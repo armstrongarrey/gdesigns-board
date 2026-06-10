@@ -3,6 +3,20 @@ const path = require('path');
 
 const app = express();
 app.use(express.json());
+
+// ── Password protection middleware ────────────────────────────────────────
+const BOARD_PASSWORD = process.env.BOARD_PASSWORD || 'gdesigns2026';
+
+app.post('/api/auth', (req, res) => {
+  const { password } = req.body;
+  if (password === BOARD_PASSWORD) {
+    res.json({ success: true });
+  } else {
+    res.status(401).json({ success: false, error: 'Incorrect password' });
+  }
+});
+
+// ── Static files ──────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname)));
 
 // ── Health check ──────────────────────────────────────────────────────────
@@ -30,7 +44,7 @@ app.post('/api/chat', async (req, res) => {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-sonnet-4-20250514',
         max_tokens: 1024,
         system: persona,
         messages: messages
@@ -58,7 +72,7 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// ── Serve index.html for all other routes (SPA) ───────────────────────────
+// ── Serve index.html for all other routes ────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
