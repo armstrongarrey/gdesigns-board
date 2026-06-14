@@ -178,7 +178,7 @@ const DIRS = [
     persona: `You are Ray Dalio — founder of Bridgewater Associates, the world's largest hedge fund, author of Principles and The Changing World Order. You built your success on radical truth, radical transparency, and a deep belief in understanding the fundamental principles that govern how things work — whether markets, organisations, or life itself. You are deeply analytical, systems-oriented, and you believe that most people fail because they are unwilling to face painful realities and learn from them. You speak with the calm authority of someone who has stress-tested every belief against reality. You are advising the founder of G-DESIGNS LTD — a digital agency in Buea, Cameroon offering web design, development, branding, digital marketing, SEO, and social media management. Tagline: 'Learn. Create. Innovate.' Registered February 2026. Solo founder, bootstrapping, seeking funding and financial clarity. Respond in character, first person, principles-and-financial-strategy advice, 2–4 paragraphs, no bullet points, no markdown headers.`
   }
 ,
-  // ── RESEARCH & INNOVATION DIRECTORS ───────────────────────────────────────
+,
   {
     id: "deming", name: "W. Edwards Deming", short: "Deming", init: "WD",
     role: "Data, Quality & Systems Research", bg: "#0a1a0a", fg: "#66dd66",
@@ -213,38 +213,14 @@ const DIRS = [
 let active = null;
 let convos = {};
 let busy = false;
-let currentAI = 'claude'; // 'claude' or 'chatgpt'
-
-// ── AI Toggle ──────────────────────────────────────────────────────────────
-function setAI(model) {
-  currentAI = model;
-  document.getElementById('btnClaude').className  = 'ai-btn' + (model === 'claude'  ? ' active-claude'  : '');
-  document.getElementById('btnChatGPT').className = 'ai-btn' + (model === 'chatgpt' ? ' active-chatgpt' : '');
-  // Update who-bar badge if a director is active
-  if (active) updateWhoBar();
-}
-
-function updateWhoBar() {
-  const d = active;
-  const badge = currentAI === 'claude'
-    ? `<span class="ai-badge claude">⚡ Claude</span>`
-    : `<span class="ai-badge chatgpt">🤖 ChatGPT</span>`;
-  document.getElementById('whoBar').innerHTML = `
-    <div class="who-av" style="background:${d.bg};color:${d.fg}">${d.init}</div>
-    <div style="flex:1">
-      <div class="who-n">${d.name} ${badge}</div>
-      <div class="who-r">${d.role}</div>
-    </div>
-    <div class="who-status"><div class="odot"></div>Online</div>`;
-}
 
 // ── Storage ────────────────────────────────────────────────────────────────
 function saveConvos() {
-  try { localStorage.setItem('gd_board_convos_v3', JSON.stringify(convos)); } catch(e) {}
+  try { localStorage.setItem('gd_board_convos_v4', JSON.stringify(convos)); } catch(e) {}
 }
 function loadConvos() {
   try {
-    const raw = localStorage.getItem('gd_board_convos_v3');
+    const raw = localStorage.getItem('gd_board_convos_v4');
     if (raw) convos = JSON.parse(raw);
   } catch(e) { convos = {}; }
 }
@@ -253,7 +229,6 @@ function loadConvos() {
 function ts() {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
-
 function esc(str) {
   return str
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -267,8 +242,6 @@ function buildScroll() {
     const c = document.createElement('div');
     c.className = 'dchip';
     c.id = 'dc_' + d.id;
-    c.setAttribute('role', 'button');
-    c.setAttribute('aria-label', d.name + ', ' + d.role);
     c.innerHTML = `<div class="dav" style="background:${d.bg};color:${d.fg}">${d.init}</div>
                    <span class="dchip-name">${d.short}</span>`;
     c.addEventListener('click', () => selectDir(d));
@@ -280,19 +253,26 @@ function buildScroll() {
 function selectDir(d) {
   if (busy) return;
   active = d;
-
   document.querySelectorAll('.dchip').forEach(c => c.classList.remove('active'));
   document.getElementById('dc_' + d.id).classList.add('active');
   document.getElementById('splash').style.display = 'none';
   document.getElementById('chatbox').classList.add('show');
   document.getElementById('errBar').classList.remove('show');
 
-  updateWhoBar();
+  const ai = window.getCurrentAI ? window.getCurrentAI() : 'claude';
+  const aiLabel = ai === 'chatgpt' ? 'ChatGPT' : ai === 'gemini' ? 'Gemini' : 'Claude';
+  const aiClass = 'badge-' + ai;
+  document.getElementById('whoBar').innerHTML = `
+    <div class="who-av" style="background:${d.bg};color:${d.fg}">${d.init}</div>
+    <div style="flex:1">
+      <div class="who-n">${d.name} <span class="ai-badge ${aiClass}">${aiLabel}</span></div>
+      <div class="who-r">${d.role}</div>
+    </div>
+    <div class="who-status"><div class="odot" style="background:#4a9a4a"></div>Online</div>`;
 
   if (!convos[d.id]) {
     convos[d.id] = [{ from: 'them', text: d.welcome, time: ts() }];
   }
-
   renderMsgs();
   buildChips(d);
   document.getElementById('ti').placeholder = `Message ${d.short}...`;
@@ -308,7 +288,8 @@ function renderMsgs() {
     const row = document.createElement('div');
     row.className = 'mrow ' + (m.from === 'them' ? 'them' : 'me');
     if (m.from === 'them') {
-      const badge = m.ai ? `<span class="ai-badge badge-${m.ai}">${m.ai === 'chatgpt' ? 'ChatGPT' : m.ai === 'gemini' ? 'Gemini' : 'Claude'}</span>` : '';
+      const aiLabel = m.ai === 'chatgpt' ? 'ChatGPT' : m.ai === 'gemini' ? 'Gemini' : 'Claude';
+      const badge = m.ai ? `<span class="ai-badge badge-${m.ai}">${aiLabel}</span>` : '';
       row.innerHTML = `<div class="mav2" style="background:${active.bg};color:${active.fg}">${active.init}</div>
                        <div><div class="bub">${esc(m.text)}</div>${badge}</div>`;
     } else {
@@ -325,7 +306,7 @@ function renderMsgs() {
   box.scrollTop = box.scrollHeight;
 }
 
-// ── Show typing indicator ──────────────────────────────────────────────────
+// ── Typing indicator ───────────────────────────────────────────────────────
 function showTyping() {
   const box = document.getElementById('msgs');
   const row = document.createElement('div');
@@ -340,9 +321,7 @@ function showTyping() {
 // ── Quick chips ────────────────────────────────────────────────────────────
 function buildChips(d) {
   const el = document.getElementById('qrow');
-  el.innerHTML = (d.chips || []).map(c =>
-    `<div class="qc" role="button">${c}</div>`
-  ).join('');
+  el.innerHTML = (d.chips || []).map(c => `<div class="qc">${c}</div>`).join('');
   el.querySelectorAll('.qc').forEach(ch => {
     ch.addEventListener('click', () => { if (!busy) send(ch.textContent); });
   });
@@ -358,12 +337,12 @@ async function send(text) {
   convos[active.id].push({ from: 'you', text, time: ts() });
   renderMsgs();
   showTyping();
-
   document.getElementById('ti').value = '';
   document.getElementById('ti').style.height = 'auto';
   document.getElementById('sbtn').disabled = true;
 
   const d = active;
+  const selectedAI = window.getCurrentAI ? window.getCurrentAI() : 'claude';
 
   const history = (convos[d.id] || []).slice(-14).map(m => ({
     role: m.from === 'them' ? 'assistant' : 'user',
@@ -375,12 +354,13 @@ async function send(text) {
   }
 
   let reply = null;
-  let aiUsed = window.getCurrentAI ? window.getCurrentAI() : 'claude';
+  let aiUsed = selectedAI;
+
   try {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ persona: d.persona, messages: history, ai: (window.getCurrentAI ? window.getCurrentAI() : 'claude') })
+      body: JSON.stringify({ persona: d.persona, messages: history, ai: selectedAI })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -388,7 +368,7 @@ async function send(text) {
     }
     const data = await res.json();
     reply = data.reply;
-    aiUsed = data.ai || (window.getCurrentAI ? window.getCurrentAI() : 'claude');
+    aiUsed = data.ai || selectedAI;
   } catch (e) {
     document.getElementById('errBar').textContent = '⚠ ' + e.message + ' — please try again.';
     document.getElementById('errBar').classList.add('show');
@@ -412,14 +392,9 @@ async function send(text) {
 document.getElementById('sbtn').addEventListener('click', () => {
   send(document.getElementById('ti').value);
 });
-
 document.getElementById('ti').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    send(e.target.value);
-  }
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(e.target.value); }
 });
-
 document.getElementById('ti').addEventListener('input', function () {
   this.style.height = 'auto';
   this.style.height = Math.min(this.scrollHeight, 110) + 'px';
