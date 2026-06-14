@@ -213,6 +213,30 @@ const DIRS = [
 let active = null;
 let convos = {};
 let busy = false;
+let currentAI = 'claude'; // 'claude' or 'chatgpt'
+
+// ── AI Toggle ──────────────────────────────────────────────────────────────
+function setAI(model) {
+  currentAI = model;
+  document.getElementById('btnClaude').className  = 'ai-btn' + (model === 'claude'  ? ' active-claude'  : '');
+  document.getElementById('btnChatGPT').className = 'ai-btn' + (model === 'chatgpt' ? ' active-chatgpt' : '');
+  // Update who-bar badge if a director is active
+  if (active) updateWhoBar();
+}
+
+function updateWhoBar() {
+  const d = active;
+  const badge = currentAI === 'claude'
+    ? `<span class="ai-badge claude">⚡ Claude</span>`
+    : `<span class="ai-badge chatgpt">🤖 ChatGPT</span>`;
+  document.getElementById('whoBar').innerHTML = `
+    <div class="who-av" style="background:${d.bg};color:${d.fg}">${d.init}</div>
+    <div style="flex:1">
+      <div class="who-n">${d.name} ${badge}</div>
+      <div class="who-r">${d.role}</div>
+    </div>
+    <div class="who-status"><div class="odot"></div>Online</div>`;
+}
 
 // ── Storage ────────────────────────────────────────────────────────────────
 function saveConvos() {
@@ -263,13 +287,7 @@ function selectDir(d) {
   document.getElementById('chatbox').classList.add('show');
   document.getElementById('errBar').classList.remove('show');
 
-  document.getElementById('whoBar').innerHTML = `
-    <div class="who-av" style="background:${d.bg};color:${d.fg}">${d.init}</div>
-    <div style="flex:1">
-      <div class="who-n">${d.name}</div>
-      <div class="who-r">${d.role}</div>
-    </div>
-    <div class="who-status"><div class="odot"></div>Online</div>`;
+  updateWhoBar();
 
   if (!convos[d.id]) {
     convos[d.id] = [{ from: 'them', text: d.welcome, time: ts() }];
@@ -290,8 +308,9 @@ function renderMsgs() {
     const row = document.createElement('div');
     row.className = 'mrow ' + (m.from === 'them' ? 'them' : 'me');
     if (m.from === 'them') {
+      const badge = m.ai ? `<span class="ai-badge badge-${m.ai}">${m.ai === 'chatgpt' ? 'ChatGPT' : m.ai === 'gemini' ? 'Gemini' : 'Claude'}</span>` : '';
       row.innerHTML = `<div class="mav2" style="background:${active.bg};color:${active.fg}">${active.init}</div>
-                       <div class="bub">${esc(m.text)}</div>`;
+                       <div><div class="bub">${esc(m.text)}</div>${badge}</div>`;
     } else {
       row.innerHTML = `<div class="bub">${esc(m.text)}</div>
                        <div class="mav2" style="background:#2a1f4e;color:#9070d0">YOU</div>`;
@@ -356,11 +375,12 @@ async function send(text) {
   }
 
   let reply = null;
+  let aiUsed = window.getCurrentAI ? window.getCurrentAI() : 'claude';
   try {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ persona: d.persona, messages: history })
+      body: JSON.stringify({ persona: d.persona, messages: history, ai: (window.getCurrentAI ? window.getCurrentAI() : 'claude') })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -368,6 +388,7 @@ async function send(text) {
     }
     const data = await res.json();
     reply = data.reply;
+    aiUsed = data.ai || (window.getCurrentAI ? window.getCurrentAI() : 'claude');
   } catch (e) {
     document.getElementById('errBar').textContent = '⚠ ' + e.message + ' — please try again.';
     document.getElementById('errBar').classList.add('show');
@@ -377,7 +398,7 @@ async function send(text) {
   if (tr) tr.remove();
 
   if (reply) {
-    convos[d.id].push({ from: 'them', text: reply, time: ts() });
+    convos[d.id].push({ from: 'them', text: reply, time: ts(), ai: aiUsed });
     renderMsgs();
     saveConvos();
   }
