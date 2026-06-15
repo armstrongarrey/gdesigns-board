@@ -71,6 +71,7 @@
   /* AI TOGGLE */
   .ai-toggle { display: flex; gap: 4px; background: var(--bg2); border: 1px solid var(--border); border-radius: 20px; padding: 3px; }
   .ai-btn { display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 16px; border: none; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; font-family: inherit; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+  .ai-btn.active-auto { background: #1e1540; color: #9d7dff; }
   .ai-btn.active-claude { background: #2a1f5e; color: var(--claude-color); }
   .ai-btn.active-chatgpt { background: #0a2a20; color: var(--chatgpt-color); }
   .ai-btn.active-gemini { background: #0a1a3a; color: var(--gemini-color); }
@@ -195,7 +196,10 @@
     <div class="hdr-right">
       <!-- AI Toggle -->
       <div class="ai-toggle" id="aiToggle" role="group" aria-label="Select AI model">
-        <button class="ai-btn active-claude" data-ai="claude" onclick="setAI('claude')">
+        <button class="ai-btn active-auto" data-ai="auto" onclick="setAI('auto')">
+          <div class="ai-dot" style="background:#9d7dff"></div><span>Auto</span>
+        </button>
+        <button class="ai-btn" data-ai="claude" onclick="setAI('claude')">
           <div class="ai-dot"></div><span>Claude</span>
         </button>
         <button class="ai-btn" data-ai="chatgpt" onclick="setAI('chatgpt')">
@@ -216,7 +220,7 @@
     <div class="splash" id="splash">
       <div class="sp-icon">🏛️</div>
       <div class="sp-t">Your Board Awaits</div>
-      <div class="sp-s">Select a director above, choose your AI (Claude, ChatGPT, or Gemini), then type your challenge.</div>
+      <div class="sp-s">Select a director above and type your challenge. The best AI is chosen automatically — or override it with the toggle.</div>
     </div>
     <section class="chatbox" id="chatbox">
       <div class="who-bar" id="whoBar"></div>
@@ -262,23 +266,11 @@ document.getElementById('pwInput').addEventListener('keydown', e => { if(e.key==
 document.getElementById('logoutBtn').addEventListener('click', showLogin);
 if (isAuthed()) showApp();
 
-// ── AI Toggle ──────────────────────────────────────────────────────────────
-let currentAI = localStorage.getItem('gd_board_ai') || 'claude';
-
-function setAI(ai) {
-  currentAI = ai;
-  localStorage.setItem('gd_board_ai', ai);
-  document.querySelectorAll('.ai-btn').forEach(btn => {
-    btn.classList.remove('active-claude','active-chatgpt','active-gemini');
-    if (btn.dataset.ai === ai) btn.classList.add('active-'+ai);
-  });
-}
-
-// Apply saved AI on load
-setAI(currentAI);
-
-// Expose to app.js
-window.getCurrentAI = () => currentAI;
+// ── Restore saved AI mode on load (setAI is defined in app.js) ────────────
+window.addEventListener('load', () => {
+  const saved = localStorage.getItem('gd_board_ai_mode') || 'auto';
+  if (window.setAI) window.setAI(saved);
+});
 </script>
 
 </body>
