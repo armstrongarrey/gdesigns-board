@@ -161,12 +161,80 @@
     .ai-btn span { display: none; }
     .bub { max-width: 86%; font-size: 12.5px; }
   }
+
+  /* ── MODE SELECTOR ── */
+  .mode-screen {
+    position: fixed; inset: 0; background: var(--bg);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 200; padding: 24px;
+  }
+  .mode-box {
+    width: 100%; max-width: 420px;
+    display: flex; flex-direction: column; align-items: center; gap: 24px;
+  }
+  .mode-logo { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .mode-logo-img { width: 56px; height: 56px; object-fit: contain; }
+  .mode-logo-fallback { width: 56px; height: 56px; background: var(--purple); border-radius: 14px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 24px; color: #fff; }
+  .mode-title { font-size: 20px; font-weight: 700; color: var(--text); text-align: center; }
+  .mode-sub { font-size: 12px; color: var(--muted); text-align: center; line-height: 1.6; max-width: 300px; }
+  .mode-cards { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+  .mode-card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 14px; padding: 18px 20px; cursor: pointer;
+    transition: border-color 0.15s, background 0.15s; text-decoration: none;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .mode-card:hover { border-color: var(--purple); background: var(--bg3); }
+  .mode-card-icon { font-size: 26px; flex-shrink: 0; }
+  .mode-card-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+  .mode-card-desc { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+  .mode-card-arrow { margin-left: auto; font-size: 16px; color: var(--muted); flex-shrink: 0; }
+  .mode-card.internal { border-color: #2a1f4e; }
+  .mode-card.internal:hover { border-color: var(--purple); }
+  .mode-card.public { border-color: #1a2a1a; }
+  .mode-card.public:hover { border-color: #10a37f; }
+  .mode-brand { font-size: 10px; color: #2a2040; }
 </style>
 </head>
 <body>
 
+<!-- MODE SELECTOR -->
+<div class="mode-screen" id="modeScreen">
+  <div class="mode-box">
+    <div class="mode-logo">
+      <img src="logo.png" class="mode-logo-img" alt="G-DESIGNS"
+        onerror="this.style.display='none';document.getElementById('modeLogoFallback').style.display='flex'">
+      <div class="mode-logo-fallback" id="modeLogoFallback" style="display:none">G</div>
+      <div class="mode-title">G-DESIGNS Board of Directors</div>
+      <div class="mode-sub">Strategic Intelligence Council · 29 Legendary Business Minds</div>
+    </div>
+
+    <div class="mode-cards">
+      <div class="mode-card internal" onclick="showLogin()">
+        <div class="mode-card-icon">🔒</div>
+        <div>
+          <div class="mode-card-title">Enter the Boardroom</div>
+          <div class="mode-card-desc">Internal access for G-DESIGNS team. Password required. Full chat with all 29 directors.</div>
+        </div>
+        <div class="mode-card-arrow">→</div>
+      </div>
+
+      <a class="mode-card public" href="/consult">
+        <div class="mode-card-icon">🌐</div>
+        <div>
+          <div class="mode-card-title">Consult the Board</div>
+          <div class="mode-card-desc">Public access. Get a full strategic report from multiple board members on your business challenge.</div>
+        </div>
+        <div class="mode-card-arrow">→</div>
+      </a>
+    </div>
+
+    <div class="mode-brand">G-DESIGNS LTD · Learn. Create. Innovate. · board.gdesignsme.com</div>
+  </div>
+</div>
+
 <!-- LOGIN -->
-<div class="login-screen" id="loginScreen">
+<div class="login-screen" id="loginScreen" style="display:none">
   <div class="login-box">
     <img src="logo.png" class="login-logo" alt="G-DESIGNS Logo" onerror="this.style.display='none';document.getElementById('loginLogoFallback').style.display='flex'">
     <div class="login-logo-fallback" id="loginLogoFallback" style="display:none">G</div>
@@ -242,31 +310,84 @@
 
 <script src="app.js"></script>
 <script>
-// ── Auth ───────────────────────────────────────────────────────────────────
+// ── Auth & Mode Flow ────────────────────────────────────────────────────────
 const SESSION_KEY = 'gd_board_auth';
-function isAuthed() { return sessionStorage.getItem(SESSION_KEY) === 'true'; }
-function showApp() { document.getElementById('loginScreen').style.display='none'; document.getElementById('app').classList.add('show'); }
-function showLogin() { sessionStorage.removeItem(SESSION_KEY); document.getElementById('loginScreen').style.display='flex'; document.getElementById('app').classList.remove('show'); document.getElementById('pwInput').value=''; document.getElementById('loginErr').classList.remove('show'); }
+
+function isAuthed() {
+  return sessionStorage.getItem(SESSION_KEY) === 'true';
+}
+
+function showModeSelector() {
+  document.getElementById('modeScreen').style.display = 'flex';
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('app').classList.remove('show');
+}
+
+function showLogin() {
+  // Called from mode selector "Enter the Boardroom" card
+  sessionStorage.removeItem(SESSION_KEY);
+  document.getElementById('modeScreen').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('app').classList.remove('show');
+  document.getElementById('pwInput').value = '';
+  document.getElementById('loginErr').classList.remove('show');
+  setTimeout(() => document.getElementById('pwInput').focus(), 100);
+}
+
+function showApp() {
+  document.getElementById('modeScreen').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('app').classList.add('show');
+}
+
+function lockBoard() {
+  sessionStorage.removeItem(SESSION_KEY);
+  showModeSelector();
+}
 
 async function attemptLogin() {
   const pw = document.getElementById('pwInput').value.trim();
   if (!pw) return;
   const btn = document.getElementById('loginBtn');
-  btn.disabled = true; btn.textContent = 'Verifying...';
+  btn.disabled = true;
+  btn.textContent = 'Verifying...';
   try {
-    const res = await fetch('/api/auth', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({password:pw}) });
+    const res = await fetch('/api/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw })
+    });
     const data = await res.json();
-    if (data.success) { sessionStorage.setItem(SESSION_KEY,'true'); showApp(); }
-    else { document.getElementById('loginErr').classList.add('show'); document.getElementById('pwInput').value=''; document.getElementById('pwInput').focus(); }
-  } catch(e) { document.getElementById('loginErr').textContent='Connection error. Please try again.'; document.getElementById('loginErr').classList.add('show'); }
-  btn.disabled=false; btn.textContent='Enter the Boardroom';
+    if (data.success) {
+      sessionStorage.setItem(SESSION_KEY, 'true');
+      showApp();
+    } else {
+      document.getElementById('loginErr').classList.add('show');
+      document.getElementById('pwInput').value = '';
+      document.getElementById('pwInput').focus();
+    }
+  } catch(e) {
+    document.getElementById('loginErr').textContent = 'Connection error. Please try again.';
+    document.getElementById('loginErr').classList.add('show');
+  }
+  btn.disabled = false;
+  btn.textContent = 'Enter the Boardroom';
 }
-document.getElementById('loginBtn').addEventListener('click', attemptLogin);
-document.getElementById('pwInput').addEventListener('keydown', e => { if(e.key==='Enter') attemptLogin(); });
-document.getElementById('logoutBtn').addEventListener('click', showLogin);
-if (isAuthed()) showApp();
 
-// ── Restore saved AI mode on load (setAI is defined in app.js) ────────────
+document.getElementById('loginBtn').addEventListener('click', attemptLogin);
+document.getElementById('pwInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') attemptLogin();
+});
+document.getElementById('logoutBtn').addEventListener('click', lockBoard);
+
+// ── Init: decide which screen to show ──────────────────────────────────────
+if (isAuthed()) {
+  showApp();
+} else {
+  showModeSelector();
+}
+
+// ── Restore saved AI mode ──────────────────────────────────────────────────
 window.addEventListener('load', () => {
   const saved = localStorage.getItem('gd_board_ai_mode') || 'auto';
   if (window.setAI) window.setAI(saved);
