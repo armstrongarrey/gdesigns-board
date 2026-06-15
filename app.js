@@ -209,10 +209,85 @@ const DIRS = [
   }
 ];
 
+// ── AI Auto-Assignment per Director ───────────────────────────────────────
+// Each director is pre-assigned the AI that best matches their thinking style.
+// Claude  = rich narrative, wisdom, philosophy, faith, long-form advice
+// ChatGPT = analytical, structured, technical, data-driven, systems
+// Gemini  = creative, motivational, media, social, fast energy
+const DIRECTOR_AI = {
+  rockefeller:   'claude',    // Deep wisdom, measured authority
+  dangote:       'claude',    // African market narrative, relationship-driven
+  awosika:       'claude',    // Faith, purpose, pastoral warmth
+  tbjoshua:      'claude',    // Spiritual depth and scripture
+  napoleon:      'claude',    // Mindset philosophy, Think and Grow Rich
+  sinek:         'claude',    // Purpose storytelling, Why-driven narrative
+  ogilvy:        'claude',    // Rich copywriting craft, long-form ad thinking
+  buffett:       'claude',    // Patient folksy wisdom, analogies and wit
+  drucker:       'chatgpt',   // Management frameworks, systematic analysis
+  porter:        'chatgpt',   // Five Forces, competitive analysis frameworks
+  deming:        'chatgpt',   // Data, quality systems, statistical thinking
+  christensen:   'chatgpt',   // Research-based innovation theory
+  thiel:         'chatgpt',   // Contrarian logic, structured startup analysis
+  dalio:         'chatgpt',   // Principles, financial systems, radical logic
+  taleb:         'chatgpt',   // Risk frameworks, probability, antifragility
+  gates:         'chatgpt',   // Technology systems, analytical strategy
+  bezos:         'chatgpt',   // Operational systems, working backwards logic
+  kotler:        'chatgpt',   // Marketing mix frameworks, academic structure
+  moukouri:      'chatgpt',   // Legal analysis, OHADA framework precision
+  jackma:        'gemini',    // Energetic storytelling, resilience narratives
+  musk:          'gemini',    // Fast first-principles, blunt disruptive energy
+  jobs:          'gemini',    // Creative vision, design philosophy
+  garyvee:       'gemini',    // High-energy social media, hustle culture
+  oprah:         'gemini',    // Warm storytelling, emotional connection
+  robbins:       'gemini',    // Peak performance energy, motivational fire
+  kawasaki:      'gemini',    // Evangelism, creative pitching energy
+  godin:         'gemini',    // Short sharp philosophical provocations
+  adamgrant:     'gemini',    // Warm research storytelling, playful insight
+  hopkins:       'chatgpt',   // Scientific testing, direct response precision
+};
+
 // ── State ──────────────────────────────────────────────────────────────────
 let active = null;
 let convos = {};
 let busy = false;
+let manualAI = null; // null = auto mode, 'claude'/'chatgpt'/'gemini' = manual override
+
+// ── AI Selection Logic ─────────────────────────────────────────────────────
+function getAIForDirector(dirId) {
+  if (manualAI) return manualAI; // manual override wins
+  return DIRECTOR_AI[dirId] || 'claude'; // auto-assign
+}
+
+function setAI(ai) {
+  manualAI = ai === 'auto' ? null : ai;
+  localStorage.setItem('gd_board_ai_mode', ai);
+  updateToggleUI();
+  // Update who bar badge if director is selected
+  if (active) updateWhoBar(active);
+}
+
+function updateToggleUI() {
+  const mode = manualAI || 'auto';
+  document.querySelectorAll('.ai-btn').forEach(btn => {
+    btn.classList.remove('active-claude', 'active-chatgpt', 'active-gemini', 'active-auto');
+    if (btn.dataset.ai === mode) btn.classList.add('active-' + mode);
+  });
+}
+
+function updateWhoBar(d) {
+  const ai = getAIForDirector(d.id);
+  const aiLabel = ai === 'chatgpt' ? 'ChatGPT' : ai === 'gemini' ? 'Gemini' : 'Claude';
+  document.getElementById('whoBar').innerHTML = `
+    <div class="who-av" style="background:${d.bg};color:${d.fg}">${d.init}</div>
+    <div style="flex:1">
+      <div class="who-n">${d.name} <span class="ai-badge badge-${ai}">${aiLabel}</span></div>
+      <div class="who-r">${d.role}</div>
+    </div>
+    <div class="who-status"><div class="odot" style="background:#4a9a4a"></div>Online</div>`;
+}
+
+// Make setAI available to index.html buttons
+window.setAI = setAI;
 
 // ── Storage ────────────────────────────────────────────────────────────────
 function saveConvos() {
@@ -258,17 +333,7 @@ function selectDir(d) {
   document.getElementById('splash').style.display = 'none';
   document.getElementById('chatbox').classList.add('show');
   document.getElementById('errBar').classList.remove('show');
-
-  const ai = window.getCurrentAI ? window.getCurrentAI() : 'claude';
-  const aiLabel = ai === 'chatgpt' ? 'ChatGPT' : ai === 'gemini' ? 'Gemini' : 'Claude';
-  const aiClass = 'badge-' + ai;
-  document.getElementById('whoBar').innerHTML = `
-    <div class="who-av" style="background:${d.bg};color:${d.fg}">${d.init}</div>
-    <div style="flex:1">
-      <div class="who-n">${d.name} <span class="ai-badge ${aiClass}">${aiLabel}</span></div>
-      <div class="who-r">${d.role}</div>
-    </div>
-    <div class="who-status"><div class="odot" style="background:#4a9a4a"></div>Online</div>`;
+  updateWhoBar(d);
 
   if (!convos[d.id]) {
     convos[d.id] = [{ from: 'them', text: d.welcome, time: ts() }];
@@ -342,7 +407,7 @@ async function send(text) {
   document.getElementById('sbtn').disabled = true;
 
   const d = active;
-  const selectedAI = window.getCurrentAI ? window.getCurrentAI() : 'claude';
+  const selectedAI = getAIForDirector(d.id);
 
   const history = (convos[d.id] || []).slice(-14).map(m => ({
     role: m.from === 'them' ? 'assistant' : 'user',
@@ -403,3 +468,8 @@ document.getElementById('ti').addEventListener('input', function () {
 // ── Init ───────────────────────────────────────────────────────────────────
 loadConvos();
 buildScroll();
+
+// Restore saved AI mode
+const savedMode = localStorage.getItem('gd_board_ai_mode') || 'auto';
+manualAI = savedMode === 'auto' ? null : savedMode;
+// UI update will happen after index.html load event fires
