@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Consult the Board — G-DESIGNS LTD</title>
+<meta name="description" content="Get strategic advice from G-DESIGNS' AI Board of Directors — 29 legendary business minds at your service.">
+<meta name="theme-color" content="#0e0b1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>
+  :root {
+    --purple: #6C3Bff;
+    --purple-light: #8b5cf6;
+    --bg: #0e0b1a;
+    --bg2: #14102a;
+    --bg3: #1a1438;
+    --bg4: #090717;
+    --border: #2a1f4e;
+    --border2: #1a1030;
+    --text: #e8e0ff;
+    --text2: #c8b8f0;
+    --muted: #5a4a7a;
+    --muted2: #3a2f5a;
+    --green: #10a37f;
+    --gold: #e6aa00;
+    --red: #ff4444;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html { scroll-behavior: smooth; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* ── HEADER ── */
+  .hdr { background: #1a0e3a; border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; }
+  .hdr-logo { display: flex; align-items: center; gap: 10px; }
+  .hdr-mark { width: 32px; height: 32px; background: var(--purple); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; color: #fff; flex-shrink: 0; }
+  .hdr-title { font-size: 13px; font-weight: 600; color: var(--text); }
+  .hdr-sub { font-size: 9px; color: var(--purple); letter-spacing: 0.08em; text-transform: uppercase; }
+  .hdr-back { font-size: 11px; color: var(--muted); text-decoration: none; border: 1px solid var(--border); border-radius: 7px; padding: 5px 10px; transition: all 0.12s; }
+  .hdr-back:hover { border-color: var(--purple); color: var(--text2); }
+
+  /* ── STAGES ── */
+  .stage { display: none; }
+  .stage.active { display: block; }
+
+  /* ── STAGE 1: LANDING ── */
+  .landing { max-width: 680px; margin: 0 auto; padding: 40px 20px 60px; }
+  .landing-hero { text-align: center; margin-bottom: 40px; }
+  .landing-badge { display: inline-flex; align-items: center; gap: 6px; background: var(--bg2); border: 1px solid var(--border); border-radius: 20px; padding: 5px 14px; margin-bottom: 16px; }
+  .badge-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--purple); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .badge-text { font-size: 11px; color: var(--purple); letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; }
+  .landing-h1 { font-size: clamp(26px, 5vw, 42px); font-weight: 700; color: var(--text); line-height: 1.2; margin-bottom: 12px; }
+  .landing-h1 span { color: var(--purple); }
+  .landing-sub { font-size: 14px; color: var(--muted); line-height: 1.7; max-width: 480px; margin: 0 auto 28px; }
+
+  .directors-preview { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-bottom: 36px; }
+  .dir-pill { display: flex; align-items: center; gap: 6px; background: var(--bg2); border: 1px solid var(--border); border-radius: 20px; padding: 5px 10px 5px 6px; }
+  .dir-av { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 7px; font-weight: 700; }
+  .dir-pill-name { font-size: 10.5px; color: var(--text2); font-weight: 500; }
+
+  /* ── FORM ── */
+  .consult-form { background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; padding: 28px 24px; }
+  .form-title { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .form-sub { font-size: 12px; color: var(--muted); margin-bottom: 22px; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .form-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .form-field label { font-size: 11px; color: var(--muted); letter-spacing: 0.05em; text-transform: uppercase; font-weight: 600; }
+  .form-input { background: var(--bg); border: 1px solid var(--border); border-radius: 9px; outline: none; color: var(--text2); font-size: 13.5px; font-family: inherit; padding: 10px 13px; transition: border-color 0.15s; width: 100%; }
+  .form-input:focus { border-color: var(--purple); }
+  .form-input::placeholder { color: var(--muted2); }
+  textarea.form-input { resize: vertical; min-height: 80px; line-height: 1.5; }
+  .form-select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%235a4a7a' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; cursor: pointer; }
+  .form-note { font-size: 11px; color: var(--muted2); margin-top: 4px; }
+  .form-divider { border: none; border-top: 1px solid var(--border2); margin: 18px 0; }
+  .submit-btn { width: 100%; background: var(--purple); border: none; border-radius: 10px; color: #fff; font-size: 15px; font-weight: 600; font-family: inherit; padding: 13px; cursor: pointer; transition: opacity 0.15s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .submit-btn:hover { opacity: 0.88; }
+  .submit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .privacy-note { font-size: 11px; color: var(--muted2); text-align: center; margin-top: 12px; }
+
+  /* ── STAGE 2: QUALIFY CHAT ── */
+  .qualify-wrap { max-width: 680px; margin: 0 auto; padding: 30px 20px 60px; }
+  .qualify-header { text-align: center; margin-bottom: 28px; }
+  .qualify-title { font-size: 20px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+  .qualify-sub { font-size: 13px; color: var(--muted); }
+  .progress-bar { background: var(--bg2); border-radius: 10px; height: 4px; margin-bottom: 28px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--purple); border-radius: 10px; transition: width 0.4s ease; }
+
+  .qualify-chat { background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+  .qualify-msgs { min-height: 200px; max-height: 400px; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .qualify-msgs::-webkit-scrollbar { width: 3px; }
+  .qualify-msgs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .qmsg { display: flex; gap: 8px; align-items: flex-start; }
+  .qmsg.user { flex-direction: row-reverse; }
+  .qmsg-av { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; background: var(--purple); color: #fff; }
+  .qmsg-av.user-av { background: #2a1f4e; color: #9070d0; }
+  .qmsg-bubble { max-width: 82%; padding: 9px 13px; font-size: 13px; line-height: 1.65; }
+  .qmsg.board .qmsg-bubble { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); border-radius: 12px 12px 12px 3px; }
+  .qmsg.user .qmsg-bubble { background: var(--purple); color: #fff; border-radius: 12px 12px 3px 12px; }
+
+  .qualify-input-row { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border2); background: var(--bg); }
+  .qualify-input { flex: 1; background: var(--bg2); border: 1px solid var(--border); border-radius: 9px; outline: none; color: var(--text2); font-size: 13px; font-family: inherit; padding: 9px 12px; transition: border-color 0.15s; }
+  .qualify-input:focus { border-color: var(--purple); }
+  .qualify-input::placeholder { color: var(--muted2); }
+  .qualify-send { background: var(--purple); border: none; border-radius: 9px; width: 38px; height: 38px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 16px; transition: opacity 0.12s; flex-shrink: 0; }
+  .qualify-send:hover { opacity: 0.85; }
+  .qualify-send:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .assemble-btn { width: 100%; margin-top: 16px; background: linear-gradient(135deg, var(--purple), #9333ea); border: none; border-radius: 10px; color: #fff; font-size: 14px; font-weight: 600; font-family: inherit; padding: 13px; cursor: pointer; display: none; align-items: center; justify-content: center; gap: 8px; transition: opacity 0.15s; }
+  .assemble-btn.show { display: flex; }
+  .assemble-btn:hover { opacity: 0.88; }
+
+  /* ── STAGE 3: LOADING ── */
+  .loading-wrap { max-width: 520px; margin: 60px auto; padding: 40px 20px; text-align: center; }
+  .loading-icon { font-size: 48px; margin-bottom: 20px; animation: spin 2s linear infinite; }
+  @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+  .loading-title { font-size: 20px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+  .loading-sub { font-size: 13px; color: var(--muted); margin-bottom: 28px; line-height: 1.6; }
+  .loading-directors { display: flex; flex-direction: column; gap: 8px; text-align: left; }
+  .loading-dir { display: flex; align-items: center; gap: 10px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; }
+  .loading-dir-av { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; flex-shrink: 0; }
+  .loading-dir-name { font-size: 12px; color: var(--text2); font-weight: 500; flex: 1; }
+  .loading-dir-status { font-size: 10px; }
+  .status-thinking { color: var(--gold); }
+  .status-done { color: var(--green); }
+  .status-waiting { color: var(--muted); }
+
+  /* ── STAGE 4: REPORT ── */
+  .report-wrap { max-width: 760px; margin: 0 auto; padding: 30px 20px 80px; }
+  .report-header { background: linear-gradient(135deg, #1a0e3a, #0e0b1a); border: 1px solid var(--border); border-radius: 16px; padding: 24px; margin-bottom: 24px; }
+  .report-badge { display: inline-flex; align-items: center; gap: 6px; background: var(--purple); border-radius: 20px; padding: 4px 12px; margin-bottom: 12px; }
+  .report-badge-text { font-size: 10px; color: #fff; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+  .report-title { font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+  .report-meta { font-size: 12px; color: var(--muted); }
+  .report-meta span { color: var(--text2); font-weight: 500; }
+
+  .report-section { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .report-section-label { font-size: 9.5px; color: var(--purple); letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700; margin-bottom: 10px; }
+  .report-section-content { font-size: 13.5px; color: var(--text2); line-height: 1.75; }
+  .report-section-content p { margin-bottom: 10px; }
+  .report-section-content p:last-child { margin-bottom: 0; }
+
+  .board-insights { display: flex; flex-direction: column; gap: 14px; margin-bottom: 16px; }
+  .insight-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .insight-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: #120f28; border-bottom: 1px solid var(--border2); }
+  .insight-av { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; flex-shrink: 0; }
+  .insight-name { font-size: 13px; font-weight: 600; color: var(--text); }
+  .insight-role { font-size: 10px; color: var(--muted); }
+  .insight-ai-badge { margin-left: auto; font-size: 9px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
+  .badge-claude  { background: #2a1f5e; color: #9d7dff; }
+  .badge-chatgpt { background: #0a2a20; color: #10a37f; }
+  .badge-gemini  { background: #0a1a3a; color: #4285f4; }
+  .insight-body { padding: 14px 16px; font-size: 13px; color: var(--text2); line-height: 1.75; }
+
+  .synthesis-card { background: linear-gradient(135deg, #1a0e3a, #0a0817); border: 1px solid var(--purple); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .synthesis-label { font-size: 9.5px; color: var(--purple); letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 6px; }
+  .synthesis-content { font-size: 13.5px; color: var(--text2); line-height: 1.8; white-space: pre-wrap; }
+
+  .report-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+  .action-btn { flex: 1; min-width: 140px; padding: 11px 16px; border-radius: 9px; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; gap: 7px; }
+  .btn-primary { background: var(--purple); border: none; color: #fff; }
+  .btn-primary:hover { opacity: 0.85; }
+  .btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--text2); }
+  .btn-secondary:hover { border-color: var(--purple); color: var(--text); }
+  .btn-new { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  .btn-new:hover { border-color: var(--purple); color: var(--text2); }
+
+  /* ── TYPING INDICATOR ── */
+  .typing { display: flex; gap: 4px; align-items: center; padding: 10px 13px; background: var(--bg3); border: 1px solid var(--border); border-radius: 12px 12px 12px 3px; width: fit-content; }
+  .tdot { width: 5px; height: 5px; border-radius: 50%; background: var(--purple); animation: ta 1.2s infinite; }
+  .tdot:nth-child(2){animation-delay:.2s} .tdot:nth-child(3){animation-delay:.4s}
+  @keyframes ta{0%,80%,100%{opacity:.2}40%{opacity:1}}
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 520px) {
+    .form-row { grid-template-columns: 1fr; }
+    .report-actions { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <div class="hdr-logo">
+    <div class="hdr-mark">G</div>
+    <div>
+      <div class="hdr-title">G-DESIGNS Board of Directors</div>
+      <div class="hdr-sub">Public Consultation</div>
+    </div>
+  </div>
+  <a href="/" class="hdr-back">← Back</a>
+</header>
+
+<!-- STAGE 1: LANDING & FORM -->
+<div class="stage active" id="stage1">
+  <div class="landing">
+    <div class="landing-hero">
+      <div class="landing-badge">
+        <div class="badge-dot"></div>
+        <span class="badge-text">Board Available Now</span>
+      </div>
+      <h1 class="landing-h1">Get Advice From<br><span>29 Legendary Minds</span></h1>
+      <p class="landing-sub">Describe your business challenge and our AI Board of Directors — featuring Rockefeller, Ogilvy, Buffett, Porter and more — will deliver a structured strategic consultation.</p>
+
+      <div class="directors-preview">
+        <div class="dir-pill"><div class="dir-av" style="background:#2a4a1a;color:#7fcc50">JR</div><span class="dir-pill-name">Rockefeller</span></div>
+        <div class="dir-pill"><div class="dir-av" style="background:#1a0500;color:#ff7040">DO</div><span class="dir-pill-name">Ogilvy</span></div>
+        <div class="dir-pill"><div class="dir-av" style="background:#001a1a;color:#40cccc">WB</div><span class="dir-pill-name">Buffett</span></div>
+        <div class="dir-pill"><div class="dir-av" style="background:#001520;color:#44bbdd">MP</div><span class="dir-pill-name">Porter</span></div>
+        <div class="dir-pill"><div class="dir-av" style="background:#001520;color:#00c8ff">EM</div><span class="dir-pill-name">Musk</span></div>
+        <div class="dir-pill"><div class="dir-av" style="background:#002a1a;color:#00cc88">BG</div><span class="dir-pill-name">Gates</span></div>
+        <div class="dir-pill"><div class="dir-av" style="background:#1a1000;color:#ffaa00">SG</div><span class="dir-pill-name">Godin</span></div>
+        <div class="dir-pill"><div class="dir-av" style="background:#001a10;color:#30dd88">PK</div><span class="dir-pill-name">Kotler</span></div>
+      </div>
+    </div>
+
+    <div class="consult-form">
+      <div class="form-title">Start Your Consultation</div>
+      <div class="form-sub">Fill in your details and business challenge — the board will do the rest.</div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Your Name *</label>
+          <input class="form-input" type="text" id="clientName" placeholder="e.g. John Doe" required>
+        </div>
+        <div class="form-field">
+          <label>Phone Number *</label>
+          <input class="form-input" type="tel" id="clientPhone" placeholder="e.g. +237 6 75 78 15 17" required>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Email Address *</label>
+          <input class="form-input" type="email" id="clientEmail" placeholder="you@example.com" required>
+        </div>
+        <div class="form-field">
+          <label>Business Type *</label>
+          <input class="form-input" type="text" id="businessType" placeholder="e.g. Digital Agency, Restaurant" required>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Industry</label>
+          <select class="form-input form-select" id="industry">
+            <option value="">Select industry...</option>
+            <option>Technology & Digital</option>
+            <option>Marketing & Advertising</option>
+            <option>Retail & E-commerce</option>
+            <option>Food & Hospitality</option>
+            <option>Education & Training</option>
+            <option>Health & Wellness</option>
+            <option>Finance & Investment</option>
+            <option>Real Estate</option>
+            <option>Manufacturing</option>
+            <option>Agriculture</option>
+            <option>Media & Entertainment</option>
+            <option>Logistics & Supply Chain</option>
+            <option>Professional Services</option>
+            <option>Non-profit & Social Impact</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Growth Stage</label>
+          <select class="form-input form-select" id="stage">
+            <option value="">Select stage...</option>
+            <option>Idea / Pre-launch</option>
+            <option>Early Stage (0–1 year)</option>
+            <option>Growth Stage (1–3 years)</option>
+            <option>Established (3+ years)</option>
+            <option>Scaling / Expansion</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-field">
+          <label>Location</label>
+          <input class="form-input" type="text" id="location" placeholder="e.g. Buea, Cameroon">
+        </div>
+        <div class="form-field">
+          <label>Budget Range</label>
+          <select class="form-input form-select" id="budget">
+            <option value="">Select budget...</option>
+            <option>Under $500</option>
+            <option>$500 – $2,000</option>
+            <option>$2,000 – $10,000</option>
+            <option>$10,000 – $50,000</option>
+            <option>$50,000+</option>
+            <option>Seeking Investment</option>
+          </select>
+        </div>
+      </div>
+
+      <hr class="form-divider">
+
+      <div class="form-field">
+        <label>Main Challenge / Problem *</label>
+        <textarea class="form-input" id="challenge" placeholder="Describe the biggest challenge your business is facing right now..." rows="3" required></textarea>
+      </div>
+
+      <div class="form-field">
+        <label>Goal / What You Want to Achieve *</label>
+        <textarea class="form-input" id="goal" placeholder="What outcome are you hoping to achieve from this consultation?" rows="2" required></textarea>
+      </div>
+
+      <div id="formError" style="display:none;font-size:12px;color:#ff8080;background:#1a0808;border:1px solid #3a1010;border-radius:8px;padding:8px 12px;margin-bottom:12px;"></div>
+
+      <button class="submit-btn" id="startBtn" onclick="startConsultation()">
+        🏛️ Consult the Board
+      </button>
+      <div class="privacy-note">🔒 Your information is kept confidential and used only for this consultation.</div>
+    </div>
+  </div>
+</div>
+
+<!-- STAGE 2: QUALIFY CHAT -->
+<div class="stage" id="stage2">
+  <div class="qualify-wrap">
+    <div class="qualify-header">
+      <div class="qualify-title">🏛️ Board Secretary</div>
+      <div class="qualify-sub">A few quick questions before the board convenes</div>
+    </div>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:20%"></div></div>
+
+    <div class="qualify-chat">
+      <div class="qualify-msgs" id="qualifyMsgs"></div>
+      <div class="qualify-input-row">
+        <input class="qualify-input" id="qualifyInput" placeholder="Type your answer..." onkeydown="if(event.key==='Enter')sendQualifyAnswer()">
+        <button class="qualify-send" id="qualifySend" onclick="sendQualifyAnswer()">↑</button>
+      </div>
+    </div>
+
+    <button class="assemble-btn" id="assembleBtn" onclick="runConsultation()">
+      ⚡ Assemble the Board — Get My Report
+    </button>
+  </div>
+</div>
+
+<!-- STAGE 3: LOADING -->
+<div class="stage" id="stage3">
+  <div class="loading-wrap">
+    <div class="loading-icon">⚙️</div>
+    <div class="loading-title">Assembling Your Board</div>
+    <div class="loading-sub">Our directors are reviewing your case and preparing their strategic advice. This takes 30–60 seconds.</div>
+    <div class="loading-directors" id="loadingDirectors"></div>
+  </div>
+</div>
+
+<!-- STAGE 4: REPORT -->
+<div class="stage" id="stage4">
+  <div class="report-wrap">
+    <div class="report-header">
+      <div class="report-badge"><span class="report-badge-text">🏛️ Board Consultation Report</span></div>
+      <div class="report-title" id="reportTitle">Strategic Advisory Report</div>
+      <div class="report-meta">Prepared for <span id="reportClient"></span> · <span id="reportDate"></span></div>
+    </div>
+
+    <div class="report-section">
+      <div class="report-section-label">📋 Executive Summary</div>
+      <div class="report-section-content" id="reportSummary"></div>
+    </div>
+
+    <div class="report-section-label" style="padding:0 4px 10px;font-size:9.5px;color:var(--purple);letter-spacing:0.12em;text-transform:uppercase;font-weight:700;">🎯 Board Member Insights</div>
+    <div class="board-insights" id="boardInsights"></div>
+
+    <div class="synthesis-card">
+      <div class="synthesis-label">⚡ Synthesised Board Recommendation</div>
+      <div class="synthesis-content" id="reportSynthesis"></div>
+    </div>
+
+    <div class="report-actions">
+      <button class="action-btn btn-primary" onclick="downloadReport()">⬇ Download PDF</button>
+      <button class="action-btn btn-secondary" onclick="printReport()">🖨 Print Report</button>
+      <button class="action-btn btn-new" onclick="startOver()">↩ New Consultation</button>
+    </div>
+
+    <div style="font-size:11px;color:var(--muted2);text-align:center;margin-top:16px;">
+      Powered by G-DESIGNS LTD AI Board · board.gdesignsme.com · Learn. Create. Innovate.
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let clientInfo = {};
+let businessData = {};
+let qualifyHistory = [];
+let qualifyExchanges = 0;
+let reportData = null;
+const MAX_QUALIFY = 3;
+
+const DIRECTOR_COLORS = {
+  rockefeller:['#2a4a1a','#7fcc50'], dangote:['#2a1f00','#e6aa00'],
+  ogilvy:['#1a0500','#ff7040'], kotler:['#001a10','#30dd88'],
+  porter:['#001520','#44bbdd'], buffett:['#001a1a','#40cccc'],
+  thiel:['#1a0a00','#ff6600'], gates:['#002a1a','#00cc88'],
+  dalio:['#0a1a0a','#44dd88'], godin:['#1a1000','#ffaa00'],
+  sinek:['#001520','#44aadd'], moukouri:['#0a1a2a','#60aaff'],
+  robbins:['#2a0000','#ff4444'], drucker:['#0a0a1a','#8888ff'],
+  awosika:['#1a0a2a','#c070ff'], jackma:['#001a2a','#40aaee'],
+  musk:['#001520','#00c8ff'], jobs:['#222','#d0d0d0'],
+  garyvee:['#1a001a','#dd44ff'], oprah:['#2a0a1a','#ff80cc'],
+  napoleon:['#1a1a00','#ddcc00'], christensen:['#1a0a1a','#cc88ff'],
+  deming:['#0a1a0a','#66dd66'], adamgrant:['#0a0a1a','#aaaaff'],
+  hopkins:['#1a1500','#ccaa44']
+};
+
+function getDirColors(id) {
+  return DIRECTOR_COLORS[id] || ['#1a1a1a','#888888'];
+}
+
+// ── Stage navigation ────────────────────────────────────────────────────────
+function showStage(n) {
+  document.querySelectorAll('.stage').forEach(s => s.classList.remove('active'));
+  document.getElementById('stage' + n).classList.add('active');
+  window.scrollTo(0,0);
+}
+
+// ── STAGE 1: Start consultation ─────────────────────────────────────────────
+function startConsultation() {
+  const name = document.getElementById('clientName').value.trim();
+  const phone = document.getElementById('clientPhone').value.trim();
+  const email = document.getElementById('clientEmail').value.trim();
+  const businessType = document.getElementById('businessType').value.trim();
+  const challenge = document.getElementById('challenge').value.trim();
+  const goal = document.getElementById('goal').value.trim();
+  const errEl = document.getElementById('formError');
+
+  if (!name || !phone || !email || !businessType || !challenge || !goal) {
+    errEl.textContent = 'Please fill in all required fields marked with *.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (!email.includes('@')) {
+    errEl.textContent = 'Please enter a valid email address.';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+
+  clientInfo = { name, phone, email };
+  businessData = {
+    businessType,
+    industry: document.getElementById('industry').value,
+    stage: document.getElementById('stage').value,
+    location: document.getElementById('location').value.trim(),
+    budget: document.getElementById('budget').value,
+    challenge,
+    goal
+  };
+
+  showStage(2);
+  startQualify();
+}
+
+// ── STAGE 2: Question-driven qualify ────────────────────────────────────────
+function addQualifyMsg(text, from) {
+  const box = document.getElementById('qualifyMsgs');
+  const row = document.createElement('div');
+  row.className = 'qmsg ' + from;
+  if (from === 'board') {
+    row.innerHTML = `<div class="qmsg-av">🏛️</div><div class="qmsg-bubble">${text}</div>`;
+  } else {
+    row.innerHTML = `<div class="qmsg-bubble">${text}</div><div class="qmsg-av user-av">YOU</div>`;
+  }
+  box.appendChild(row);
+  box.scrollTop = box.scrollHeight;
+}
+
+function showQualifyTyping() {
+  const box = document.getElementById('qualifyMsgs');
+  const t = document.createElement('div');
+  t.className = 'qmsg board'; t.id = 'qualTyping';
+  t.innerHTML = `<div class="qmsg-av">🏛️</div><div class="typing"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>`;
+  box.appendChild(t);
+  box.scrollTop = box.scrollHeight;
+}
+
+function removeQualifyTyping() {
+  const t = document.getElementById('qualTyping');
+  if (t) t.remove();
+}
+
+async function startQualify() {
+  addQualifyMsg(`Welcome, ${clientInfo.name}. I'm the Board Secretary. I've reviewed your submission and will ask a few targeted questions before assembling your board. This ensures the directors give you the most relevant advice possible.`, 'board');
+
+  await checkQualify();
+}
+
+async function checkQualify() {
+  if (qualifyExchanges >= MAX_QUALIFY) {
+    showAssembleButton();
+    return;
+  }
+
+  showQualifyTyping();
+  document.getElementById('qualifySend').disabled = true;
+
+  try {
+    const res = await fetch('/api/consult/qualify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ businessData, conversationHistory: qualifyHistory })
+    });
+    const data = await res.json();
+    removeQualifyTyping();
+
+    if (data.ready) {
+      addQualifyMsg('Thank you — I have enough context. The board is ready to convene.', 'board');
+      showAssembleButton();
+    } else {
+      addQualifyMsg(data.question, 'board');
+      document.getElementById('qualifySend').disabled = false;
+      document.getElementById('qualifyInput').focus();
+      updateProgress();
+    }
+  } catch(e) {
+    removeQualifyTyping();
+    addQualifyMsg('Ready to assemble the board with the information provided.', 'board');
+    showAssembleButton();
+  }
+}
+
+async function sendQualifyAnswer() {
+  const input = document.getElementById('qualifyInput');
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  addQualifyMsg(text, 'user');
+  qualifyHistory.push({ role: 'user', content: text });
+  qualifyExchanges++;
+
+  // Update businessData with new context
+  businessData.additionalContext = (businessData.additionalContext || '') + ' ' + text;
+
+  updateProgress();
+
+  if (qualifyExchanges >= MAX_QUALIFY) {
+    showAssembleButton();
+  } else {
+    await checkQualify();
+  }
+}
+
+function updateProgress() {
+  const pct = Math.min(20 + (qualifyExchanges / MAX_QUALIFY) * 70, 90);
+  document.getElementById('progressFill').style.width = pct + '%';
+}
+
+function showAssembleButton() {
+  document.getElementById('qualifySend').disabled = true;
+  document.getElementById('qualifyInput').disabled = true;
+  document.getElementById('assembleBtn').classList.add('show');
+  document.getElementById('progressFill').style.width = '100%';
+}
+
+// ── STAGE 3: Run consultation ────────────────────────────────────────────────
+async function runConsultation() {
+  showStage(3);
+
+  try {
+    const res = await fetch('/api/consult/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ businessData, clientInfo, conversationHistory: qualifyHistory })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Server error');
+    }
+
+    const data = await res.json();
+
+    // Show loading directors
+    const loadingEl = document.getElementById('loadingDirectors');
+    loadingEl.innerHTML = data.directors.map(d => {
+      const [bg, fg] = getDirColors(d.id);
+      return `<div class="loading-dir">
+        <div class="loading-dir-av" style="background:${bg};color:${fg}">${d.name.split(' ').map(w=>w[0]).slice(0,2).join('')}</div>
+        <div class="loading-dir-name">${d.name} — ${d.role}</div>
+        <div class="loading-dir-status status-done">✓ Done</div>
+      </div>`;
+    }).join('');
+
+    reportData = data;
+    setTimeout(() => renderReport(data), 1200);
+
+  } catch(e) {
+    showStage(2);
+    alert('Error running consultation: ' + e.message + '. Please try again.');
+  }
+}
+
+// ── STAGE 4: Render report ───────────────────────────────────────────────────
+function renderReport(data) {
+  showStage(4);
+
+  document.getElementById('reportTitle').textContent = `Strategic Report: ${data.businessData.businessType}`;
+  document.getElementById('reportClient').textContent = data.client.name;
+  document.getElementById('reportDate').textContent = new Date(data.generatedAt).toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
+
+  // Parse synthesis sections
+  const synthesis = data.synthesis;
+  const summaryMatch = synthesis.match(/EXECUTIVE SUMMARY\s*([\s\S]*?)(?=KEY STRATEGIC|RISK ANALYSIS|90-DAY|FINAL|$)/i);
+  const summaryText = summaryMatch ? summaryMatch[1].trim() : synthesis.substring(0, 300);
+  document.getElementById('reportSummary').innerHTML = summaryText.split('\n').filter(Boolean).map(p => `<p>${p}</p>`).join('');
+
+  // Board insights
+  const insightsEl = document.getElementById('boardInsights');
+  insightsEl.innerHTML = data.insights.map(insight => {
+    const [bg, fg] = getDirColors(insight.id);
+    const initials = insight.name.split(' ').map(w=>w[0]).slice(0,2).join('');
+    const aiLabel = insight.ai === 'chatgpt' ? 'ChatGPT' : insight.ai === 'gemini' ? 'Gemini' : 'Claude';
+    return `<div class="insight-card">
+      <div class="insight-header">
+        <div class="insight-av" style="background:${bg};color:${fg}">${initials}</div>
+        <div>
+          <div class="insight-name">${insight.name}</div>
+          <div class="insight-role">${insight.role}</div>
+        </div>
+        <div class="insight-ai-badge badge-${insight.ai}">${aiLabel}</div>
+      </div>
+      <div class="insight-body">${insight.insight.split('\n').filter(Boolean).map(p=>`<p style="margin-bottom:8px">${p}</p>`).join('')}</div>
+    </div>`;
+  }).join('');
+
+  // Full synthesis (remove the executive summary since it's shown above)
+  const fullSynthesis = synthesis.replace(/EXECUTIVE SUMMARY[\s\S]*?(?=KEY STRATEGIC|RISK|90-DAY|FINAL)/i, '').trim();
+  document.getElementById('reportSynthesis').textContent = fullSynthesis;
+}
+
+// ── Export functions ──────────────────────────────────────────────────────────
+function printReport() {
+  window.print();
+}
+
+function downloadReport() {
+  if (!reportData) return;
+
+  const lines = [
+    'G-DESIGNS LTD — BOARD CONSULTATION REPORT',
+    '='.repeat(50),
+    `Client: ${reportData.client.name}`,
+    `Email: ${reportData.client.email}`,
+    `Date: ${new Date(reportData.generatedAt).toLocaleDateString()}`,
+    `Business: ${reportData.businessData.businessType}`,
+    '',
+    'BOARD MEMBERS CONSULTED:',
+    reportData.directors.map(d => `• ${d.name} — ${d.role}`).join('\n'),
+    '',
+    '='.repeat(50),
+    'BOARD MEMBER INSIGHTS:',
+    '='.repeat(50),
+    ...reportData.insights.map(i => `\n${i.name.toUpperCase()} (${i.role})\n${'-'.repeat(40)}\n${i.insight}`),
+    '',
+    '='.repeat(50),
+    'SYNTHESISED RECOMMENDATION:',
+    '='.repeat(50),
+    reportData.synthesis,
+    '',
+    '='.repeat(50),
+    'Powered by G-DESIGNS LTD AI Board of Directors',
+    'board.gdesignsme.com | Learn. Create. Innovate.'
+  ];
+
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `GDesigns-Board-Report-${reportData.client.name.replace(/\s/g,'-')}-${Date.now()}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function startOver() {
+  clientInfo = {}; businessData = {}; qualifyHistory = [];
+  qualifyExchanges = 0; reportData = null;
+  document.getElementById('qualifyMsgs').innerHTML = '';
+  document.getElementById('assembleBtn').classList.remove('show');
+  document.getElementById('qualifyInput').disabled = false;
+  document.getElementById('qualifySend').disabled = false;
+  document.getElementById('progressFill').style.width = '20%';
+  showStage(1);
+}
+</script>
+</body>
+</html>
