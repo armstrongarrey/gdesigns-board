@@ -392,6 +392,28 @@ function buildChips(d) {
   });
 }
 
+// ── Build conversation-aware persona ──────────────────────────────────────
+function buildLivePersona(d, exchangeCount) {
+  const style = exchangeCount < 3
+    ? `CONVERSATION STYLE — MENTOR MODE (early conversation):
+You are getting to know the founder and their situation. Be warm, curious, and genuinely interested. After sharing your insight, ALWAYS end with ONE specific follow-up question that digs deeper into what they just said. Your question should feel natural — like a real mentor who wants to understand before advising fully.`
+    : `CONVERSATION STYLE — ADVISOR MODE (conversation is deepening):
+You now have meaningful context. You may gently challenge their thinking, offer a contrarian perspective, or push back on assumptions you've heard. After your response, ALWAYS end with ONE pointed question that challenges them to think differently or reveal something they haven't considered yet.`;
+
+  return `${d.persona}
+
+${style}
+
+CRITICAL RULES FOR LIVE CONVERSATION:
+1. NEVER give a complete one-shot lecture. This is a real back-and-forth conversation.
+2. ALWAYS end EVERY response with exactly ONE question — no exceptions.
+3. Your question must be specific to what they just said — never generic.
+4. Keep responses focused — 2–3 paragraphs maximum, then your question.
+5. Build on what you already know from the conversation history.
+6. If they ask a direct question, answer it — but then ask your follow-up.
+7. Feel like a real person having a real conversation, not an AI generating an essay.`;
+}
+
 // ── Send message ───────────────────────────────────────────────────────────
 async function send(text) {
   text = text.trim();
@@ -409,7 +431,11 @@ async function send(text) {
   const d = active;
   const selectedAI = getAIForDirector(d.id);
 
-  const history = (convos[d.id] || []).slice(-14).map(m => ({
+  // Count exchanges to adapt conversation style
+  const exchangeCount = convos[d.id].filter(m => m.from === 'you').length;
+  const livePersona = buildLivePersona(d, exchangeCount);
+
+  const history = (convos[d.id] || []).slice(-16).map(m => ({
     role: m.from === 'them' ? 'assistant' : 'user',
     content: m.text
   }));
@@ -425,7 +451,7 @@ async function send(text) {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ persona: d.persona, messages: history, ai: selectedAI })
+      body: JSON.stringify({ persona: livePersona, messages: history, ai: selectedAI })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
