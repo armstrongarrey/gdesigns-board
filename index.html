@@ -386,12 +386,6 @@ if (isAuthed()) {
 } else {
   showModeSelector();
 }
-
-// ── Restore saved AI mode ──────────────────────────────────────────────────
-window.addEventListener('load', () => {
-  const saved = localStorage.getItem('gd_board_ai_mode') || 'auto';
-  if (window.setAI) window.setAI(saved);
-});
 </script>
 
 </body>
