@@ -97,7 +97,7 @@ async function askGemini(persona, messages) {
   }));
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -287,48 +287,80 @@ app.post('/api/consult/qualify', async (req, res) => {
     return res.status(400).json({ error: 'Missing business data' });
   }
 
-  // Check if we have enough context to proceed
-  const hasChallenge = businessData.challenge && businessData.challenge.length > 20;
-  const hasGoal = businessData.goal && businessData.goal.length > 10;
-  const hasIndustry = businessData.industry && businessData.industry.length > 2;
-  const exchangeCount = conversationHistory.length;
+  // Count only user messages (actual answers given)
+  const userExchanges = conversationHistory.filter(m => m.role === 'user').length;
 
-  // If we have enough context OR already had 3+ exchanges, proceed
-  if ((hasChallenge && hasGoal && hasIndustry) || exchangeCount >= 6) {
-    return res.json({ ready: true, message: 'Sufficient context gathered. Assembling your board...' });
+  // MINIMUM 5 user exchanges before ready — no exceptions
+  // After 10 exchanges always declare ready
+  if (userExchanges >= 10) {
+    return res.json({ ready: true });
   }
 
-  // Otherwise generate a clarifying question
+  // Check depth of context gathered
+  const allAnswers = conversationHistory.filter(m => m.role === 'user').map(m => m.content).join(' ');
+  const totalWords = allAnswers.split(' ').length;
+
+  // Need at least 5 exchanges AND 80+ words of context
+  const hasDeepContext = userExchanges >= 5 && totalWords >= 80;
+
+  // Topic areas we want covered — track what's been discussed
+  const topics = {
+    revenue: /revenue|sales|income|money|earn|charge|price|cost|budget|afford|spend/i.test(allAnswers),
+    customers: /customer|client|target|audience|who|market|people|demographic|buyer/i.test(allAnswers),
+    competition: /compet|rival|other|alternative|market|different|unique|better|worse/i.test(allAnswers),
+    timeline: /when|timeline|soon|urgent|month|year|week|deadline|time|plan/i.test(allAnswers),
+    tried: /tried|attempt|done|before|fail|work|didn|haven|already|previous/i.test(allAnswers),
+  };
+
+  const topicsCovered = Object.values(topics).filter(Boolean).length;
+
+  // Ready only if: 5+ exchanges AND deep context AND 4+ topics covered
+  if (hasDeepContext && topicsCovered >= 4) {
+    return res.json({ ready: true });
+  }
+
+  // Build full context for question generation
   const contextSoFar = `
 Business Type: ${businessData.businessType || 'Not specified'}
 Industry: ${businessData.industry || 'Not specified'}
 Challenge: ${businessData.challenge || 'Not specified'}
 Goal: ${businessData.goal || 'Not specified'}
-Budget: ${businessData.budget || 'Not specified'}
 Location: ${businessData.location || 'Not specified'}
 Growth Stage: ${businessData.stage || 'Not specified'}
-Previous answers: ${conversationHistory.map(m => m.content).join(' | ')}
+Exchanges so far: ${userExchanges}
+Topics covered: Revenue=${topics.revenue}, Customers=${topics.customers}, Competition=${topics.competition}, Timeline=${topics.timeline}, Past attempts=${topics.tried}
+Conversation so far: ${conversationHistory.map(m => `${m.role === 'user' ? 'Client' : 'Secretary'}: ${m.content}`).join(' | ')}
   `.trim();
 
-  const qualifyPrompt = `You are a senior board secretary preparing a client for a consultation with G-DESIGNS' board of directors.
+  // Determine which topic to probe next
+  const missingTopics = Object.entries(topics).filter(([,v]) => !v).map(([k]) => k);
+  const topicGuidance = missingTopics.length > 0 ? `
+PRIORITY: The conversation has NOT yet covered these important areas: ${missingTopics.join(', ')}.
+Focus your question on uncovering one of these missing areas.
+` : 'Dig deeper into what has already been shared to uncover nuance and specifics.';
 
-Your job is to ask ONE single clarifying question to gather the most important missing information before the board can provide useful advice.
+  const qualifyPrompt = `You are a sharp, experienced board secretary conducting a pre-consultation interview for G-DESIGNS' elite Board of Directors.
+
+Your goal is to ask ONE focused, strategic question that extracts the most valuable missing business intelligence.
 
 Current context:
 ${contextSoFar}
 
-Rules:
-- Ask ONLY ONE question
-- Make it specific and business-focused
-- Do not repeat what is already known
-- Do not ask generic questions like "tell me more"
-- The question should unlock the most strategic insight
-- Keep it under 25 words
-- Return ONLY the question, nothing else`;
+${topicGuidance}
+
+QUESTION GUIDELINES:
+- Ask ONLY ONE question — never two in one message
+- Be conversational and warm, not robotic
+- Build naturally on what was just said
+- Never repeat a topic already well-covered
+- Make the question feel like it comes from genuine curiosity about their business
+- Aim for questions that reveal strategy, numbers, or specific situations
+- Examples of good questions: "What does your current pricing look like, and how did you arrive at that number?", "Who is the one type of customer who would pay you without hesitation — have you found them yet?", "What have you already tried to solve this problem, and what happened?"
+- Return ONLY the question itself — no preamble, no label`;
 
   try {
-    const question = await askClaude(qualifyPrompt, [{ role: 'user', content: 'What is the most important question to ask next?' }]);
-    res.json({ ready: false, question: question.trim() });
+    const question = await askClaude(qualifyPrompt, [{ role: 'user', content: 'Ask the most important strategic question right now.' }]);
+    res.json({ ready: false, question: question.trim().replace(/^["']|["']$/g, '') });
   } catch (err) {
     console.error('Qualify error:', err.message);
     res.status(500).json({ error: err.message });
