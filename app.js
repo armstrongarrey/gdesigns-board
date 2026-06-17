@@ -481,22 +481,31 @@ async function send(text) {
 }
 
 // ── Input events ───────────────────────────────────────────────────────────
-document.getElementById('sbtn').addEventListener('click', () => {
-  send(document.getElementById('ti').value);
-});
-document.getElementById('ti').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(e.target.value); }
-});
-document.getElementById('ti').addEventListener('input', function () {
-  this.style.height = 'auto';
-  this.style.height = Math.min(this.scrollHeight, 110) + 'px';
-});
+document.addEventListener('DOMContentLoaded', function() {
 
-// ── Init ───────────────────────────────────────────────────────────────────
-loadConvos();
-buildScroll();
+  // Safe element getter
+  function el(id) { return document.getElementById(id); }
 
-// Restore saved AI mode
-const savedMode = localStorage.getItem('gd_board_ai_mode') || 'auto';
-manualAI = savedMode === 'auto' ? null : savedMode;
-// UI update will happen after index.html load event fires
+  // Attach send button
+  const sbtn = el('sbtn');
+  const ti = el('ti');
+  if (sbtn) sbtn.addEventListener('click', () => send(ti ? ti.value : ''));
+  if (ti) {
+    ti.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(e.target.value); }
+    });
+    ti.addEventListener('input', function () {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 110) + 'px';
+    });
+  }
+
+  // Init
+  loadConvos();
+  buildScroll();
+
+  // Restore saved AI mode
+  const savedMode = localStorage.getItem('gd_board_ai_mode') || 'auto';
+  manualAI = savedMode === 'auto' ? null : savedMode;
+  updateToggleUI();
+});
