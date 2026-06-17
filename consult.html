@@ -221,7 +221,8 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
 
 <header class="hdr">
   <div class="hdr-logo">
-    <img src="logo.png" style="width:32px;height:32px;object-fit:contain;" alt="G-DESIGNS" onerror="this.outerHTML='<div style=\"width:32px;height:32px;background:#6C3Bff;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff\">G</div>'">
+    <img src="logo.png" id="consultLogoImg" style="width:32px;height:32px;object-fit:contain;display:block" alt="G-DESIGNS" onerror="this.style.display='none';document.getElementById('consultLogoFb').style.display='flex'">
+    <div id="consultLogoFb" class="hdr-mark" style="display:none">G</div>
     <div>
       <div class="hdr-title">G-DESIGNS Board of Directors</div>
       <div class="hdr-sub">Public Consultation</div>
