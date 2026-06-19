@@ -502,7 +502,11 @@ function showTyping(){
 function removeTyping(){const t=document.getElementById('ctyp');if(t)t.remove();}
 
 async function initChat(){
-  addMsg(`Welcome ${clientInfo.name}! I'm the Board Secretary. I've reviewed your submission about ${bizData.businessType}.\n\nBefore I assemble your board, I need to ask you a few focused questions so the directors can give you truly tailored advice — not generic answers. This is a real conversation, so take your time.\n\nLet's start: ${await getFirstQuestion()}`, 'board');
+  const firstQ = await getFirstQuestion();
+  const welcomeMsg = `Welcome ${clientInfo.name}! I'm the Board Secretary. I've reviewed your submission about ${bizData.businessType}.\n\nBefore I assemble your board, I need to ask you a few focused questions so the directors can give you truly tailored advice — not generic answers. This is a real conversation, so take your time.\n\nLet's start: ${firstQ}`;
+  addMsg(welcomeMsg, 'board');
+  // Seed chatHistory so server sees full conversation from the start
+  chatHistory.push({role:'assistant', content: welcomeMsg});
 }
 
 async function getFirstQuestion(){
