@@ -97,7 +97,7 @@ async function askGemini(persona, messages) {
   }));
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -287,80 +287,79 @@ app.post('/api/consult/qualify', async (req, res) => {
     return res.status(400).json({ error: 'Missing business data' });
   }
 
-  // Count only user messages (actual answers given)
+  // Count only user messages
   const userExchanges = conversationHistory.filter(m => m.role === 'user').length;
+  const lastUserMsg = conversationHistory.filter(m => m.role === 'user').slice(-1)[0]?.content || '';
 
-  // MINIMUM 5 user exchanges before ready — no exceptions
   // After 10 exchanges always declare ready
   if (userExchanges >= 10) {
     return res.json({ ready: true });
   }
 
-  // Check depth of context gathered
+  // Check depth of context
   const allAnswers = conversationHistory.filter(m => m.role === 'user').map(m => m.content).join(' ');
-  const totalWords = allAnswers.split(' ').length;
+  const totalWords = allAnswers.trim().split(/\s+/).length;
 
-  // Need at least 5 exchanges AND 80+ words of context
-  const hasDeepContext = userExchanges >= 5 && totalWords >= 80;
-
-  // Topic areas we want covered — track what's been discussed
+  // Topic areas to cover
   const topics = {
-    revenue: /revenue|sales|income|money|earn|charge|price|cost|budget|afford|spend/i.test(allAnswers),
-    customers: /customer|client|target|audience|who|market|people|demographic|buyer/i.test(allAnswers),
-    competition: /compet|rival|other|alternative|market|different|unique|better|worse/i.test(allAnswers),
-    timeline: /when|timeline|soon|urgent|month|year|week|deadline|time|plan/i.test(allAnswers),
-    tried: /tried|attempt|done|before|fail|work|didn|haven|already|previous/i.test(allAnswers),
+    revenue:     /revenue|sales|income|money|earn|charge|price|cost|afford|spend/i.test(allAnswers),
+    customers:   /customer|client|target|audience|who|market|people|demographic|buyer/i.test(allAnswers),
+    competition: /compet|rival|other|alternative|different|unique|better|worse/i.test(allAnswers),
+    timeline:    /when|timeline|soon|urgent|month|year|week|deadline|time|plan/i.test(allAnswers),
+    tried:       /tried|attempt|done|before|fail|work|didn|haven|already|previous/i.test(allAnswers),
   };
-
   const topicsCovered = Object.values(topics).filter(Boolean).length;
 
-  // Ready only if: 5+ exchanges AND deep context AND 4+ topics covered
-  if (hasDeepContext && topicsCovered >= 4) {
+  // Ready only if 5+ real exchanges AND enough words AND topics covered
+  if (userExchanges >= 5 && totalWords >= 60 && topicsCovered >= 4) {
     return res.json({ ready: true });
   }
 
-  // Build full context for question generation
-  const contextSoFar = `
+  // Detect if user said something off-topic / conversational
+  const isSmallTalk = /^(hi|hello|hey|how are you|good morning|good evening|good afternoon|thanks|thank you|ok|okay|sure|yes|no|great|nice|cool|wow|awesome)[\s!?.]*$/i.test(lastUserMsg.trim());
+
+  const conversationStr = conversationHistory
+    .map(m => `${m.role === 'user' ? 'Client' : 'Secretary'}: ${m.content}`)
+    .join('\n');
+
+  const missingTopics = Object.entries(topics).filter(([,v]) => !v).map(([k]) => k);
+  const nextTopicHint = missingTopics.length > 0
+    ? `The most important missing topic to uncover next is: ${missingTopics[0]}. Ask about it naturally.`
+    : 'All key topics touched. Dig deeper into specifics — numbers, timelines, or past attempts.';
+
+  const qualifyPrompt = `You are the Board Secretary for G-DESIGNS' elite AI Board of Directors. You are conducting a pre-consultation interview to gather business intelligence before assembling the board.
+
+BUSINESS CONTEXT:
 Business Type: ${businessData.businessType || 'Not specified'}
 Industry: ${businessData.industry || 'Not specified'}
 Challenge: ${businessData.challenge || 'Not specified'}
 Goal: ${businessData.goal || 'Not specified'}
 Location: ${businessData.location || 'Not specified'}
 Growth Stage: ${businessData.stage || 'Not specified'}
-Exchanges so far: ${userExchanges}
-Topics covered: Revenue=${topics.revenue}, Customers=${topics.customers}, Competition=${topics.competition}, Timeline=${topics.timeline}, Past attempts=${topics.tried}
-Conversation so far: ${conversationHistory.map(m => `${m.role === 'user' ? 'Client' : 'Secretary'}: ${m.content}`).join(' | ')}
-  `.trim();
 
-  // Determine which topic to probe next
-  const missingTopics = Object.entries(topics).filter(([,v]) => !v).map(([k]) => k);
-  const topicGuidance = missingTopics.length > 0 ? `
-PRIORITY: The conversation has NOT yet covered these important areas: ${missingTopics.join(', ')}.
-Focus your question on uncovering one of these missing areas.
-` : 'Dig deeper into what has already been shared to uncover nuance and specifics.';
+FULL CONVERSATION SO FAR:
+${conversationStr}
 
-  const qualifyPrompt = `You are a sharp, experienced board secretary conducting a pre-consultation interview for G-DESIGNS' elite Board of Directors.
+THE CLIENT JUST SAID: "${lastUserMsg}"
 
-Your goal is to ask ONE focused, strategic question that extracts the most valuable missing business intelligence.
+${isSmallTalk ? `IMPORTANT: The client said something conversational ("${lastUserMsg}"). Acknowledge it warmly and briefly in 1 sentence, then smoothly transition to a focused business question. Do not ignore what they said.` : `IMPORTANT: Respond naturally to what the client just said. Acknowledge or react briefly if needed, then ask ONE focused follow-up question.`}
 
-Current context:
-${contextSoFar}
+${nextTopicHint}
 
-${topicGuidance}
-
-QUESTION GUIDELINES:
-- Ask ONLY ONE question — never two in one message
-- Be conversational and warm, not robotic
-- Build naturally on what was just said
-- Never repeat a topic already well-covered
-- Make the question feel like it comes from genuine curiosity about their business
-- Aim for questions that reveal strategy, numbers, or specific situations
-- Examples of good questions: "What does your current pricing look like, and how did you arrive at that number?", "Who is the one type of customer who would pay you without hesitation — have you found them yet?", "What have you already tried to solve this problem, and what happened?"
-- Return ONLY the question itself — no preamble, no label`;
+RULES:
+- Always acknowledge what the client actually said before asking your question
+- Ask ONLY ONE question at the end
+- Be warm, professional, and conversational — not robotic
+- Never repeat a question already asked
+- Keep your full response under 60 words
+- Return your response as plain text only`;
 
   try {
-    const question = await askClaude(qualifyPrompt, [{ role: 'user', content: 'Ask the most important strategic question right now.' }]);
-    res.json({ ready: false, question: question.trim().replace(/^["']|["']$/g, '') });
+    const response = await askClaude(qualifyPrompt, [
+      { role: 'user', content: lastUserMsg || 'Please continue the interview.' }
+    ]);
+    const cleaned = response.trim().replace(/^["']|["']$/g, '');
+    res.json({ ready: false, question: cleaned });
   } catch (err) {
     console.error('Qualify error:', err.message);
     res.status(500).json({ error: err.message });
