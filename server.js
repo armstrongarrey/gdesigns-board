@@ -490,6 +490,152 @@ Keep each section concise and actionable. Total: 400-500 words.`;
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// HEYGEN VIDEO INTEGRATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+const HEYGEN_API = 'https://api.heygen.com';
+const HEYGEN_KEY = process.env.HEYGEN_API_KEY;
+const HEYGEN_AVATAR = process.env.HEYGEN_AVATAR_ID;
+const HEYGEN_VOICE = process.env.HEYGEN_VOICE_ID;
+
+// ── Helper: generate a HeyGen video and poll until ready ──────────────────
+async function generateHeyGenVideo(script) {
+  if (!HEYGEN_KEY || !HEYGEN_AVATAR || !HEYGEN_VOICE) {
+    throw new Error('HeyGen credentials not configured');
+  }
+
+  // Step 1: Submit video generation request
+  const createRes = await fetch(`${HEYGEN_API}/v2/video/generate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Api-Key': HEYGEN_KEY
+    },
+    body: JSON.stringify({
+      video_inputs: [{
+        character: {
+          type: 'avatar',
+          avatar_id: HEYGEN_AVATAR,
+          avatar_style: 'normal'
+        },
+        voice: {
+          type: 'text',
+          input_text: script,
+          voice_id: HEYGEN_VOICE,
+          speed: 1.0
+        },
+        background: {
+          type: 'color',
+          value: '#0e0b1a'
+        }
+      }],
+      dimension: { width: 1280, height: 720 },
+      aspect_ratio: '16:9',
+      test: false
+    })
+  });
+
+  if (!createRes.ok) {
+    const err = await createRes.json().catch(() => ({}));
+    throw new Error(err?.message || 'HeyGen create error: ' + createRes.status);
+  }
+
+  const createData = await createRes.json();
+  const videoId = createData?.data?.video_id;
+  if (!videoId) throw new Error('No video_id returned from HeyGen');
+
+  // Step 2: Poll for completion (max 3 minutes)
+  const maxAttempts = 36;
+  const pollInterval = 5000;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, pollInterval));
+
+    const statusRes = await fetch(`${HEYGEN_API}/v1/video_status.get?video_id=${videoId}`, {
+      headers: { 'X-Api-Key': HEYGEN_KEY }
+    });
+
+    if (!statusRes.ok) continue;
+
+    const statusData = await statusRes.json();
+    const status = statusData?.data?.status;
+
+    if (status === 'completed') {
+      const videoUrl = statusData?.data?.video_url;
+      if (!videoUrl) throw new Error('Video completed but no URL returned');
+      return { videoId, videoUrl };
+    }
+
+    if (status === 'failed') {
+      throw new Error('HeyGen video generation failed: ' + (statusData?.data?.error || 'Unknown error'));
+    }
+    // status === 'processing' or 'pending' — keep polling
+  }
+
+  throw new Error('HeyGen video generation timed out after 3 minutes');
+}
+
+// ── Welcome video endpoint ────────────────────────────────────────────────
+app.post('/api/heygen/welcome', async (req, res) => {
+  const { clientName, businessType } = req.body;
+
+  if (!clientName || !businessType) {
+    return res.status(400).json({ error: 'Missing clientName or businessType' });
+  }
+
+  const script = `Welcome to the G-DESIGNS Board of Directors, ${clientName}. I'm delighted to have you here today.
+
+You've come at the right time. Our board of 29 world-class advisors — including minds like Rockefeller, Buffett, Ogilvy, and Porter — are ready to engage with your ${businessType} business and deliver you a strategic consultation unlike anything you've experienced before.
+
+Our Board Secretary will now ask you a few focused questions. Please answer as honestly and specifically as you can. The more context you provide, the more powerful your board report will be.
+
+Let's begin. The board is assembled and ready for you.`;
+
+  try {
+    const { videoUrl } = await generateHeyGenVideo(script);
+    res.json({ success: true, videoUrl });
+  } catch (err) {
+    console.error('HeyGen welcome error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Report video endpoint ─────────────────────────────────────────────────
+app.post('/api/heygen/report', async (req, res) => {
+  const { clientName, businessType, synthesis } = req.body;
+
+  if (!clientName || !synthesis) {
+    return res.status(400).json({ error: 'Missing clientName or synthesis' });
+  }
+
+  // Extract key sections from synthesis for a concise video script (60-90 sec)
+  const scriptPrompt = `You are creating a 75-second video script for an AI presenter delivering board recommendations.
+
+Extract the most important points from this board synthesis and turn them into a natural, confident spoken script.
+
+CLIENT: ${clientName}
+BUSINESS: ${businessType}
+SYNTHESIS: ${synthesis}
+
+SCRIPT RULES:
+- Start with: "Good day ${clientName}. On behalf of the G-DESIGNS Board of Directors, here is our strategic verdict on your ${businessType}."
+- Cover: the core finding, top 2 recommendations, and one key risk
+- End with: "Your full written report with all board insights and your 90-day action plan is available below. The board wishes you every success."
+- Spoken, natural language — not bullet points
+- Exactly 75 seconds when read at normal pace (approx 180 words)
+- Return ONLY the script text, nothing else`;
+
+  try {
+    const script = await askClaude(scriptPrompt, [{ role: 'user', content: 'Generate the video script now.' }]);
+    const { videoUrl } = await generateHeyGenVideo(script.trim());
+    res.json({ success: true, videoUrl });
+  } catch (err) {
+    console.error('HeyGen report error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── SPA fallback ──────────────────────────────────────────────────────────
 app.get('/consult', (req, res) => {
   res.sendFile(path.join(__dirname, 'consult.html'));
