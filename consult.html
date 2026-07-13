@@ -214,6 +214,22 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
 .dash-start-btn:hover{opacity:.85}
 .dash-start-btn:disabled{opacity:.4;cursor:not-allowed}
 
+/* ── HEYGEN VIDEO ── */
+.video-section{background:#000;border-radius:14px;overflow:hidden;margin-bottom:20px;position:relative}
+.video-section video{width:100%;display:block;border-radius:14px}
+.video-loading{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;gap:12px;background:linear-gradient(135deg,#1a0e3a,#0a0717);border-radius:14px;border:1px solid var(--border)}
+.video-loading-icon{font-size:32px;animation:spin 2s linear infinite}
+@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+.video-loading-text{font-size:13px;color:var(--muted);text-align:center;line-height:1.6}
+.video-loading-sub{font-size:11px;color:var(--muted2);text-align:center}
+.video-error{display:none;font-size:12px;color:var(--muted);text-align:center;padding:16px;background:var(--bg2);border-radius:10px;border:1px solid var(--border)}
+.video-badge{display:inline-flex;align-items:center;gap:6px;background:#1a0e3a;border:1px solid var(--border);border-radius:20px;padding:4px 12px;margin-bottom:10px}
+.video-badge-dot{width:6px;height:6px;border-radius:50%;background:var(--purple);animation:pulse 2s infinite}
+.video-badge-text{font-size:10px;color:var(--purple);font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.video-label{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.welcome-video-wrap{max-width:700px;margin:0 auto;padding:20px 20px 0}
+.report-video-wrap{margin-bottom:20px}
+
 @media(max-width:520px){.form-row{grid-template-columns:1fr}.report-actions{flex-direction:column}}
 </style>
 </head>
@@ -303,6 +319,19 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
 
 <!-- STAGE 2: LIVE CHAT -->
 <div class="stage" id="stage2">
+  <!-- Welcome Video (loads async after form submit) -->
+  <div class="welcome-video-wrap" id="welcomeVideoWrap" style="display:none">
+    <div class="video-badge"><div class="video-badge-dot"></div><span class="video-badge-text">🎬 Personal Welcome from G-DESIGNS</span></div>
+    <div id="welcomeVideoContainer">
+      <div class="video-loading" id="welcomeLoading">
+        <div class="video-loading-icon">🎬</div>
+        <div class="video-loading-text">Preparing your personal welcome video...</div>
+        <div class="video-loading-sub">This takes about 60 seconds. The board secretary will begin while it loads.</div>
+      </div>
+      <div class="video-error" id="welcomeVideoError">Welcome video unavailable — continuing with text consultation.</div>
+    </div>
+  </div>
+
   <div class="chat-wrap">
     <div class="chat-header">
       <div class="chat-header-av">🏛️</div>
@@ -346,6 +375,19 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
       <div class="report-badge"><span class="report-badge-text">🏛️ Board Consultation Report</span></div>
       <div class="report-title" id="rTitle">Strategic Advisory Report</div>
       <div class="report-meta">Prepared for <span id="rClient"></span> · <span id="rDate"></span></div>
+    </div>
+
+    <!-- VIDEO REPORT (loads async) -->
+    <div class="report-video-wrap" id="reportVideoWrap">
+      <div class="video-label">🎬 Video Presentation from the Board</div>
+      <div id="reportVideoContainer">
+        <div class="video-loading" id="reportVideoLoading">
+          <div class="video-loading-icon">⚙️</div>
+          <div class="video-loading-text">Generating your personalised video board presentation...</div>
+          <div class="video-loading-sub">Armstrong is preparing to deliver your strategic verdict. Takes about 60–90 seconds.</div>
+        </div>
+        <div class="video-error" id="reportVideoError">Video presentation unavailable — please read the written report below.</div>
+      </div>
     </div>
 
     <div class="rsec">
@@ -470,8 +512,10 @@ function startConsult(){
     challenge,goal};
 
   showStage(2);
-  // Log client info immediately — before chat starts, so we capture even if they leave
+  // Log client info immediately
   logClientInfo();
+  // Start welcome video async (don't await — runs in background)
+  loadWelcomeVideo(clientInfo.name, bizData.businessType);
   initChat();
 }
 
@@ -626,6 +670,9 @@ function renderReport(data){
 
   const full=s.replace(/EXECUTIVE SUMMARY[\s\S]*?(?=KEY STRATEGIC|RISK|90-DAY|FINAL)/i,'').trim();
   document.getElementById('rSynth').textContent=full;
+
+  // Start report video async (runs in background while user reads)
+  loadReportVideo(data.client.name, data.businessData.businessType, data.synthesis);
 }
 
 // ── REVIEW SYSTEM ──────────────────────────────────────────────────────────
@@ -670,6 +717,68 @@ async function submitReview(){
     btn.disabled=false;btn.textContent='Submit Review';
     alert('Could not submit review. Please try again.');
   }
+}
+
+// ── HEYGEN VIDEO FUNCTIONS ─────────────────────────────────────────────────
+
+async function loadWelcomeVideo(name, businessType) {
+  document.getElementById('welcomeVideoWrap').style.display = 'block';
+  try {
+    const res = await fetch('/api/heygen/welcome', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientName: name, businessType })
+    });
+    if (!res.ok) throw new Error('Video generation failed');
+    const data = await res.json();
+    if (data.videoUrl) {
+      renderVideo('welcomeVideoContainer', 'welcomeLoading', 'welcomeVideoError', data.videoUrl);
+    } else {
+      throw new Error('No video URL');
+    }
+  } catch(e) {
+    console.log('Welcome video error:', e.message);
+    document.getElementById('welcomeLoading').style.display = 'none';
+    document.getElementById('welcomeVideoError').style.display = 'block';
+  }
+}
+
+async function loadReportVideo(name, businessType, synthesis) {
+  try {
+    const res = await fetch('/api/heygen/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientName: name, businessType, synthesis })
+    });
+    if (!res.ok) throw new Error('Report video failed');
+    const data = await res.json();
+    if (data.videoUrl) {
+      renderVideo('reportVideoContainer', 'reportVideoLoading', 'reportVideoError', data.videoUrl);
+    } else {
+      throw new Error('No video URL');
+    }
+  } catch(e) {
+    console.log('Report video error:', e.message);
+    document.getElementById('reportVideoLoading').style.display = 'none';
+    document.getElementById('reportVideoError').style.display = 'block';
+  }
+}
+
+function renderVideo(containerId, loadingId, errorId, videoUrl) {
+  const container = document.getElementById(containerId);
+  const loading = document.getElementById(loadingId);
+  const error = document.getElementById(errorId);
+  if (loading) loading.style.display = 'none';
+  if (error) error.style.display = 'none';
+
+  const videoWrap = document.createElement('div');
+  videoWrap.className = 'video-section';
+  videoWrap.innerHTML = `
+    <video controls autoplay style="width:100%;border-radius:14px;display:block">
+      <source src="${videoUrl}" type="video/mp4">
+      Your browser does not support video playback.
+    </video>`;
+  container.appendChild(videoWrap);
 }
 
 // ── GOOGLE SHEETS LOGGING ──────────────────────────────────────────────────
