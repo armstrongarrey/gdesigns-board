@@ -584,13 +584,23 @@ app.post('/api/heygen/welcome', async (req, res) => {
     return res.status(400).json({ error: 'Missing clientName or businessType' });
   }
 
-  const script = `Welcome to the G-DESIGNS Board of Directors, ${clientName}. I'm delighted to have you here today.
+  // Generate welcome script via Claude to enforce word count
+  const welcomeScriptPrompt = `Write a welcome video script for ${clientName} who is consulting the G-DESIGNS Board of Directors about their ${businessType} business.
 
-You've come at the right time. Our board of 29 world-class advisors — including minds like Rockefeller, Buffett, Ogilvy, and Porter — are ready to engage with your ${businessType} business and deliver you a strategic consultation unlike anything you've experienced before.
+STRICT RULES:
+- Maximum 75 words total — count carefully
+- Warm, professional, personal tone
+- Mention their name and business type
+- Tell them the Board Secretary will ask questions
+- End encouraging them to answer honestly
+- Return ONLY the script, nothing else
 
-Our Board Secretary will now ask you a few focused questions. Please answer as honestly and specifically as you can. The more context you provide, the more powerful your board report will be.
+Example structure (adapt freely):
+"Welcome [name]. I'm glad you're here at the G-DESIGNS Board. Our advisors are ready to help your [business]. Our Board Secretary will ask you a few questions — answer honestly and specifically for the best results. Let's get started."`;
 
-Let's begin. The board is assembled and ready for you.`;
+  const script = await askClaude(welcomeScriptPrompt, [
+    { role: 'user', content: 'Write the welcome script now. Maximum 75 words.' }
+  ]);
 
   try {
     const { videoUrl } = await generateHeyGenVideo(script);
@@ -610,20 +620,21 @@ app.post('/api/heygen/report', async (req, res) => {
   }
 
   // Extract key sections from synthesis for a concise video script (60-90 sec)
-  const scriptPrompt = `You are creating a 75-second video script for an AI presenter delivering board recommendations.
+  const scriptPrompt = `You are creating a 25-40 second video script for an AI presenter delivering board recommendation highlights.
 
-Extract the most important points from this board synthesis and turn them into a natural, confident spoken script.
+Extract only the most critical points from this board synthesis and turn them into a natural, confident spoken script.
 
 CLIENT: ${clientName}
 BUSINESS: ${businessType}
 SYNTHESIS: ${synthesis}
 
 SCRIPT RULES:
-- Start with: "Good day ${clientName}. On behalf of the G-DESIGNS Board of Directors, here is our strategic verdict on your ${businessType}."
-- Cover: the core finding, top 2 recommendations, and one key risk
-- End with: "Your full written report with all board insights and your 90-day action plan is available below. The board wishes you every success."
-- Spoken, natural language — not bullet points
-- Exactly 75 seconds when read at normal pace (approx 180 words)
+- Start with: "Good day ${clientName}. Here is your G-DESIGNS Board verdict on your ${businessType}."
+- Cover ONLY: the single most important finding and top 2 action items
+- End with: "Your full report with all board insights is ready below."
+- Spoken, natural language — conversational not formal
+- Between 60 and 95 words total — strictly no more than 95 words
+- Count your words carefully before returning
 - Return ONLY the script text, nothing else`;
 
   try {
