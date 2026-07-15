@@ -499,11 +499,22 @@ const HEYGEN_KEY = process.env.HEYGEN_API_KEY;
 const HEYGEN_AVATAR = process.env.HEYGEN_AVATAR_ID;
 const HEYGEN_VOICE = process.env.HEYGEN_VOICE_ID;
 
+// ── Helper: detect best video dimensions for device type ──────────────────
+function getVideoDimensions(deviceType) {
+  switch(deviceType) {
+    case 'mobile':  return { width: 720,  height: 1280, aspect_ratio: '9:16' };
+    case 'tablet':  return { width: 1080, height: 1080, aspect_ratio: '1:1'  };
+    default:        return { width: 1280, height: 720,  aspect_ratio: '16:9' };
+  }
+}
+
 // ── Helper: generate a HeyGen video and poll until ready ──────────────────
-async function generateHeyGenVideo(script) {
+async function generateHeyGenVideo(script, deviceType = 'desktop') {
   if (!HEYGEN_KEY || !HEYGEN_AVATAR || !HEYGEN_VOICE) {
     throw new Error('HeyGen credentials not configured');
   }
+
+  const { width, height, aspect_ratio } = getVideoDimensions(deviceType);
 
   // Step 1: Submit video generation request
   const createRes = await fetch(`${HEYGEN_API}/v2/video/generate`, {
@@ -530,8 +541,8 @@ async function generateHeyGenVideo(script) {
           value: '#0e0b1a'
         }
       }],
-      dimension: { width: 1280, height: 720 },
-      aspect_ratio: '16:9',
+      dimension: { width, height },
+      aspect_ratio,
       test: false
     })
   });
@@ -578,13 +589,12 @@ async function generateHeyGenVideo(script) {
 
 // ── Welcome video endpoint ────────────────────────────────────────────────
 app.post('/api/heygen/welcome', async (req, res) => {
-  const { clientName, businessType } = req.body;
+  const { clientName, businessType, deviceType = 'desktop' } = req.body;
 
   if (!clientName || !businessType) {
     return res.status(400).json({ error: 'Missing clientName or businessType' });
   }
 
-  // Generate welcome script via Claude to enforce word count
   const welcomeScriptPrompt = `Write a welcome video script for ${clientName} who is consulting the G-DESIGNS Board of Directors about their ${businessType} business.
 
 STRICT RULES:
@@ -598,13 +608,12 @@ STRICT RULES:
 Example structure (adapt freely):
 "Welcome [name]. I'm glad you're here at the G-DESIGNS Board. Our advisors are ready to help your [business]. Our Board Secretary will ask you a few questions — answer honestly and specifically for the best results. Let's get started."`;
 
-  const script = await askClaude(welcomeScriptPrompt, [
-    { role: 'user', content: 'Write the welcome script now. Maximum 75 words.' }
-  ]);
-
   try {
-    const { videoUrl } = await generateHeyGenVideo(script);
-    res.json({ success: true, videoUrl });
+    const script = await askClaude(welcomeScriptPrompt, [
+      { role: 'user', content: 'Write the welcome script now. Maximum 75 words.' }
+    ]);
+    const { videoUrl } = await generateHeyGenVideo(script.trim(), deviceType);
+    res.json({ success: true, videoUrl, deviceType });
   } catch (err) {
     console.error('HeyGen welcome error:', err.message);
     res.status(500).json({ error: err.message });
@@ -613,13 +622,12 @@ Example structure (adapt freely):
 
 // ── Report video endpoint ─────────────────────────────────────────────────
 app.post('/api/heygen/report', async (req, res) => {
-  const { clientName, businessType, synthesis } = req.body;
+  const { clientName, businessType, synthesis, deviceType = 'desktop' } = req.body;
 
   if (!clientName || !synthesis) {
     return res.status(400).json({ error: 'Missing clientName or synthesis' });
   }
 
-  // Extract key sections from synthesis for a concise video script (60-90 sec)
   const scriptPrompt = `You are creating a 25-40 second video script for an AI presenter delivering board recommendation highlights.
 
 Extract only the most critical points from this board synthesis and turn them into a natural, confident spoken script.
@@ -639,8 +647,8 @@ SCRIPT RULES:
 
   try {
     const script = await askClaude(scriptPrompt, [{ role: 'user', content: 'Generate the video script now.' }]);
-    const { videoUrl } = await generateHeyGenVideo(script.trim());
-    res.json({ success: true, videoUrl });
+    const { videoUrl } = await generateHeyGenVideo(script.trim(), deviceType);
+    res.json({ success: true, videoUrl, deviceType });
   } catch (err) {
     console.error('HeyGen report error:', err.message);
     res.status(500).json({ error: err.message });
