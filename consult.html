@@ -719,14 +719,23 @@ async function submitReview(){
   }
 }
 
+// ── DEVICE DETECTION ──────────────────────────────────────────────────────
+function getDeviceType() {
+  const w = window.innerWidth;
+  if (w < 768) return 'mobile';
+  if (w < 1024) return 'tablet';
+  return 'desktop';
+}
+
 // ── HEYGEN VIDEO FUNCTIONS ─────────────────────────────────────────────────
 
 async function loadWelcomeVideo(name, businessType) {
+  const deviceType = getDeviceType();
   try {
     const res = await fetch('/api/heygen/welcome', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientName: name, businessType })
+      body: JSON.stringify({ clientName: name, businessType, deviceType })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -734,7 +743,7 @@ async function loadWelcomeVideo(name, businessType) {
     }
     const data = await res.json();
     if (data.videoUrl) {
-      renderVideo('welcomeVideoContainer', 'welcomeLoading', 'welcomeVideoError', data.videoUrl);
+      renderVideo('welcomeVideoContainer', 'welcomeLoading', 'welcomeVideoError', data.videoUrl, deviceType);
     } else {
       throw new Error('No video URL returned');
     }
@@ -748,18 +757,22 @@ async function loadWelcomeVideo(name, businessType) {
 }
 
 async function loadReportVideo(name, businessType, synthesis) {
+  const deviceType = getDeviceType();
   try {
     const res = await fetch('/api/heygen/report', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientName: name, businessType, synthesis })
+      body: JSON.stringify({ clientName: name, businessType, synthesis, deviceType })
     });
-    if (!res.ok) throw new Error('Report video failed');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Report video failed');
+    }
     const data = await res.json();
     if (data.videoUrl) {
-      renderVideo('reportVideoContainer', 'reportVideoLoading', 'reportVideoError', data.videoUrl);
+      renderVideo('reportVideoContainer', 'reportVideoLoading', 'reportVideoError', data.videoUrl, deviceType);
     } else {
-      throw new Error('No video URL');
+      throw new Error('No video URL returned');
     }
   } catch(e) {
     console.log('Report video error:', e.message);
@@ -768,17 +781,23 @@ async function loadReportVideo(name, businessType, synthesis) {
   }
 }
 
-function renderVideo(containerId, loadingId, errorId, videoUrl) {
+function renderVideo(containerId, loadingId, errorId, videoUrl, deviceType) {
   const container = document.getElementById(containerId);
   const loading = document.getElementById(loadingId);
   const error = document.getElementById(errorId);
   if (loading) loading.style.display = 'none';
   if (error) error.style.display = 'none';
 
+  const isMobile = deviceType === 'mobile';
+  const isTablet = deviceType === 'tablet';
+  const maxWidth = isMobile ? '420px' : isTablet ? '620px' : '100%';
+
   const videoWrap = document.createElement('div');
   videoWrap.className = 'video-section';
+  videoWrap.style.maxWidth = maxWidth;
+  videoWrap.style.margin = '0 auto';
   videoWrap.innerHTML = `
-    <video controls autoplay style="width:100%;border-radius:14px;display:block">
+    <video controls autoplay playsinline style="width:100%;border-radius:14px;display:block">
       <source src="${videoUrl}" type="video/mp4">
       Your browser does not support video playback.
     </video>`;
