@@ -689,6 +689,31 @@ app.get('/api/user/consultations/:id', authRequired, async (req, res) => {
 // CONSULTATION (BOARD) ROUTES
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ── Auto-match: suggest the best director for a described challenge ────────
+app.post('/api/board/match', authRequired, async (req, res) => {
+  const { challenge, directors } = req.body; // directors: [{id,name,role}]
+  if (!challenge || !directors || !directors.length) {
+    return res.status(400).json({ error: 'Missing challenge or director list' });
+  }
+
+  const matchPrompt = `A founder described this challenge: "${challenge}"
+
+Here is the list of available board directors, each with their specialty:
+${directors.map(d => `- ${d.id}: ${d.name} — ${d.role}`).join('\n')}
+
+Pick the ONE director whose specialty best matches this challenge. Return ONLY the director's id (the short lowercase code before the colon), nothing else — no explanation, no punctuation.`;
+
+  try {
+    const result = await askClaude(matchPrompt, [{ role: 'user', content: 'Which director id matches best?' }]);
+    const matchedId = result.trim().toLowerCase().replace(/[^a-z]/g, '');
+    const valid = directors.find(d => d.id === matchedId);
+    res.json({ directorId: valid ? matchedId : directors[0].id });
+  } catch (err) {
+    console.error('Match error:', err.message);
+    res.json({ directorId: directors[0].id }); // graceful fallback
+  }
+});
+
 app.post('/api/board/chat', authRequired, async (req, res) => {
   const { persona, messages, ai, directorId, consultationId } = req.body;
 
