@@ -324,6 +324,39 @@ function buildScroll() {
   });
 }
 
+// ── Auto-match director based on described challenge ──────────────────────
+async function autoMatchDirector() {
+  const input = document.getElementById('autoMatchInput');
+  const challenge = input.value.trim();
+  if (!challenge) { input.focus(); return; }
+
+  const btn = document.getElementById('autoMatchBtn');
+  btn.disabled = true;
+  btn.textContent = 'Matching you with a director...';
+
+  const available = DIRS.map(d => ({ id: d.id, name: d.name, role: d.role }));
+
+  try {
+    const res = await fetch('/api/board-match', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challenge, directors: available })
+    });
+    const data = await res.json();
+    const matched = DIRS.find(d => d.id === data.directorId) || DIRS[0];
+
+    selectDir(matched);
+    setTimeout(() => {
+      document.getElementById('ti').value = challenge;
+      send(challenge);
+    }, 300);
+  } catch(e) {
+    alert('Could not auto-match right now — please pick a director manually from the row above.');
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 7.2H22l-6 4.4 2.3 7.2-6.3-4.6-6.3 4.6 2.3-7.2-6-4.4h7.6z"/></svg> Match Me With a Director';
+}
+
 // ── Select director ────────────────────────────────────────────────────────
 function selectDir(d) {
   if (busy) return;
