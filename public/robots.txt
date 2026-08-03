@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Allow: /consult
+Disallow: /dashboard
+Disallow: /boardroom
+Disallow: /board
+Disallow: /admin
+Disallow: /api/
+
+Sitemap: https://consult.gdesignsme.com/sitemap.xml
