@@ -52,14 +52,29 @@ const STARTER_DIRECTORS = ['rockefeller', 'ogilvy', 'buffett', 'dangote', 'kotle
 
 // ── EMAIL TRANSPORTER ──────────────────────────────────────────────────────
 const mailer = nodemailer.createTransport({
-  service: 'gmail',
-  auth: { user: GMAIL_USER, pass: GMAIL_PASS }
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
+  requireTLS: true,
+  auth: { user: GMAIL_USER, pass: GMAIL_PASS },
+  connectionTimeout: 20000,
+  greetingTimeout: 20000,
+  socketTimeout: 20000
+});
+
+// Verify connection on startup so failures show clearly in logs
+mailer.verify((err, success) => {
+  if (err) console.error('Mailer verify failed:', err.message);
+  else console.log('Mailer ready — SMTP connection verified');
 });
 
 async function sendEmail(to, subject, html) {
   try {
     await mailer.sendMail({ from: `"Arreyon Consult" <${GMAIL_USER}>`, to, subject, html });
-  } catch(e) { console.error('Email error:', e.message); }
+    console.log('Email sent successfully to:', to);
+  } catch(e) {
+    console.error('Email error:', e.message, '| code:', e.code, '| command:', e.command);
+  }
 }
 
 // ── GOOGLE OAUTH ───────────────────────────────────────────────────────────
