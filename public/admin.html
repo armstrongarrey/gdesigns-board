@@ -77,6 +77,7 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
 .cms-field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px}
 .cms-field-key{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
 .cms-field-input{background:var(--bg2);border:1px solid var(--border);border-radius:6px;outline:none;color:var(--text);font-size:13px;font-family:inherit;padding:8px 10px;transition:border-color .15s;width:100%}
+textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
 .cms-field-input:focus{border-color:var(--purple)}
 
 .msg-box{padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:14px;display:none}
@@ -197,31 +198,24 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
     <!-- CMS EDITOR -->
     <div class="section-view" id="section-cms">
       <div class="msg-box msg-success" id="cmsMsg"></div>
-      <p style="font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.6">Edit all landing page content here. Changes go live immediately after saving.</p>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.6">Edit all landing page content here. Every section is listed automatically. Changes go live immediately after saving.</p>
 
-      <div class="cms-section">
-        <div class="cms-section-title">Hero Section</div>
-        <div id="cmsHero"></div>
-      </div>
-      <div class="cms-section">
-        <div class="cms-section-title">How It Works</div>
-        <div id="cmsHowItWorks"></div>
-      </div>
-      <div class="cms-section">
-        <div class="cms-section-title">Pricing</div>
-        <div id="cmsPricing"></div>
-      </div>
-      <div class="cms-section">
-        <div class="cms-section-title">CTA Section</div>
-        <div id="cmsCTA"></div>
-      </div>
-      <div class="cms-section">
-        <div class="cms-section-title">Footer</div>
-        <div id="cmsFooter"></div>
+      <div id="cmsAllSections"></div>
+
+      <div class="form-card">
+        <div class="form-card-title">Add New Field</div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Add a brand new piece of editable content that doesn't exist yet.</p>
+        <div class="form-row">
+          <div class="form-group"><label>Section</label><input class="form-input" id="newFieldSection" placeholder="e.g. about"></div>
+          <div class="form-group"><label>Key</label><input class="form-input" id="newFieldKey" placeholder="e.g. subtitle"></div>
+        </div>
+        <div class="form-group"><label>Value</label><textarea class="form-input" id="newFieldValue" placeholder="Content text..."></textarea></div>
+        <button class="btn-ghost" onclick="addNewCmsField()">Add Field</button>
       </div>
 
-      <button class="btn-primary" style="padding:12px 28px;font-size:14px" onclick="saveCMS()">Save All Changes</button>
+      <button class="btn-primary" style="padding:12px 28px;font-size:14px;margin-top:8px" onclick="saveCMS()">Save All Changes</button>
     </div>
+
 
     <!-- ANNOUNCEMENTS -->
     <div class="section-view" id="section-announcements">
@@ -447,22 +441,52 @@ async function loadCMS() {
     const res = await fetch('/api/cms');
     const { content } = await res.json();
     cmsData = content;
-    renderCMSSection('cmsHero', 'hero', content.hero);
-    renderCMSSection('cmsHowItWorks', 'how_it_works', content.how_it_works);
-    renderCMSSection('cmsPricing', 'pricing', content.pricing);
-    renderCMSSection('cmsCTA', 'cta', content.cta);
-    renderCMSSection('cmsFooter', 'footer', content.footer);
+    renderAllCmsSections(content);
   } catch(e) {}
 }
 
-function renderCMSSection(containerId, section, data) {
-  const el = document.getElementById(containerId);
-  if (!el || !data) return;
-  el.innerHTML = Object.entries(data).map(([key, value]) => `
-    <div class="cms-field">
-      <div class="cms-field-key">${key.replace(/_/g,' ')}</div>
-      <input class="cms-field-input" data-section="${section}" data-key="${key}" value="${(value||'').replace(/"/g,'&quot;')}" placeholder="${key}">
-    </div>`).join('');
+// Preferred display order; any section not listed here still shows, appended at the end
+const SECTION_ORDER = ['hero', 'about', 'how_it_works', 'directors', 'pricing', 'testimonials', 'faq', 'cta', 'contact', 'footer'];
+const SECTION_LABELS = {
+  hero: 'Hero Section', about: 'About Section', how_it_works: 'How It Works',
+  directors: 'Directors Section', pricing: 'Pricing', testimonials: 'Testimonials',
+  faq: 'FAQ', cta: 'CTA Section', contact: 'Contact Section', footer: 'Footer'
+};
+
+function renderAllCmsSections(content) {
+  const container = document.getElementById('cmsAllSections');
+  if (!container) return;
+  const allSections = Object.keys(content || {});
+  const ordered = [...SECTION_ORDER.filter(s => allSections.includes(s)), ...allSections.filter(s => !SECTION_ORDER.includes(s))];
+
+  container.innerHTML = ordered.map(section => {
+    const data = content[section];
+    const label = SECTION_LABELS[section] || section.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+    const fields = Object.entries(data || {}).map(([key, value]) => {
+      const isLong = (value || '').length > 80;
+      return `<div class="cms-field">
+        <div class="cms-field-key">${key.replace(/_/g,' ')}</div>
+        ${isLong
+          ? `<textarea class="cms-field-input" data-section="${section}" data-key="${key}" placeholder="${key}">${(value||'').replace(/</g,'&lt;')}</textarea>`
+          : `<input class="cms-field-input" data-section="${section}" data-key="${key}" value="${(value||'').replace(/"/g,'&quot;')}" placeholder="${key}">`}
+      </div>`;
+    }).join('');
+    return `<div class="cms-section"><div class="cms-section-title">${label}</div>${fields}</div>`;
+  }).join('');
+}
+
+function addNewCmsField() {
+  const section = document.getElementById('newFieldSection').value.trim().toLowerCase().replace(/\s+/g,'_');
+  const key = document.getElementById('newFieldKey').value.trim().toLowerCase().replace(/\s+/g,'_');
+  const value = document.getElementById('newFieldValue').value.trim();
+  if (!section || !key) { showMsg('cmsMsg', 'Section and key are required', 'error'); return; }
+  if (!cmsData[section]) cmsData[section] = {};
+  cmsData[section][key] = value;
+  renderAllCmsSections(cmsData);
+  document.getElementById('newFieldSection').value = '';
+  document.getElementById('newFieldKey').value = '';
+  document.getElementById('newFieldValue').value = '';
+  showMsg('cmsMsg', 'Field added below — click "Save All Changes" to publish it.', 'success');
 }
 
 async function saveCMS() {
@@ -472,8 +496,10 @@ async function saveCMS() {
     const res = await fetch('/api/cms/bulk', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({updates}) });
     const data = await res.json();
     showMsg('cmsMsg', data.success ? 'All changes saved successfully. Changes are live on the site.' : (data.error||'Save failed'), data.success?'success':'error');
+    if (data.success) loadCMS();
   } catch(e) { showMsg('cmsMsg', 'Save failed', 'error'); }
 }
+
 
 // ── ANNOUNCEMENTS ──────────────────────────────────────────────────────────
 async function loadAnnouncements() {
