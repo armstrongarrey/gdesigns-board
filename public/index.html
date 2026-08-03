@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arreyon Consult — Your AI Board of Directors, Available 24/7 | G-DESIGNS LTD</title>
+<meta name="description" content="Arreyon Consult by G-DESIGNS LTD convenes 29 legendary business minds around your challenge. Get boardroom-grade strategy, analysis, and a report you can act on. Available 24/7.">
+<meta name="keywords" content="AI board of directors, business strategy, AI consultant, Cameroon, Africa, Arreyon, G-DESIGNS, strategic advice, business consulting">
+<meta name="author" content="G-DESIGNS LTD">
+<meta name="robots" content="index, follow">
+<meta property="og:title" content="Arreyon Consult — Your AI Board of Directors">
+<meta property="og:description" content="29 legendary business minds. One strategic verdict. Available 24/7.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://consult.gdesignsme.com">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Arreyon Consult by G-DESIGNS LTD">
+<meta name="twitter:description" content="Your AI Board of Directors. Available 24/7.">
+<link rel="canonical" href="https://consult.gdesignsme.com">
+<link rel="icon" href="/assets/favicon.ico" type="image/x-icon">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.263.1/lucide.min.css">
+<style>
+:root {
+  --purple: #6C3Bff;
+  --purple-light: #8b5cf6;
+  --purple-dark: #5025cc;
+  --bg: #09090f;
+  --bg2: #0f0f1a;
+  --bg3: #14102a;
+  --bg4: #1a1438;
+  --border: #1e1b4b;
+  --border-light: #2d2a5e;
+  --text: #f1f0ff;
+  --text2: #c4c0e8;
+  --muted: #7c78a8;
+  --muted2: #4a4680;
+  --gold: #f59e0b;
+  --green: #10b981;
+  --red: #ef4444;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'Inter', -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* ── ANNOUNCEMENT BANNER ── */
+.announcement-banner {
+  background: linear-gradient(90deg, var(--purple), var(--purple-light));
+  color: #fff;
+  text-align: center;
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  position: relative;
+  display: none;
+}
+.announcement-banner.show { display: block; }
+.announcement-banner a { color: #fff; text-decoration: underline; }
+.announcement-close {
+  position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: #fff; cursor: pointer; font-size: 18px; line-height: 1;
+}
+
+/* ── NAV ── */
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(9,9,15,0.95);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 5%;
+}
+.nav-inner {
+  max-width: 1200px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 64px;
+}
+.nav-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+.nav-logo-mark {
+  width: 34px; height: 34px; background: var(--purple);
+  border-radius: 8px; display: flex; align-items: center; justify-content: center;
+}
+.nav-logo-mark img { width: 22px; height: 22px; object-fit: contain; }
+.nav-logo-text { font-size: 15px; font-weight: 700; color: var(--text); }
+.nav-logo-sub { font-size: 10px; color: var(--muted); display: block; line-height: 1; }
+.nav-links { display: flex; align-items: center; gap: 28px; }
+.nav-links a { font-size: 14px; color: var(--muted); text-decoration: none; transition: color .15s; font-weight: 500; }
+.nav-links a:hover { color: var(--text); }
+.nav-actions { display: flex; align-items: center; gap: 12px; }
+.btn-ghost { background: transparent; border: 1px solid var(--border-light); color: var(--text2); font-size: 14px; font-weight: 500; padding: 8px 18px; border-radius: 8px; cursor: pointer; font-family: inherit; transition: all .15s; text-decoration: none; display: inline-flex; align-items: center; }
+.btn-ghost:hover { border-color: var(--purple); color: var(--text); }
+.btn-primary { background: var(--purple); border: none; color: #fff; font-size: 14px; font-weight: 600; padding: 9px 20px; border-radius: 8px; cursor: pointer; font-family: inherit; transition: all .15s; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.btn-primary:hover { background: var(--purple-light); transform: translateY(-1px); }
+.btn-large { padding: 14px 32px; font-size: 15px; border-radius: 10px; }
+.btn-outline { background: transparent; border: 1px solid var(--border-light); color: var(--text2); }
+.btn-outline:hover { border-color: var(--purple); color: var(--text); background: var(--bg3); }
+.nav-hamburger { display: none; background: none; border: none; color: var(--text); cursor: pointer; padding: 6px; }
+
+/* ── HERO ── */
+.hero {
+  max-width: 1200px; margin: 0 auto;
+  padding: 100px 5% 80px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center;
+}
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--bg3); border: 1px solid var(--border-light);
+  border-radius: 20px; padding: 5px 14px; margin-bottom: 20px;
+  font-size: 12px; color: var(--purple-light); font-weight: 500;
+}
+.hero-badge-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--purple-light); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1}50%{opacity:.4} }
+.hero h1 { font-size: clamp(32px,4vw,52px); font-weight: 800; line-height: 1.15; margin-bottom: 20px; }
+.hero h1 span { color: var(--purple-light); }
+.hero-sub { font-size: 17px; color: var(--text2); line-height: 1.7; margin-bottom: 32px; max-width: 480px; }
+.hero-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 40px; }
+.hero-proof { display: flex; align-items: center; gap: 10px; }
+.hero-proof-avatars { display: flex; }
+.hero-proof-avatars span {
+  width: 32px; height: 32px; border-radius: 50%; background: var(--bg3);
+  border: 2px solid var(--bg); display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; margin-left: -8px; color: var(--purple-light);
+}
+.hero-proof-avatars span:first-child { margin-left: 0; }
+.hero-proof-text { font-size: 13px; color: var(--muted); }
+.hero-proof-text strong { color: var(--text2); }
+.hero-visual {
+  position: relative; border-radius: 16px; overflow: hidden;
+  background: var(--bg2); border: 1px solid var(--border);
+}
+.hero-card {
+  background: var(--bg3); border: 1px solid var(--border-light);
+  border-radius: 12px; padding: 20px; margin: 20px;
+}
+.hero-card-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 8px; }
+.hero-card-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 12px; }
+.hero-directors { display: flex; flex-direction: column; gap: 8px; }
+.hero-director {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg4); border-radius: 8px; padding: 8px 12px;
+}
+.hd-av {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; flex-shrink: 0;
+}
+.hd-name { font-size: 12px; font-weight: 500; color: var(--text2); }
+.hd-role { font-size: 10px; color: var(--muted); }
+.hd-status { margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+.hero-card-verdict {
+  margin-top: 12px; background: var(--purple); border-radius: 8px; padding: 10px 14px;
+  font-size: 13px; font-weight: 600; color: #fff;
+}
+
+/* ── SECTIONS ── */
+section { padding: 80px 5%; }
+.section-inner { max-width: 1200px; margin: 0 auto; }
+.section-label { font-size: 11px; color: var(--purple-light); text-transform: uppercase; letter-spacing: .12em; font-weight: 600; margin-bottom: 12px; }
+.section-title { font-size: clamp(26px,3vw,40px); font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+.section-sub { font-size: 16px; color: var(--text2); max-width: 560px; line-height: 1.7; }
+
+/* ── STATS ── */
+.stats { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 48px 5%; }
+.stats-inner { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(4,1fr); gap: 40px; text-align: center; }
+.stat-number { font-size: 42px; font-weight: 800; color: var(--text); line-height: 1; margin-bottom: 6px; }
+.stat-number span { color: var(--purple-light); }
+.stat-label { font-size: 13px; color: var(--muted); }
+
+/* ── HOW IT WORKS ── */
+.steps { display: grid; grid-template-columns: repeat(3,1fr); gap: 24px; margin-top: 48px; }
+.step-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 14px; padding: 28px; position: relative; overflow: hidden;
+}
+.step-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, var(--purple), var(--purple-light));
+}
+.step-num { font-size: 48px; font-weight: 900; color: var(--border-light); line-height: 1; margin-bottom: 16px; }
+.step-title { font-size: 18px; font-weight: 700; margin-bottom: 10px; }
+.step-desc { font-size: 14px; color: var(--text2); line-height: 1.7; }
+
+/* ── DIRECTORS GRID ── */
+.directors-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px,1fr)); gap: 16px; margin-top: 48px; }
+.director-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 20px; transition: all .2s;
+}
+.director-card:hover { border-color: var(--purple); transform: translateY(-2px); }
+.dir-card-av {
+  width: 44px; height: 44px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; margin-bottom: 12px;
+}
+.dir-card-name { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+.dir-card-role { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.dir-card-tag { display: inline-block; font-size: 10px; background: var(--bg3); border: 1px solid var(--border-light); border-radius: 4px; padding: 2px 7px; color: var(--muted); }
+.directors-more { text-align: center; margin-top: 24px; color: var(--muted); font-size: 14px; }
+
+/* ── FEATURES ── */
+.features-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; margin-top: 48px; }
+.feature-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 14px; padding: 24px;
+}
+.feature-icon {
+  width: 44px; height: 44px; background: var(--bg3); border: 1px solid var(--border-light);
+  border-radius: 10px; display: flex; align-items: center; justify-content: center;
+  margin-bottom: 14px; color: var(--purple-light);
+}
+.feature-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+.feature-desc { font-size: 13px; color: var(--text2); line-height: 1.65; }
+
+/* ── PRICING ── */
+.pricing-toggle { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 32px 0 48px; }
+.toggle-label { font-size: 14px; color: var(--muted); font-weight: 500; }
+.toggle-label.active { color: var(--text); }
+.toggle-switch {
+  width: 48px; height: 26px; background: var(--bg3); border: 1px solid var(--border-light);
+  border-radius: 13px; cursor: pointer; position: relative; transition: background .2s;
+}
+.toggle-switch.on { background: var(--purple); border-color: var(--purple); }
+.toggle-knob {
+  position: absolute; top: 3px; left: 3px;
+  width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .2s;
+}
+.toggle-switch.on .toggle-knob { transform: translateX(22px); }
+.toggle-badge { background: var(--green); color: #fff; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
+.pricing-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; }
+.price-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 16px; padding: 28px; position: relative; transition: all .2s;
+}
+.price-card.featured { border-color: var(--purple); background: linear-gradient(135deg, var(--bg3), var(--bg2)); }
+.price-card.featured::before {
+  content: 'Most Popular';
+  position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+  background: var(--purple); color: #fff; font-size: 11px; font-weight: 700;
+  padding: 4px 16px; border-radius: 10px; white-space: nowrap;
+}
+.price-name { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 4px; }
+.price-amount { font-size: 42px; font-weight: 900; line-height: 1; margin: 12px 0 4px; }
+.price-amount span { font-size: 18px; font-weight: 500; color: var(--muted); }
+.price-cfa { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.price-desc { font-size: 13px; color: var(--muted); margin-bottom: 20px; line-height: 1.5; }
+.price-divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+.price-feature { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; color: var(--text2); margin-bottom: 10px; line-height: 1.5; }
+.price-feature svg { flex-shrink: 0; margin-top: 2px; }
+.price-feature.disabled { color: var(--muted2); }
+.price-feature.disabled svg { color: var(--muted2); }
+.price-btn { width: 100%; margin-top: 20px; padding: 12px; border-radius: 10px; font-size: 14px; font-weight: 600; }
+
+/* ── TESTIMONIALS ── */
+.testimonials-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; margin-top: 48px; }
+.testimonial-card {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 14px; padding: 24px;
+}
+.testimonial-stars { color: var(--gold); font-size: 14px; margin-bottom: 12px; }
+.testimonial-text { font-size: 14px; color: var(--text2); line-height: 1.7; margin-bottom: 16px; font-style: italic; }
+.testimonial-author { display: flex; align-items: center; gap: 10px; }
+.testimonial-av {
+  width: 36px; height: 36px; border-radius: 50%; background: var(--bg3);
+  display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: var(--purple-light);
+}
+.testimonial-name { font-size: 13px; font-weight: 600; }
+.testimonial-role { font-size: 11px; color: var(--muted); }
+
+/* ── FAQ ── */
+.faq-list { max-width: 720px; margin: 48px auto 0; }
+.faq-item { border-bottom: 1px solid var(--border); }
+.faq-question {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 0; cursor: pointer; font-size: 15px; font-weight: 600;
+  background: none; border: none; color: var(--text); font-family: inherit; width: 100%; text-align: left;
+}
+.faq-question:hover { color: var(--purple-light); }
+.faq-answer { font-size: 14px; color: var(--text2); line-height: 1.7; padding: 0 0 16px; display: none; }
+.faq-answer.open { display: block; }
+.faq-icon { flex-shrink: 0; color: var(--purple-light); transition: transform .2s; }
+.faq-icon.open { transform: rotate(45deg); }
+
+/* ── CTA SECTION ── */
+.cta-section {
+  background: linear-gradient(135deg, var(--bg3) 0%, var(--bg2) 100%);
+  border: 1px solid var(--border); border-radius: 20px;
+  padding: 64px 48px; text-align: center;
+  max-width: 900px; margin: 0 auto;
+}
+.cta-section h2 { font-size: clamp(26px,3vw,40px); font-weight: 800; margin-bottom: 14px; }
+.cta-section p { font-size: 16px; color: var(--text2); margin-bottom: 32px; }
+.cta-actions { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; }
+.cta-trust { margin-top: 20px; font-size: 12px; color: var(--muted); display: flex; align-items: center; justify-content: center; gap: 20px; }
+
+/* ── CONTACT ── */
+.contact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 48px; }
+.contact-item { display: flex; align-items: flex-start; gap: 14px; }
+.contact-icon { width: 40px; height: 40px; background: var(--bg3); border: 1px solid var(--border-light); border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--purple-light); }
+.contact-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 4px; }
+.contact-value { font-size: 14px; color: var(--text2); }
+.contact-value a { color: var(--purple-light); text-decoration: none; }
+
+/* ── FOOTER ── */
+footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 48px 5% 24px; }
+.footer-inner { max-width: 1200px; margin: 0 auto; }
+.footer-top { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 40px; margin-bottom: 40px; }
+.footer-brand p { font-size: 13px; color: var(--muted); line-height: 1.7; margin-top: 12px; max-width: 260px; }
+.footer-col h4 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 14px; }
+.footer-col a { display: block; font-size: 13px; color: var(--text2); text-decoration: none; margin-bottom: 8px; transition: color .15s; }
+.footer-col a:hover { color: var(--purple-light); }
+.footer-bottom { border-top: 1px solid var(--border); padding-top: 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.footer-bottom p { font-size: 12px; color: var(--muted); }
+
+/* ── POPUP ── */
+.announcement-popup-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 999; display: none; align-items: center; justify-content: center; padding: 20px; }
+.announcement-popup-overlay.show { display: flex; }
+.announcement-popup { background: var(--bg2); border: 1px solid var(--border-light); border-radius: 16px; padding: 32px; max-width: 460px; width: 100%; position: relative; }
+.popup-close { position: absolute; top: 14px; right: 14px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1; }
+.popup-title { font-size: 20px; font-weight: 700; margin-bottom: 10px; }
+.popup-message { font-size: 14px; color: var(--text2); line-height: 1.7; margin-bottom: 20px; }
+
+/* ── RESPONSIVE ── */
+@media(max-width:1024px) {
+  .pricing-grid, .features-grid, .steps { grid-template-columns: 1fr 1fr; }
+  .footer-top { grid-template-columns: 1fr 1fr; }
+  .stats-inner { grid-template-columns: repeat(2,1fr); }
+}
+@media(max-width:768px) {
+  .hero { grid-template-columns: 1fr; padding: 60px 5% 40px; }
+  .hero-visual { display: none; }
+  .pricing-grid, .features-grid, .steps, .testimonials-grid { grid-template-columns: 1fr; }
+  .contact-grid { grid-template-columns: 1fr; }
+  .nav-links { display: none; }
+  .nav-hamburger { display: block; }
+  .stats-inner { grid-template-columns: repeat(2,1fr); gap: 24px; }
+  .footer-top { grid-template-columns: 1fr; }
+  .cta-section { padding: 40px 24px; }
+  .directors-grid { grid-template-columns: repeat(2,1fr); }
+}
+</style>
+</head>
+<body>
+
+<!-- ANNOUNCEMENT BANNER -->
+<div class="announcement-banner" id="announcementBanner">
+  <span id="bannerText"></span>
+  <button class="announcement-close" onclick="document.getElementById('announcementBanner').classList.remove('show')">×</button>
+</div>
+
+<!-- ANNOUNCEMENT POPUP -->
+<div class="announcement-popup-overlay" id="announcementPopup">
+  <div class="announcement-popup">
+    <button class="popup-close" onclick="document.getElementById('announcementPopup').classList.remove('show')">×</button>
+    <div class="popup-title" id="popupTitle"></div>
+    <div class="popup-message" id="popupMessage"></div>
+    <button class="btn-primary" onclick="document.getElementById('announcementPopup').classList.remove('show')">Got it</button>
+  </div>
+</div>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-inner">
+    <a href="/" class="nav-logo">
+      <div class="nav-logo-mark">
+        <img src="/assets/logo.png" alt="Arreyon" onerror="this.parentElement.innerHTML='<span style=\'color:#fff;font-weight:700;font-size:14px\'>A</span>'">
+      </div>
+      <div>
+        <div class="nav-logo-text">Arreyon Consult</div>
+        <span class="nav-logo-sub">by G-DESIGNS LTD</span>
+      </div>
+    </a>
+    <div class="nav-links">
+      <a href="#how-it-works">How It Works</a>
+      <a href="#directors">The Board</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#contact">Contact</a>
+    </div>
+    <div class="nav-actions">
+      <a href="/auth?mode=login" class="btn-ghost">Sign In</a>
+      <a href="/auth?mode=signup" class="btn-primary">Start Free</a>
+    </div>
+    <button class="nav-hamburger" onclick="toggleMobileMenu()">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section style="padding:0">
+  <div class="hero">
+    <div class="hero-content">
+      <div class="hero-badge">
+        <div class="hero-badge-dot"></div>
+        <span id="heroProof">Trusted by founders across Africa and beyond</span>
+      </div>
+      <h1 id="heroHeadline">Your AI Consultant and Board of Directors.<br><span>Available 24/7.</span></h1>
+      <p class="hero-sub" id="heroSub">Arreyon Consult convenes 29 legendary business minds around your challenge. Get boardroom-grade strategy, analysis, and a report you can act on.</p>
+      <div class="hero-actions">
+        <a href="/auth?mode=signup" class="btn-primary btn-large" id="heroCTA1">Start Free — No Credit Card</a>
+        <a href="#how-it-works" class="btn-ghost btn-large" id="heroCTA2">See How It Works</a>
+      </div>
+      <div class="hero-proof">
+        <div class="hero-proof-avatars">
+          <span>RK</span><span>DO</span><span>WB</span><span>EM</span><span>SJ</span>
+        </div>
+        <div class="hero-proof-text"><strong>29 legendary advisors</strong> ready for your challenge</div>
+      </div>
+    </div>
+    <div class="hero-visual">
+      <div class="hero-card">
+        <div class="hero-card-label">Board Session Active</div>
+        <div class="hero-card-title">Your board is convened</div>
+        <div class="hero-directors">
+          <div class="hero-director">
+            <div class="hd-av" style="background:#2a4a1a;color:#7fcc50">JR</div>
+            <div><div class="hd-name">John D. Rockefeller</div><div class="hd-role">Empire &amp; Cost Strategy</div></div>
+            <div class="hd-status"></div>
+          </div>
+          <div class="hero-director">
+            <div class="hd-av" style="background:#1a0500;color:#ff7040">DO</div>
+            <div><div class="hd-name">David Ogilvy</div><div class="hd-role">Brand &amp; Advertising</div></div>
+            <div class="hd-status"></div>
+          </div>
+          <div class="hero-director">
+            <div class="hd-av" style="background:#001a1a;color:#40cccc">WB</div>
+            <div><div class="hd-name">Warren Buffett</div><div class="hd-role">Investment &amp; Long-Term Value</div></div>
+            <div class="hd-status"></div>
+          </div>
+          <div class="hero-director">
+            <div class="hd-av" style="background:#001520;color:#44bbdd">MP</div>
+            <div><div class="hd-name">Michael Porter</div><div class="hd-role">Competitive Strategy</div></div>
+            <div class="hd-status"></div>
+          </div>
+        </div>
+        <div class="hero-card-verdict">Board Verdict: Focus on customer acquisition first — revenue follows positioning.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- STATS -->
+<div class="stats">
+  <div class="stats-inner">
+    <div><div class="stat-number"><span>29</span></div><div class="stat-label">Legendary Advisors</div></div>
+    <div><div class="stat-number">24<span>/7</span></div><div class="stat-label">Always Available</div></div>
+    <div><div class="stat-number">&lt;<span>60s</span></div><div class="stat-label">Average Response Time</div></div>
+    <div><div class="stat-number"><span>3</span> AI</div><div class="stat-label">Models Combined</div></div>
+  </div>
+</div>
+
+<!-- HOW IT WORKS -->
+<section id="how-it-works">
+  <div class="section-inner">
+    <div class="section-label">How It Works</div>
+    <h2 class="section-title" id="howTitle">Three steps to boardroom-grade advice</h2>
+    <div class="steps">
+      <div class="step-card"><div class="step-num">01</div><div class="step-title" id="step1Title">Brief your board</div><div class="step-desc" id="step1Desc">Fill in your business details. Our Board Secretary asks targeted questions to understand your situation deeply before assembling the right directors.</div></div>
+      <div class="step-card"><div class="step-num">02</div><div class="step-title" id="step2Title">The board convenes</div><div class="step-desc" id="step2Desc">Arreyon automatically selects the most relevant directors for your challenge. Each one delivers their unique strategic perspective in real time.</div></div>
+      <div class="step-card"><div class="step-num">03</div><div class="step-title" id="step3Title">Get your verdict</div><div class="step-desc" id="step3Desc">Receive a structured report with executive summary, board insights, risk analysis, and a 90-day action plan you can implement immediately.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- DIRECTORS -->
+<section id="directors" style="background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border)">
+  <div class="section-inner">
+    <div class="section-label">The Board</div>
+    <h2 class="section-title">Twenty-nine legendary minds. One strategic verdict.</h2>
+    <p class="section-sub" id="aboutDesc">Arreyon assembles the greatest business minds in history and briefs them on your specific business. Each advisor brings a unique discipline.</p>
+    <div class="directors-grid">
+      <div class="director-card"><div class="dir-card-av" style="background:#2a4a1a;color:#7fcc50">JR</div><div class="dir-card-name">John D. Rockefeller</div><div class="dir-card-role">Oil, Monopoly &amp; Empire Building</div><div class="dir-card-tag">Strategy</div></div>
+      <div class="director-card"><div class="dir-card-av" style="background:#2a1f00;color:#e6aa00">AD</div><div class="dir-card-name">Aliko Dangote</div><div class="dir-card-role">African Enterprise &amp; Scale</div><div class="dir-card-tag">African Markets</div></div>
+      <div class="director-card"><div class="dir-card-av" style="background:#1a0500;color:#ff7040">DO</div><div class="dir-card-name">David Ogilvy</div><div class="dir-card-role">Advertising &amp; Copywriting</div><div class="dir-card-tag">Marketing</div></div>
+      <div class="director-card"><div class="dir-card-av" style="background:#001a1a;color:#40cccc">WB</div><div class="dir-card-name">Warren Buffett</div><div class="dir-card-role">Value, Moats &amp; Long-Term Thinking</div><div class="dir-card-tag">Finance</div></div>
+      <div class="director-card"><div class="dir-card-av" style="background:#001520;color:#00c8ff">EM</div><div class="dir-card-name">Elon Musk</div><div class="dir-card-role">Disruption &amp; First Principles</div><div class="dir-card-tag">Innovation</div></div>
+      <div class="director-card"><div class="dir-card-av" style="background:#222;color:#d0d0d0">SJ</div><div class="dir-card-name">Steve Jobs</div><div class="dir-card-role">Design, Product &amp; Simplicity</div><div class="dir-card-tag">Product</div></div>
+      <div class="director-card"><div class="dir-card-av" style="background:#001a10;color:#30dd88">PK</div><div class="dir-card-name">Philip Kotler</div><div class="dir-card-role">Marketing Science &amp; Strategy</div><div class="dir-card-tag">Marketing</div></div>
+      <div class="director-card"><div class="dir-card-av" style="background:#001520;color:#44bbdd">MP</div><div class="dir-card-name">Michael Porter</div><div class="dir-card-role">Competitive Research &amp; Analysis</div><div class="dir-card-tag">Strategy</div></div>
+    </div>
+    <div class="directors-more">+ 21 more legendary advisors including Jack Ma, Oprah Winfrey, Peter Thiel, Seth Godin, Ray Dalio and more</div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section>
+  <div class="section-inner">
+    <div class="section-label">Features</div>
+    <h2 class="section-title">Everything you need for strategic clarity</h2>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+        <div class="feature-title">Auto Director Selection</div>
+        <div class="feature-desc">Arreyon automatically selects the most relevant directors for your specific challenge — no manual configuration needed.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+        <div class="feature-title">Live Board Conversation</div>
+        <div class="feature-desc">Real back-and-forth dialogue with each director. They ask follow-up questions and adapt to your specific answers.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+        <div class="feature-title">Structured Report</div>
+        <div class="feature-desc">Executive summary, board insights, risk analysis, and a 90-day action plan — all in one downloadable report.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg></div>
+        <div class="feature-title">Video Presentation</div>
+        <div class="feature-desc">Get a personalised video presentation of your board's key recommendations — optimised for your device.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+        <div class="feature-title">Consultation History</div>
+        <div class="feature-desc">Full replay of every consultation — conversation, report, and video — stored securely in your dashboard.</div>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div>
+        <div class="feature-title">Three AI Models</div>
+        <div class="feature-desc">Claude, ChatGPT, and Gemini — each director is matched with the AI that best fits their thinking style.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section id="pricing" style="background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border)">
+  <div class="section-inner">
+    <div class="section-label">Pricing</div>
+    <h2 class="section-title" id="pricingTitle">Simple, transparent pricing</h2>
+    <p class="section-sub" style="margin:0 auto;text-align:center" id="pricingSubtitle">Start free. Upgrade when you need more.</p>
+    <div class="pricing-toggle">
+      <span class="toggle-label active" id="monthlyLabel">Monthly</span>
+      <div class="toggle-switch" id="billingToggle" onclick="toggleBilling()"><div class="toggle-knob"></div></div>
+      <span class="toggle-label" id="annualLabel">Annual <span class="toggle-badge">Save 20%</span></span>
+    </div>
+    <div class="pricing-grid">
+      <!-- Starter -->
+      <div class="price-card">
+        <div class="price-name" id="starterName">Starter</div>
+        <div class="price-amount">Free <span></span></div>
+        <div class="price-cfa">Free forever</div>
+        <div class="price-desc" id="starterDesc">For founders exploring AI-powered strategic advice</div>
+        <hr class="price-divider">
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 3 consultations per month</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 5 starter directors</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Board Secretary Q&amp;A</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Basic board report</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 1 team member</div>
+        <div class="price-feature disabled"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Report download</div>
+        <div class="price-feature disabled"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Consultation history</div>
+        <div class="price-feature disabled"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Video report</div>
+        <a href="/auth?mode=signup&plan=starter" class="btn-primary price-btn btn-outline">Get Started Free</a>
+      </div>
+      <!-- Pro -->
+      <div class="price-card featured">
+        <div class="price-name" id="proName">Arreyon Pro</div>
+        <div class="price-amount" id="proPrice">$35 <span>/mo</span></div>
+        <div class="price-cfa" id="proCFA">20,125 FCFA/month</div>
+        <div class="price-desc" id="proDesc">For serious founders who need regular strategic guidance</div>
+        <hr class="price-divider">
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 10 consultations per month</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> All 29 directors</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Report download (PDF)</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Full consultation history</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 3 team members</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Priority email support</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Board Secretary deep-dive</div>
+        <div class="price-feature disabled"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Video report</div>
+        <a href="/auth?mode=signup&plan=pro" class="btn-primary price-btn">Get Arreyon Pro</a>
+      </div>
+      <!-- Business -->
+      <div class="price-card">
+        <div class="price-name" id="bizName">Arreyon Business</div>
+        <div class="price-amount" id="bizPrice">$150 <span>/mo</span></div>
+        <div class="price-cfa" id="bizCFA">86,250 FCFA/month</div>
+        <div class="price-desc" id="bizDesc">For teams and growing organisations that need unlimited access</div>
+        <hr class="price-divider">
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Unlimited consultations</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> All 29 directors</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> PDF + Word download</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Video report (HeyGen)</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 6 team members</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Custom AI director personas</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Priority WhatsApp support</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Full consultation history</div>
+        <a href="/auth?mode=signup&plan=business" class="btn-primary price-btn">Get Arreyon Business</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TESTIMONIALS -->
+<section>
+  <div class="section-inner">
+    <div class="section-label">What Founders Say</div>
+    <h2 class="section-title">Real advice. Real results.</h2>
+    <div class="testimonials-grid">
+      <div class="testimonial-card">
+        <div class="testimonial-stars">★★★★★</div>
+        <div class="testimonial-text">"I asked Rockefeller and Buffett about my pricing strategy. The report they generated was more actionable than advice I paid a consultant $500 for."</div>
+        <div class="testimonial-author"><div class="testimonial-av">KN</div><div><div class="testimonial-name">Kwame Nkrumah-Asante</div><div class="testimonial-role">Founder, TechStart Ghana</div></div></div>
+      </div>
+      <div class="testimonial-card">
+        <div class="testimonial-stars">★★★★★</div>
+        <div class="testimonial-text">"The Board Secretary asked better questions than most investors I've pitched to. By the time I saw the report, I already knew what to do."</div>
+        <div class="testimonial-author"><div class="testimonial-av">AI</div><div><div class="testimonial-name">Amina Ibrahim</div><div class="testimonial-role">CEO, Lagos Fashion Co.</div></div></div>
+      </div>
+      <div class="testimonial-card">
+        <div class="testimonial-stars">★★★★★</div>
+        <div class="testimonial-text">"Having Dangote and Porter analyse my Cameroon market entry strategy at 11pm — for free — is something I still can't believe is real."</div>
+        <div class="testimonial-author"><div class="testimonial-av">BE</div><div><div class="testimonial-name">Bernard Etame</div><div class="testimonial-role">Founder, DigiCam Solutions</div></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section style="background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border)">
+  <div class="section-inner" style="text-align:center">
+    <div class="section-label">FAQ</div>
+    <h2 class="section-title">Frequently asked questions</h2>
+    <div class="faq-list" style="text-align:left">
+      <div class="faq-item"><button class="faq-question" onclick="toggleFaq(this)">How is Arreyon Consult different from ChatGPT? <svg class="faq-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button><div class="faq-answer">Arreyon Consult is purpose-built for strategic business advice. Instead of a single AI, you get 29 specialised directors — each with a unique framework and persona — who debate your challenge and deliver a synthesised verdict. The Board Secretary gathers deep context before any advice is given, ensuring the output is specific to your situation.</div></div>
+      <div class="faq-item"><button class="faq-question" onclick="toggleFaq(this)">Can I use it from Africa? <svg class="faq-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button><div class="faq-answer">Yes. Arreyon Consult was built with African founders in mind. Payment via MTN MoMo is supported. The platform works on any device and internet connection. Several directors — including Aliko Dangote — are specifically tuned for African market dynamics.</div></div>
+      <div class="faq-item"><button class="faq-question" onclick="toggleFaq(this)">How does payment work? <svg class="faq-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button><div class="faq-answer">We accept MTN MoMo (Cameroon) and international bank transfer. After submitting payment details, our team manually verifies and activates your plan within 24 hours. You will receive a confirmation email once activated.</div></div>
+      <div class="faq-item"><button class="faq-question" onclick="toggleFaq(this)">Is my consultation data private? <svg class="faq-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button><div class="faq-answer">Yes. Your consultations are private to your account. We do not share your business information with third parties or use it to train AI models. Each session is encrypted and stored securely.</div></div>
+      <div class="faq-item"><button class="faq-question" onclick="toggleFaq(this)">What happens when I hit my consultation limit? <svg class="faq-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button><div class="faq-answer">Your limit resets at the start of each calendar month. You can upgrade your plan at any time to get more consultations immediately. Business plan users have unlimited consultations with no monthly cap.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section>
+  <div class="section-inner">
+    <div class="cta-section">
+      <h2 id="ctaTitle">Bring your hardest decision to the board</h2>
+      <p id="ctaSubtitle">Your first consultation is free. No credit card required. No setup. Just strategy.</p>
+      <div class="cta-actions">
+        <a href="/auth?mode=signup" class="btn-primary btn-large" id="ctaBtn">Convene Your Board</a>
+        <a href="#pricing" class="btn-ghost btn-large">View Pricing</a>
+      </div>
+      <div class="cta-trust">
+        <span>No credit card required</span>
+        <span>Email verification</span>
+        <span>Cancel anytime</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CONTACT -->
+<section id="contact" style="background:var(--bg2);border-top:1px solid var(--border)">
+  <div class="section-inner">
+    <div class="section-label">Contact</div>
+    <h2 class="section-title">Get in touch</h2>
+    <p class="section-sub">We're here to help. Reach out through any of the channels below.</p>
+    <div class="contact-grid">
+      <div class="contact-item">
+        <div class="contact-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
+        <div><div class="contact-label">Phone / WhatsApp</div><div class="contact-value"><a href="https://wa.me/237675781517">+237 675 781 517</a></div></div>
+      </div>
+      <div class="contact-item">
+        <div class="contact-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></div>
+        <div><div class="contact-label">Email</div><div class="contact-value"><a href="mailto:info@gdesignsme.com">info@gdesignsme.com</a></div></div>
+      </div>
+      <div class="contact-item">
+        <div class="contact-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></div>
+        <div><div class="contact-label">Email (Gmail)</div><div class="contact-value"><a href="mailto:gdesignsme@gmail.com">gdesignsme@gmail.com</a></div></div>
+      </div>
+      <div class="contact-item">
+        <div class="contact-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div>
+        <div><div class="contact-label">Location</div><div class="contact-value">Buea, Cameroon &amp; Dubai, UAE</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <a href="/" class="nav-logo" style="margin-bottom:12px;display:inline-flex">
+          <div class="nav-logo-mark"><img src="/assets/logo.png" alt="Arreyon" onerror="this.parentElement.innerHTML='<span style=\'color:#fff;font-size:12px;font-weight:700\'>A</span>'"></div>
+          <div style="margin-left:10px"><div class="nav-logo-text">Arreyon Consult</div><span class="nav-logo-sub">by G-DESIGNS LTD</span></div>
+        </a>
+        <p id="footerTagline">Learn. Create. Innovate. — Strategic AI consulting for African and global founders.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Product</h4>
+        <a href="#how-it-works">How It Works</a>
+        <a href="#directors">The Board</a>
+        <a href="#pricing">Pricing</a>
+        <a href="/consult">Public Consult</a>
+      </div>
+      <div class="footer-col">
+        <h4>Account</h4>
+        <a href="/auth?mode=signup">Sign Up</a>
+        <a href="/auth?mode=login">Sign In</a>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/boardroom">Boardroom</a>
+      </div>
+      <div class="footer-col">
+        <h4>Company</h4>
+        <a href="#contact">Contact Us</a>
+        <a href="https://gdesignsme.com" target="_blank">G-DESIGNS LTD</a>
+        <a href="https://wa.me/237675781517" target="_blank">WhatsApp</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p id="footerCopyright">© 2026 Arreyon Consult by G-DESIGNS LTD. All rights reserved.</p>
+      <p style="color:var(--muted2);font-size:11px">consult.gdesignsme.com</p>
+    </div>
+  </div>
+</footer>
+
+<script>
+// ── BILLING TOGGLE ──────────────────────────────────────────────────────────
+let isAnnual = false;
+const prices = {
+  pro:      { monthly: { usd: 35, cfa: 20125 }, annual: { usd: 28, cfa: 16100 } },
+  business: { monthly: { usd: 150, cfa: 86250 }, annual: { usd: 120, cfa: 69000 } }
+};
+
+function toggleBilling() {
+  isAnnual = !isAnnual;
+  const t = document.getElementById('billingToggle');
+  const ml = document.getElementById('monthlyLabel');
+  const al = document.getElementById('annualLabel');
+  t.classList.toggle('on', isAnnual);
+  ml.classList.toggle('active', !isAnnual);
+  al.classList.toggle('active', isAnnual);
+
+  const p = isAnnual ? prices.pro.annual : prices.pro.monthly;
+  const b = isAnnual ? prices.business.annual : prices.business.monthly;
+  document.getElementById('proPrice').innerHTML = `$${p.usd} <span>/mo</span>`;
+  document.getElementById('proCFA').textContent = `${p.cfa.toLocaleString()} FCFA/month${isAnnual?' (billed annually)':''}`;
+  document.getElementById('bizPrice').innerHTML = `$${b.usd} <span>/mo</span>`;
+  document.getElementById('bizCFA').textContent = `${b.cfa.toLocaleString()} FCFA/month${isAnnual?' (billed annually)':''}`;
+}
+
+// ── FAQ ──────────────────────────────────────────────────────────────────────
+function toggleFaq(btn) {
+  const answer = btn.nextElementSibling;
+  const icon = btn.querySelector('.faq-icon');
+  const isOpen = answer.classList.contains('open');
+  document.querySelectorAll('.faq-answer').forEach(a => a.classList.remove('open'));
+  document.querySelectorAll('.faq-icon').forEach(i => i.classList.remove('open'));
+  if (!isOpen) { answer.classList.add('open'); icon.classList.add('open'); }
+}
+
+// ── MOBILE MENU ──────────────────────────────────────────────────────────────
+function toggleMobileMenu() {
+  const links = document.querySelector('.nav-links');
+  if (links.style.display === 'flex') {
+    links.style.display = '';
+  } else {
+    links.style.cssText = 'display:flex;flex-direction:column;position:fixed;top:64px;left:0;right:0;background:var(--bg2);border-bottom:1px solid var(--border);padding:20px;gap:16px;z-index:99';
+  }
+}
+
+// ── LOAD CMS CONTENT ─────────────────────────────────────────────────────────
+async function loadCMS() {
+  try {
+    const res = await fetch('/api/cms');
+    const { content } = await res.json();
+
+    // Hero
+    if (content.hero) {
+      if (content.hero.headline) document.getElementById('heroHeadline').innerHTML = content.hero.headline.replace(/\. /, '.<br>');
+      if (content.hero.subheadline) document.getElementById('heroSub').textContent = content.hero.subheadline;
+      if (content.hero.social_proof) document.getElementById('heroProof').textContent = content.hero.social_proof;
+      if (content.hero.cta_primary) document.getElementById('heroCTA1').textContent = content.hero.cta_primary + ' — No Credit Card';
+      if (content.hero.cta_secondary) document.getElementById('heroCTA2').textContent = content.hero.cta_secondary;
+    }
+
+    // Pricing
+    if (content.pricing) {
+      if (content.pricing.pro_price_usd) document.getElementById('proPrice').innerHTML = `$${content.pricing.pro_price_usd} <span>/mo</span>`;
+      if (content.pricing.pro_price_cfa) document.getElementById('proCFA').textContent = parseInt(content.pricing.pro_price_cfa).toLocaleString() + ' FCFA/month';
+      if (content.pricing.business_price_usd) document.getElementById('bizPrice').innerHTML = `$${content.pricing.business_price_usd} <span>/mo</span>`;
+      if (content.pricing.business_price_cfa) document.getElementById('bizCFA').textContent = parseInt(content.pricing.business_price_cfa).toLocaleString() + ' FCFA/month';
+
+      // Update toggle prices reference
+      if (content.pricing.pro_price_usd) prices.pro.monthly.usd = parseInt(content.pricing.pro_price_usd);
+      if (content.pricing.pro_price_cfa) prices.pro.monthly.cfa = parseInt(content.pricing.pro_price_cfa);
+      if (content.pricing.pro_price_usd_annual) prices.pro.annual.usd = parseInt(content.pricing.pro_price_usd_annual);
+      if (content.pricing.pro_price_cfa_annual) prices.pro.annual.cfa = parseInt(content.pricing.pro_price_cfa_annual);
+      if (content.pricing.business_price_usd) prices.business.monthly.usd = parseInt(content.pricing.business_price_usd);
+      if (content.pricing.business_price_cfa) prices.business.monthly.cfa = parseInt(content.pricing.business_price_cfa);
+      if (content.pricing.business_price_usd_annual) prices.business.annual.usd = parseInt(content.pricing.business_price_usd_annual);
+      if (content.pricing.business_price_cfa_annual) prices.business.annual.cfa = parseInt(content.pricing.business_price_cfa_annual);
+    }
+
+    // CTA
+    if (content.cta) {
+      if (content.cta.headline) document.getElementById('ctaTitle').textContent = content.cta.headline;
+      if (content.cta.subheadline) document.getElementById('ctaSubtitle').textContent = content.cta.subheadline;
+      if (content.cta.button) document.getElementById('ctaBtn').textContent = content.cta.button;
+    }
+
+    // Footer
+    if (content.footer) {
+      if (content.footer.tagline) document.getElementById('footerTagline').textContent = 'Learn. Create. Innovate. — ' + content.footer.tagline;
+      if (content.footer.copyright) document.getElementById('footerCopyright').textContent = '© ' + content.footer.copyright;
+    }
+  } catch(e) { console.log('CMS load error:', e.message); }
+}
+
+// ── LOAD ANNOUNCEMENTS ────────────────────────────────────────────────────────
+async function loadAnnouncements() {
+  try {
+    const res = await fetch('/api/announcements');
+    const { announcements } = await res.json();
+    if (!announcements || !announcements.length) return;
+
+    announcements.forEach(a => {
+      if (a.show_as_banner) {
+        document.getElementById('bannerText').textContent = a.message;
+        document.getElementById('announcementBanner').classList.add('show');
+      }
+      if (a.show_as_popup) {
+        const shown = sessionStorage.getItem('popup_' + a.id);
+        if (!shown) {
+          document.getElementById('popupTitle').textContent = a.title;
+          document.getElementById('popupMessage').textContent = a.message;
+          document.getElementById('announcementPopup').classList.add('show');
+          sessionStorage.setItem('popup_' + a.id, '1');
+        }
+      }
+    });
+  } catch(e) {}
+}
+
+loadCMS();
+loadAnnouncements();
+</script>
+</body>
+</html>
