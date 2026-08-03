@@ -282,8 +282,15 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
   <div class="board-main">
     <div class="splash" id="splash">
       <div class="sp-icon">🏛️</div>
-      <div class="sp-t">Your Board Awaits</div>
-      <div class="sp-s">Select any director above, then type your challenge. The best AI is chosen automatically — or use the toggle.</div>
+      <div class="sp-t">Not sure who to ask?</div>
+      <div class="sp-s" style="margin-bottom:16px">Describe your challenge and we'll match you with the right director instantly — or pick one from the row above.</div>
+      <div style="width:100%;max-width:420px;display:flex;flex-direction:column;gap:10px">
+        <textarea id="autoMatchInput" placeholder="e.g. I'm struggling to close deals with enterprise clients..." rows="3" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;outline:none;color:var(--text);font-size:13.5px;font-family:inherit;padding:12px 14px;resize:vertical" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();autoMatchDirector()}"></textarea>
+        <button class="sbtn" style="width:100%;height:auto;padding:11px;border-radius:9px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:13.5px;font-weight:600" onclick="autoMatchDirector()" id="autoMatchBtn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 7.2H22l-6 4.4 2.3 7.2-6.3-4.6-6.3 4.6 2.3-7.2-6-4.4h7.6z"/></svg>
+          Match Me With a Director
+        </button>
+      </div>
     </div>
 
     <section class="chatbox" id="chatbox">
