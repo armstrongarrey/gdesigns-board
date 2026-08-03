@@ -13,6 +13,16 @@ const session = require('express-session');
 
 const app = express();
 
+// ── DOMAIN REDIRECT: board.gdesignsme.com → consult.gdesignsme.com ─────────
+// Runs first, before any other middleware, to redirect old domain visitors
+app.use((req, res, next) => {
+  const host = req.headers.host || '';
+  if (host === 'board.gdesignsme.com') {
+    return res.redirect(301, `https://consult.gdesignsme.com${req.originalUrl}`);
+  }
+  next();
+});
+
 // ── MIDDLEWARE ─────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
