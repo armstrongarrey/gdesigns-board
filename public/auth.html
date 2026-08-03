@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign In — Arreyon Consult</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --purple:#6C3Bff; --purple-light:#8b5cf6; --bg:#09090f; --bg2:#0f0f1a;
+  --bg3:#14102a; --border:#1e1b4b; --border-light:#2d2a5e;
+  --text:#f1f0ff; --text2:#c4c0e8; --muted:#7c78a8; --green:#10b981; --red:#ef4444;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+.auth-page{flex:1;display:grid;grid-template-columns:1fr 1fr;min-height:100vh}
+.auth-left{background:linear-gradient(135deg,var(--bg3),var(--bg2));border-right:1px solid var(--border);padding:48px;display:flex;flex-direction:column;justify-content:space-between}
+.auth-logo{display:flex;align-items:center;gap:10px;text-decoration:none}
+.auth-logo-mark{width:36px;height:36px;background:var(--purple);border-radius:9px;display:flex;align-items:center;justify-content:center}
+.auth-logo-mark img{width:22px;height:22px;object-fit:contain}
+.auth-logo-name{font-size:15px;font-weight:700;color:var(--text)}
+.auth-logo-sub{font-size:10px;color:var(--muted)}
+.auth-left-content{flex:1;display:flex;flex-direction:column;justify-content:center;padding:40px 0}
+.auth-left h2{font-size:28px;font-weight:800;margin-bottom:12px;line-height:1.3}
+.auth-left p{font-size:15px;color:var(--text2);line-height:1.7;margin-bottom:32px}
+.auth-directors{display:flex;flex-direction:column;gap:10px}
+.auth-director{display:flex;align-items:center;gap:12px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;padding:10px 14px}
+.auth-dir-av{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0}
+.auth-dir-name{font-size:13px;font-weight:600;color:var(--text2)}
+.auth-dir-role{font-size:11px;color:var(--muted)}
+.auth-dir-online{width:7px;height:7px;border-radius:50%;background:var(--green);margin-left:auto}
+.auth-left-foot{font-size:12px;color:var(--muted)}
+
+.auth-right{display:flex;align-items:center;justify-content:center;padding:48px 40px}
+.auth-box{width:100%;max-width:420px}
+.auth-tabs{display:flex;gap:0;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:3px;margin-bottom:28px}
+.auth-tab{flex:1;padding:8px;border:none;background:transparent;color:var(--muted);font-size:14px;font-weight:600;font-family:inherit;cursor:pointer;border-radius:7px;transition:all .15s}
+.auth-tab.active{background:var(--purple);color:#fff}
+.auth-title{font-size:22px;font-weight:800;margin-bottom:6px}
+.auth-sub{font-size:13px;color:var(--muted);margin-bottom:24px;line-height:1.6}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:9px;outline:none;color:var(--text);font-size:14px;font-family:inherit;padding:11px 14px;transition:border-color .15s}
+.form-input:focus{border-color:var(--purple)}
+.form-input::placeholder{color:var(--muted)}
+select.form-input{appearance:none;cursor:pointer}
+.form-err{font-size:12px;color:var(--red);margin-top:5px;display:none}
+.form-err.show{display:block}
+.auth-btn{width:100%;background:var(--purple);border:none;border-radius:9px;color:#fff;font-size:15px;font-weight:600;font-family:inherit;padding:13px;cursor:pointer;transition:all .15s;margin-top:4px}
+.auth-btn:hover{background:var(--purple-light)}
+.auth-btn:disabled{opacity:.5;cursor:not-allowed}
+.auth-divider{display:flex;align-items:center;gap:12px;margin:20px 0;color:var(--muted);font-size:12px}
+.auth-divider::before,.auth-divider::after{content:'';flex:1;border-top:1px solid var(--border)}
+.google-btn{width:100%;background:var(--bg3);border:1px solid var(--border-light);border-radius:9px;color:var(--text2);font-size:14px;font-weight:600;font-family:inherit;padding:12px;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:10px;text-decoration:none}
+.google-btn:hover{border-color:var(--purple);color:var(--text)}
+.google-icon{width:18px;height:18px}
+.auth-footer{text-align:center;margin-top:20px;font-size:13px;color:var(--muted)}
+.auth-footer a{color:var(--purple-light);text-decoration:none;font-weight:500}
+.auth-link{background:none;border:none;color:var(--purple-light);font-size:13px;cursor:pointer;font-family:inherit;font-weight:500}
+.auth-success{background:#0a2a20;border:1px solid var(--green);border-radius:9px;padding:14px;font-size:13px;color:var(--green);margin-bottom:16px;display:none}
+.auth-success.show{display:block}
+.auth-error-box{background:#1a0808;border:1px solid var(--red);border-radius:9px;padding:14px;font-size:13px;color:var(--red);margin-bottom:16px;display:none}
+.auth-error-box.show{display:block}
+@media(max-width:768px){
+  .auth-page{grid-template-columns:1fr}
+  .auth-left{display:none}
+  .auth-right{padding:32px 20px;align-items:flex-start;padding-top:60px}
+  .auth-box{max-width:100%}
+}
+</style>
+</head>
+<body>
+<div class="auth-page">
+  <!-- LEFT PANEL -->
+  <div class="auth-left">
+    <a href="/" class="auth-logo">
+      <div class="auth-logo-mark"><img src="/assets/logo.png" alt="A" onerror="this.parentElement.innerHTML='<span style=\'color:#fff;font-weight:700\'>A</span>'"></div>
+      <div><div class="auth-logo-name">Arreyon Consult</div><div class="auth-logo-sub">by G-DESIGNS LTD</div></div>
+    </a>
+    <div class="auth-left-content">
+      <h2>Your board is ready to convene.</h2>
+      <p>Sign in and bring your hardest business decision to 29 legendary advisors — available right now.</p>
+      <div class="auth-directors">
+        <div class="auth-director"><div class="auth-dir-av" style="background:#2a4a1a;color:#7fcc50">JR</div><div><div class="auth-dir-name">John D. Rockefeller</div><div class="auth-dir-role">Empire &amp; Cost Strategy</div></div><div class="auth-dir-online"></div></div>
+        <div class="auth-director"><div class="auth-dir-av" style="background:#1a0500;color:#ff7040">DO</div><div><div class="auth-dir-name">David Ogilvy</div><div class="auth-dir-role">Brand &amp; Advertising</div></div><div class="auth-dir-online"></div></div>
+        <div class="auth-director"><div class="auth-dir-av" style="background:#001a1a;color:#40cccc">WB</div><div><div class="auth-dir-name">Warren Buffett</div><div class="auth-dir-role">Investment &amp; Long-Term Value</div></div><div class="auth-dir-online"></div></div>
+        <div class="auth-director"><div class="auth-dir-av" style="background:#2a1f00;color:#e6aa00">AD</div><div><div class="auth-dir-name">Aliko Dangote</div><div class="auth-dir-role">African Enterprise &amp; Scale</div></div><div class="auth-dir-online"></div></div>
+      </div>
+    </div>
+    <div class="auth-left-foot">© 2026 Arreyon Consult by G-DESIGNS LTD</div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="auth-right">
+    <div class="auth-box">
+
+      <!-- LOGIN FORM -->
+      <div id="loginForm">
+        <div class="auth-tabs">
+          <button class="auth-tab active" onclick="switchTab('login')">Sign In</button>
+          <button class="auth-tab" onclick="switchTab('signup')">Create Account</button>
+        </div>
+        <div class="auth-title">Welcome back</div>
+        <div class="auth-sub">Sign in to access your board</div>
+        <div class="auth-error-box" id="loginError"></div>
+        <div class="auth-success" id="loginSuccess"></div>
+        <div class="form-group"><label>Email Address</label><input class="form-input" type="email" id="loginEmail" placeholder="you@example.com"></div>
+        <div class="form-group">
+          <label>Password</label>
+          <input class="form-input" type="password" id="loginPassword" placeholder="Your password">
+          <div style="text-align:right;margin-top:6px"><button class="auth-link" onclick="switchTab('forgot')">Forgot password?</button></div>
+        </div>
+        <button class="auth-btn" onclick="doLogin()" id="loginBtn">Sign In</button>
+        <div class="auth-divider">or</div>
+        <a href="/auth/google" class="google-btn">
+          <svg class="google-icon" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          Continue with Google
+        </a>
+        <div class="auth-footer">Don't have an account? <button class="auth-link" onclick="switchTab('signup')">Create one free</button></div>
+      </div>
+
+      <!-- SIGNUP FORM -->
+      <div id="signupForm" style="display:none">
+        <div class="auth-tabs">
+          <button class="auth-tab" onclick="switchTab('login')">Sign In</button>
+          <button class="auth-tab active" onclick="switchTab('signup')">Create Account</button>
+        </div>
+        <div class="auth-title">Create your account</div>
+        <div class="auth-sub">Start free — no credit card required</div>
+        <div class="auth-error-box" id="signupError"></div>
+        <div class="form-row">
+          <div class="form-group"><label>First Name</label><input class="form-input" type="text" id="signupFirst" placeholder="John"></div>
+          <div class="form-group"><label>Last Name</label><input class="form-input" type="text" id="signupLast" placeholder="Doe"></div>
+        </div>
+        <div class="form-group"><label>Email Address</label><input class="form-input" type="email" id="signupEmail" placeholder="you@example.com"></div>
+        <div class="form-group"><label>Password</label><input class="form-input" type="password" id="signupPassword" placeholder="Minimum 8 characters"></div>
+        <div class="form-row">
+          <div class="form-group"><label>Phone (optional)</label><input class="form-input" type="tel" id="signupPhone" placeholder="+237..."></div>
+          <div class="form-group"><label>Country</label>
+            <select class="form-input" id="signupCountry">
+              <option value="">Select...</option>
+              <option>Cameroon</option><option>Nigeria</option><option>Ghana</option><option>Kenya</option>
+              <option>South Africa</option><option>Senegal</option><option>Ivory Coast</option>
+              <option>United Arab Emirates</option><option>United Kingdom</option><option>United States</option>
+              <option>France</option><option>Other</option>
+            </select>
+          </div>
+        </div>
+        <button class="auth-btn" onclick="doSignup()" id="signupBtn">Create Account</button>
+        <div class="auth-divider">or</div>
+        <a href="/auth/google" class="google-btn">
+          <svg class="google-icon" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          Sign up with Google
+        </a>
+        <div class="auth-footer">Already have an account? <button class="auth-link" onclick="switchTab('login')">Sign in</button></div>
+      </div>
+
+      <!-- FORGOT PASSWORD -->
+      <div id="forgotForm" style="display:none">
+        <div class="auth-title">Reset password</div>
+        <div class="auth-sub">Enter your email and we'll send a reset link</div>
+        <div class="auth-error-box" id="forgotError"></div>
+        <div class="auth-success" id="forgotSuccess"></div>
+        <div class="form-group"><label>Email Address</label><input class="form-input" type="email" id="forgotEmail" placeholder="you@example.com"></div>
+        <button class="auth-btn" onclick="doForgot()">Send Reset Link</button>
+        <div class="auth-footer" style="margin-top:16px"><button class="auth-link" onclick="switchTab('login')">Back to sign in</button></div>
+      </div>
+
+      <!-- RESET PASSWORD -->
+      <div id="resetForm" style="display:none">
+        <div class="auth-title">Set new password</div>
+        <div class="auth-sub">Choose a strong new password for your account</div>
+        <div class="auth-error-box" id="resetError"></div>
+        <div class="auth-success" id="resetSuccess"></div>
+        <div class="form-group"><label>New Password</label><input class="form-input" type="password" id="resetPassword" placeholder="Minimum 8 characters"></div>
+        <div class="form-group"><label>Confirm Password</label><input class="form-input" type="password" id="resetConfirm" placeholder="Repeat password"></div>
+        <button class="auth-btn" onclick="doReset()">Set New Password</button>
+      </div>
+
+      <!-- VERIFY NOTICE -->
+      <div id="verifyNotice" style="display:none">
+        <div class="auth-title">Check your email</div>
+        <div class="auth-sub">We've sent a verification link to <strong id="verifyEmail"></strong>. Click the link to activate your account.</div>
+        <div class="auth-success show" style="margin-top:16px">Verification email sent. Check your inbox and spam folder.</div>
+        <button class="auth-btn" style="margin-top:16px" onclick="resendVerification()">Resend Email</button>
+        <div class="auth-footer" style="margin-top:12px"><button class="auth-link" onclick="switchTab('login')">Back to sign in</button></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const resetToken = params.get('token');
+
+function switchTab(tab) {
+  ['loginForm','signupForm','forgotForm','resetForm','verifyNotice'].forEach(id => {
+    document.getElementById(id).style.display = 'none';
+  });
+  if (tab === 'login') document.getElementById('loginForm').style.display = 'block';
+  else if (tab === 'signup') document.getElementById('signupForm').style.display = 'block';
+  else if (tab === 'forgot') document.getElementById('forgotForm').style.display = 'block';
+  else if (tab === 'reset') document.getElementById('resetForm').style.display = 'block';
+  else if (tab === 'verify') document.getElementById('verifyNotice').style.display = 'block';
+}
+
+// Init
+if (resetToken) switchTab('reset');
+else if (params.get('mode') === 'signup') switchTab('signup');
+else switchTab('login');
+
+// Show URL error
+const urlErr = params.get('error');
+if (urlErr) {
+  const msgs = { invalid_token:'Verification link is invalid or expired.', google_failed:'Google sign-in failed. Please try again.', verify_failed:'Verification failed. Please try again.' };
+  const el = document.getElementById('loginError');
+  if (el) { el.textContent = msgs[urlErr] || 'An error occurred.'; el.classList.add('show'); }
+}
+
+function showErr(id, msg) {
+  const el = document.getElementById(id);
+  el.textContent = msg; el.classList.add('show');
+}
+function hideErr(id) { document.getElementById(id).classList.remove('show'); }
+function showSucc(id, msg) {
+  const el = document.getElementById(id);
+  el.textContent = msg; el.classList.add('show');
+}
+
+async function doLogin() {
+  hideErr('loginError');
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  if (!email || !password) return showErr('loginError', 'Please enter your email and password.');
+  const btn = document.getElementById('loginBtn');
+  btn.disabled = true; btn.textContent = 'Signing in...';
+  try {
+    const res = await fetch('/api/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, password}) });
+    const data = await res.json();
+    if (data.success) { window.location.href = '/dashboard'; }
+    else if (data.needsVerification) {
+      document.getElementById('verifyEmail').textContent = email;
+      switchTab('verify');
+    } else { showErr('loginError', data.error || 'Login failed.'); }
+  } catch(e) { showErr('loginError', 'Connection error. Please try again.'); }
+  btn.disabled = false; btn.textContent = 'Sign In';
+}
+
+async function doSignup() {
+  hideErr('signupError');
+  const firstName = document.getElementById('signupFirst').value.trim();
+  const lastName = document.getElementById('signupLast').value.trim();
+  const email = document.getElementById('signupEmail').value.trim();
+  const password = document.getElementById('signupPassword').value;
+  const phone = document.getElementById('signupPhone').value.trim();
+  const country = document.getElementById('signupCountry').value;
+  if (!firstName || !lastName || !email || !password) return showErr('signupError', 'Please fill in all required fields.');
+  if (password.length < 8) return showErr('signupError', 'Password must be at least 8 characters.');
+  const btn = document.getElementById('signupBtn');
+  btn.disabled = true; btn.textContent = 'Creating account...';
+  try {
+    const res = await fetch('/api/auth/register', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({firstName, lastName, email, password, phone, country}) });
+    const data = await res.json();
+    if (data.success) {
+      document.getElementById('verifyEmail').textContent = email;
+      switchTab('verify');
+    } else { showErr('signupError', data.error || 'Registration failed.'); }
+  } catch(e) { showErr('signupError', 'Connection error. Please try again.'); }
+  btn.disabled = false; btn.textContent = 'Create Account';
+}
+
+async function doForgot() {
+  hideErr('forgotError');
+  const email = document.getElementById('forgotEmail').value.trim();
+  if (!email) return showErr('forgotError', 'Please enter your email address.');
+  try {
+    await fetch('/api/auth/forgot-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email}) });
+    showSucc('forgotSuccess', 'If that email exists, a reset link has been sent.');
+  } catch(e) { showErr('forgotError', 'Failed. Please try again.'); }
+}
+
+async function doReset() {
+  hideErr('resetError');
+  const password = document.getElementById('resetPassword').value;
+  const confirm = document.getElementById('resetConfirm').value;
+  if (password.length < 8) return showErr('resetError', 'Password must be at least 8 characters.');
+  if (password !== confirm) return showErr('resetError', 'Passwords do not match.');
+  try {
+    const res = await fetch('/api/auth/reset-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: resetToken, password}) });
+    const data = await res.json();
+    if (data.success) { showSucc('resetSuccess', 'Password reset successfully. You can now sign in.'); setTimeout(() => switchTab('login'), 2000); }
+    else showErr('resetError', data.error || 'Reset failed.');
+  } catch(e) { showErr('resetError', 'Failed. Please try again.'); }
+}
+
+async function resendVerification() {
+  const email = document.getElementById('verifyEmail').textContent;
+  await fetch('/api/auth/resend-verification', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email}) });
+  alert('Verification email resent. Please check your inbox.');
+}
+
+// Enter key support
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    if (document.getElementById('loginForm').style.display !== 'none') doLogin();
+    else if (document.getElementById('signupForm').style.display !== 'none') doSignup();
+  }
+});
+</script>
+</body>
+</html>

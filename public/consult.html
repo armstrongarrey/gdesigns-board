@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Consult the Board — Arreyon Consult by Arreyon Consult by G-DESIGNS LTD</title>
+<meta name="description" content="Consult Arreyon's AI Board of Directors — 29 legendary business minds, free and instant.">
+<meta name="robots" content="index, follow">
+<meta name="description" content="Get strategic advice from G-DESIGNS' AI Board of Directors.">
+<meta name="theme-color" content="#0e0b1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>
+:root {
+  --purple:#6C3Bff; --bg:#09090f; --bg2:#0f0f1a; --bg3:#14102a; --bg4:#090717;
+  --border:#2a1f4e; --border2:#1a1030; --text:#e8e0ff; --text2:#c8b8f0;
+  --muted:#5a4a7a; --muted2:#3a2f5a; --green:#10a37f; --gold:#e6aa00;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html{scroll-behavior:smooth}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+
+/* HEADER */
+.hdr{background:#1a0e3a;border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50}
+.hdr-logo{display:flex;align-items:center;gap:10px}
+.hdr-mark{width:32px;height:32px;background:var(--purple);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff;flex-shrink:0}
+.hdr-title{font-size:13px;font-weight:600;color:var(--text)}
+.hdr-sub{font-size:9px;color:var(--purple);letter-spacing:.08em;text-transform:uppercase}
+.hdr-back{font-size:11px;color:var(--muted);text-decoration:none;border:1px solid var(--border);border-radius:7px;padding:5px 10px;transition:all .12s}
+.hdr-back:hover{border-color:var(--purple);color:var(--text2)}
+
+/* STAGES */
+.stage{display:none}.stage.active{display:block}
+
+/* ── STAGE 1: LANDING ── */
+.landing{max-width:700px;margin:0 auto;padding:36px 20px 60px}
+.landing-hero{text-align:center;margin-bottom:36px}
+.landing-badge{display:inline-flex;align-items:center;gap:6px;background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:5px 14px;margin-bottom:14px}
+.bdot{width:6px;height:6px;border-radius:50%;background:var(--purple);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.badge-text{font-size:11px;color:var(--purple);letter-spacing:.08em;text-transform:uppercase;font-weight:600}
+.landing-h1{font-size:clamp(24px,5vw,40px);font-weight:700;line-height:1.2;margin-bottom:10px}
+.landing-h1 span{color:var(--purple)}
+.landing-sub{font-size:14px;color:#9080c0;line-height:1.7;max-width:460px;margin:0 auto 24px}
+
+.dir-pills{display:flex;justify-content:center;flex-wrap:wrap;gap:7px;margin-bottom:32px}
+.dir-pill{display:flex;align-items:center;gap:5px;background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:4px 10px 4px 5px}
+.dav{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:7px;font-weight:700}
+.dir-pill-name{font-size:10.5px;color:var(--text2);font-weight:500}
+
+/* REVIEWS SECTION */
+.reviews-section{margin-bottom:32px}
+.reviews-title{font-size:13px;font-weight:600;color:var(--text2);text-align:center;margin-bottom:14px;display:flex;align-items:center;justify-content:center;gap:8px}
+.reviews-grid{display:flex;flex-direction:column;gap:10px}
+.review-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+.review-stars{color:var(--gold);font-size:14px;margin-bottom:6px}
+.review-text{font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:6px;font-style:italic}
+.review-author{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.review-biz{color:var(--text2);font-weight:500}
+.reviews-empty{font-size:12px;color:var(--muted2);text-align:center;padding:16px}
+
+/* FORM */
+.consult-form{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:26px 22px}
+.form-title{font-size:16px;font-weight:600;color:var(--text);margin-bottom:3px}
+.form-sub{font-size:13px;color:#9080c0;margin-bottom:20px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.form-field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
+.form-field label{font-size:10.5px;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;font-weight:600}
+.form-input{background:var(--bg);border:1px solid var(--border);border-radius:9px;outline:none;color:var(--text2);font-size:13.5px;font-family:inherit;padding:10px 12px;transition:border-color .15s;width:100%}
+.form-input:focus{border-color:var(--purple)}
+.form-input::placeholder{color:var(--muted2)}
+textarea.form-input{resize:vertical;min-height:78px;line-height:1.5}
+select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%235a4a7a' d='M6 8L1 3h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:30px;cursor:pointer}
+.form-divider{border:none;border-top:1px solid var(--border2);margin:16px 0}
+.submit-btn{width:100%;background:var(--purple);border:none;border-radius:10px;color:#fff;font-size:15px;font-weight:600;font-family:inherit;padding:13px;cursor:pointer;transition:opacity .15s;display:flex;align-items:center;justify-content:center;gap:8px}
+.submit-btn:hover{opacity:.88}
+.submit-btn:disabled{opacity:.4;cursor:not-allowed}
+.privacy-note{font-size:11px;color:var(--muted2);text-align:center;margin-top:10px}
+.form-err{display:none;font-size:12px;color:#ff8080;background:#1a0808;border:1px solid #3a1010;border-radius:8px;padding:8px 12px;margin-bottom:10px}
+.form-err.show{display:block}
+
+/* ── STAGE 2: LIVE CHAT ── */
+.chat-wrap{max-width:700px;margin:0 auto;padding:24px 20px 60px;display:flex;flex-direction:column;height:calc(100vh - 60px)}
+.chat-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-shrink:0}
+.chat-header-av{width:40px;height:40px;background:var(--purple);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.chat-header-title{font-size:16px;font-weight:600;color:var(--text)}
+.chat-header-sub{font-size:12px;color:#9080c0}
+.chat-header-right{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.context-badge{font-size:10px;color:var(--muted);background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:3px 10px}
+.context-badge.ready{color:var(--green);border-color:var(--green);background:#0a2a20}
+
+.chat-box{background:var(--bg2);border:1px solid var(--border);border-radius:16px;flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:400px}
+.chat-msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:4px}
+.chat-msgs::-webkit-scrollbar{width:3px}
+.chat-msgs::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+.cmsg{display:flex;gap:8px;align-items:flex-start}
+.cmsg.user{flex-direction:row-reverse}
+.cmsg-av{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;background:var(--purple);color:#fff}
+.cmsg-av.user-av{background:#2a1f4e;color:#9070d0}
+.cmsg-bub{max-width:82%;padding:9px 13px;font-size:13px;line-height:1.65}
+.cmsg.board .cmsg-bub{background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:12px 12px 12px 3px}
+.cmsg.user .cmsg-bub{background:var(--purple);color:#fff;border-radius:12px 12px 3px 12px}
+.cmsg-time{font-size:9px;color:#252035;padding:2px 36px 8px}
+.cmsg.user+.cmsg-time{text-align:right}
+
+.typing-row{display:flex;gap:8px;align-items:flex-end;margin-bottom:4px}
+.tpill{display:flex;gap:3px;align-items:center;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:12px 12px 12px 3px}
+.td{width:5px;height:5px;border-radius:50%;background:var(--purple);animation:ta 1.2s infinite}
+.td:nth-child(2){animation-delay:.2s}.td:nth-child(3){animation-delay:.4s}
+@keyframes ta{0%,80%,100%{opacity:.2}40%{opacity:1}}
+
+.chat-input-row{display:flex;gap:8px;padding:11px;border-top:1px solid var(--border2);background:var(--bg);flex-shrink:0}
+.chat-input{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:9px;outline:none;color:var(--text2);font-size:13px;font-family:inherit;padding:9px 12px;transition:border-color .15s;resize:none;min-height:38px;max-height:90px;line-height:1.5}
+.chat-input:focus{border-color:var(--purple)}
+.chat-input::placeholder{color:var(--muted2)}
+.chat-send{background:var(--purple);border:none;border-radius:9px;width:38px;height:38px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;flex-shrink:0;transition:opacity .12s}
+.chat-send:hover{opacity:.85}
+.chat-send:disabled{opacity:.3;cursor:not-allowed}
+
+.report-btn-wrap{margin-top:12px;flex-shrink:0}
+.report-btn{width:100%;background:linear-gradient(135deg,var(--purple),#9333ea);border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:600;font-family:inherit;padding:13px;cursor:pointer;display:none;align-items:center;justify-content:center;gap:8px;transition:opacity .15s}
+.report-btn.show{display:flex}
+.report-btn:hover{opacity:.88}
+
+/* ── STAGE 3: LOADING ── */
+.loading-wrap{max-width:520px;margin:60px auto;padding:40px 20px;text-align:center}
+.loading-icon{font-size:48px;margin-bottom:20px;animation:spin 2s linear infinite}
+@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+.loading-title{font-size:20px;font-weight:600;margin-bottom:8px}
+.loading-sub{font-size:14px;color:#9080c0;margin-bottom:24px;line-height:1.6}
+.loading-dirs{display:flex;flex-direction:column;gap:8px;text-align:left}
+.ldir{display:flex;align-items:center;gap:10px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:9px 12px}
+.ldir-av{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;flex-shrink:0}
+.ldir-name{font-size:12px;color:var(--text2);font-weight:500;flex:1}
+.st-done{color:var(--green)}.st-wait{color:var(--muted)}
+
+/* ── STAGE 4: REPORT ── */
+.report-wrap{max-width:780px;margin:0 auto;padding:28px 20px 40px}
+.report-hdr{background:linear-gradient(135deg,#1a0e3a,#0e0b1a);border:1px solid var(--border);border-radius:16px;padding:22px;margin-bottom:20px}
+.report-badge{display:inline-flex;align-items:center;gap:6px;background:var(--purple);border-radius:20px;padding:4px 12px;margin-bottom:10px}
+.report-badge-text{font-size:10px;color:#fff;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.report-title{font-size:20px;font-weight:700;margin-bottom:5px}
+.report-meta{font-size:12px;color:var(--muted)}
+.report-meta span{color:var(--text2);font-weight:500}
+
+.rsec{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:14px}
+.rsec-label{font-size:9.5px;color:var(--purple);letter-spacing:.12em;text-transform:uppercase;font-weight:700;margin-bottom:10px}
+.rsec-body{font-size:13.5px;color:var(--text2);line-height:1.75}
+.rsec-body p{margin-bottom:8px}.rsec-body p:last-child{margin-bottom:0}
+
+.insights-list{display:flex;flex-direction:column;gap:12px;margin-bottom:14px}
+.icard{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.icard-hdr{display:flex;align-items:center;gap:10px;padding:11px 15px;background:#120f28;border-bottom:1px solid var(--border2)}
+.icard-av{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0}
+.icard-name{font-size:12.5px;font-weight:600;color:var(--text)}
+.icard-role{font-size:10px;color:var(--muted)}
+.icard-ai{margin-left:auto;font-size:9px;font-weight:600;padding:2px 8px;border-radius:10px}
+.badge-claude{background:#2a1f5e;color:#9d7dff}
+.badge-chatgpt{background:#0a2a20;color:#10a37f}
+.badge-gemini{background:#0a1a3a;color:#4285f4}
+.icard-body{padding:13px 15px;font-size:13px;color:var(--text2);line-height:1.75}
+
+.synth-card{background:linear-gradient(135deg,#1a0e3a,#0a0817);border:1px solid var(--purple);border-radius:12px;padding:18px;margin-bottom:14px}
+.synth-label{font-size:9.5px;color:var(--purple);letter-spacing:.12em;text-transform:uppercase;font-weight:700;margin-bottom:12px}
+.synth-body{font-size:13.5px;color:var(--text2);line-height:1.8;white-space:pre-wrap}
+
+/* ── REVIEW SECTION ── */
+.review-section{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:14px}
+.review-section-title{font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px}
+.review-section-sub{font-size:13px;color:#9080c0;margin-bottom:16px}
+.stars-row{display:flex;gap:8px;margin-bottom:14px}
+.star-btn{font-size:30px;cursor:pointer;color:#3a3a5a;transition:color .15s,transform .12s;background:none;border:none;padding:2px;line-height:1}
+.star-btn.active,.star-btn.hover{color:#f5a623}
+.star-btn:hover{color:#f5a623;transform:scale(1.12)}
+.review-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:9px;outline:none;color:var(--text2);font-size:13px;font-family:inherit;padding:10px 12px;resize:vertical;min-height:80px;line-height:1.5;transition:border-color .15s;margin-bottom:12px}
+.review-input:focus{border-color:var(--purple)}
+.review-input::placeholder{color:var(--muted2)}
+.review-submit{background:var(--purple);border:none;border-radius:9px;color:#fff;font-size:13px;font-weight:600;font-family:inherit;padding:10px 20px;cursor:pointer;transition:opacity .12s}
+.review-submit:hover{opacity:.85}
+.review-submit:disabled{opacity:.4;cursor:not-allowed}
+.review-thanks{display:none;font-size:13px;color:var(--green);background:#0a2a20;border:1px solid var(--green);border-radius:9px;padding:12px;text-align:center}
+.review-thanks.show{display:block}
+
+/* REPORT ACTIONS */
+.report-actions{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.abtn{flex:1;min-width:130px;padding:11px 14px;border-radius:9px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:6px}
+.abtn-primary{background:var(--purple);border:none;color:#fff}
+.abtn-primary:hover{opacity:.85}
+.abtn-secondary{background:transparent;border:1px solid var(--border);color:var(--text2)}
+.abtn-secondary:hover{border-color:var(--purple);color:var(--text)}
+.abtn-new{background:transparent;border:1px solid var(--border);color:var(--muted)}
+.abtn-new:hover{border-color:var(--purple);color:var(--text2)}
+
+/* ── STAGE 5: DASHBOARD ── */
+.dash-wrap{max-width:680px;margin:0 auto;padding:28px 20px 60px}
+.dash-welcome{background:linear-gradient(135deg,#1a0e3a,#0e0b1a);border:1px solid var(--border);border-radius:16px;padding:22px;margin-bottom:20px;display:flex;align-items:center;gap:14px}
+.dash-av{width:46px;height:46px;background:var(--purple);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.dash-name{font-size:17px;font-weight:600;color:var(--text)}
+.dash-sub{font-size:12px;color:var(--muted);margin-top:2px}
+
+.dash-prev{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px}
+.dash-prev-label{font-size:9.5px;color:var(--purple);letter-spacing:.1em;text-transform:uppercase;font-weight:700;margin-bottom:10px}
+.dash-prev-biz{font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px}
+.dash-prev-challenge{font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:10px}
+.dash-prev-dirs{display:flex;flex-wrap:wrap;gap:5px}
+.dash-prev-dir{font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:3px 9px;color:var(--text2)}
+.view-report-btn{font-size:12px;color:var(--purple);background:none;border:none;cursor:pointer;padding:6px 0;font-family:inherit;text-decoration:underline}
+
+.dash-new{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px}
+.dash-new-label{font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px}
+.dash-new-sub{font-size:13px;color:#9080c0;margin-bottom:14px}
+.dash-topic{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:9px;outline:none;color:var(--text2);font-size:13.5px;font-family:inherit;padding:10px 12px;margin-bottom:10px;transition:border-color .15s}
+.dash-topic:focus{border-color:var(--purple)}
+.dash-topic::placeholder{color:var(--muted2)}
+.dash-start-btn{background:var(--purple);border:none;border-radius:9px;color:#fff;font-size:14px;font-weight:600;font-family:inherit;padding:11px 20px;cursor:pointer;transition:opacity .12s;width:100%}
+.dash-start-btn:hover{opacity:.85}
+.dash-start-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* ── HEYGEN VIDEO ── */
+.video-section{background:#000;border-radius:14px;overflow:hidden;margin-bottom:20px;position:relative}
+.video-section video{width:100%;display:block;border-radius:14px}
+.video-loading{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;gap:12px;background:linear-gradient(135deg,#1a0e3a,#0a0717);border-radius:14px;border:1px solid var(--border)}
+.video-loading-icon{font-size:32px;animation:spin 2s linear infinite}
+@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+.video-loading-text{font-size:13px;color:var(--muted);text-align:center;line-height:1.6}
+.video-loading-sub{font-size:11px;color:var(--muted2);text-align:center}
+.video-error{display:none;font-size:12px;color:var(--muted);text-align:center;padding:16px;background:var(--bg2);border-radius:10px;border:1px solid var(--border)}
+.video-badge{display:inline-flex;align-items:center;gap:6px;background:#1a0e3a;border:1px solid var(--border);border-radius:20px;padding:4px 12px;margin-bottom:10px}
+.video-badge-dot{width:6px;height:6px;border-radius:50%;background:var(--purple);animation:pulse 2s infinite}
+.video-badge-text{font-size:10px;color:var(--purple);font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.video-label{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.welcome-video-wrap{max-width:700px;margin:0 auto;padding:20px 20px 0}
+.report-video-wrap{margin-bottom:20px}
+
+@media(max-width:520px){.form-row{grid-template-columns:1fr}.report-actions{flex-direction:column}}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <div class="hdr-logo">
+    <img src="/assets/logo.png" id="consultLogoImg" style="width:32px;height:32px;object-fit:contain;display:block" alt="Arreyon" onerror="this.style.display='none';document.getElementById('consultLogoFb').style.display='flex'">
+    <div id="consultLogoFb" class="hdr-mark" style="display:none">A</div>
+    <div>
+      <div class="hdr-title">Arreyon Consult</div>
+      <div class="hdr-sub">Public Consultation</div>
+    </div>
+  </div>
+  <a href="/" class="hdr-back">← Back to Home</a>
+</header>
+
+<!-- STAGE 1: LANDING + FORM -->
+<div class="stage active" id="stage1">
+  <div class="landing">
+    <div class="landing-hero">
+      <div class="landing-badge"><div class="bdot"></div><span class="badge-text">Board Available Now</span></div>
+      <h1 class="landing-h1">Get Advice From<br><span>29 Legendary Minds</span></h1>
+      <p class="landing-sub">Have a real strategic conversation with our AI Board of Directors. Rockefeller, Ogilvy, Buffett, Porter and more will engage with your business — asking questions, challenging your thinking, and delivering a full report.</p>
+      <div class="dir-pills">
+        <div class="dir-pill"><div class="dav" style="background:#2a4a1a;color:#7fcc50">JR</div><span class="dir-pill-name">Rockefeller</span></div>
+        <div class="dir-pill"><div class="dav" style="background:#1a0500;color:#ff7040">DO</div><span class="dir-pill-name">Ogilvy</span></div>
+        <div class="dir-pill"><div class="dav" style="background:#001a1a;color:#40cccc">WB</div><span class="dir-pill-name">Buffett</span></div>
+        <div class="dir-pill"><div class="dav" style="background:#001520;color:#44bbdd">MP</div><span class="dir-pill-name">Porter</span></div>
+        <div class="dir-pill"><div class="dav" style="background:#001520;color:#00c8ff">EM</div><span class="dir-pill-name">Musk</span></div>
+        <div class="dir-pill"><div class="dav" style="background:#002a1a;color:#00cc88">BG</div><span class="dir-pill-name">Gates</span></div>
+        <div class="dir-pill"><div class="dav" style="background:#1a1000;color:#ffaa00">SG</div><span class="dir-pill-name">Godin</span></div>
+        <div class="dir-pill"><div class="dav" style="background:#001a10;color:#30dd88">PK</div><span class="dir-pill-name">Kotler</span></div>
+      </div>
+    </div>
+
+    <!-- Public reviews -->
+    <div class="reviews-section" id="reviewsSection" style="display:none">
+      <div class="reviews-title">⭐ What Others Say</div>
+      <div class="reviews-grid" id="reviewsGrid"></div>
+    </div>
+
+    <div class="consult-form">
+      <div class="form-title">Start Your Consultation</div>
+      <div class="form-sub">Fill in your details — then have a real conversation with the board before they generate your report.</div>
+      <div class="form-row">
+        <div class="form-field"><label>Your Name *</label><input class="form-input" id="fName" placeholder="e.g. John Doe" required></div>
+        <div class="form-field"><label>Phone Number *</label><input class="form-input" type="tel" id="fPhone" placeholder="+237 6 75 78 15 17" required></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label>Email Address *</label><input class="form-input" type="email" id="fEmail" placeholder="you@example.com" required></div>
+        <div class="form-field"><label>Business Type *</label><input class="form-input" id="fBizType" placeholder="e.g. Digital Agency, Restaurant" required></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label>Industry</label>
+          <select class="form-input" id="fIndustry">
+            <option value="">Select industry...</option>
+            <option>Technology & Digital</option><option>Marketing & Advertising</option>
+            <option>Retail & E-commerce</option><option>Food & Hospitality</option>
+            <option>Education & Training</option><option>Health & Wellness</option>
+            <option>Finance & Investment</option><option>Real Estate</option>
+            <option>Manufacturing</option><option>Agriculture</option>
+            <option>Media & Entertainment</option><option>Logistics & Supply Chain</option>
+            <option>Professional Services</option><option>Non-profit & Social Impact</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div class="form-field"><label>Growth Stage</label>
+          <select class="form-input" id="fStage">
+            <option value="">Select stage...</option>
+            <option>Idea / Pre-launch</option><option>Early Stage (0–1 year)</option>
+            <option>Growth Stage (1–3 years)</option><option>Established (3+ years)</option>
+            <option>Scaling / Expansion</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-field"><label>Location</label><input class="form-input" id="fLocation" placeholder="e.g. Buea, Cameroon"></div>
+      <hr class="form-divider">
+      <div class="form-field"><label>Main Challenge / Problem *</label><textarea class="form-input" id="fChallenge" placeholder="What is the biggest challenge your business is facing right now?" rows="3" required></textarea></div>
+      <div class="form-field"><label>Goal / What You Want to Achieve *</label><textarea class="form-input" id="fGoal" placeholder="What outcome do you want from this consultation?" rows="2" required></textarea></div>
+      <div class="form-err" id="formErr"></div>
+      <button class="submit-btn" onclick="startConsult()">🏛️ Begin Consultation</button>
+      <div class="privacy-note">🔒 Your information is kept confidential and used only for this consultation.</div>
+    </div>
+  </div>
+</div>
+
+<!-- STAGE 2: LIVE CHAT -->
+<div class="stage" id="stage2">
+  <!-- Welcome Video (shows loading immediately, video loads async) -->
+  <div class="welcome-video-wrap" id="welcomeVideoWrap">
+    <div class="video-badge"><div class="video-badge-dot"></div><span class="video-badge-text">🎬 Personal Welcome from G-DESIGNS</span></div>
+    <div id="welcomeVideoContainer">
+      <div class="video-loading" id="welcomeLoading">
+        <div class="video-loading-icon">🎬</div>
+        <div class="video-loading-text">Preparing your personal welcome video...</div>
+        <div class="video-loading-sub">This takes about 60 seconds. The board secretary will begin while it loads.</div>
+      </div>
+      <div class="video-error" id="welcomeVideoError">Welcome video unavailable — continuing with text consultation.</div>
+    </div>
+  </div>
+
+  <div class="chat-wrap">
+    <div class="chat-header">
+      <div class="chat-header-av">🏛️</div>
+      <div>
+        <div class="chat-header-title">Board Secretary</div>
+        <div class="chat-header-sub">Gathering context before assembling your board</div>
+      </div>
+      <div class="chat-header-right">
+        <div class="context-badge" id="contextBadge">Building context...</div>
+      </div>
+    </div>
+
+    <div class="chat-box">
+      <div class="chat-msgs" id="chatMsgs"></div>
+      <div class="chat-input-row">
+        <textarea class="chat-input" id="chatIn" placeholder="Type your answer..." rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+        <button class="chat-send" id="chatSend" onclick="sendChat()">↑</button>
+      </div>
+    </div>
+
+    <div class="report-btn-wrap">
+      <button class="report-btn" id="reportBtn" onclick="generateReport()">⚡ Generate Board Report</button>
+    </div>
+  </div>
+</div>
+
+<!-- STAGE 3: LOADING -->
+<div class="stage" id="stage3">
+  <div class="loading-wrap">
+    <div class="loading-icon">⚙️</div>
+    <div class="loading-title">Assembling Your Board</div>
+    <div class="loading-sub">Our directors are reviewing your case. Each one is preparing their unique strategic perspective. This takes 30–60 seconds.</div>
+    <div class="loading-dirs" id="loadingDirs"></div>
+  </div>
+</div>
+
+<!-- STAGE 4: REPORT -->
+<div class="stage" id="stage4">
+  <div class="report-wrap">
+    <div class="report-hdr">
+      <div class="report-badge"><span class="report-badge-text">🏛️ Board Consultation Report</span></div>
+      <div class="report-title" id="rTitle">Strategic Advisory Report</div>
+      <div class="report-meta">Prepared for <span id="rClient"></span> · <span id="rDate"></span></div>
+    </div>
+
+    <!-- VIDEO REPORT (loads async) -->
+    <div class="report-video-wrap" id="reportVideoWrap">
+      <div class="video-label">🎬 Video Presentation from the Board</div>
+      <div id="reportVideoContainer">
+        <div class="video-loading" id="reportVideoLoading">
+          <div class="video-loading-icon">⚙️</div>
+          <div class="video-loading-text">Generating your personalised video board presentation...</div>
+          <div class="video-loading-sub">Armstrong is preparing to deliver your strategic verdict. Takes about 60–90 seconds.</div>
+        </div>
+        <div class="video-error" id="reportVideoError">Video presentation unavailable — please read the written report below.</div>
+      </div>
+    </div>
+
+    <div class="rsec">
+      <div class="rsec-label">📋 Executive Summary</div>
+      <div class="rsec-body" id="rSummary"></div>
+    </div>
+
+    <div class="rsec-label" style="padding:0 4px 10px;font-size:9.5px;color:var(--purple);letter-spacing:.12em;text-transform:uppercase;font-weight:700;">🎯 Board Member Insights</div>
+    <div class="insights-list" id="rInsights"></div>
+
+    <div class="synth-card">
+      <div class="synth-label">⚡ Synthesised Board Recommendation</div>
+      <div class="synth-body" id="rSynth"></div>
+    </div>
+
+    <div class="report-actions">
+      <button class="abtn abtn-primary" onclick="downloadReport()">⬇ Download Report</button>
+      <button class="abtn abtn-secondary" onclick="printReport()">🖨 Print</button>
+      <button class="abtn abtn-new" onclick="showDashboard()">💬 New Consultation</button>
+    </div>
+
+    <!-- REVIEW -->
+    <div class="review-section">
+      <div class="review-section-title">⭐ Share Your Experience</div>
+      <div class="review-section-sub">How was your consultation with the G-DESIGNS Board? Your feedback helps us improve.</div>
+      <div class="stars-row" id="starsRow">
+        <button class="star-btn" data-v="1" onclick="setStar(1)" style="color:#3a3a5a">★</button>
+        <button class="star-btn" data-v="2" onclick="setStar(2)" style="color:#3a3a5a">★</button>
+        <button class="star-btn" data-v="3" onclick="setStar(3)" style="color:#3a3a5a">★</button>
+        <button class="star-btn" data-v="4" onclick="setStar(4)" style="color:#3a3a5a">★</button>
+        <button class="star-btn" data-v="5" onclick="setStar(5)" style="color:#3a3a5a">★</button>
+      </div>
+      <textarea class="review-input" id="reviewText" placeholder="Tell us about your experience with the board consultation..."></textarea>
+      <button class="review-submit" id="reviewSubmit" onclick="submitReview()">Submit Review</button>
+      <div class="review-thanks" id="reviewThanks">🎉 Thank you for your feedback! Your review helps other entrepreneurs find the board.</div>
+    </div>
+
+    <div style="font-size:11px;color:var(--muted2);text-align:center;margin-top:8px">
+      Powered by Arreyon Consult by G-DESIGNS LTD AI Board · board.gdesignsme.com · Learn. Create. Innovate.
+    </div>
+  </div>
+</div>
+
+<!-- STAGE 5: DASHBOARD -->
+<div class="stage" id="stage5">
+  <div class="dash-wrap">
+    <div class="dash-welcome">
+      <div class="dash-av">👋</div>
+      <div>
+        <div class="dash-name" id="dashName">Welcome back!</div>
+        <div class="dash-sub" id="dashSub">Ready for your next consultation?</div>
+      </div>
+    </div>
+
+    <div class="dash-prev" id="dashPrev">
+      <div class="dash-prev-label">📋 Previous Consultation</div>
+      <div class="dash-prev-biz" id="dashPrevBiz"></div>
+      <div class="dash-prev-challenge" id="dashPrevChallenge"></div>
+      <div class="dash-prev-dirs" id="dashPrevDirs"></div>
+      <br>
+      <button class="view-report-btn" onclick="showStage(4)">↩ View Previous Report</button>
+    </div>
+
+    <div class="dash-new">
+      <div class="dash-new-label">💬 Start New Consultation</div>
+      <div class="dash-new-sub">What would you like to discuss with the board today?</div>
+      <textarea class="dash-topic" id="dashTopic" placeholder="Describe your new challenge or question for the board..." rows="3"></textarea>
+      <button class="dash-start-btn" onclick="startNewTopic()">🏛️ Consult the Board</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────────────
+const WEBHOOK = 'https://script.google.com/macros/s/AKfycbzi608sQoBBfj_LW4cex5s_ZSjkM-zRlWVePUhePr8dqJBmYgnBryN7vI0-KNZbkMc/exec';
+
+const DIR_COLORS = {
+  rockefeller:['#2a4a1a','#7fcc50'],dangote:['#2a1f00','#e6aa00'],
+  ogilvy:['#1a0500','#ff7040'],kotler:['#001a10','#30dd88'],
+  porter:['#001520','#44bbdd'],buffett:['#001a1a','#40cccc'],
+  thiel:['#1a0a00','#ff6600'],gates:['#002a1a','#00cc88'],
+  dalio:['#0a1a0a','#44dd88'],godin:['#1a1000','#ffaa00'],
+  sinek:['#001520','#44aadd'],moukouri:['#0a1a2a','#60aaff'],
+  robbins:['#2a0000','#ff4444'],drucker:['#0a0a1a','#8888ff'],
+  default:['#1a1a2a','#8888cc']
+};
+function dc(id){return DIR_COLORS[id]||DIR_COLORS.default}
+
+// ── State ──────────────────────────────────────────────────────────────────
+let clientInfo = {};
+let bizData = {};
+let chatHistory = [];
+let reportData = null;
+let starRating = 0;
+let contextScore = 0;
+let readyForReport = false;
+
+// ── Utilities ──────────────────────────────────────────────────────────────
+function ts(){return new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}
+function showStage(n){document.querySelectorAll('.stage').forEach(s=>s.classList.remove('active'));document.getElementById('stage'+n).classList.add('active');window.scrollTo(0,0)}
+
+// ── STAGE 1 ────────────────────────────────────────────────────────────────
+function startConsult(){
+  const name=document.getElementById('fName').value.trim();
+  const phone=document.getElementById('fPhone').value.trim();
+  const email=document.getElementById('fEmail').value.trim();
+  const biz=document.getElementById('fBizType').value.trim();
+  const challenge=document.getElementById('fChallenge').value.trim();
+  const goal=document.getElementById('fGoal').value.trim();
+  const err=document.getElementById('formErr');
+
+  if(!name||!phone||!email||!biz||!challenge||!goal){
+    err.textContent='Please fill in all required fields marked with *.';
+    err.classList.add('show');return;
+  }
+  if(!email.includes('@')){err.textContent='Please enter a valid email address.';err.classList.add('show');return;}
+  err.classList.remove('show');
+
+  clientInfo={name,phone,email};
+  bizData={businessType:biz,industry:document.getElementById('fIndustry').value,
+    stage:document.getElementById('fStage').value,location:document.getElementById('fLocation').value.trim(),
+    challenge,goal};
+
+  showStage(2);
+  // Log client info immediately
+  logClientInfo();
+  // Delay welcome video slightly so stage 2 is fully rendered first
+  setTimeout(() => loadWelcomeVideo(clientInfo.name, bizData.businessType), 2000);
+  initChat();
+}
+
+// ── STAGE 2: LIVE CHAT ─────────────────────────────────────────────────────
+function addMsg(text,from){
+  const box=document.getElementById('chatMsgs');
+  const row=document.createElement('div');
+  row.className='cmsg '+from;
+  if(from==='board'){
+    row.innerHTML=`<div class="cmsg-av">🏛️</div><div class="cmsg-bub">${text.replace(/\n/g,'<br>')}</div>`;
+  } else {
+    row.innerHTML=`<div class="cmsg-bub">${text.replace(/\n/g,'<br>')}</div><div class="cmsg-av user-av">YOU</div>`;
+  }
+  box.appendChild(row);
+  const t=document.createElement('div');
+  t.className='cmsg-time';t.style.textAlign=from==='board'?'left':'right';
+  t.textContent=ts();box.appendChild(t);
+  box.scrollTop=box.scrollHeight;
+}
+
+function showTyping(){
+  const box=document.getElementById('chatMsgs');
+  const r=document.createElement('div');
+  r.className='typing-row';r.id='ctyp';
+  r.innerHTML=`<div class="cmsg-av" style="width:28px;height:28px;border-radius:50%;background:var(--purple);color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px">🏛️</div><div class="tpill"><div class="td"></div><div class="td"></div><div class="td"></div></div>`;
+  box.appendChild(r);box.scrollTop=box.scrollHeight;
+}
+function removeTyping(){const t=document.getElementById('ctyp');if(t)t.remove();}
+
+async function initChat(){
+  const firstQ = await getFirstQuestion();
+  const welcomeMsg = `Welcome ${clientInfo.name}! I'm the Board Secretary. I've reviewed your submission about ${bizData.businessType}.\n\nBefore I assemble your board, I need to ask you a few focused questions so the directors can give you truly tailored advice — not generic answers. This is a real conversation, so take your time.\n\nLet's start: ${firstQ}`;
+  addMsg(welcomeMsg, 'board');
+  // Seed chatHistory so server sees full conversation from the start
+  chatHistory.push({role:'assistant', content: welcomeMsg});
+}
+
+async function getFirstQuestion(){
+  try{
+    const res=await fetch('/api/consult/qualify',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({businessData:bizData,conversationHistory:[]})});
+    const d=await res.json();
+    return d.question||`What is the single biggest obstacle standing between you and your goal of "${bizData.goal}" right now?`;
+  }catch{return `What is the single biggest obstacle standing between you and your goal of "${bizData.goal}" right now?`;}
+}
+
+async function sendChat(){
+  const inp=document.getElementById('chatIn');
+  const text=inp.value.trim();
+  if(!text||document.getElementById('chatSend').disabled)return;
+  inp.value='';inp.style.height='auto';
+  document.getElementById('chatSend').disabled=true;
+
+  addMsg(text,'user');
+  chatHistory.push({role:'user',content:text});
+  bizData.additionalContext=(bizData.additionalContext||'')+' '+text;
+
+  showTyping();
+
+  try{
+    const res=await fetch('/api/consult/qualify',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({businessData:bizData,conversationHistory:chatHistory})});
+    const d=await res.json();
+    removeTyping();
+
+    if(d.ready){
+      readyForReport=true;
+      addMsg(`Excellent. I now have a thorough understanding of your situation. The board is ready to convene.\n\nI'm preparing to brief ${selectPreviewCount()} directors who are most relevant to your challenge. Click the button below when you're ready for your full strategic report.`,'board');
+      chatHistory.push({role:'assistant',content:'Context gathered. Ready for report.'});
+      document.getElementById('reportBtn').classList.add('show');
+      document.getElementById('contextBadge').textContent='✓ Ready for report';
+      document.getElementById('contextBadge').className='context-badge ready';
+    } else {
+      addMsg(d.question,'board');
+      chatHistory.push({role:'assistant',content:d.question});
+      updateContextBadge();
+    }
+  }catch(e){
+    removeTyping();
+    addMsg('I encountered a brief interruption. Please try sending your message again.','board');
+  }
+
+  document.getElementById('chatSend').disabled=false;
+  document.getElementById('chatIn').focus();
+}
+
+function selectPreviewCount(){
+  return Math.min(4+Math.floor(chatHistory.length/4),6);
+}
+
+function updateContextBadge(){
+  const exchanges=chatHistory.filter(m=>m.role==='user').length;
+  const labels=['Building context...','Getting clearer...','Good detail...','Strong context...','Deep understanding...','Almost ready...','Nearly there...','Ready soon...'];
+  document.getElementById('contextBadge').textContent=labels[Math.min(exchanges,7)];
+}
+
+// ── STAGE 3 + 4: GENERATE REPORT ──────────────────────────────────────────
+async function generateReport(){
+  showStage(3);
+
+  // Log to Google Sheets
+  logConsultation();
+
+  try{
+    const res=await fetch('/api/consult/run',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({businessData:bizData,clientInfo,conversationHistory:chatHistory})});
+    if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||'Server error');}
+    const data=await res.json();
+
+    // Show directors loading
+    const ld=document.getElementById('loadingDirs');
+    ld.innerHTML=data.directors.map(d=>{
+      const[bg,fg]=dc(d.id);
+      const init=d.name.split(' ').map(w=>w[0]).slice(0,2).join('');
+      return `<div class="ldir"><div class="ldir-av" style="background:${bg};color:${fg}">${init}</div>
+        <div class="ldir-name">${d.name} — ${d.role}</div>
+        <div class="st-done">✓ Done</div></div>`;
+    }).join('');
+
+    reportData=data;
+    setTimeout(()=>renderReport(data),1000);
+  }catch(e){
+    showStage(2);
+    alert('Error generating report: '+e.message+'. Please try again.');
+  }
+}
+
+function renderReport(data){
+  showStage(4);
+  document.getElementById('rTitle').textContent='Strategic Report: '+data.businessData.businessType;
+  document.getElementById('rClient').textContent=data.client.name;
+  document.getElementById('rDate').textContent=new Date(data.generatedAt).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'});
+
+  const s=data.synthesis;
+  const sumMatch=s.match(/EXECUTIVE SUMMARY\s*([\s\S]*?)(?=KEY STRATEGIC|RISK|90-DAY|FINAL|$)/i);
+  const sumText=sumMatch?sumMatch[1].trim():s.substring(0,300);
+  document.getElementById('rSummary').innerHTML=sumText.split('\n').filter(Boolean).map(p=>`<p>${p}</p>`).join('');
+
+  document.getElementById('rInsights').innerHTML=data.insights.map(i=>{
+    const[bg,fg]=dc(i.id);
+    const init=i.name.split(' ').map(w=>w[0]).slice(0,2).join('');
+    const aiL=i.ai==='chatgpt'?'ChatGPT':i.ai==='gemini'?'Gemini':'Claude';
+    return `<div class="icard">
+      <div class="icard-hdr">
+        <div class="icard-av" style="background:${bg};color:${fg}">${init}</div>
+        <div><div class="icard-name">${i.name}</div><div class="icard-role">${i.role}</div></div>
+        <div class="icard-ai badge-${i.ai}">${aiL}</div>
+      </div>
+      <div class="icard-body">${i.insight.split('\n').filter(Boolean).map(p=>`<p style="margin-bottom:8px">${p}</p>`).join('')}</div>
+    </div>`;
+  }).join('');
+
+  const full=s.replace(/EXECUTIVE SUMMARY[\s\S]*?(?=KEY STRATEGIC|RISK|90-DAY|FINAL)/i,'').trim();
+  document.getElementById('rSynth').textContent=full;
+
+  // Start report video async (runs in background while user reads)
+  loadReportVideo(data.client.name, data.businessData.businessType, data.synthesis);
+}
+
+// ── REVIEW SYSTEM ──────────────────────────────────────────────────────────
+function setStar(n){
+  starRating=n;
+  renderStars(n);
+}
+
+function renderStars(highlight){
+  document.querySelectorAll('.star-btn').forEach(b=>{
+    const v=parseInt(b.dataset.v);
+    b.style.color=v<=highlight?'#f5a623':'#444466';
+  });
+}
+
+// Star hover effects
+document.addEventListener('DOMContentLoaded',()=>{
+  document.querySelectorAll('.star-btn').forEach(b=>{
+    b.addEventListener('mouseenter',()=>renderStars(parseInt(b.dataset.v)));
+    b.addEventListener('mouseleave',()=>renderStars(starRating||0));
+  });
+});
+
+async function submitReview(){
+  if(!starRating){alert('Please select a star rating first.');return;}
+  const comment=document.getElementById('reviewText').value.trim();
+  if(!comment){alert('Please write a brief comment about your experience.');return;}
+
+  const btn=document.getElementById('reviewSubmit');
+  btn.disabled=true;btn.textContent='Submitting...';
+
+  try{
+    await fetch(WEBHOOK,{method:'POST',mode:'no-cors',
+      body:JSON.stringify({type:'review',timestamp:new Date().toISOString(),
+        name:clientInfo.name,email:clientInfo.email,stars:starRating,
+        comment,businessType:bizData.businessType})});
+    document.getElementById('reviewThanks').classList.add('show');
+    btn.style.display='none';
+    document.getElementById('reviewText').disabled=true;
+    document.querySelectorAll('.star-btn').forEach(b=>b.disabled=true);
+  }catch(e){
+    btn.disabled=false;btn.textContent='Submit Review';
+    alert('Could not submit review. Please try again.');
+  }
+}
+
+// ── DEVICE DETECTION ──────────────────────────────────────────────────────
+function getDeviceType() {
+  const w = window.innerWidth;
+  if (w < 768) return 'mobile';
+  if (w < 1024) return 'tablet';
+  return 'desktop';
+}
+
+// ── HEYGEN VIDEO FUNCTIONS ─────────────────────────────────────────────────
+
+async function loadWelcomeVideo(name, businessType) {
+  const deviceType = getDeviceType();
+  try {
+    const res = await fetch('/api/heygen/welcome', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientName: name, businessType, deviceType })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Video generation failed');
+    }
+    const data = await res.json();
+    if (data.videoUrl) {
+      renderVideo('welcomeVideoContainer', 'welcomeLoading', 'welcomeVideoError', data.videoUrl, deviceType);
+    } else {
+      throw new Error('No video URL returned');
+    }
+  } catch(e) {
+    console.log('Welcome video error:', e.message);
+    const loading = document.getElementById('welcomeLoading');
+    const error = document.getElementById('welcomeVideoError');
+    if (loading) loading.style.display = 'none';
+    if (error) error.style.display = 'block';
+  }
+}
+
+async function loadReportVideo(name, businessType, synthesis) {
+  const deviceType = getDeviceType();
+  try {
+    const res = await fetch('/api/heygen/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientName: name, businessType, synthesis, deviceType })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Report video failed');
+    }
+    const data = await res.json();
+    if (data.videoUrl) {
+      renderVideo('reportVideoContainer', 'reportVideoLoading', 'reportVideoError', data.videoUrl, deviceType);
+    } else {
+      throw new Error('No video URL returned');
+    }
+  } catch(e) {
+    console.log('Report video error:', e.message);
+    document.getElementById('reportVideoLoading').style.display = 'none';
+    document.getElementById('reportVideoError').style.display = 'block';
+  }
+}
+
+function renderVideo(containerId, loadingId, errorId, videoUrl, deviceType) {
+  const container = document.getElementById(containerId);
+  const loading = document.getElementById(loadingId);
+  const error = document.getElementById(errorId);
+  if (loading) loading.style.display = 'none';
+  if (error) error.style.display = 'none';
+
+  const isMobile = deviceType === 'mobile';
+  const isTablet = deviceType === 'tablet';
+  const maxWidth = isMobile ? '420px' : isTablet ? '620px' : '100%';
+
+  const videoWrap = document.createElement('div');
+  videoWrap.className = 'video-section';
+  videoWrap.style.maxWidth = maxWidth;
+  videoWrap.style.margin = '0 auto';
+  videoWrap.innerHTML = `
+    <video controls autoplay playsinline style="width:100%;border-radius:14px;display:block">
+      <source src="${videoUrl}" type="video/mp4">
+      Your browser does not support video playback.
+    </video>`;
+  container.appendChild(videoWrap);
+}
+
+// ── GOOGLE SHEETS LOGGING ──────────────────────────────────────────────────
+// Immediate capture — logs as soon as form is submitted
+async function logClientInfo(){
+  try{
+    await fetch(WEBHOOK,{method:'POST',mode:'no-cors',
+      body:JSON.stringify({type:'consultation',timestamp:new Date().toISOString(),
+        name:clientInfo.name,phone:clientInfo.phone,email:clientInfo.email,
+        businessType:bizData.businessType,industry:bizData.industry,
+        location:bizData.location,stage:bizData.stage,budget:'To be discussed',
+        challenge:bizData.challenge,goal:bizData.goal,directors:'Pending'})});
+  }catch(e){console.log('Client log error:',e.message);}
+}
+
+// Full log after report — updates with directors used
+async function logConsultation(){
+  try{
+    const directors=reportData?reportData.directors.map(d=>d.name).join(', '):'Pending';
+    const budget=chatHistory.filter(m=>m.role==='user').map(m=>m.content).join(' ').match(/\d+[k$]?|budget|afford|spend|invest/i)?'Discussed in chat':'Not specified';
+    await fetch(WEBHOOK,{method:'POST',mode:'no-cors',
+      body:JSON.stringify({type:'consultation',timestamp:new Date().toISOString(),
+        name:clientInfo.name,phone:clientInfo.phone,email:clientInfo.email,
+        businessType:bizData.businessType,industry:bizData.industry,
+        location:bizData.location,stage:bizData.stage,budget,
+        challenge:bizData.challenge,goal:bizData.goal,directors})});
+  }catch(e){console.log('Logging error:',e.message);}
+}
+
+// ── LOAD PUBLIC REVIEWS ────────────────────────────────────────────────────
+async function loadReviews(){
+  try{
+    const res=await fetch(WEBHOOK+'?type=get_reviews',{method:'GET',mode:'cors'});
+    const data=await res.json();
+    if(data.reviews&&data.reviews.length>0){
+      const grid=document.getElementById('reviewsGrid');
+      grid.innerHTML=data.reviews.slice(0,5).map(r=>`
+        <div class="review-card">
+          <div class="review-stars">${'★'.repeat(r.stars)}${'☆'.repeat(5-r.stars)}</div>
+          <div class="review-text">"${r.comment}"</div>
+          <div class="review-author">
+            <span class="review-biz">${r.name.split(' ')[0]}</span>
+            · ${r.businessType||'Business Owner'}
+          </div>
+        </div>`).join('');
+      document.getElementById('reviewsSection').style.display='block';
+    }
+  }catch(e){/* Reviews unavailable — hide section silently */}
+}
+
+// ── STAGE 5: DASHBOARD ─────────────────────────────────────────────────────
+function showDashboard(){
+  document.getElementById('dashName').textContent='Welcome back, '+clientInfo.name+'!';
+  document.getElementById('dashSub').textContent=clientInfo.email+' · '+bizData.businessType;
+
+  if(reportData){
+    document.getElementById('dashPrevBiz').textContent=bizData.businessType;
+    document.getElementById('dashPrevChallenge').textContent=bizData.challenge;
+    document.getElementById('dashPrevDirs').innerHTML=reportData.directors.map(d=>
+      `<span class="dash-prev-dir">${d.name.split(' ').slice(-1)[0]}</span>`
+    ).join('');
+    document.getElementById('dashPrev').style.display='block';
+  } else {
+    document.getElementById('dashPrev').style.display='none';
+  }
+
+  showStage(5);
+}
+
+async function startNewTopic(){
+  const topic=document.getElementById('dashTopic').value.trim();
+  if(!topic){alert('Please describe your new challenge or question.');return;}
+
+  // Update bizData with new challenge — keep client info
+  bizData.challenge=topic;
+  bizData.goal='';
+  bizData.additionalContext='';
+  chatHistory=[];
+  readyForReport=false;
+
+  document.getElementById('chatMsgs').innerHTML='';
+  document.getElementById('reportBtn').classList.remove('show');
+  document.getElementById('contextBadge').textContent='Building context...';
+  document.getElementById('contextBadge').className='context-badge';
+  document.getElementById('chatIn').disabled=false;
+  document.getElementById('chatSend').disabled=false;
+
+  showStage(2);
+
+  addMsg(`Welcome back, ${clientInfo.name}! I can see you want to discuss: "${topic}"\n\nLet's dive right in. ${await getFirstQuestion()}`, 'board');
+}
+
+// ── EXPORT ─────────────────────────────────────────────────────────────────
+function printReport(){window.print();}
+
+function downloadReport(){
+  if(!reportData)return;
+  const lines=[
+    'Arreyon Consult by G-DESIGNS LTD — BOARD CONSULTATION REPORT',
+    '='.repeat(50),
+    `Client: ${reportData.client.name}`,
+    `Email: ${reportData.client.email}`,
+    `Phone: ${reportData.client.phone||''}`,
+    `Date: ${new Date(reportData.generatedAt).toLocaleDateString()}`,
+    `Business: ${reportData.businessData.businessType}`,
+    `Industry: ${reportData.businessData.industry||''}`,
+    `Challenge: ${reportData.businessData.challenge}`,
+    `Goal: ${reportData.businessData.goal}`,
+    '',
+    'BOARD MEMBERS CONSULTED:',
+    reportData.directors.map(d=>`• ${d.name} — ${d.role}`).join('\n'),
+    '',
+    '='.repeat(50),
+    'BOARD MEMBER INSIGHTS:',
+    '='.repeat(50),
+    ...reportData.insights.map(i=>`\n${i.name.toUpperCase()} (${i.role})\n${'-'.repeat(40)}\n${i.insight}`),
+    '',
+    '='.repeat(50),
+    'SYNTHESISED RECOMMENDATION:',
+    '='.repeat(50),
+    reportData.synthesis,
+    '',
+    '='.repeat(50),
+    'Powered by Arreyon Consult by G-DESIGNS LTD AI Board of Directors',
+    'board.gdesignsme.com | gdesignsme.com | Learn. Create. Innovate.'
+  ];
+  const blob=new Blob([lines.join('\n')],{type:'text/plain'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`GDesigns-Board-${reportData.client.name.replace(/\s/g,'-')}-${Date.now()}.txt`;
+  a.click();URL.revokeObjectURL(url);
+}
+
+// ── CHAT INPUT AUTO-RESIZE ─────────────────────────────────────────────────
+document.getElementById('chatIn').addEventListener('input',function(){
+  this.style.height='auto';
+  this.style.height=Math.min(this.scrollHeight,90)+'px';
+});
+
+// ── INIT ───────────────────────────────────────────────────────────────────
+loadReviews();
+</script>
+</body>
+</html>

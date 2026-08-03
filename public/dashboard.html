@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — Arreyon Consult</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--purple:#6C3Bff;--purple-light:#8b5cf6;--bg:#09090f;--bg2:#0f0f1a;--bg3:#14102a;--bg4:#1a1438;--border:#1e1b4b;--border-light:#2d2a5e;--text:#f1f0ff;--text2:#c4c0e8;--muted:#7c78a8;--muted2:#4a4680;--green:#10b981;--gold:#f59e0b;--red:#ef4444}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex}
+.sidebar{width:240px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;bottom:0;left:0;z-index:50}
+.sidebar-logo{padding:20px 20px 16px;border-bottom:1px solid var(--border)}
+.sidebar-logo a{display:flex;align-items:center;gap:9px;text-decoration:none}
+.logo-mark{width:32px;height:32px;background:var(--purple);border-radius:8px;display:flex;align-items:center;justify-content:center}
+.logo-mark img{width:20px;height:20px;object-fit:contain}
+.logo-name{font-size:14px;font-weight:700;color:var(--text)}
+.logo-sub{font-size:9px;color:var(--muted)}
+.sidebar-nav{flex:1;padding:16px 12px;display:flex;flex-direction:column;gap:2px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:500;color:var(--muted);transition:all .15s;cursor:pointer;border:none;background:none;font-family:inherit;width:100%}
+.nav-item:hover{background:var(--bg3);color:var(--text2)}
+.nav-item.active{background:var(--bg3);color:var(--text);border-left:2px solid var(--purple)}
+.nav-item svg{flex-shrink:0;width:16px;height:16px}
+.nav-section{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted2);padding:12px 12px 6px}
+.sidebar-plan{margin:12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px}
+.plan-name{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:4px}
+.plan-badge{display:inline-block;font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;margin-bottom:10px}
+.plan-badge.starter{background:var(--bg4);color:var(--muted)}
+.plan-badge.pro{background:rgba(108,59,255,.2);color:var(--purple-light)}
+.plan-badge.business{background:rgba(245,158,11,.15);color:var(--gold)}
+.upgrade-btn{display:block;width:100%;background:var(--purple);border:none;border-radius:7px;color:#fff;font-size:12px;font-weight:600;padding:8px;cursor:pointer;font-family:inherit;text-align:center;text-decoration:none;transition:opacity .15s}
+.upgrade-btn:hover{opacity:.85}
+.sidebar-user{padding:12px;border-top:1px solid var(--border)}
+.user-info{display:flex;align-items:center;gap:9px}
+.user-av{width:32px;height:32px;border-radius:50%;background:var(--purple);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0}
+.user-name{font-size:13px;font-weight:600;color:var(--text2)}
+.user-email{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px}
+.logout-btn{background:none;border:none;color:var(--muted);cursor:pointer;padding:4px;margin-left:auto;flex-shrink:0}
+.logout-btn:hover{color:var(--red)}
+
+.main{margin-left:240px;flex:1;display:flex;flex-direction:column;min-height:100vh}
+.topbar{padding:16px 28px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg2);position:sticky;top:0;z-index:40}
+.topbar-title{font-size:20px;font-weight:700}
+.topbar-sub{font-size:13px;color:var(--muted);margin-top:2px}
+.topbar-actions{display:flex;align-items:center;gap:12px}
+.btn-primary{background:var(--purple);border:none;color:#fff;font-size:13px;font-weight:600;padding:9px 18px;border-radius:8px;cursor:pointer;font-family:inherit;transition:all .15s;display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+.btn-primary:hover{background:var(--purple-light)}
+.btn-ghost{background:transparent;border:1px solid var(--border-light);color:var(--text2);font-size:13px;font-weight:500;padding:8px 16px;border-radius:8px;cursor:pointer;font-family:inherit;transition:all .15s;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+.btn-ghost:hover{border-color:var(--purple);color:var(--text)}
+
+.content{padding:28px;flex:1}
+.section-view{display:none}
+.section-view.active{display:block}
+
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px}
+.stat-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px}
+.stat-value{font-size:28px;font-weight:800;line-height:1;margin-bottom:4px}
+.stat-sub{font-size:12px;color:var(--muted)}
+
+.welcome-card{background:linear-gradient(135deg,var(--bg3),var(--bg2));border:1px solid var(--border-light);border-radius:14px;padding:28px;margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.welcome-text h2{font-size:22px;font-weight:800;margin-bottom:6px}
+.welcome-text p{font-size:14px;color:var(--text2);line-height:1.6;max-width:500px}
+.welcome-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+
+.section-title{font-size:17px;font-weight:700;margin-bottom:16px}
+.section-sub{font-size:13px;color:var(--muted);margin-bottom:20px}
+
+.consult-domains{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:28px}
+.domain-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;cursor:pointer;transition:all .2s;text-decoration:none;display:block}
+.domain-card:hover{border-color:var(--purple);transform:translateY(-2px)}
+.domain-icon{width:40px;height:40px;background:var(--bg3);border:1px solid var(--border-light);border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;color:var(--purple-light)}
+.domain-name{font-size:14px;font-weight:700;margin-bottom:6px}
+.domain-desc{font-size:12px;color:var(--text2);line-height:1.6}
+
+.history-list{display:flex;flex-direction:column;gap:10px}
+.history-item{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px 20px;display:flex;align-items:center;gap:14px;cursor:pointer;transition:all .15s;text-decoration:none}
+.history-item:hover{border-color:var(--purple);background:var(--bg3)}
+.history-icon{width:36px;height:36px;background:var(--bg3);border:1px solid var(--border-light);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--purple-light)}
+.history-title{font-size:14px;font-weight:600;margin-bottom:4px}
+.history-meta{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:10px}
+.history-time{margin-left:auto;font-size:12px;color:var(--muted);white-space:nowrap}
+.history-empty{text-align:center;padding:48px 20px;color:var(--muted)}
+.history-empty svg{margin-bottom:12px;opacity:.3}
+.history-empty p{font-size:14px;margin-bottom:16px}
+
+.profile-form{max-width:520px}
+.form-group{margin-bottom:18px}
+.form-group label{display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px}
+.form-input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:9px;outline:none;color:var(--text);font-size:14px;font-family:inherit;padding:11px 14px;transition:border-color .15s}
+.form-input:focus{border-color:var(--purple)}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+
+.plan-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.plan-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;position:relative}
+.plan-card.current{border-color:var(--purple)}
+.plan-card-name{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
+.plan-card-price{font-size:32px;font-weight:900;margin-bottom:4px}
+.plan-card-price span{font-size:14px;font-weight:500;color:var(--muted)}
+.plan-current-badge{position:absolute;top:14px;right:14px;background:var(--purple);color:#fff;font-size:10px;font-weight:700;padding:3px 10px;border-radius:6px}
+.usage-bar{background:var(--border);border-radius:4px;height:6px;margin:12px 0 6px;overflow:hidden}
+.usage-fill{height:100%;background:var(--purple);border-radius:4px;transition:width .3s}
+.usage-fill.danger{background:var(--red)}
+.usage-text{font-size:12px;color:var(--muted)}
+
+.upgrade-prompt{background:linear-gradient(135deg,var(--bg3),var(--bg2));border:1px solid var(--border-light);border-radius:12px;padding:24px;text-align:center;margin-top:16px}
+.upgrade-prompt h3{font-size:16px;font-weight:700;margin-bottom:8px}
+.upgrade-prompt p{font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.6}
+
+.mobile-menu-btn{display:none;background:none;border:none;color:var(--text);cursor:pointer;padding:6px}
+@media(max-width:900px){
+  .sidebar{transform:translateX(-100%);transition:transform .3s}
+  .sidebar.open{transform:translateX(0)}
+  .main{margin-left:0}
+  .mobile-menu-btn{display:block}
+  .stats-grid,.consult-domains,.plan-cards{grid-template-columns:1fr 1fr}
+}
+@media(max-width:600px){
+  .stats-grid,.consult-domains,.plan-cards{grid-template-columns:1fr}
+  .content{padding:16px}
+  .topbar{padding:12px 16px}
+  .welcome-card{flex-direction:column}
+}
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-logo">
+    <a href="/"><div class="logo-mark"><img src="/assets/logo.png" alt="A" onerror="this.parentElement.innerHTML='<span style=\'color:#fff;font-weight:700;font-size:12px\'>A</span>'"></div><div style="margin-left:9px"><div class="logo-name">Arreyon Consult</div><div class="logo-sub">by G-DESIGNS LTD</div></div></a>
+  </div>
+  <nav class="sidebar-nav">
+    <button class="nav-item active" onclick="showSection('home')" id="nav-home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard
+    </button>
+    <button class="nav-item" onclick="showSection('boardroom')" id="nav-boardroom">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Boardroom
+    </button>
+    <button class="nav-item" onclick="showSection('history')" id="nav-history">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>History
+    </button>
+    <div class="nav-section">Account</div>
+    <button class="nav-item" onclick="showSection('profile')" id="nav-profile">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Profile
+    </button>
+    <button class="nav-item" onclick="showSection('billing')" id="nav-billing">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>Billing &amp; Plan
+    </button>
+    <a href="/consult" class="nav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Public Consult
+    </a>
+  </nav>
+  <div class="sidebar-plan" id="sidebarPlan">
+    <div class="plan-name">Current Plan</div>
+    <div class="plan-badge starter" id="sidebarPlanBadge">Starter</div>
+    <a href="#" onclick="showSection('billing');return false" class="upgrade-btn" id="upgradeBtn">Upgrade Plan</a>
+  </div>
+  <div class="sidebar-user">
+    <div class="user-info">
+      <div class="user-av" id="userAv">U</div>
+      <div style="flex:1;min-width:0"><div class="user-name" id="userName">Loading...</div><div class="user-email" id="userEmail"></div></div>
+      <button class="logout-btn" onclick="doLogout()" title="Sign out">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="main">
+  <div class="topbar">
+    <div>
+      <button class="mobile-menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="topbarTitle"><div class="topbar-title">Dashboard</div><div class="topbar-sub" id="topbarSub">Good to see you</div></div>
+    <div class="topbar-actions">
+      <a href="/boardroom" class="btn-primary">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New Session
+      </a>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- HOME SECTION -->
+    <div class="section-view active" id="section-home">
+      <div class="welcome-card">
+        <div class="welcome-text">
+          <h2 id="welcomeMsg">Good day!</h2>
+          <p>Your board is assembled and ready. What challenge are you bringing to them today?</p>
+          <div class="welcome-actions">
+            <a href="/boardroom" class="btn-primary">Ask the Board</a>
+            <button class="btn-ghost" onclick="showSection('history')">View History</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Consultations Used</div>
+          <div class="stat-value" id="statUsed">0</div>
+          <div class="stat-sub" id="statLimit">of 3 this month</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Directors Available</div>
+          <div class="stat-value" id="statDirs">5</div>
+          <div class="stat-sub">legendary advisors</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Current Plan</div>
+          <div class="stat-value" id="statPlan" style="font-size:18px;margin-top:4px">Starter</div>
+          <div class="stat-sub">active</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Member Since</div>
+          <div class="stat-value" id="statSince" style="font-size:16px;margin-top:6px">—</div>
+          <div class="stat-sub">welcome aboard</div>
+        </div>
+      </div>
+
+      <div class="section-title">Start a consultation</div>
+      <div class="consult-domains">
+        <a href="/boardroom?topic=strategy" class="domain-card">
+          <div class="domain-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+          <div class="domain-name">Business Strategy</div>
+          <div class="domain-desc">Market positioning, competitive advantage, growth planning</div>
+        </a>
+        <a href="/boardroom?topic=marketing" class="domain-card">
+          <div class="domain-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+          <div class="domain-name">Marketing &amp; Brand</div>
+          <div class="domain-desc">Brand building, advertising, social media, copywriting</div>
+        </a>
+        <a href="/boardroom?topic=finance" class="domain-card">
+          <div class="domain-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div>
+          <div class="domain-name">Finance &amp; Investment</div>
+          <div class="domain-desc">Pricing, funding, financial strategy, economic moats</div>
+        </a>
+        <a href="/boardroom?topic=sales" class="domain-card">
+          <div class="domain-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+          <div class="domain-name">Sales &amp; Closing</div>
+          <div class="domain-desc">Sales psychology, closing deals, customer acquisition</div>
+        </a>
+        <a href="/boardroom?topic=operations" class="domain-card">
+          <div class="domain-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg></div>
+          <div class="domain-name">Operations &amp; Systems</div>
+          <div class="domain-desc">Process building, management, scaling operations</div>
+        </a>
+        <a href="/boardroom?topic=innovation" class="domain-card">
+          <div class="domain-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div>
+          <div class="domain-name">Innovation &amp; Product</div>
+          <div class="domain-desc">Product design, disruption, first principles thinking</div>
+        </a>
+      </div>
+
+      <div class="section-title">Recent sessions</div>
+      <div class="history-list" id="homeHistory">
+        <div class="history-empty">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <p>No consultations yet</p>
+          <a href="/boardroom" class="btn-primary">Start your first session</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- HISTORY SECTION -->
+    <div class="section-view" id="section-history">
+      <div class="section-title">Consultation History</div>
+      <div class="section-sub">Full replay of every consultation including conversation and report.</div>
+      <div class="history-list" id="fullHistory">
+        <div style="text-align:center;padding:40px;color:var(--muted)">Loading history...</div>
+      </div>
+      <div id="historyUpgradePrompt" style="display:none">
+        <div class="upgrade-prompt">
+          <h3>Consultation history is a Pro feature</h3>
+          <p>Upgrade to Arreyon Pro to access your full consultation history, including all conversations and reports.</p>
+          <button class="btn-primary" onclick="showSection('billing')">Upgrade to Pro</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PROFILE SECTION -->
+    <div class="section-view" id="section-profile">
+      <div class="section-title">Profile Settings</div>
+      <div class="profile-form">
+        <div class="form-row">
+          <div class="form-group"><label>First Name</label><input class="form-input" id="profileFirst" type="text"></div>
+          <div class="form-group"><label>Last Name</label><input class="form-input" id="profileLast" type="text"></div>
+        </div>
+        <div class="form-group"><label>Email Address</label><input class="form-input" id="profileEmail" type="email" readonly style="opacity:.6;cursor:not-allowed"></div>
+        <div class="form-row">
+          <div class="form-group"><label>Phone</label><input class="form-input" id="profilePhone" type="tel" placeholder="+237..."></div>
+          <div class="form-group"><label>Country</label><input class="form-input" id="profileCountry" type="text" placeholder="Your country"></div>
+        </div>
+        <button class="btn-primary" onclick="saveProfile()">Save Changes</button>
+        <div id="profileMsg" style="margin-top:10px;font-size:13px;display:none"></div>
+      </div>
+    </div>
+
+    <!-- BILLING SECTION -->
+    <div class="section-view" id="section-billing">
+      <div class="section-title">Billing &amp; Plan</div>
+      <div class="section-sub">Manage your subscription and upgrade for more access.</div>
+      <div class="plan-cards" id="planCards"></div>
+
+      <div style="margin-top:32px">
+        <div class="section-title">Usage this month</div>
+        <div style="max-width:400px">
+          <div style="font-size:13px;color:var(--text2);margin-bottom:8px">Consultations</div>
+          <div class="usage-bar"><div class="usage-fill" id="usageFill" style="width:0%"></div></div>
+          <div class="usage-text" id="usageText">0 of 3 used</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BOARDROOM REDIRECT SECTION -->
+    <div class="section-view" id="section-boardroom">
+      <div class="section-title">Boardroom</div>
+      <div class="section-sub">Open a live session with your board of directors.</div>
+      <div style="text-align:center;padding:40px">
+        <a href="/boardroom" class="btn-primary btn-large" style="font-size:15px;padding:14px 32px">Open Boardroom</a>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- PAYMENT MODAL -->
+<div id="paymentModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:200;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--bg2);border:1px solid var(--border-light);border-radius:16px;width:100%;max-width:500px;max-height:90vh;overflow-y:auto;padding:32px;position:relative">
+    <button onclick="closePayment()" style="position:absolute;top:14px;right:14px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;line-height:1">×</button>
+    <h2 style="font-size:20px;font-weight:800;margin-bottom:4px">Upgrade Plan</h2>
+    <div id="paymentPlanName" style="font-size:14px;color:var(--muted);margin-bottom:24px"></div>
+
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:20px">
+      <div style="font-size:24px;font-weight:900;margin-bottom:4px" id="paymentAmount"></div>
+      <div style="font-size:13px;color:var(--muted)" id="paymentAmountCFA"></div>
+    </div>
+
+    <!-- Coupon -->
+    <div style="display:flex;gap:8px;margin-bottom:20px">
+      <input class="form-input" id="couponInput" placeholder="Coupon code (optional)" style="flex:1">
+      <button class="btn-ghost" onclick="applyCoupon()" style="white-space:nowrap">Apply</button>
+    </div>
+    <div id="couponMsg" style="font-size:12px;margin-bottom:12px;display:none"></div>
+
+    <!-- Billing cycle -->
+    <div style="margin-bottom:20px">
+      <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:block;margin-bottom:8px">Billing Cycle</label>
+      <div style="display:flex;gap:8px">
+        <button class="billing-cycle-btn active" data-cycle="monthly" onclick="setCycle('monthly')">Monthly</button>
+        <button class="billing-cycle-btn" data-cycle="annual" onclick="setCycle('annual')">Annual <span style="font-size:10px;background:var(--green);color:#fff;padding:2px 6px;border-radius:4px;margin-left:4px">-20%</span></button>
+      </div>
+    </div>
+
+    <!-- Payment method -->
+    <div style="margin-bottom:20px">
+      <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:block;margin-bottom:8px">Payment Method</label>
+      <select class="form-input" id="paymentMethod" onchange="onMethodChange()">
+        <option value="">Select payment method...</option>
+        <option value="mtn_momo">MTN MoMo (Cameroon)</option>
+        <option value="international">International (Bank Transfer / WhatsApp)</option>
+      </select>
+    </div>
+
+    <!-- MTN MoMo details -->
+    <div id="mtnDetails" style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:20px">
+      <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:8px">Send payment to:</div>
+      <div style="font-size:15px;font-weight:700;color:var(--purple-light);margin-bottom:4px">+237 675 781 517</div>
+      <div style="font-size:13px;color:var(--muted)">Name: Bakor Ivo EyongManyi</div>
+      <div style="margin-top:12px;font-size:12px;color:var(--muted);line-height:1.6">After payment, enter your transaction reference below and fill in your details. Our team will activate your plan within 24 hours.</div>
+    </div>
+
+    <!-- International details -->
+    <div id="intlDetails" style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:20px;text-align:center">
+      <div style="font-size:14px;color:var(--text2);margin-bottom:14px">Chat with us directly to arrange international payment.</div>
+      <a href="https://wa.me/237675781517" target="_blank" class="btn-primary" style="background:#25D366">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+        WhatsApp Us
+      </a>
+    </div>
+
+    <!-- Payer details -->
+    <div id="payerDetails" style="display:none">
+      <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:12px">Your details</div>
+      <div class="form-group"><label>Full Name</label><input class="form-input" id="payerName" placeholder="Your full name"></div>
+      <div class="form-group"><label>Email</label><input class="form-input" id="payerEmail" type="email" placeholder="your@email.com"></div>
+      <div class="form-row">
+        <div class="form-group"><label>Phone</label><input class="form-input" id="payerPhone" placeholder="+237..."></div>
+        <div class="form-group"><label>Country</label><input class="form-input" id="payerCountry" placeholder="Your country"></div>
+      </div>
+      <div class="form-group"><label>Transaction Reference (optional)</label><input class="form-input" id="payerRef" placeholder="MoMo reference or note"></div>
+      <button class="btn-primary" style="width:100%;padding:13px" onclick="submitPayment()">Submit Payment Details</button>
+      <div id="paymentMsg" style="margin-top:10px;font-size:13px;text-align:center;display:none"></div>
+    </div>
+  </div>
+</div>
+
+<style>
+.billing-cycle-btn{background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:13px;font-weight:600;padding:9px 18px;cursor:pointer;font-family:inherit;transition:all .15s;display:flex;align-items:center}
+.billing-cycle-btn.active{background:var(--purple);border-color:var(--purple);color:#fff}
+</style>
+
+<script>
+let user = null;
+let selectedPlan = 'pro';
+let selectedCycle = 'monthly';
+let discountPct = 0;
+
+const planPrices = {
+  pro:      { monthly:{usd:35,cfa:20125}, annual:{usd:28,cfa:16100} },
+  business: { monthly:{usd:150,cfa:86250}, annual:{usd:120,cfa:69000} }
+};
+
+const planLimits = {
+  starter:  { consultations:3, dirs:5 },
+  pro:      { consultations:10, dirs:29 },
+  business: { consultations:-1, dirs:29 }
+};
+
+async function init() {
+  try {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) { window.location.href = '/auth'; return; }
+    const data = await res.json();
+    user = data.user;
+    renderUser();
+    loadHistory();
+    renderBilling();
+    loadProfile();
+  } catch(e) { window.location.href = '/auth'; }
+}
+
+function renderUser() {
+  const name = user.first_name + ' ' + user.last_name;
+  const initials = (user.first_name[0] + user.last_name[0]).toUpperCase();
+  document.getElementById('userName').textContent = name;
+  document.getElementById('userEmail').textContent = user.email;
+  document.getElementById('userAv').textContent = initials;
+  document.getElementById('welcomeMsg').textContent = getGreeting() + ', ' + user.first_name + '!';
+  document.getElementById('topbarSub').textContent = getDateStr();
+
+  const plan = user.plan || 'starter';
+  const badge = document.getElementById('sidebarPlanBadge');
+  badge.textContent = plan.charAt(0).toUpperCase() + plan.slice(1);
+  badge.className = 'plan-badge ' + plan;
+  if (plan !== 'starter') document.getElementById('upgradeBtn').textContent = 'Manage Plan';
+
+  document.getElementById('statPlan').textContent = plan.charAt(0).toUpperCase() + plan.slice(1);
+  document.getElementById('statUsed').textContent = user.consultations_used || 0;
+  document.getElementById('statLimit').textContent = 'of ' + (planLimits[plan]?.consultations === -1 ? '∞' : planLimits[plan]?.consultations) + ' this month';
+  document.getElementById('statDirs').textContent = planLimits[plan]?.dirs || 5;
+  document.getElementById('statSince').textContent = new Date(user.created_at).toLocaleDateString('en-GB', {month:'short',year:'numeric'});
+}
+
+function getGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function getDateStr() {
+  return new Date().toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch('/api/user/consultations');
+    const data = await res.json();
+
+    if (data.upgradeRequired) {
+      document.getElementById('fullHistory').innerHTML = '';
+      document.getElementById('historyUpgradePrompt').style.display = 'block';
+      return;
+    }
+
+    const list = data.consultations || [];
+    const homeEl = document.getElementById('homeHistory');
+    const fullEl = document.getElementById('fullHistory');
+
+    if (!list.length) {
+      homeEl.innerHTML = `<div class="history-empty"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><p>No consultations yet</p><a href="/boardroom" class="btn-primary">Start your first session</a></div>`;
+      fullEl.innerHTML = `<div class="history-empty"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><p>No consultations yet. Start your first session.</p><a href="/boardroom" class="btn-primary">Open Boardroom</a></div>`;
+      return;
+    }
+
+    const renderItems = (items) => items.map(c => `
+      <a href="/boardroom?consultation=${c.id}" class="history-item">
+        <div class="history-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+        <div style="flex:1"><div class="history-title">${c.title || c.business_type || 'Consultation'}</div>
+        <div class="history-meta"><span>${c.business_type || 'General'}</span>${c.directors_used ? `<span>${JSON.parse(c.directors_used||'[]').length} directors</span>` : ''}</div></div>
+        <div class="history-time">${timeAgo(c.created_at)}</div>
+      </a>`).join('');
+
+    homeEl.innerHTML = renderItems(list.slice(0,3));
+    fullEl.innerHTML = renderItems(list);
+  } catch(e) { console.log('History error:', e.message); }
+}
+
+function timeAgo(date) {
+  const diff = Date.now() - new Date(date).getTime();
+  const mins = Math.floor(diff/60000);
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins/60);
+  if (hrs < 24) return hrs + 'h ago';
+  const days = Math.floor(hrs/24);
+  if (days < 7) return days + 'd ago';
+  return new Date(date).toLocaleDateString('en-GB',{day:'numeric',month:'short'});
+}
+
+async function loadProfile() {
+  if (!user) return;
+  document.getElementById('profileFirst').value = user.first_name || '';
+  document.getElementById('profileLast').value = user.last_name || '';
+  document.getElementById('profileEmail').value = user.email || '';
+
+  const res = await fetch('/api/user/profile');
+  const data = await res.json();
+  if (data.user) {
+    document.getElementById('profilePhone').value = data.user.phone || '';
+    document.getElementById('profileCountry').value = data.user.country || '';
+  }
+}
+
+async function saveProfile() {
+  const msg = document.getElementById('profileMsg');
+  try {
+    const res = await fetch('/api/user/profile', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        firstName: document.getElementById('profileFirst').value,
+        lastName: document.getElementById('profileLast').value,
+        phone: document.getElementById('profilePhone').value,
+        country: document.getElementById('profileCountry').value
+      })
+    });
+    const data = await res.json();
+    msg.style.display = 'block';
+    msg.style.color = data.success ? 'var(--green)' : 'var(--red)';
+    msg.textContent = data.success ? 'Profile updated successfully.' : (data.error || 'Failed to update.');
+  } catch(e) { msg.style.display='block'; msg.style.color='var(--red)'; msg.textContent='Update failed.'; }
+}
+
+function renderBilling() {
+  if (!user) return;
+  const plan = user.plan || 'starter';
+  const used = user.consultations_used || 0;
+  const limit = planLimits[plan]?.consultations;
+
+  const pct = limit === -1 ? 20 : Math.min((used/limit)*100, 100);
+  const fill = document.getElementById('usageFill');
+  if (fill) { fill.style.width = pct + '%'; if (pct > 80) fill.classList.add('danger'); }
+  const utxt = document.getElementById('usageText');
+  if (utxt) utxt.textContent = used + ' of ' + (limit === -1 ? 'Unlimited' : limit) + ' used';
+
+  const cards = document.getElementById('planCards');
+  if (!cards) return;
+  cards.innerHTML = [
+    { id:'starter', name:'Starter', price:'Free', cfa:'Free', desc:'For founders exploring AI-powered advice' },
+    { id:'pro', name:'Arreyon Pro', price:'$35/mo', cfa:'20,125 FCFA/mo', desc:'For serious founders needing regular guidance' },
+    { id:'business', name:'Arreyon Business', price:'$150/mo', cfa:'86,250 FCFA/mo', desc:'For teams needing unlimited access' }
+  ].map(p => `
+    <div class="plan-card ${p.id === plan ? 'current' : ''}">
+      ${p.id === plan ? '<div class="plan-current-badge">Current</div>' : ''}
+      <div class="plan-card-name">${p.name}</div>
+      <div class="plan-card-price">${p.price} <span></span></div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">${p.cfa}</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.5">${p.desc}</div>
+      ${p.id === plan ? '<div style="font-size:13px;color:var(--green);font-weight:600">Active plan</div>' :
+        p.id === 'starter' ? '<div style="font-size:13px;color:var(--muted)">Free forever</div>' :
+        `<button class="btn-primary" style="width:100%" onclick="openPayment('${p.id}')">Upgrade to ${p.name}</button>`}
+    </div>`).join('');
+}
+
+function showSection(name) {
+  document.querySelectorAll('.section-view').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('section-' + name).classList.add('active');
+  const navEl = document.getElementById('nav-' + name);
+  if (navEl) navEl.classList.add('active');
+  const titles = {home:'Dashboard',history:'History',profile:'Profile',billing:'Billing & Plan',boardroom:'Boardroom'};
+  document.querySelector('.topbar-title').textContent = titles[name] || 'Dashboard';
+  if (window.innerWidth < 900) document.getElementById('sidebar').classList.remove('open');
+}
+
+function openPayment(plan) {
+  selectedPlan = plan;
+  selectedCycle = 'monthly';
+  discountPct = 0;
+  document.getElementById('couponInput').value = '';
+  document.getElementById('couponMsg').style.display = 'none';
+  document.getElementById('mtnDetails').style.display = 'none';
+  document.getElementById('intlDetails').style.display = 'none';
+  document.getElementById('payerDetails').style.display = 'none';
+  document.getElementById('paymentMethod').value = '';
+  document.getElementById('paymentMsg').style.display = 'none';
+  document.querySelectorAll('.billing-cycle-btn').forEach((b,i) => b.classList.toggle('active', i===0));
+  updatePaymentUI();
+  document.getElementById('paymentModal').style.display = 'flex';
+}
+
+function closePayment() { document.getElementById('paymentModal').style.display = 'none'; }
+
+function updatePaymentUI() {
+  const p = planPrices[selectedPlan]?.[selectedCycle] || {usd:0,cfa:0};
+  const usd = (p.usd * (1 - discountPct/100)).toFixed(2);
+  const cfa = Math.round(p.cfa * (1 - discountPct/100));
+  document.getElementById('paymentPlanName').textContent = (selectedPlan === 'pro' ? 'Arreyon Pro' : 'Arreyon Business') + ' — ' + selectedCycle;
+  document.getElementById('paymentAmount').textContent = '$' + usd + '/month';
+  document.getElementById('paymentAmountCFA').textContent = cfa.toLocaleString() + ' FCFA/month' + (selectedCycle === 'annual' ? ' (billed annually)' : '');
+}
+
+function setCycle(cycle) {
+  selectedCycle = cycle;
+  document.querySelectorAll('.billing-cycle-btn').forEach(b => b.classList.toggle('active', b.dataset.cycle === cycle));
+  updatePaymentUI();
+}
+
+async function applyCoupon() {
+  const code = document.getElementById('couponInput').value.trim();
+  const msg = document.getElementById('couponMsg');
+  if (!code) return;
+  try {
+    const res = await fetch('/api/coupons/validate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({code, plan: selectedPlan}) });
+    const data = await res.json();
+    msg.style.display = 'block';
+    if (data.valid) { discountPct = data.discount; msg.style.color = 'var(--green)'; msg.textContent = data.description + ' — ' + data.discount + '% discount applied!'; updatePaymentUI(); }
+    else { discountPct = 0; msg.style.color = 'var(--red)'; msg.textContent = data.error || 'Invalid coupon.'; }
+  } catch(e) { msg.style.display='block'; msg.style.color='var(--red)'; msg.textContent='Failed to validate.'; }
+}
+
+function onMethodChange() {
+  const method = document.getElementById('paymentMethod').value;
+  document.getElementById('mtnDetails').style.display = method === 'mtn_momo' ? 'block' : 'none';
+  document.getElementById('intlDetails').style.display = method === 'international' ? 'block' : 'none';
+  document.getElementById('payerDetails').style.display = method === 'mtn_momo' ? 'block' : 'none';
+  if (user) {
+    document.getElementById('payerName').value = (user.first_name||'') + ' ' + (user.last_name||'');
+    document.getElementById('payerEmail').value = user.email || '';
+    document.getElementById('payerPhone').value = '';
+    document.getElementById('payerCountry').value = '';
+  }
+}
+
+async function submitPayment() {
+  const msg = document.getElementById('paymentMsg');
+  msg.style.display = 'none';
+  try {
+    const res = await fetch('/api/payments/submit', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        userId: user.id, plan: selectedPlan, billingCycle: selectedCycle,
+        paymentMethod: document.getElementById('paymentMethod').value,
+        payerName: document.getElementById('payerName').value,
+        payerEmail: document.getElementById('payerEmail').value,
+        payerPhone: document.getElementById('payerPhone').value,
+        payerCountry: document.getElementById('payerCountry').value,
+        couponCode: document.getElementById('couponInput').value.trim(),
+        transactionRef: document.getElementById('payerRef').value.trim()
+      })
+    });
+    const data = await res.json();
+    msg.style.display = 'block';
+    if (data.success) { msg.style.color = 'var(--green)'; msg.textContent = 'Payment details submitted! Our team will activate your plan within 24 hours.'; }
+    else { msg.style.color = 'var(--red)'; msg.textContent = data.error || 'Submission failed.'; }
+  } catch(e) { msg.style.display='block'; msg.style.color='var(--red)'; msg.textContent='Submission failed.'; }
+}
+
+async function doLogout() {
+  await fetch('/api/auth/logout', { method:'POST' });
+  window.location.href = '/';
+}
+
+init();
+</script>
+</body>
+</html>
