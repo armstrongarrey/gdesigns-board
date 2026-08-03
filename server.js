@@ -2,7 +2,7 @@ const express = require('express');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
+// nodemailer removed — Render blocks outbound SMTP; using Resend HTTP API instead
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const cors = require('cors');
@@ -50,30 +50,32 @@ const PLAN_LIMITS = {
 
 const STARTER_DIRECTORS = ['rockefeller', 'ogilvy', 'buffett', 'dangote', 'kotler'];
 
-// ── EMAIL TRANSPORTER ──────────────────────────────────────────────────────
-const mailer = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  requireTLS: true,
-  auth: { user: GMAIL_USER, pass: GMAIL_PASS },
-  connectionTimeout: 20000,
-  greetingTimeout: 20000,
-  socketTimeout: 20000
-});
-
-// Verify connection on startup so failures show clearly in logs
-mailer.verify((err, success) => {
-  if (err) console.error('Mailer verify failed:', err.message);
-  else console.log('Mailer ready — SMTP connection verified');
-});
+// ── EMAIL (via Resend HTTP API — Render blocks outbound SMTP ports) ────────
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM = process.env.RESEND_FROM || 'Arreyon Consult <onboarding@resend.dev>';
 
 async function sendEmail(to, subject, html) {
+  if (!RESEND_API_KEY) {
+    console.error('Email error: RESEND_API_KEY not configured');
+    return;
+  }
   try {
-    await mailer.sendMail({ from: `"Arreyon Consult" <${GMAIL_USER}>`, to, subject, html });
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ from: RESEND_FROM, to: [to], subject, html })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.error('Email error:', res.status, err?.message || JSON.stringify(err));
+      return;
+    }
     console.log('Email sent successfully to:', to);
   } catch(e) {
-    console.error('Email error:', e.message, '| code:', e.code, '| command:', e.command);
+    console.error('Email error:', e.message);
   }
 }
 
