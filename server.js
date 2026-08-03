@@ -1117,18 +1117,19 @@ app.post('/api/heygen/welcome', async (req, res) => {
   const { clientName, businessType, deviceType = 'desktop' } = req.body;
   if (!clientName || !businessType) return res.status(400).json({ error: 'Missing clientName or businessType' });
 
-  const welcomeScriptPrompt = `Write a welcome video script for ${clientName} who is consulting the Arreyon Consult Board of Directors about their ${businessType} business.
+  const welcomeScriptPrompt = `Write a very short welcome video script for ${clientName} who is consulting the Arreyon Consult Board of Directors about their ${businessType} business.
 
 STRICT RULES:
-- Maximum 75 words total — count carefully
-- Warm, professional, personal tone
-- Mention their name and business type
-- Tell them the Board Secretary will ask questions
-- End encouraging them to answer honestly
-- Return ONLY the script, nothing else`;
+- Maximum 22 words total — count carefully, this is a hard limit
+- Must take no more than 10 seconds to speak aloud
+- Warm, personal, single sentence or two short sentences
+- Mention their name
+- Return ONLY the script, nothing else
+
+Example length/style: "Welcome ${clientName}. Your board is ready. Let's understand your ${businessType} business and get you real strategic advice."`;
 
   try {
-    const script = await askClaude(welcomeScriptPrompt, [{ role: 'user', content: 'Write the welcome script now. Maximum 75 words.' }]);
+    const script = await askClaude(welcomeScriptPrompt, [{ role: 'user', content: 'Write the welcome script now. Maximum 22 words — hard limit, must be under 10 seconds spoken.' }]);
     const { videoUrl } = await generateHeyGenVideo(script.trim(), deviceType);
     res.json({ success: true, videoUrl, deviceType });
   } catch (err) {
