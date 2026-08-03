@@ -3,15 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Consult the Board — Arreyon Consult by Arreyon Consult by G-DESIGNS LTD</title>
-<meta name="description" content="Consult Arreyon's AI Board of Directors — 29 legendary business minds, free and instant.">
-<meta name="robots" content="index, follow">
+<title>Consult the Board — G-DESIGNS LTD</title>
 <meta name="description" content="Get strategic advice from G-DESIGNS' AI Board of Directors.">
 <meta name="theme-color" content="#0e0b1a">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <style>
 :root {
-  --purple:#6C3Bff; --bg:#09090f; --bg2:#0f0f1a; --bg3:#14102a; --bg4:#090717;
+  --purple:#6C3Bff; --bg:#0e0b1a; --bg2:#14102a; --bg3:#1a1438; --bg4:#090717;
   --border:#2a1f4e; --border2:#1a1030; --text:#e8e0ff; --text2:#c8b8f0;
   --muted:#5a4a7a; --muted2:#3a2f5a; --green:#10a37f; --gold:#e6aa00;
 }
@@ -239,14 +237,14 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
 
 <header class="hdr">
   <div class="hdr-logo">
-    <img src="/assets/logo.png" id="consultLogoImg" style="width:32px;height:32px;object-fit:contain;display:block" alt="Arreyon" onerror="this.style.display='none';document.getElementById('consultLogoFb').style.display='flex'">
-    <div id="consultLogoFb" class="hdr-mark" style="display:none">A</div>
+    <img src="logo.png" id="consultLogoImg" style="width:32px;height:32px;object-fit:contain;display:block" alt="G-DESIGNS" onerror="this.style.display='none';document.getElementById('consultLogoFb').style.display='flex'">
+    <div id="consultLogoFb" class="hdr-mark" style="display:none">G</div>
     <div>
-      <div class="hdr-title">Arreyon Consult</div>
+      <div class="hdr-title">G-DESIGNS Board of Directors</div>
       <div class="hdr-sub">Public Consultation</div>
     </div>
   </div>
-  <a href="/" class="hdr-back">← Back to Home</a>
+  <a href="/" class="hdr-back">← Back</a>
 </header>
 
 <!-- STAGE 1: LANDING + FORM -->
@@ -428,7 +426,7 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
     </div>
 
     <div style="font-size:11px;color:var(--muted2);text-align:center;margin-top:8px">
-      Powered by Arreyon Consult by G-DESIGNS LTD AI Board · board.gdesignsme.com · Learn. Create. Innovate.
+      Powered by G-DESIGNS LTD AI Board · board.gdesignsme.com · Learn. Create. Innovate.
     </div>
   </div>
 </div>
@@ -615,7 +613,23 @@ function updateContextBadge(){
 }
 
 // ── STAGE 3 + 4: GENERATE REPORT ──────────────────────────────────────────
+function hasUsedFreeReport() {
+  return localStorage.getItem('arreyon_free_report_used') === 'true';
+}
+function markFreeReportUsed() {
+  localStorage.setItem('arreyon_free_report_used', 'true');
+}
+function isLoggedIn() {
+  return document.cookie.includes('arreyon_token');
+}
+
 async function generateReport(){
+  // Gate: not logged in AND already used their 1 free report → require signup
+  if (!isLoggedIn() && hasUsedFreeReport()) {
+    showSignupGate();
+    return;
+  }
+
   showStage(3);
 
   // Log to Google Sheets
@@ -626,6 +640,8 @@ async function generateReport(){
       body:JSON.stringify({businessData:bizData,clientInfo,conversationHistory:chatHistory})});
     if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||'Server error');}
     const data=await res.json();
+
+    if (!isLoggedIn()) markFreeReportUsed();
 
     // Show directors loading
     const ld=document.getElementById('loadingDirs');
@@ -643,6 +659,20 @@ async function generateReport(){
     showStage(2);
     alert('Error generating report: '+e.message+'. Please try again.');
   }
+}
+
+function showSignupGate() {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:999;display:flex;align-items:center;justify-content:center;padding:20px';
+  overlay.innerHTML = `
+    <div style="background:var(--bg2);border:1px solid var(--border-light);border-radius:16px;padding:32px;max-width:420px;width:100%;text-align:center">
+      <div style="font-size:32px;margin-bottom:14px">🔒</div>
+      <div style="font-size:19px;font-weight:700;margin-bottom:10px">You've used your free report</div>
+      <div style="font-size:13.5px;color:var(--muted);line-height:1.7;margin-bottom:24px">Create a free Arreyon Consult account to unlock 3 more consultations every month — plus save your history and access all 29 directors.</div>
+      <a href="/auth?mode=signup" class="submit-btn" style="text-decoration:none;display:block;margin-bottom:10px">Create Free Account</a>
+      <button onclick="this.closest('div').parentElement.remove()" style="background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;padding:8px">Maybe later</button>
+    </div>`;
+  document.body.appendChild(overlay);
 }
 
 function renderReport(data){
@@ -902,7 +932,7 @@ function printReport(){window.print();}
 function downloadReport(){
   if(!reportData)return;
   const lines=[
-    'Arreyon Consult by G-DESIGNS LTD — BOARD CONSULTATION REPORT',
+    'G-DESIGNS LTD — BOARD CONSULTATION REPORT',
     '='.repeat(50),
     `Client: ${reportData.client.name}`,
     `Email: ${reportData.client.email}`,
@@ -927,7 +957,7 @@ function downloadReport(){
     reportData.synthesis,
     '',
     '='.repeat(50),
-    'Powered by Arreyon Consult by G-DESIGNS LTD AI Board of Directors',
+    'Powered by G-DESIGNS LTD AI Board of Directors',
     'board.gdesignsme.com | gdesignsme.com | Learn. Create. Innovate.'
   ];
   const blob=new Blob([lines.join('\n')],{type:'text/plain'});
