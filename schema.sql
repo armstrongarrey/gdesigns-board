@@ -209,6 +209,39 @@ INSERT INTO cms_content (section, key, value, type) VALUES
 ('cta', 'subheadline', 'Your first consultation is free. No credit card required.', 'text'),
 ('cta', 'button', 'Convene Your Board', 'text'),
 
+-- Contact section
+('contact', 'headline', 'Get in touch', 'text'),
+('contact', 'subheadline', 'We are here to help. Reach out through any of the channels below.', 'text'),
+('contact', 'phone', '+237 675 781 517', 'text'),
+('contact', 'email_primary', 'info@gdesignsme.com', 'text'),
+('contact', 'email_secondary', 'gdesignsme@gmail.com', 'text'),
+('contact', 'location', 'Buea, Cameroon & Dubai, UAE', 'text'),
+
+-- Testimonials
+('testimonials', 'headline', 'Real advice. Real results.', 'text'),
+('testimonials', 'testimonial1_text', 'I asked Rockefeller and Buffett about my pricing strategy. The report they generated was more actionable than advice I paid a consultant $500 for.', 'text'),
+('testimonials', 'testimonial1_name', 'Kwame Nkrumah-Asante', 'text'),
+('testimonials', 'testimonial1_role', 'Founder, TechStart Ghana', 'text'),
+('testimonials', 'testimonial2_text', 'The Board Secretary asked better questions than most investors I have pitched to. By the time I saw the report, I already knew what to do.', 'text'),
+('testimonials', 'testimonial2_name', 'Amina Ibrahim', 'text'),
+('testimonials', 'testimonial2_role', 'CEO, Lagos Fashion Co.', 'text'),
+('testimonials', 'testimonial3_text', 'Having Dangote and Porter analyse my Cameroon market entry strategy at 11pm, for free, is something I still cannot believe is real.', 'text'),
+('testimonials', 'testimonial3_name', 'Bernard Etame', 'text'),
+('testimonials', 'testimonial3_role', 'Founder, DigiCam Solutions', 'text'),
+
+-- FAQ
+('faq', 'headline', 'Frequently asked questions', 'text'),
+('faq', 'q1_question', 'How is Arreyon Consult different from ChatGPT?', 'text'),
+('faq', 'q1_answer', 'Arreyon Consult is purpose-built for strategic business advice. Instead of a single AI, you get 29 specialised directors who debate your challenge and deliver a synthesised verdict.', 'text'),
+('faq', 'q2_question', 'Can I use it from Africa?', 'text'),
+('faq', 'q2_answer', 'Yes. Arreyon Consult was built with African founders in mind. Payment via MTN MoMo is supported. Several directors are specifically tuned for African market dynamics.', 'text'),
+('faq', 'q3_question', 'How does payment work?', 'text'),
+('faq', 'q3_answer', 'We accept MTN MoMo (Cameroon) and international bank transfer via WhatsApp. Our team manually verifies and activates your plan within 24 hours.', 'text'),
+('faq', 'q4_question', 'Is my consultation data private?', 'text'),
+('faq', 'q4_answer', 'Yes. Your consultations are private to your account. We do not share your business information with third parties or use it to train AI models.', 'text'),
+('faq', 'q5_question', 'What happens when I hit my consultation limit?', 'text'),
+('faq', 'q5_answer', 'Your limit resets at the start of each calendar month. You can upgrade your plan at any time for more consultations immediately.', 'text'),
+
 -- Footer
 ('footer', 'tagline', 'Learn. Create. Innovate.', 'text'),
 ('footer', 'copyright', '2026 Arreyon Consult by G-DESIGNS LTD. All rights reserved.', 'text')
