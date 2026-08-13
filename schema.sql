@@ -242,6 +242,53 @@ INSERT INTO cms_content (section, key, value, type) VALUES
 ('faq', 'q5_question', 'What happens when I hit my consultation limit?', 'text'),
 ('faq', 'q5_answer', 'Your limit resets at the start of each calendar month. You can upgrade your plan at any time for more consultations immediately.', 'text'),
 
+-- Stats bar
+('stats', 'stat1_number', '29', 'text'),
+('stats', 'stat1_label', 'Legendary Advisors', 'text'),
+('stats', 'stat2_number', '24/7', 'text'),
+('stats', 'stat2_label', 'Always Available', 'text'),
+('stats', 'stat3_number', '<60s', 'text'),
+('stats', 'stat3_label', 'Average Response Time', 'text'),
+('stats', 'stat4_number', '3 AI', 'text'),
+('stats', 'stat4_label', 'Models Combined', 'text'),
+
+-- Features section
+('features', 'headline', 'Everything you need for strategic clarity', 'text'),
+('features', 'feature1_title', 'Auto Director Matching', 'text'),
+('features', 'feature1_desc', 'Describe your challenge and get matched instantly with the most relevant director — or browse and pick manually.', 'text'),
+('features', 'feature2_title', 'Live Board Conversation', 'text'),
+('features', 'feature2_desc', 'Real back-and-forth dialogue with each director. They ask follow-up questions and adapt to your specific answers.', 'text'),
+('features', 'feature3_title', 'Structured Report', 'text'),
+('features', 'feature3_desc', 'Executive summary, board insights, risk analysis, and a 90-day action plan — all in one downloadable report.', 'text'),
+('features', 'feature4_title', 'Video Presentation', 'text'),
+('features', 'feature4_desc', 'Get a personalised video presentation of your board key recommendations — optimised for your device.', 'text'),
+('features', 'feature5_title', 'Consultation History', 'text'),
+('features', 'feature5_desc', 'Full replay of every consultation — conversation, report, and video — stored securely in your dashboard.', 'text'),
+('features', 'feature6_title', 'Three AI Models', 'text'),
+('features', 'feature6_desc', 'Claude, ChatGPT, and Gemini — each director is matched with the AI that best fits their thinking style.', 'text'),
+
+-- Pricing feature bullet lists (one per line, shown exactly as written)
+('pricing', 'starter_features', '3 consultations per month
+5 starter directors
+Board Secretary Q&A
+Basic board report
+1 team member', 'textarea'),
+('pricing', 'pro_features', '10 consultations per month
+All 29 directors
+Report download (PDF)
+Full consultation history
+3 team members
+Priority email support
+Board Secretary deep-dive', 'textarea'),
+('pricing', 'business_features', 'Unlimited consultations
+All 29 directors
+PDF + Word download
+Video report (HeyGen)
+6 team members
+Custom AI director personas
+Priority WhatsApp support
+Full consultation history', 'textarea'),
+
 -- Footer
 ('footer', 'tagline', 'Learn. Create. Innovate.', 'text'),
 ('footer', 'copyright', '2026 Arreyon Consult by G-DESIGNS LTD. All rights reserved.', 'text')
