@@ -818,14 +818,18 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 }`;
 
     const raw = await askClaude(prompt, [{ role: 'user', content: 'Produce the Chairman synthesis now, as JSON only.' }], { feature: 'chairman_synthesis', userId: req.userId }, 2000);
-    const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
-
     let synthesis;
+
     try {
-      synthesis = JSON.parse(cleaned);
+
+      synthesis = extractJSON(raw);
+
     } catch (e) {
-      console.error('Chairman synthesis JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
+
+      console.error('Chairman synthesis JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
+
       throw new Error('Could not produce the board verdict — please try again');
+
     }
 
     res.json({ success: true, synthesis });
@@ -924,12 +928,11 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 }`;
 
     const raw = await askClaude(prompt, [{ role: 'user', content: 'Find the opportunities now, as JSON only.' }], { feature: 'entrepreneur_mode', userId: req.userId }, 2800);
-    const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
     let structured;
     try {
-      structured = JSON.parse(cleaned);
+      structured = extractJSON(raw);
     } catch (e) {
-      console.error('Opportunity finder JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
+      console.error('Opportunity finder JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
       throw new Error('Could not generate opportunities — please try again');
     }
 
@@ -1015,12 +1018,11 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 }`;
 
     const raw = await askClaude(prompt, [{ role: 'user', content: 'Validate the idea now, as JSON only.' }], { feature: 'entrepreneur_mode', userId: req.userId }, 2800);
-    const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
     let structured;
     try {
-      structured = JSON.parse(cleaned);
+      structured = extractJSON(raw);
     } catch (e) {
-      console.error('Idea validation JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
+      console.error('Idea validation JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
       throw new Error('Could not validate the idea — please try again');
     }
 
@@ -1166,12 +1168,11 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 }`;
 
     const raw = await askClaude(prompt, [{ role: 'user', content: 'Build the business plan now, as JSON only.' }], { feature: 'entrepreneur_mode', userId: req.userId }, 4500);
-    const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
     let plan;
     try {
-      plan = JSON.parse(cleaned);
+      plan = extractJSON(raw);
     } catch (e) {
-      console.error('Business plan JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
+      console.error('Business plan JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
       throw new Error('Could not generate the business plan — please try again');
     }
 
@@ -1225,6 +1226,27 @@ async function logAIUsage({ provider, model, status, errorMessage, durationMs, f
       [provider, model, status, errorMessage || null, durationMs, feature || 'unspecified', userId || null, businessId || null]
     );
   } catch (e) { /* never let logging break the actual request */ }
+}
+
+// ── Robust JSON extraction from an AI response ──────────────────────────────
+// A plain markdown-fence strip only works if the response is EXACTLY the JSON
+// block with nothing else. In practice, longer/more complex prompts sometimes
+// get a stray sentence of preamble or a trailing note despite instructions to
+// return "only JSON" — that alone breaks a naive strip regardless of token
+// budget. This finds the outermost {...} block and parses just that, which
+// survives any surrounding text.
+function extractJSON(raw) {
+  let text = raw.trim();
+  // Strip a leading ```json or ``` fence and a trailing ``` if present
+  text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace < firstBrace) {
+    throw new Error('No JSON object found in response');
+  }
+  const jsonSlice = text.slice(firstBrace, lastBrace + 1);
+  return JSON.parse(jsonSlice);
 }
 
 async function _askClaudeRaw(persona, messages, maxTokens = 1024) {
@@ -1888,12 +1910,11 @@ Return ONLY valid JSON, no markdown formatting, in exactly this structure:
 List up to 8 competitors total${includeInternational ? ', aiming for a mix of local and international where results support it' : ' (national only)'}. Up to 4 competitive_gaps (omit the key entirely if none can be evidenced). Up to 4 strategic_recommendations, ranked by priority. Up to 4 audit_coverage rows. Omit "local_coverage_note" entirely if results were adequate.`;
 
   const raw = await askClaude(synthesisPrompt, [{ role: 'user', content: 'Produce the complete structured report now, as JSON only.' }], { feature: 'research_engine', userId }, 3500);
-  const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
   let structured;
   try {
-    structured = JSON.parse(cleaned);
+    structured = extractJSON(raw);
   } catch (e) {
-    console.error('Research JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
+    console.error('Research JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
     throw new Error('Could not parse market research — please try again');
   }
 
@@ -2057,11 +2078,10 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 }`;
 
   const raw = await askClaude(prompt, [{ role: 'user', content: 'Perform the verification pass now, as JSON only.' }], { feature: 'verification_engine', userId }, 2500);
-  const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
   try {
-    return JSON.parse(cleaned);
+    return extractJSON(raw);
   } catch (e) {
-    console.error('Verification JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
+    console.error('Verification JSON parse failed.', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
     throw new Error('Could not complete verification — please try again');
   }
 }
@@ -2303,11 +2323,10 @@ Omit any key entirely if you have no supporting evidence for it. Do not include 
 
   const fullPrompt = prompt + promptTail;
   const raw = await askClaude(fullPrompt, [{ role: 'user', content: 'Extract the structured business facts now, as JSON only.' }], { feature: 'website_analyzer', userId }, 1800);
-  const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
   try {
-    return JSON.parse(cleaned);
+    return extractJSON(raw);
   } catch (e) {
-    console.error('Business facts JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
+    console.error('Business facts JSON parse failed.', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
     throw new Error('Could not parse business analysis — please try again');
   }
 }
