@@ -1108,18 +1108,75 @@ function renderAnalysisResults(data) {
   grid.innerHTML = Object.entries(data.facts).map(([key, fact]) => {
     if (!fact || !fact.value) return '';
     const label = FACT_LABELS[key] || key;
-    const badgeColor = fact.source_type === 'observed' ? 'var(--green)' : 'var(--gold)';
-    const badgeText = fact.source_type === 'observed' ? 'Observed' : 'AI Inferred';
-    return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px">
+    const badgeInfo = { observed: ['var(--green)', 'Observed'], inferred: ['var(--gold)', 'AI Inferred'], user_provided: ['var(--purple-light)', 'You Edited'] };
+    const [badgeColor, badgeText] = badgeInfo[fact.source_type] || badgeInfo.inferred;
+    const safeValue = fact.value.replace(/"/g, '&quot;');
+    return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px" id="factCard_${key}">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">${label}</div>
-        <div style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:5px;background:${badgeColor}22;color:${badgeColor}">${badgeText}</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:5px;background:${badgeColor}22;color:${badgeColor}">${badgeText}</div>
+          <button onclick="startEditFact('${key}', '${data.businessId}')" title="Edit" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:2px;display:flex" id="editIcon_${key}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+          </button>
+        </div>
       </div>
-      <div style="font-size:13px;color:var(--text2);line-height:1.6">${fact.value}</div>
+      <div id="factView_${key}">
+        <div style="font-size:13px;color:var(--text2);line-height:1.6">${fact.value}</div>
+      </div>
+      <div id="factEdit_${key}" style="display:none">
+        <textarea id="factInput_${key}" class="form-input" style="font-size:13px;margin-bottom:8px" rows="2">${safeValue}</textarea>
+        <div style="display:flex;gap:6px">
+          <button class="btn-primary" style="padding:6px 14px;font-size:12px" onclick="saveFact('${key}', '${data.businessId}')">Save</button>
+          <button class="btn-ghost" style="padding:6px 14px;font-size:12px" onclick="cancelEditFact('${key}')">Cancel</button>
+        </div>
+      </div>
     </div>`;
   }).join('');
 
   document.getElementById('analyzerResults').style.display = 'block';
+}
+
+function startEditFact(key) {
+  document.getElementById('factView_' + key).style.display = 'none';
+  document.getElementById('editIcon_' + key).style.display = 'none';
+  document.getElementById('factEdit_' + key).style.display = 'block';
+}
+
+function cancelEditFact(key) {
+  document.getElementById('factView_' + key).style.display = 'block';
+  document.getElementById('editIcon_' + key).style.display = 'flex';
+  document.getElementById('factEdit_' + key).style.display = 'none';
+}
+
+async function saveFact(key, businessId) {
+  const newValue = document.getElementById('factInput_' + key).value.trim();
+  if (!newValue) return;
+
+  try {
+    const res = await fetch(`/api/business/${businessId}/facts/${key}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: newValue })
+    });
+    if (!res.ok) { alert('Failed to save. Please try again.'); return; }
+
+    // Update in-memory data and re-render this one card so the badge flips to "You Edited"
+    if (currentAnalysisData?.facts?.[key]) {
+      currentAnalysisData.facts[key] = { value: newValue, source_type: 'user_provided' };
+    }
+    document.getElementById('factView_' + key).innerHTML = `<div style="font-size:13px;color:var(--text2);line-height:1.6">${newValue}</div>`;
+    cancelEditFact(key);
+
+    // Refresh the badge to reflect the new source_type without a full re-render
+    const card = document.getElementById('factCard_' + key);
+    const badge = card.querySelector('div[style*="border-radius:5px"]');
+    if (badge) {
+      badge.style.background = 'var(--purple-light)22';
+      badge.style.color = 'var(--purple-light)';
+      badge.textContent = 'You Edited';
+    }
+  } catch (e) {
+    alert('Connection error. Please try again.');
+  }
 }
 
 async function loadAnalyzedBusinesses() {
