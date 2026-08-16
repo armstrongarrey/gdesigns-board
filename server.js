@@ -2946,6 +2946,335 @@ app.get('/api/business/:id/report', authRequired, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ENTREPRENEUR MODE REPORT — downloadable HTML/PDF/DOCX for opportunity
+// searches, idea validations, and generated business plans
+// ═══════════════════════════════════════════════════════════════════════════
+
+function planSectionText(plan) {
+  if (!plan) return null;
+  const bm = plan.business_model || {}, st = plan.strategy || {}, mk = plan.marketing_plan || {}, ex = plan.execution_plan || {}, fin = plan.financial_snapshot || {};
+  return { bm, st, mk, ex, fin };
+}
+
+function buildEntrepreneurReportHTML(session) {
+  const isOpp = session.mode === 'opportunity_finder';
+  const dateStr = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const title = isOpp ? 'Business Opportunity Report' : 'Business Idea Validation Report';
+  const s = session.structured_output || {};
+
+  const inputRows = Object.entries(session.input_data || {}).filter(([,v]) => v).map(([k,v]) =>
+    `<tr><td style="padding:6px 12px;font-weight:600;width:160px">${k.replace(/([A-Z])/g,' $1').replace(/^./,c=>c.toUpperCase())}</td><td style="padding:6px 12px">${v}</td></tr>`
+  ).join('');
+
+  let bodyHtml = '';
+  if (isOpp) {
+    const oppRows = (s.opportunities || []).map(o => `
+      <div style="border:1px solid #e5e5e5;border-radius:8px;padding:14px;margin-bottom:12px;page-break-inside:avoid">
+        <div style="font-weight:700;font-size:15px;margin-bottom:4px">${o.name}</div>
+        <div style="font-size:13px;margin-bottom:6px">${o.description || ''}</div>
+        <div style="font-size:12.5px;color:#666;font-style:italic;margin-bottom:8px">Why it fits: ${o.why_it_fits || ''}</div>
+        <table style="width:100%;font-size:11.5px"><tr>
+          <td>Demand: <strong>${o.demand||'—'}</strong></td><td>Competition: <strong>${o.competition||'—'}</strong></td><td>Margin: <strong>${o.potential_margin||'—'}</strong></td>
+        </tr><tr>
+          <td>Acquisition: <strong>${o.customer_acquisition_difficulty||'—'}</strong></td><td>Scalability: <strong>${o.scalability||'—'}</strong></td><td>Risk: <strong>${o.risk||'—'}</strong></td>
+        </tr></table>
+        <div style="font-size:12px;margin-top:6px">Startup cost: ${o.startup_cost_estimate||'—'} · Time to revenue: ${o.time_to_first_revenue||'—'}</div>
+      </div>`).join('');
+    bodyHtml = `<h2>Opportunities Found</h2>${oppRows}
+      <h2>Where to Start</h2><p>${s.overall_recommendation || ''}</p>
+      ${s.what_to_learn_first ? `<p><em>First, learn: ${s.what_to_learn_first}</em></p>` : ''}`;
+  } else {
+    const verdictColor = { validate: '#10b981', modify: '#d97706', reconsider: '#dc2626' }[s.verdict] || '#666';
+    bodyHtml = `
+      <div style="border:2px solid ${verdictColor};border-radius:10px;padding:16px;text-align:center;margin-bottom:20px">
+        <div style="font-size:20px;font-weight:800;color:${verdictColor}">${(s.verdict||'').toUpperCase()}</div>
+        <div style="font-size:13px;margin-top:6px">${s.verdict_reasoning || ''}</div>
+      </div>
+      <h2>Assessment</h2>
+      <p><strong>Problem Addressed:</strong> ${s.problem_addressed || ''}</p>
+      <p><strong>Target Customer:</strong> ${s.target_customer || ''}</p>
+      <p><strong>Demand Assessment:</strong> ${s.demand_assessment || ''}</p>
+      <p><strong>Existing Alternatives:</strong> ${(s.existing_alternatives||[]).join(', ')}</p>
+      <p><strong>Competition Level:</strong> ${s.competition_level || ''}</p>
+      <p><strong>Suggested Pricing:</strong> ${s.suggested_pricing || ''}</p>
+      <p><strong>Startup Requirements:</strong> ${s.startup_requirements || ''}</p>
+      <p><strong>Unit Economics:</strong> ${s.unit_economics_note || ''}</p>
+      <p><strong>Distribution Channels:</strong> ${s.distribution_channels || ''}</p>
+      <p><strong>Customer Acquisition:</strong> ${s.customer_acquisition_strategy || ''}</p>
+      <p><strong>Differentiation Opportunity:</strong> ${s.differentiation_opportunity || ''}</p>
+      <p><strong>Scalability:</strong> ${s.scalability_note || ''}</p>
+      ${(s.risks||[]).length ? `<p><strong>Risks:</strong></p><ul>${s.risks.map(r=>`<li>${r}</li>`).join('')}</ul>` : ''}`;
+  }
+
+  const p = planSectionText(session.business_plan);
+  const planHtml = p ? `
+    <h2>Business Plan</h2>
+    <h3 style="color:#6C3Bff;font-size:14px">Business Model</h3>
+    <p><strong>Value Proposition:</strong> ${p.bm.value_proposition||''}<br><strong>Customer Segments:</strong> ${p.bm.customer_segments||''}</p>
+    <p><strong>Revenue Streams:</strong> ${(p.bm.revenue_streams||[]).join(', ')}<br><strong>Cost Structure:</strong> ${(p.bm.cost_structure||[]).join(', ')}</p>
+    <h3 style="color:#6C3Bff;font-size:14px">Strategy</h3>
+    <p><strong>Positioning:</strong> ${p.st.positioning||''}<br><strong>Competitive Advantage:</strong> ${p.st.competitive_advantage||''}<br><strong>Differentiation:</strong> ${p.st.differentiation||''}</p>
+    <h3 style="color:#6C3Bff;font-size:14px">Marketing Plan</h3>
+    <p><strong>Target Audience:</strong> ${p.mk.target_audience||''}<br><strong>Key Messaging:</strong> ${p.mk.key_messaging||''}</p>
+    <p><strong>Channels:</strong> ${(p.mk.marketing_channels||[]).join(', ')}<br><strong>Content Strategy:</strong> ${p.mk.content_strategy||''}</p>
+    <p><strong>Promotional Tactics:</strong> ${(p.mk.promotional_tactics||[]).join(', ')}<br><strong>Acquisition Funnel:</strong> ${p.mk.customer_acquisition_funnel||''}</p>
+    <p><strong>Marketing Budget:</strong> ${p.mk.marketing_budget_estimate||''}</p>
+    <h3 style="color:#6C3Bff;font-size:14px">Execution Plan</h3>
+    <p><strong>First 30 Days:</strong></p><ul>${(p.ex.phase_30_days||[]).map(t=>`<li>${t}</li>`).join('')}</ul>
+    <p><strong>Days 31-60:</strong></p><ul>${(p.ex.phase_60_days||[]).map(t=>`<li>${t}</li>`).join('')}</ul>
+    <p><strong>Days 61-90:</strong></p><ul>${(p.ex.phase_90_days||[]).map(t=>`<li>${t}</li>`).join('')}</ul>
+    <h3 style="color:#6C3Bff;font-size:14px">Financial Snapshot</h3>
+    <p><strong>Startup Cost:</strong> ${p.fin.estimated_startup_cost||''}<br><strong>Monthly Operating Cost:</strong> ${p.fin.monthly_operating_cost||''}</p>
+    <p><strong>Breakeven Estimate:</strong> ${p.fin.breakeven_estimate||''}<br><strong>Key Assumption:</strong> ${p.fin.key_assumption||''}</p>` : '';
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title>
+<style>
+body{font-family:Georgia,serif;color:#1a1a1a;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.6}
+h1{font-size:24px;border-bottom:3px solid #6C3Bff;padding-bottom:10px}
+h2{font-size:16px;color:#6C3Bff;margin-top:26px;text-transform:uppercase;letter-spacing:.04em}
+.meta{color:#777;font-size:13px;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+p{font-size:13.5px}
+.footer{margin-top:40px;padding-top:14px;border-top:1px solid #ddd;font-size:11px;color:#999;text-align:center}
+</style></head><body>
+<h1>${title}</h1>
+<div class="meta">Generated ${dateStr} · Arreyon Consult by G-DESIGNS LTD ${session.research_backed ? '· Research-backed' : '· AI estimate only, not research-backed'}</div>
+<h2>Your Circumstances</h2><table>${inputRows}</table>
+${bodyHtml}
+${planHtml}
+<div class="footer">Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com · AI-generated — independently verify before major decisions.</div>
+</body></html>`;
+}
+
+async function buildEntrepreneurReportPDF(session) {
+  const doc = new PDFDocument({ margin: 50, size: 'A4' });
+  const isOpp = session.mode === 'opportunity_finder';
+  const purple = '#6C3Bff';
+  const MARGIN = 50, WIDTH = 495;
+  const s = session.structured_output || {};
+
+  function line(text, { size = 10, color = '#222', bold = false, gapAfter = 4 } = {}) {
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size).fillColor(color).text(text, MARGIN, doc.y, { width: WIDTH });
+    doc.moveDown(gapAfter / 10);
+  }
+  function h2(text) {
+    if (doc.y > 700) doc.addPage();
+    doc.moveDown(0.6);
+    line(text.toUpperCase(), { size: 12.5, color: purple, bold: true, gapAfter: 3 });
+  }
+  function ensureSpace(min) { if (doc.y > 792 - min) doc.addPage(); }
+
+  const title = isOpp ? 'Business Opportunity Report' : 'Business Idea Validation Report';
+  doc.font('Helvetica-Bold').fontSize(20).fillColor('#111').text(title, MARGIN, MARGIN, { width: WIDTH });
+  doc.moveTo(MARGIN, doc.y + 6).lineTo(MARGIN + WIDTH, doc.y + 6).strokeColor(purple).lineWidth(2).stroke();
+  doc.moveDown(0.8);
+  line(`Generated ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} · Arreyon Consult · ${session.research_backed ? 'Research-backed' : 'AI estimate only'}`, { size: 9, color: '#777', gapAfter: 6 });
+
+  h2('Your Circumstances');
+  Object.entries(session.input_data || {}).filter(([,v]) => v).forEach(([k,v]) => {
+    line(`${k.replace(/([A-Z])/g,' $1').replace(/^./,c=>c.toUpperCase())}: ${v}`, { size: 9.5 });
+  });
+
+  if (isOpp) {
+    h2('Opportunities Found');
+    (s.opportunities || []).forEach(o => {
+      ensureSpace(90);
+      line(o.name, { size: 12, bold: true, gapAfter: 2 });
+      line(o.description || '', { size: 9.5, color: '#444', gapAfter: 2 });
+      line(`Why it fits: ${o.why_it_fits || ''}`, { size: 9, color: '#666', gapAfter: 2 });
+      line(`Demand: ${o.demand||'—'}  |  Competition: ${o.competition||'—'}  |  Margin: ${o.potential_margin||'—'}  |  Risk: ${o.risk||'—'}`, { size: 9, gapAfter: 2 });
+      line(`Startup cost: ${o.startup_cost_estimate||'—'}  |  Time to revenue: ${o.time_to_first_revenue||'—'}`, { size: 9, color: '#666', gapAfter: 6 });
+    });
+    h2('Where to Start');
+    line(s.overall_recommendation || '', { size: 10 });
+    if (s.what_to_learn_first) line(`First, learn: ${s.what_to_learn_first}`, { size: 9.5, color: '#666' });
+  } else {
+    h2('Verdict');
+    const verdictColor = { validate: '#10b981', modify: '#d97706', reconsider: '#dc2626' }[s.verdict] || '#666';
+    line((s.verdict || '').toUpperCase(), { size: 16, bold: true, color: verdictColor, gapAfter: 3 });
+    line(s.verdict_reasoning || '', { size: 10, gapAfter: 6 });
+
+    h2('Assessment');
+    const rows = [['Problem Addressed', s.problem_addressed], ['Target Customer', s.target_customer], ['Demand Assessment', s.demand_assessment],
+      ['Existing Alternatives', (s.existing_alternatives||[]).join(', ')], ['Competition Level', s.competition_level], ['Suggested Pricing', s.suggested_pricing],
+      ['Startup Requirements', s.startup_requirements], ['Unit Economics', s.unit_economics_note], ['Distribution Channels', s.distribution_channels],
+      ['Customer Acquisition', s.customer_acquisition_strategy], ['Differentiation', s.differentiation_opportunity], ['Scalability', s.scalability_note]].filter(([,v])=>v);
+    rows.forEach(([label, val]) => { ensureSpace(30); line(`${label}: ${val}`, { size: 9.5, gapAfter: 3 }); });
+    if (s.risks?.length) { h2('Risks'); s.risks.forEach(r => line(`• ${r}`, { size: 9.5, color: '#a00', gapAfter: 2 })); }
+  }
+
+  const p = planSectionText(session.business_plan);
+  if (p) {
+    h2('Business Plan — Business Model');
+    line(`Value Proposition: ${p.bm.value_proposition||''}`, { size: 9.5, gapAfter: 2 });
+    line(`Customer Segments: ${p.bm.customer_segments||''}`, { size: 9.5, gapAfter: 2 });
+    line(`Revenue Streams: ${(p.bm.revenue_streams||[]).join(', ')}`, { size: 9.5, gapAfter: 2 });
+    line(`Cost Structure: ${(p.bm.cost_structure||[]).join(', ')}`, { size: 9.5, gapAfter: 6 });
+
+    h2('Strategy');
+    line(`Positioning: ${p.st.positioning||''}`, { size: 9.5, gapAfter: 2 });
+    line(`Competitive Advantage: ${p.st.competitive_advantage||''}`, { size: 9.5, gapAfter: 2 });
+    line(`Differentiation: ${p.st.differentiation||''}`, { size: 9.5, gapAfter: 6 });
+
+    h2('Marketing Plan');
+    line(`Target Audience: ${p.mk.target_audience||''}`, { size: 9.5, gapAfter: 2 });
+    line(`Key Messaging: ${p.mk.key_messaging||''}`, { size: 9.5, gapAfter: 2 });
+    line(`Channels: ${(p.mk.marketing_channels||[]).join(', ')}`, { size: 9.5, gapAfter: 2 });
+    line(`Content Strategy: ${p.mk.content_strategy||''}`, { size: 9.5, gapAfter: 2 });
+    line(`Promotional Tactics: ${(p.mk.promotional_tactics||[]).join(', ')}`, { size: 9.5, gapAfter: 2 });
+    line(`Acquisition Funnel: ${p.mk.customer_acquisition_funnel||''}`, { size: 9.5, gapAfter: 2 });
+    line(`Marketing Budget: ${p.mk.marketing_budget_estimate||''}`, { size: 9.5, gapAfter: 6 });
+
+    h2('Execution Plan');
+    line('First 30 Days:', { size: 9.5, bold: true, gapAfter: 1 });
+    (p.ex.phase_30_days||[]).forEach(t => line(`  • ${t}`, { size: 9, gapAfter: 1 }));
+    line('Days 31-60:', { size: 9.5, bold: true, gapAfter: 1 });
+    (p.ex.phase_60_days||[]).forEach(t => line(`  • ${t}`, { size: 9, gapAfter: 1 }));
+    line('Days 61-90:', { size: 9.5, bold: true, gapAfter: 1 });
+    (p.ex.phase_90_days||[]).forEach(t => line(`  • ${t}`, { size: 9, gapAfter: 1 }));
+    doc.moveDown(0.4);
+
+    h2('Financial Snapshot');
+    line(`Startup Cost: ${p.fin.estimated_startup_cost||''}`, { size: 9.5, gapAfter: 2 });
+    line(`Monthly Operating Cost: ${p.fin.monthly_operating_cost||''}`, { size: 9.5, gapAfter: 2 });
+    line(`Breakeven Estimate: ${p.fin.breakeven_estimate||''}`, { size: 9.5, gapAfter: 2 });
+    line(`Key Assumption: ${p.fin.key_assumption||''}`, { size: 9.5, gapAfter: 2 });
+  }
+
+  doc.moveDown(1.5);
+  line('Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com · AI-generated — independently verify before major decisions.', { size: 7.5, color: '#aaa' });
+
+  return doc;
+}
+
+async function buildEntrepreneurReportDOCX(session) {
+  const isOpp = session.mode === 'opportunity_finder';
+  const s = session.structured_output || {};
+  const children = [];
+
+  const title = isOpp ? 'Business Opportunity Report' : 'Business Idea Validation Report';
+  children.push(new Paragraph({ text: title, heading: HeadingLevel.TITLE }));
+  children.push(new Paragraph({ children: [new TextRun({ text: `Generated ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})} · Arreyon Consult · ${session.research_backed ? 'Research-backed' : 'AI estimate only'}`, italics: true, size: 18, color: '777777' })] }));
+  children.push(new Paragraph({ text: '' }));
+
+  function heading(text) { children.push(new Paragraph({ text, heading: HeadingLevel.HEADING_1 })); }
+  function subheading(text) { children.push(new Paragraph({ text, heading: HeadingLevel.HEADING_2 })); }
+  function para(text) { children.push(new Paragraph({ text: text || '', spacing: { after: 120 } })); }
+  function bullet(text) { children.push(new Paragraph({ text, bullet: { level: 0 } })); }
+
+  heading('Your Circumstances');
+  Object.entries(session.input_data || {}).filter(([,v]) => v).forEach(([k,v]) => {
+    para(`${k.replace(/([A-Z])/g,' $1').replace(/^./,c=>c.toUpperCase())}: ${v}`);
+  });
+
+  if (isOpp) {
+    heading('Opportunities Found');
+    (s.opportunities || []).forEach(o => {
+      subheading(o.name);
+      para(o.description);
+      para(`Why it fits: ${o.why_it_fits || ''}`);
+      para(`Demand: ${o.demand||'—'} | Competition: ${o.competition||'—'} | Margin: ${o.potential_margin||'—'} | Risk: ${o.risk||'—'}`);
+      para(`Startup cost: ${o.startup_cost_estimate||'—'} | Time to revenue: ${o.time_to_first_revenue||'—'}`);
+    });
+    heading('Where to Start');
+    para(s.overall_recommendation);
+    if (s.what_to_learn_first) para(`First, learn: ${s.what_to_learn_first}`);
+  } else {
+    heading('Verdict');
+    children.push(new Paragraph({ children: [new TextRun({ text: (s.verdict||'').toUpperCase(), bold: true, size: 28 })] }));
+    para(s.verdict_reasoning);
+
+    heading('Assessment');
+    const rows = [['Problem Addressed', s.problem_addressed], ['Target Customer', s.target_customer], ['Demand Assessment', s.demand_assessment],
+      ['Existing Alternatives', (s.existing_alternatives||[]).join(', ')], ['Competition Level', s.competition_level], ['Suggested Pricing', s.suggested_pricing],
+      ['Startup Requirements', s.startup_requirements], ['Unit Economics', s.unit_economics_note], ['Distribution Channels', s.distribution_channels],
+      ['Customer Acquisition', s.customer_acquisition_strategy], ['Differentiation', s.differentiation_opportunity], ['Scalability', s.scalability_note]].filter(([,v])=>v);
+    rows.forEach(([label, val]) => para(`${label}: ${val}`));
+    if (s.risks?.length) { subheading('Risks'); s.risks.forEach(r => bullet(r)); }
+  }
+
+  const p = planSectionText(session.business_plan);
+  if (p) {
+    heading('Business Plan');
+    subheading('Business Model');
+    para(`Value Proposition: ${p.bm.value_proposition||''}`);
+    para(`Customer Segments: ${p.bm.customer_segments||''}`);
+    para(`Revenue Streams: ${(p.bm.revenue_streams||[]).join(', ')}`);
+    para(`Cost Structure: ${(p.bm.cost_structure||[]).join(', ')}`);
+
+    subheading('Strategy');
+    para(`Positioning: ${p.st.positioning||''}`);
+    para(`Competitive Advantage: ${p.st.competitive_advantage||''}`);
+    para(`Differentiation: ${p.st.differentiation||''}`);
+
+    subheading('Marketing Plan');
+    para(`Target Audience: ${p.mk.target_audience||''}`);
+    para(`Key Messaging: ${p.mk.key_messaging||''}`);
+    para(`Channels: ${(p.mk.marketing_channels||[]).join(', ')}`);
+    para(`Content Strategy: ${p.mk.content_strategy||''}`);
+    para(`Promotional Tactics: ${(p.mk.promotional_tactics||[]).join(', ')}`);
+    para(`Acquisition Funnel: ${p.mk.customer_acquisition_funnel||''}`);
+    para(`Marketing Budget: ${p.mk.marketing_budget_estimate||''}`);
+
+    subheading('Execution Plan');
+    para('First 30 Days:'); (p.ex.phase_30_days||[]).forEach(t => bullet(t));
+    para('Days 31-60:'); (p.ex.phase_60_days||[]).forEach(t => bullet(t));
+    para('Days 61-90:'); (p.ex.phase_90_days||[]).forEach(t => bullet(t));
+
+    subheading('Financial Snapshot');
+    para(`Startup Cost: ${p.fin.estimated_startup_cost||''}`);
+    para(`Monthly Operating Cost: ${p.fin.monthly_operating_cost||''}`);
+    para(`Breakeven Estimate: ${p.fin.breakeven_estimate||''}`);
+    para(`Key Assumption: ${p.fin.key_assumption||''}`);
+  }
+
+  children.push(new Paragraph({ text: '' }));
+  children.push(new Paragraph({
+    children: [new TextRun({ text: 'Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com · AI-generated — independently verify before major decisions.', size: 15, color: 'AAAAAA', italics: true })],
+    alignment: AlignmentType.CENTER
+  }));
+
+  const doc = new DocxDocument({ sections: [{ children }] });
+  return Packer.toBuffer(doc);
+}
+
+// ── Entrepreneur Mode report download endpoint ──────────────────────────────
+app.get('/api/entrepreneur/:sessionId/report', authRequired, async (req, res) => {
+  const format = (req.query.format || 'html').toLowerCase();
+  if (!['html', 'pdf', 'docx'].includes(format)) return res.status(400).json({ error: 'Invalid format. Use html, pdf, or docx.' });
+
+  try {
+    const result = await pool.query('SELECT * FROM entrepreneur_sessions WHERE id = $1 AND user_id = $2', [req.params.sessionId, req.userId]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Session not found' });
+    const session = result.rows[0];
+    const filename = sanitizeFilename(session.mode === 'opportunity_finder' ? 'opportunity-report' : (session.input_data?.idea || 'idea-validation'));
+
+    if (format === 'html') {
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}.html"`);
+      return res.send(buildEntrepreneurReportHTML(session));
+    }
+    if (format === 'pdf') {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}.pdf"`);
+      const doc = await buildEntrepreneurReportPDF(session);
+      doc.pipe(res);
+      doc.end();
+      return;
+    }
+    if (format === 'docx') {
+      const buffer = await buildEntrepreneurReportDOCX(session);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}.docx"`);
+      return res.send(buffer);
+    }
+  } catch (err) {
+    console.error('Entrepreneur report generation error:', err.message);
+    res.status(500).json({ error: 'Failed to generate report. Please try again.' });
+  }
+});
+
 // ── Get one business profile with its current facts (latest value per key) ──
 app.get('/api/business/:id', authRequired, async (req, res) => {
   try {
