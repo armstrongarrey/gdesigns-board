@@ -1128,6 +1128,8 @@ ${isOpp ? `PRIOR OPPORTUNITY ANALYSIS:\n${JSON.stringify((session.structured_out
 YOUR TASK:
 Produce a complete, realistic business plan grounded in the founder's actual stated capital and time — not a generic template. Be specific with numbers where the founder's capital/time context allows it. Marketing must be a genuinely separate, detailed section — not a single throwaway line.
 
+CRITICAL LENGTH RULE: Every field below must be ONE sentence, maximum 25 words. Do not write paragraph-length financial justifications or multi-clause reasoning chains — state the number or conclusion plainly. If you need to show your reasoning, that reasoning must fit within the same 25-word limit as the answer itself, not as an additional explanation appended after it.
+
 Return ONLY valid JSON, no markdown, in exactly this structure:
 {
   "business_model": {
@@ -1160,14 +1162,14 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     "phase_90_days": ["specific task 1", "specific task 2"]
   },
   "financial_snapshot": {
-    "estimated_startup_cost": "realistic figure given their stated capital",
-    "monthly_operating_cost": "realistic estimate",
-    "breakeven_estimate": "realistic timeframe given their income target and time available",
-    "key_assumption": "the single biggest assumption this financial picture depends on"
+    "estimated_startup_cost": "a single figure or narrow range, max 25 words, no reasoning chain",
+    "monthly_operating_cost": "a single figure or narrow range, max 25 words, no reasoning chain",
+    "breakeven_estimate": "a single timeframe, max 25 words, no reasoning chain",
+    "key_assumption": "the single biggest assumption, stated plainly in max 25 words"
   }
 }`;
 
-    const raw = await askClaude(prompt, [{ role: 'user', content: 'Build the business plan now, as JSON only.' }], { feature: 'entrepreneur_mode', userId: req.userId }, 4500);
+    const raw = await askClaude(prompt, [{ role: 'user', content: 'Build the business plan now, as JSON only. Keep every field to one short sentence as instructed.' }], { feature: 'entrepreneur_mode', userId: req.userId }, 6500);
     let plan;
     try {
       plan = extractJSON(raw);
