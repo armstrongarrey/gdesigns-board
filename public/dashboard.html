@@ -139,6 +139,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <button class="nav-item" onclick="showSection('boardroom')" id="nav-boardroom">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Boardroom
     </button>
+    <button class="nav-item" onclick="showSection('analyzer')" id="nav-analyzer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Analyze My Business
+    </button>
     <button class="nav-item" onclick="showSection('history')" id="nav-history">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>History
     </button>
@@ -324,6 +327,48 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div class="section-sub">Open a live session with your board of directors.</div>
       <div style="text-align:center;padding:40px">
         <a href="/boardroom" class="btn-primary btn-large" style="font-size:15px;padding:14px 32px">Open Boardroom</a>
+      </div>
+    </div>
+
+    <!-- WEBSITE ANALYZER SECTION -->
+    <div class="section-view" id="section-analyzer">
+      <div class="section-title">Analyze My Business</div>
+      <div class="section-sub">Paste your business website and Arreyon will read it and extract what it can find — no need to explain everything manually.</div>
+
+      <div style="max-width:560px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:24px">
+        <div class="form-group">
+          <label>Website URL</label>
+          <input class="form-input" id="analyzerUrl" placeholder="e.g. yourbusiness.com" onkeydown="if(event.key==='Enter')runAnalysis()">
+        </div>
+        <button class="btn-primary" style="width:100%;padding:12px" onclick="runAnalysis()" id="analyzeBtn">Analyze Website</button>
+        <div id="analyzerLimitMsg" style="margin-top:10px;font-size:12px;color:var(--muted);display:none"></div>
+      </div>
+
+      <!-- Loading state with progress messages -->
+      <div id="analyzerLoading" style="display:none;max-width:560px;text-align:center;padding:32px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;margin-bottom:24px">
+        <div style="font-size:28px;margin-bottom:12px;animation:spin 2s linear infinite;display:inline-block">⚙️</div>
+        <div id="analyzerProgressText" style="font-size:14px;color:var(--text2);font-weight:600">Fetching your website...</div>
+      </div>
+      <style>@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style>
+
+      <div id="analyzerError" style="display:none;max-width:560px;background:#1a0808;border:1px solid #3a1010;border-radius:10px;padding:14px 16px;font-size:13px;color:#ff8080;margin-bottom:24px"></div>
+
+      <!-- Results -->
+      <div id="analyzerResults" style="display:none">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+          <div class="section-title" style="margin:0;font-size:16px" id="resultBizName">Business Profile</div>
+          <a id="resultUrl" href="#" target="_blank" style="font-size:12px;color:var(--purple-light);text-decoration:none">visit site ↗</a>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:18px" id="resultPages"></div>
+        <div id="factsGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px"></div>
+      </div>
+
+      <!-- Previously analyzed businesses -->
+      <div style="margin-top:32px">
+        <div class="section-title" style="font-size:15px">Your Analyzed Businesses</div>
+        <div class="history-list" id="analyzedBusinessList">
+          <div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">No businesses analyzed yet</div>
+        </div>
       </div>
     </div>
 
@@ -584,9 +629,10 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const navEl = document.getElementById('nav-' + name);
   if (navEl) navEl.classList.add('active');
-  const titles = {home:'Dashboard',history:'History',profile:'Profile',billing:'Billing & Plan',boardroom:'Boardroom'};
+  const titles = {home:'Dashboard',history:'History',profile:'Profile',billing:'Billing & Plan',boardroom:'Boardroom',analyzer:'Analyze My Business'};
   document.querySelector('.topbar-title').textContent = titles[name] || 'Dashboard';
   if (window.innerWidth < 900) document.getElementById('sidebar').classList.remove('open');
+  if (name === 'analyzer') loadAnalyzedBusinesses();
 }
 
 function openPayment(plan) {
@@ -675,6 +721,112 @@ async function submitPayment() {
 async function doLogout() {
   await fetch('/api/auth/logout', { method:'POST' });
   window.location.href = '/';
+}
+
+// ── WEBSITE ANALYZER ─────────────────────────────────────────────────────────
+const ANALYZER_PROGRESS_MESSAGES = [
+  'Fetching your website...',
+  'Reading key pages...',
+  'Understanding your business...',
+  'Extracting what we found...'
+];
+
+const FACT_LABELS = {
+  business_name: 'Business Name', industry: 'Industry', value_proposition: 'Value Proposition',
+  products_services: 'Products & Services', target_customers: 'Target Customers',
+  pricing_info: 'Pricing', location: 'Location', contact_info: 'Contact Info',
+  positioning: 'Positioning', notable_gaps: 'What\'s Missing'
+};
+
+async function runAnalysis() {
+  const urlInput = document.getElementById('analyzerUrl');
+  const url = urlInput.value.trim();
+  if (!url) { urlInput.focus(); return; }
+
+  document.getElementById('analyzerError').style.display = 'none';
+  document.getElementById('analyzerResults').style.display = 'none';
+  document.getElementById('analyzerLoading').style.display = 'block';
+  document.getElementById('analyzeBtn').disabled = true;
+
+  // Cycle through progress messages while the request is in flight
+  let step = 0;
+  const progressEl = document.getElementById('analyzerProgressText');
+  const progressTimer = setInterval(() => {
+    step = (step + 1) % ANALYZER_PROGRESS_MESSAGES.length;
+    progressEl.textContent = ANALYZER_PROGRESS_MESSAGES[step];
+  }, 3000);
+
+  try {
+    const res = await fetch('/api/business/analyze', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    const data = await res.json();
+    clearInterval(progressTimer);
+    document.getElementById('analyzerLoading').style.display = 'none';
+    document.getElementById('analyzeBtn').disabled = false;
+
+    if (!res.ok) {
+      if (data.upgradeRequired) {
+        document.getElementById('analyzerError').innerHTML = data.error + ' <a href="#" onclick="showSection(\'billing\');return false" style="color:var(--purple-light)">Upgrade now</a>';
+      } else {
+        document.getElementById('analyzerError').textContent = data.error || 'Analysis failed. Please try again.';
+      }
+      document.getElementById('analyzerError').style.display = 'block';
+      return;
+    }
+
+    renderAnalysisResults(data);
+    loadAnalyzedBusinesses();
+  } catch (e) {
+    clearInterval(progressTimer);
+    document.getElementById('analyzerLoading').style.display = 'none';
+    document.getElementById('analyzeBtn').disabled = false;
+    document.getElementById('analyzerError').textContent = 'Connection error. Please try again.';
+    document.getElementById('analyzerError').style.display = 'block';
+  }
+}
+
+function renderAnalysisResults(data) {
+  document.getElementById('resultBizName').textContent = data.facts.business_name?.value || 'Business Profile';
+  document.getElementById('resultUrl').href = data.analyzedUrl;
+  document.getElementById('resultPages').textContent = `Analyzed ${data.pagesAnalyzed.length} page${data.pagesAnalyzed.length > 1 ? 's' : ''}`;
+
+  const grid = document.getElementById('factsGrid');
+  grid.innerHTML = Object.entries(data.facts).map(([key, fact]) => {
+    if (!fact || !fact.value) return '';
+    const label = FACT_LABELS[key] || key;
+    const badgeColor = fact.source_type === 'observed' ? 'var(--green)' : 'var(--gold)';
+    const badgeText = fact.source_type === 'observed' ? 'Observed' : 'AI Inferred';
+    return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">${label}</div>
+        <div style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:5px;background:${badgeColor}22;color:${badgeColor}">${badgeText}</div>
+      </div>
+      <div style="font-size:13px;color:var(--text2);line-height:1.6">${fact.value}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('analyzerResults').style.display = 'block';
+}
+
+async function loadAnalyzedBusinesses() {
+  try {
+    const res = await fetch('/api/business');
+    const data = await res.json();
+    const list = document.getElementById('analyzedBusinessList');
+    if (!data.businesses || !data.businesses.length) {
+      list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">No businesses analyzed yet</div>';
+      return;
+    }
+    list.innerHTML = data.businesses.map(b => `
+      <div class="history-item" style="cursor:default">
+        <div class="history-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
+        <div style="flex:1"><div class="history-title">${b.name || b.website}</div>
+        <div class="history-meta"><span>${b.website}</span></div></div>
+        <div class="history-time">${timeAgo(b.updated_at)}</div>
+      </div>`).join('');
+  } catch (e) {}
 }
 
 init();
