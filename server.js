@@ -1543,7 +1543,21 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
       [req.params.id, summary, `${sources.length} sources, ${new Date().toISOString().slice(0,10)}`]
     );
 
-    res.json({ success: true, sessionId, summary, structured, sources });
+    // Per plan: Starter gets a manual "Verify" button only. Pro/Business get automatic
+    // verification right after research completes (and can still manually re-trigger).
+    let verification = null;
+    if (plan === 'pro' || plan === 'business') {
+      try {
+        verification = await runVerificationPass(structured, sources, req.userId);
+        await pool.query('UPDATE research_sessions SET verification_data = $1 WHERE id = $2', [JSON.stringify(verification), sessionId]);
+      } catch (e) {
+        console.error('Auto-verification failed (non-fatal):', e.message);
+        // Verification failing shouldn't block the research result itself — the
+        // manual "Verify" button remains available if this happens.
+      }
+    }
+
+    res.json({ success: true, sessionId, summary, structured, sources, verification, autoVerified: !!verification });
   } catch (err) {
     console.error('Research error:', err.message);
     res.status(500).json({ error: err.message || 'Research failed. Please try again.' });
@@ -1566,6 +1580,94 @@ app.get('/api/business/:id/research', authRequired, async (req, res) => {
     }
     res.json({ sessions: sessionsWithSources });
   } catch (e) { res.status(500).json({ error: 'Failed to load research history' }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VERIFICATION ENGINE — Increment 4, part 2
+// Self-challenge pass: for each recommendation, identify the strongest argument
+// against it, check whether the actual evidence supports that objection, and
+// revise the recommendation if the objection holds. Produces a confidence report.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function runVerificationPass(structured, sources, userId) {
+  const recs = structured.strategic_recommendations || [];
+  if (!recs.length) {
+    return { overall_confidence: 'low', evidence_quality: 'low', data_completeness_note: 'No recommendations were generated to verify.', main_uncertainty: 'No recommendations available.', recommendation_checks: [] };
+  }
+
+  const sourcesText = (sources || []).map((s, i) => `[${i + 1}] ${s.title}\n${s.snippet || ''}`).join('\n\n');
+  const recsText = recs.map((r, i) => `${i + 1}. ${r.title || r.action}\nSolution: ${r.solution || r.reason}\nAddresses: ${r.problem_addressed || 'N/A'}`).join('\n\n');
+
+  const prompt = `You are a skeptical senior reviewer performing a verification pass on a set of business recommendations before they are finalized for a client. Your job is to stress-test them, not to praise them.
+
+ORIGINAL EVIDENCE / SOURCES USED:
+${sourcesText.slice(0, 6000)}
+
+MARKET CONTEXT: ${structured.market_context || ''}
+OPPORTUNITY GAP IDENTIFIED: ${structured.opportunity_gap || 'None stated'}
+
+RECOMMENDATIONS TO VERIFY:
+${recsText}
+
+YOUR TASK — for EACH recommendation:
+1. Identify the single strongest argument against it (the best case for why it might be wrong or premature).
+2. Check honestly: does the evidence above actually support that objection, or is the objection weak/unsupported?
+3. Give a verdict: "upheld" (objection doesn't hold, recommendation stands), "weakened" (objection has some merit, recommendation is still reasonable but less certain), or "revise" (objection is strong enough that the recommendation should change — in this case briefly state what the revised approach should be).
+
+Then give an OVERALL assessment of this entire research pass:
+- Overall confidence (high/medium/low) in the recommendations as a whole
+- Evidence quality (high/medium/low) — were sources specific and relevant, or thin/generic?
+- Data completeness — what's the most important missing piece of information that would have made this more reliable?
+- Main uncertainty — the single biggest thing that could change the picture if it turned out to be wrong
+
+Be genuinely critical. If a recommendation is weak, say "revise", don't soften it to "upheld" out of politeness.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "overall_confidence": "high|medium|low",
+  "evidence_quality": "high|medium|low",
+  "data_completeness_note": "the most important missing piece of information",
+  "main_uncertainty": "the single biggest uncertainty that could change the recommendations",
+  "recommendation_checks": [
+    {"recommendation_title": "...", "strongest_objection": "...", "objection_supported_by_evidence": true, "verdict": "upheld|weakened|revise", "note": "brief explanation; if verdict is revise, state the revised approach here"}
+  ]
+}`;
+
+  const raw = await askClaude(prompt, [{ role: 'user', content: 'Perform the verification pass now, as JSON only.' }], { feature: 'verification_engine', userId }, 2500);
+  const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    console.error('Verification JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
+    throw new Error('Could not complete verification — please try again');
+  }
+}
+
+// ── Verification endpoint — manual trigger (all plans) or called automatically
+// right after research completes for Pro/Business (see /research endpoint) ──
+app.post('/api/business/:id/research/:sessionId/verify', authRequired, async (req, res) => {
+  try {
+    const session = await pool.query(
+      `SELECT rs.* FROM research_sessions rs
+       JOIN businesses b ON b.id = rs.business_id
+       WHERE rs.id = $1 AND rs.business_id = $2 AND b.user_id = $3`,
+      [req.params.sessionId, req.params.id, req.userId]
+    );
+    if (!session.rows.length) return res.status(404).json({ error: 'Research session not found' });
+    const sessionRow = session.rows[0];
+    if (!sessionRow.structured_data) return res.status(400).json({ error: 'This research session has no recommendations to verify' });
+
+    const sourcesResult = await pool.query('SELECT * FROM research_sources WHERE research_session_id = $1', [req.params.sessionId]);
+
+    const verification = await runVerificationPass(sessionRow.structured_data, sourcesResult.rows, req.userId);
+
+    await pool.query('UPDATE research_sessions SET verification_data = $1 WHERE id = $2', [JSON.stringify(verification), req.params.sessionId]);
+
+    res.json({ success: true, verification });
+  } catch (err) {
+    console.error('Verification error:', err.message);
+    res.status(500).json({ error: err.message || 'Verification failed. Please try again.' });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
