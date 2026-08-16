@@ -98,10 +98,57 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
     <div><div class="hdr-title">Boardroom</div><div class="hdr-sub">Arreyon Consult</div></div>
   </div>
   <div class="hdr-right">
+    <button class="send-btn" style="width:auto;height:auto;padding:9px 16px;border-radius:8px;display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600" onclick="openBoardVerdict()" id="verdictBtn">
+      🏛️ Get Board Verdict
+    </button>
     <div class="usage-pill" id="usagePill">— consultations left</div>
     <div class="plan-pill" id="planPill">Starter</div>
   </div>
 </header>
+
+<!-- CHAIRMAN SYNTHESIS MODAL -->
+<div id="verdictModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:999;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--bg2);border:1px solid var(--border-light);border-radius:16px;padding:28px;max-width:640px;width:100%;max-height:85vh;overflow-y:auto;position:relative">
+    <button onclick="closeBoardVerdict()" style="position:absolute;top:16px;right:16px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;line-height:1">×</button>
+    <div style="font-size:20px;font-weight:700;margin-bottom:4px">🏛️ Chairman's Board Verdict</div>
+    <div style="font-size:12.5px;color:var(--muted);margin-bottom:20px">A final synthesis across your conversation with the board</div>
+
+    <div id="verdictPrompt" style="text-align:center;padding:30px 10px">
+      <div style="font-size:13.5px;color:var(--text2);margin-bottom:18px">Ready to synthesize your board session into one final, decisive recommendation.</div>
+      <button class="send-btn" style="width:auto;height:auto;padding:11px 24px;border-radius:9px;font-size:14px;font-weight:600" onclick="generateBoardVerdict()">Generate Verdict</button>
+    </div>
+
+    <div id="verdictLoading" style="display:none;text-align:center;padding:40px 10px">
+      <div style="font-size:28px;margin-bottom:12px">⚖️</div>
+      <div style="font-size:13.5px;color:var(--text2)">The Chairman is reviewing your conversation...</div>
+    </div>
+
+    <div id="verdictError" style="display:none;padding:16px;background:#1a0808;border:1px solid #3a1010;border-radius:10px;font-size:13px;color:#ff8080"></div>
+
+    <div id="verdictResults" style="display:none">
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">The Problem</div>
+      <div id="verdictProblem" style="font-size:13.5px;color:var(--text2);margin-bottom:18px"></div>
+
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Key Advice</div>
+      <div id="verdictKeyAdvice" style="display:flex;flex-direction:column;gap:8px;margin-bottom:18px"></div>
+
+      <div id="verdictDisagreementWrap" style="display:none;background:#2a1f0022;border-left:3px solid var(--gold);border-radius:6px;padding:12px 14px;margin-bottom:18px">
+        <div style="font-size:10.5px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Disagreement Among Directors</div>
+        <div id="verdictDisagreementText" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
+      </div>
+
+      <div style="background:linear-gradient(135deg,var(--bg3),var(--bg2));border:1px solid var(--purple);border-radius:10px;padding:16px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Chairman's Verdict</div>
+        <div id="verdictText" style="font-size:14.5px;color:var(--text);line-height:1.7;font-weight:500"></div>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px">
+        <div id="verdictConfidenceBadge" style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px"></div>
+        <div id="verdictConfidenceReason" style="font-size:12px;color:var(--muted)"></div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div class="body-layout">
   <nav class="dir-panel" id="dirPanel">
@@ -346,6 +393,99 @@ function buildDirList() {
       ${locked?'<div class="dir-lock"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>':''}
     </div>`;
   }).join('');
+}
+
+// ── Chairman Synthesis: reviews all director conversations, produces final verdict ──
+function openBoardVerdict() {
+  document.getElementById('verdictModal').style.display = 'flex';
+  document.getElementById('verdictPrompt').style.display = 'block';
+  document.getElementById('verdictLoading').style.display = 'none';
+  document.getElementById('verdictError').style.display = 'none';
+  document.getElementById('verdictResults').style.display = 'none';
+}
+
+function closeBoardVerdict() {
+  document.getElementById('verdictModal').style.display = 'none';
+}
+
+async function generateBoardVerdict() {
+  // Gather every director conversation that actually has messages
+  const conversations = Object.entries(convos)
+    .filter(([id, msgs]) => msgs && msgs.length > 0)
+    .map(([id, msgs]) => {
+      const dir = DIRS.find(d => d.id === id);
+      return { directorName: dir?.name || id, directorRole: dir?.role || '', messages: msgs };
+    });
+
+  if (!conversations.length) {
+    document.getElementById('verdictError').textContent = 'Chat with at least one director before requesting a board verdict.';
+    document.getElementById('verdictError').style.display = 'block';
+    return;
+  }
+
+  document.getElementById('verdictPrompt').style.display = 'none';
+  document.getElementById('verdictError').style.display = 'none';
+  document.getElementById('verdictResults').style.display = 'none';
+  document.getElementById('verdictLoading').style.display = 'block';
+
+  try {
+    const res = await fetch('/api/board/synthesize', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversations })
+    });
+    const data = await res.json();
+    document.getElementById('verdictLoading').style.display = 'none';
+
+    if (!res.ok) {
+      const errEl = document.getElementById('verdictError');
+      if (data.upgradeRequired) {
+        errEl.innerHTML = data.error + ' <a href="/dashboard#billing" style="color:var(--purple-light)">Upgrade now</a>';
+      } else {
+        errEl.textContent = data.error || 'Synthesis failed. Please try again.';
+      }
+      errEl.style.display = 'block';
+      document.getElementById('verdictPrompt').style.display = 'block';
+      return;
+    }
+
+    renderBoardVerdict(data.synthesis);
+  } catch (e) {
+    document.getElementById('verdictLoading').style.display = 'none';
+    document.getElementById('verdictError').textContent = 'Connection error. Please try again.';
+    document.getElementById('verdictError').style.display = 'block';
+    document.getElementById('verdictPrompt').style.display = 'block';
+  }
+}
+
+function renderBoardVerdict(s) {
+  document.getElementById('verdictProblem').textContent = s.core_problem || '';
+
+  const advice = s.key_advice || [];
+  document.getElementById('verdictKeyAdvice').innerHTML = advice.map(a => `
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+      <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:2px">${a.director}</div>
+      <div style="font-size:12.5px;color:var(--text2);line-height:1.5">${a.summary}</div>
+    </div>`).join('');
+
+  const disagreementWrap = document.getElementById('verdictDisagreementWrap');
+  if (s.disagreements) {
+    document.getElementById('verdictDisagreementText').textContent = s.disagreements;
+    disagreementWrap.style.display = 'block';
+  } else {
+    disagreementWrap.style.display = 'none';
+  }
+
+  document.getElementById('verdictText').textContent = s.chairman_verdict || '';
+
+  const confColors = { high: 'var(--green, #10b981)', medium: 'var(--gold, #f59e0b)', low: '#ef4444' };
+  const conf = s.confidence || 'medium';
+  const badge = document.getElementById('verdictConfidenceBadge');
+  badge.style.background = `${confColors[conf] || 'var(--muted)'}22`;
+  badge.style.color = confColors[conf] || 'var(--muted)';
+  badge.textContent = `${conf.charAt(0).toUpperCase() + conf.slice(1)} Confidence`;
+  document.getElementById('verdictConfidenceReason').textContent = s.confidence_reason || '';
+
+  document.getElementById('verdictResults').style.display = 'block';
 }
 
 async function autoMatchDirector() {
