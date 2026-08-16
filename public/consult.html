@@ -620,9 +620,26 @@ function isLoggedIn() {
   return document.cookie.includes('arreyon_token');
 }
 
+// The auth cookie is httpOnly (correct security practice) so JavaScript can never
+// read it directly — isLoggedIn() above will always return false. Real login status
+// must come from the server. Cached after first check so we don't hit the API on
+// every gate check.
+let _loginStatusCache = null;
+async function checkLoginStatus() {
+  if (_loginStatusCache !== null) return _loginStatusCache;
+  try {
+    const res = await fetch('/api/auth/me');
+    _loginStatusCache = res.ok;
+  } catch (e) {
+    _loginStatusCache = false;
+  }
+  return _loginStatusCache;
+}
+
 async function generateReport(){
   // Gate: not logged in AND already used their 1 free report → require signup
-  if (!isLoggedIn() && hasUsedFreeReport()) {
+  const loggedIn = await checkLoginStatus();
+  if (!loggedIn && hasUsedFreeReport()) {
     showSignupGate();
     return;
   }
@@ -638,7 +655,7 @@ async function generateReport(){
     if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||'Server error');}
     const data=await res.json();
 
-    if (!isLoggedIn()) markFreeReportUsed();
+    if (!loggedIn) markFreeReportUsed();
 
     // Show directors loading
     const ld=document.getElementById('loadingDirs');
@@ -672,7 +689,7 @@ function showSignupGate() {
   document.body.appendChild(overlay);
 }
 
-function renderReport(data){
+async function renderReport(data){
   showStage(4);
   document.getElementById('rTitle').textContent='Strategic Report: '+data.businessData.businessType;
   document.getElementById('rClient').textContent=data.client.name;
@@ -701,7 +718,8 @@ function renderReport(data){
   document.getElementById('rSynth').textContent=full;
 
   // Show upgrade popup after they've had a moment to read the report
-  if (!isLoggedIn()) {
+  const loggedInForPopup = await checkLoginStatus();
+  if (!loggedInForPopup) {
     setTimeout(() => { document.getElementById('upgradePopup').style.display = 'flex'; }, 8000);
   }
 }
@@ -730,7 +748,8 @@ document.addEventListener('DOMContentLoaded',()=>{
 
 // Logged-in visitors shouldn't have to re-type contact details already on file
 async function prefillFormForLoggedInUser(){
-  if(!isLoggedIn()) return;
+  const loggedIn = await checkLoginStatus();
+  if(!loggedIn) return;
   try{
     const res = await fetch('/api/auth/me');
     if(!res.ok) return;
