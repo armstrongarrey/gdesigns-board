@@ -245,8 +245,12 @@ CREATE TABLE IF NOT EXISTS entrepreneur_sessions (
   input_data JSONB NOT NULL,
   structured_output JSONB,
   research_backed BOOLEAN DEFAULT FALSE,
+  discussion_messages JSONB DEFAULT '[]',
+  business_plan JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE entrepreneur_sessions ADD COLUMN IF NOT EXISTS discussion_messages JSONB DEFAULT '[]';
+ALTER TABLE entrepreneur_sessions ADD COLUMN IF NOT EXISTS business_plan JSONB;
 CREATE INDEX IF NOT EXISTS idx_entrepreneur_sessions_user ON entrepreneur_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_research_sessions_business ON research_sessions(business_id);
 
