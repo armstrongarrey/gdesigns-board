@@ -2,6 +2,7 @@ const express = require('express');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const dns = require('dns').promises;
 // nodemailer removed — Render blocks outbound SMTP; using Resend HTTP API instead
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
@@ -792,11 +793,11 @@ app.post('/api/board/save', authRequired, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── Usage logging (best-effort, never blocks the actual AI response) ───────
-async function logAIUsage({ provider, model, status, errorMessage, durationMs }) {
+async function logAIUsage({ provider, model, status, errorMessage, durationMs, feature, userId, businessId }) {
   try {
     await pool.query(
-      `INSERT INTO ai_usage (provider, model, status, error_message, duration_ms) VALUES ($1, $2, $3, $4, $5)`,
-      [provider, model, status, errorMessage || null, durationMs]
+      `INSERT INTO ai_usage (provider, model, status, error_message, duration_ms, feature, user_id, business_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [provider, model, status, errorMessage || null, durationMs, feature || 'unspecified', userId || null, businessId || null]
     );
   } catch (e) { /* never let logging break the actual request */ }
 }
@@ -848,14 +849,14 @@ async function _askGeminiRaw(persona, messages) {
 }
 
 // ── Public AI functions — same signatures as before, now with usage logging ──
-async function askClaude(persona, messages) {
+async function askClaude(persona, messages, context = {}) {
   const start = Date.now();
   try {
     const result = await _askClaudeRaw(persona, messages);
-    logAIUsage({ provider: 'claude', model: 'claude-haiku-4-5-20251001', status: 'success', durationMs: Date.now() - start });
+    logAIUsage({ provider: 'claude', model: 'claude-haiku-4-5-20251001', status: 'success', durationMs: Date.now() - start, ...context });
     return result;
   } catch (e) {
-    logAIUsage({ provider: 'claude', model: 'claude-haiku-4-5-20251001', status: 'error', errorMessage: e.message, durationMs: Date.now() - start });
+    logAIUsage({ provider: 'claude', model: 'claude-haiku-4-5-20251001', status: 'error', errorMessage: e.message, durationMs: Date.now() - start, ...context });
     throw e;
   }
 }
@@ -1311,6 +1312,315 @@ Pick the ONE director whose specialty best matches this challenge. Return ONLY t
     console.error('Board match error:', err.message);
     res.json({ directorId: directors[0].id });
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WEBSITE BUSINESS ANALYZER — Increment 2
+// SSRF-safe fetcher + HTML extractor + AI structuring into business_facts
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PRIVATE_IP_RANGES = [
+  /^127\./, /^10\./, /^192\.168\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^169\.254\./,           // link-local (covers cloud metadata 169.254.169.254)
+  /^0\./, /^::1$/, /^fc00:/i, /^fe80:/i
+];
+
+function isPrivateIP(ip) {
+  return PRIVATE_IP_RANGES.some(re => re.test(ip));
+}
+
+// Resolve hostname and reject if it points to a private/internal address
+async function assertPublicHost(hostname) {
+  if (['localhost', '0.0.0.0'].includes(hostname.toLowerCase())) {
+    throw new Error('URLs pointing to local/internal hosts are not allowed');
+  }
+  let addresses;
+  try {
+    addresses = await dns.lookup(hostname, { all: true });
+  } catch (e) {
+    throw new Error('Could not resolve hostname');
+  }
+  for (const { address } of addresses) {
+    if (isPrivateIP(address)) {
+      throw new Error('URLs pointing to private/internal IP ranges are not allowed');
+    }
+  }
+}
+
+// SSRF-safe fetch: validates scheme, host, redirects, size, and applies a timeout
+async function safeFetch(urlStr, { maxBytes = 2_000_000, timeoutMs = 8000, maxRedirects = 3 } = {}) {
+  let current = urlStr;
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    let parsed;
+    try { parsed = new URL(current); } catch { throw new Error('Invalid URL'); }
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error('Only http and https URLs are allowed');
+    }
+    await assertPublicHost(parsed.hostname);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let res;
+    try {
+      res = await fetch(current, {
+        signal: controller.signal,
+        redirect: 'manual',
+        headers: { 'User-Agent': 'ArreyonConsultBot/1.0 (+https://consult.gdesignsme.com)' }
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if ([301, 302, 303, 307, 308].includes(res.status)) {
+      const location = res.headers.get('location');
+      if (!location) throw new Error('Redirect with no location header');
+      current = new URL(location, current).toString();
+      continue; // re-validate the new host on next loop iteration
+    }
+
+    if (!res.ok) throw new Error(`Fetch failed with status ${res.status}`);
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('text/html') && !contentType.includes('text/plain')) {
+      throw new Error('URL did not return HTML content');
+    }
+
+    // Read body with a hard size cap
+    const reader = res.body.getReader();
+    let received = 0;
+    let chunks = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.length;
+      if (received > maxBytes) throw new Error('Response too large');
+      chunks.push(value);
+    }
+    const buffer = Buffer.concat(chunks.map(c => Buffer.from(c)));
+    return { html: buffer.toString('utf-8'), finalUrl: current };
+  }
+  throw new Error('Too many redirects');
+}
+
+// Minimal HTML text/metadata extraction — no external HTML parser dependency
+function extractFromHTML(html) {
+  const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+  const descMatch = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i)
+    || html.match(/<meta[^>]+content=["']([^"']*)["'][^>]+name=["']description["']/i);
+  const ogTitleMatch = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']*)["']/i);
+  const ogDescMatch = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']*)["']/i);
+
+  // Strip script/style, then tags, collapse whitespace to get readable body text
+  let body = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Cap body text sent to the AI — keep it focused and cheap
+  body = body.slice(0, 6000);
+
+  // Pull same-domain internal links whose text/href hints at key pages
+  const linkPattern = /<a\s+[^>]*href=["']([^"'#]+)["'][^>]*>([^<]*)<\/a>/gi;
+  const keyPageHints = ['about', 'service', 'product', 'pricing', 'contact', 'faq'];
+  const foundLinks = [];
+  let m;
+  while ((m = linkPattern.exec(html)) !== null && foundLinks.length < 20) {
+    const href = m[1];
+    const text = (m[2] || '').toLowerCase();
+    if (keyPageHints.some(hint => href.toLowerCase().includes(hint) || text.includes(hint))) {
+      foundLinks.push(href);
+    }
+  }
+
+  return {
+    title: (titleMatch?.[1] || ogTitleMatch?.[1] || '').trim(),
+    description: (descMatch?.[1] || ogDescMatch?.[1] || '').trim(),
+    bodyText: body,
+    candidateLinks: [...new Set(foundLinks)].slice(0, 4) // crawl budget: max 4 extra pages
+  };
+}
+
+// Fetch homepage + up to 4 key sub-pages (about/services/pricing/contact), within crawl budget
+async function analyzeWebsite(startUrl) {
+  const { html, finalUrl } = await safeFetch(startUrl);
+  const home = extractFromHTML(html);
+
+  const pages = [{ url: finalUrl, ...home }];
+  const base = new URL(finalUrl);
+
+  for (const link of home.candidateLinks) {
+    if (pages.length >= 5) break; // crawl budget: homepage + max 4
+    try {
+      const absoluteUrl = new URL(link, base).toString();
+      const linkedUrl = new URL(absoluteUrl);
+      if (linkedUrl.hostname !== base.hostname) continue; // same-domain only
+      const { html: pageHtml, finalUrl: pageFinalUrl } = await safeFetch(absoluteUrl, { timeoutMs: 6000 });
+      const extracted = extractFromHTML(pageHtml);
+      pages.push({ url: pageFinalUrl, ...extracted });
+    } catch (e) {
+      // A sub-page failing is not fatal — continue with what we have
+      continue;
+    }
+  }
+
+  return pages;
+}
+
+// Ask Claude to structure raw page content into labeled business facts
+async function structureBusinessFacts(pages, submittedUrl, userId) {
+  const combined = pages.map(p => `PAGE: ${p.url}\nTITLE: ${p.title}\nDESCRIPTION: ${p.description}\nCONTENT: ${p.bodyText}`).join('\n\n---\n\n');
+
+  const prompt = `You are a business analyst extracting structured facts from a real website's content. You will be shown raw text scraped from ${pages.length} page(s) of ${submittedUrl}.
+
+RAW WEBSITE CONTENT:
+${combined.slice(0, 12000)}
+
+YOUR TASK:
+Extract what you can genuinely observe from this content. For EVERY fact, you must label it as one of:
+- "observed" — directly and explicitly stated on the page (e.g. a stated business name, a listed price, a stated location)
+- "inferred" — a reasonable conclusion you're drawing from context, NOT explicitly stated (e.g. inferring "small business" from tone and lack of enterprise language)
+
+CRITICAL RULES:
+- NEVER invent information that isn't supported by the text above
+- If something isn't mentioned, omit it entirely — do not guess
+- Prices, contact details, and business names must be "observed" only if literally present in the text
+- Return ONLY valid JSON, no markdown formatting, no commentary
+
+Return this exact JSON structure:
+{
+  "business_name": {"value": "...", "source_type": "observed|inferred"},
+  "industry": {"value": "...", "source_type": "observed|inferred"},
+  "value_proposition": {"value": "...", "source_type": "observed|inferred"},
+  "products_services": {"value": "...", "source_type": "observed|inferred"},
+  "target_customers": {"value": "...", "source_type": "observed|inferred"},
+  "pricing_info": {"value": "...", "source_type": "observed|inferred"},
+  "location": {"value": "...", "source_type": "observed|inferred"},
+  "contact_info": {"value": "...", "source_type": "observed|inferred"},
+  "positioning": {"value": "...", "source_type": "observed|inferred"},
+  "notable_gaps": {"value": "What important business information is missing from this website that a customer or investor would want to know", "source_type": "inferred"}
+}
+
+Omit any key entirely if you have no supporting evidence for it. Do not include keys with empty or null values.`;
+
+  const raw = await askClaude(prompt, [{ role: 'user', content: 'Extract the structured business facts now, as JSON only.' }], { feature: 'website_analyzer', userId });
+  const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    throw new Error('Could not parse business analysis — please try again');
+  }
+}
+
+// Website Analyzer monthly limits per plan (Section 27 tier matrix, agreed)
+const ANALYZER_LIMITS = { starter: 1, pro: 10, business: -1 };
+
+// ── Website Analyzer endpoint ───────────────────────────────────────────────
+app.post('/api/business/analyze', authRequired, async (req, res) => {
+  const { url, businessName } = req.body;
+  if (!url) return res.status(400).json({ error: 'Website URL is required' });
+
+  try {
+    const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
+    const plan = user.rows[0]?.plan || 'starter';
+    const limit = ANALYZER_LIMITS[plan] ?? 1;
+
+    if (limit !== -1) {
+      const usedThisMonth = await pool.query(
+        `SELECT COUNT(*) FROM ai_usage WHERE user_id = $1 AND feature = 'website_analyzer'
+         AND date_trunc('month', created_at) = date_trunc('month', NOW())`,
+        [req.userId]
+      );
+      const used = parseInt(usedThisMonth.rows[0].count, 10);
+      if (used >= limit) {
+        return res.status(403).json({
+          error: `You've used your ${limit} website ${limit === 1 ? 'analysis' : 'analyses'} this month. Upgrade for more.`,
+          upgradeRequired: true
+        });
+      }
+    }
+
+    let normalizedUrl = url.trim();
+    if (!/^https?:\/\//i.test(normalizedUrl)) normalizedUrl = 'https://' + normalizedUrl;
+
+    const pages = await analyzeWebsite(normalizedUrl);
+    const facts = await structureBusinessFacts(pages, normalizedUrl, req.userId);
+
+    // Create or reuse a business profile for this user + URL
+    const existing = await pool.query(
+      'SELECT id FROM businesses WHERE user_id = $1 AND website = $2 AND is_active = true LIMIT 1',
+      [req.userId, normalizedUrl]
+    );
+
+    let businessId;
+    if (existing.rows.length) {
+      businessId = existing.rows[0].id;
+      await pool.query('UPDATE businesses SET updated_at = NOW() WHERE id = $1', [businessId]);
+    } else {
+      const inserted = await pool.query(
+        `INSERT INTO businesses (user_id, name, website) VALUES ($1, $2, $3) RETURNING id`,
+        [req.userId, businessName || facts.business_name?.value || normalizedUrl, normalizedUrl]
+      );
+      businessId = inserted.rows[0].id;
+    }
+
+    // Store each fact, tagged with its source type — each analysis adds new rows,
+    // preserving history so facts can be tracked as they change over time
+    for (const [key, data] of Object.entries(facts)) {
+      if (!data || !data.value) continue;
+      await pool.query(
+        `INSERT INTO business_facts (business_id, fact_key, fact_value, source_type, source_detail)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [businessId, key, data.value, data.source_type || 'inferred', `Analyzed from ${normalizedUrl}`]
+      );
+    }
+
+    res.json({
+      success: true,
+      businessId,
+      analyzedUrl: normalizedUrl,
+      pagesAnalyzed: pages.map(p => p.url),
+      facts
+    });
+  } catch (err) {
+    console.error('Website analysis error:', err.message);
+    res.status(500).json({ error: err.message || 'Analysis failed. Please check the URL and try again.' });
+  }
+});
+
+// ── List user's analyzed businesses ─────────────────────────────────────────
+app.get('/api/business', authRequired, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, name, website, industry, created_at, updated_at FROM businesses WHERE user_id = $1 AND is_active = true ORDER BY updated_at DESC',
+      [req.userId]
+    );
+    res.json({ businesses: result.rows });
+  } catch (e) { res.status(500).json({ error: 'Failed to load businesses' }); }
+});
+
+// ── Get one business profile with its current facts (latest value per key) ──
+app.get('/api/business/:id', authRequired, async (req, res) => {
+  try {
+    const biz = await pool.query(
+      'SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]
+    );
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    // Latest fact per key — DISTINCT ON gives current state; full history stays in the table
+    const facts = await pool.query(
+      `SELECT DISTINCT ON (fact_key) fact_key, fact_value, source_type, source_detail, created_at
+       FROM business_facts WHERE business_id = $1
+       ORDER BY fact_key, created_at DESC`,
+      [req.params.id]
+    );
+    res.json({ business: biz.rows[0], facts: facts.rows });
+  } catch (e) { res.status(500).json({ error: 'Failed to load business' }); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
