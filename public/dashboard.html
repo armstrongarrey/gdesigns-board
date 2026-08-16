@@ -333,14 +333,29 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <!-- WEBSITE ANALYZER SECTION -->
     <div class="section-view" id="section-analyzer">
       <div class="section-title">Analyze My Business</div>
-      <div class="section-sub">Paste your business website and Arreyon will read it and extract what it can find — no need to explain everything manually.</div>
+      <div class="section-sub">Have a website? Arreyon will read it. No website yet? Just describe your business instead.</div>
 
       <div style="max-width:560px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:24px">
-        <div class="form-group">
-          <label>Website URL</label>
-          <input class="form-input" id="analyzerUrl" placeholder="e.g. yourbusiness.com" onkeydown="if(event.key==='Enter')runAnalysis()">
+        <div style="display:flex;gap:0;background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:3px;margin-bottom:18px">
+          <button type="button" class="analyzer-tab active" id="tabWebsite" onclick="switchAnalyzerTab('website')" style="flex:1;padding:9px;border:none;background:var(--purple);color:#fff;font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit;transition:all .15s">I have a website</button>
+          <button type="button" class="analyzer-tab" id="tabDescription" onclick="switchAnalyzerTab('description')" style="flex:1;padding:9px;border:none;background:transparent;color:var(--muted);font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit;transition:all .15s">No website yet</button>
         </div>
-        <button class="btn-primary" style="width:100%;padding:12px" onclick="runAnalysis()" id="analyzeBtn">Analyze Website</button>
+
+        <div id="websiteInputWrap">
+          <div class="form-group">
+            <label>Website URL</label>
+            <input class="form-input" id="analyzerUrl" placeholder="e.g. yourbusiness.com" onkeydown="if(event.key==='Enter')runAnalysis()">
+          </div>
+        </div>
+
+        <div id="descriptionInputWrap" style="display:none">
+          <div class="form-group">
+            <label>Describe Your Business</label>
+            <textarea class="form-input" id="analyzerDescription" rows="5" placeholder="Tell us what your business does, who it serves, the problem or challenge you're facing, your industry, location, and anything else relevant. The more detail, the better the analysis."></textarea>
+          </div>
+        </div>
+
+        <button class="btn-primary" style="width:100%;padding:12px" onclick="runAnalysis()" id="analyzeBtn">Analyze My Business</button>
         <div id="analyzerLimitMsg" style="margin-top:10px;font-size:12px;color:var(--muted);display:none"></div>
       </div>
 
@@ -806,10 +821,42 @@ const FACT_LABELS = {
   positioning: 'Positioning', notable_gaps: 'What\'s Missing'
 };
 
+let analyzerMode = 'website';
+
+function switchAnalyzerTab(mode) {
+  analyzerMode = mode;
+  const tabWebsite = document.getElementById('tabWebsite');
+  const tabDescription = document.getElementById('tabDescription');
+  const websiteWrap = document.getElementById('websiteInputWrap');
+  const descWrap = document.getElementById('descriptionInputWrap');
+
+  if (mode === 'website') {
+    tabWebsite.style.background = 'var(--purple)'; tabWebsite.style.color = '#fff';
+    tabDescription.style.background = 'transparent'; tabDescription.style.color = 'var(--muted)';
+    websiteWrap.style.display = 'block';
+    descWrap.style.display = 'none';
+  } else {
+    tabDescription.style.background = 'var(--purple)'; tabDescription.style.color = '#fff';
+    tabWebsite.style.background = 'transparent'; tabWebsite.style.color = 'var(--muted)';
+    descWrap.style.display = 'block';
+    websiteWrap.style.display = 'none';
+  }
+}
+
 async function runAnalysis() {
+  const isWebsite = analyzerMode === 'website';
   const urlInput = document.getElementById('analyzerUrl');
-  const url = urlInput.value.trim();
-  if (!url) { urlInput.focus(); return; }
+  const descInput = document.getElementById('analyzerDescription');
+  const url = isWebsite ? urlInput.value.trim() : '';
+  const description = !isWebsite ? descInput.value.trim() : '';
+
+  if (isWebsite && !url) { urlInput.focus(); return; }
+  if (!isWebsite && description.length < 20) {
+    document.getElementById('analyzerError').textContent = 'Please describe your business in a bit more detail (at least a few sentences).';
+    document.getElementById('analyzerError').style.display = 'block';
+    descInput.focus();
+    return;
+  }
 
   document.getElementById('analyzerError').style.display = 'none';
   document.getElementById('analyzerResults').style.display = 'none';
@@ -819,15 +866,16 @@ async function runAnalysis() {
   // Cycle through progress messages while the request is in flight
   let step = 0;
   const progressEl = document.getElementById('analyzerProgressText');
+  const progressMessages = isWebsite ? ANALYZER_PROGRESS_MESSAGES : ['Reading your description...', 'Understanding your business...', 'Extracting what we found...'];
   const progressTimer = setInterval(() => {
-    step = (step + 1) % ANALYZER_PROGRESS_MESSAGES.length;
-    progressEl.textContent = ANALYZER_PROGRESS_MESSAGES[step];
+    step = (step + 1) % progressMessages.length;
+    progressEl.textContent = progressMessages[step];
   }, 3000);
 
   try {
     const res = await fetch('/api/business/analyze', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
+      body: JSON.stringify(isWebsite ? { url } : { description })
     });
     const data = await res.json();
     clearInterval(progressTimer);
@@ -863,8 +911,17 @@ function renderAnalysisResults(data) {
   currentAnalysisData = data;
   currentResearchData = null;
   document.getElementById('resultBizName').textContent = data.facts.business_name?.value || 'Business Profile';
-  document.getElementById('resultUrl').href = data.analyzedUrl;
-  document.getElementById('resultPages').textContent = `Analyzed ${data.pagesAnalyzed.length} page${data.pagesAnalyzed.length > 1 ? 's' : ''}`;
+
+  const urlLink = document.getElementById('resultUrl');
+  if (data.analyzedUrl) {
+    urlLink.href = data.analyzedUrl;
+    urlLink.style.display = 'inline';
+  } else {
+    urlLink.style.display = 'none';
+  }
+  document.getElementById('resultPages').textContent = data.isDescriptionOnly
+    ? 'Based on your business description'
+    : `Analyzed ${data.pagesAnalyzed.length} page${data.pagesAnalyzed.length > 1 ? 's' : ''}`;
 
   // Reset any previous research view when a new analysis runs
   document.getElementById('researchResults').style.display = 'none';
