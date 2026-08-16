@@ -1315,6 +1315,176 @@ Pick the ONE director whose specialty best matches this challenge. Return ONLY t
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// RESEARCH ENGINE — Increment 3
+// Provider-agnostic ResearchProvider abstraction. Tavily is the first (and
+// currently only) implementation — switching providers later means adding
+// one new function here, not touching any call site.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const RESEARCH_LIMITS = { starter: 0, pro: 5, business: -1 };
+
+// ── ResearchProvider: Tavily implementation ─────────────────────────────────
+async function tavilySearch(query, { maxResults = 5 } = {}) {
+  const apiKey = process.env.TAVILY_API_KEY;
+  if (!apiKey) throw new Error('Research is not configured yet');
+
+  const res = await fetch('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      api_key: apiKey,
+      query,
+      search_depth: 'basic',
+      include_answer: false,
+      max_results: maxResults
+    })
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e?.detail || `Tavily search failed with status ${res.status}`);
+  }
+  const data = await res.json();
+  return (data.results || []).map(r => ({
+    title: r.title, url: r.url, snippet: r.content, publishedDate: r.published_date || null
+  }));
+}
+
+// ── Provider-agnostic entry point — swap the implementation here, nowhere else ──
+async function researchSearch(query, options) {
+  return tavilySearch(query, options);
+}
+
+// ── Run market/competitor research for a business, save sources, synthesize ──
+async function runBusinessResearch(business, userId) {
+  const bizName = business.name || business.website;
+  const industry = business.industry || '';
+  const location = [business.city, business.country].filter(Boolean).join(', ');
+
+  const queries = [
+    `${bizName} competitors ${industry} ${location}`.trim(),
+    `${industry} market trends ${location} 2026`.trim()
+  ];
+
+  const allSources = [];
+  for (const q of queries) {
+    try {
+      const results = await researchSearch(q, { maxResults: 4 });
+      allSources.push(...results.map(r => ({ ...r, query: q })));
+    } catch (e) {
+      // one query failing shouldn't kill the whole research pass
+      continue;
+    }
+  }
+
+  if (!allSources.length) {
+    throw new Error('No research results could be retrieved. Please try again later.');
+  }
+
+  // Deduplicate by URL
+  const seen = new Set();
+  const uniqueSources = allSources.filter(s => {
+    if (seen.has(s.url)) return false;
+    seen.add(s.url);
+    return true;
+  });
+
+  const sourcesText = uniqueSources.map((s, i) => `[${i + 1}] ${s.title}\nURL: ${s.url}\n${s.snippet}`).join('\n\n');
+
+  const synthesisPrompt = `You are a market research analyst. Below are real search results about ${bizName}'s competitors and market.
+
+SEARCH RESULTS:
+${sourcesText.slice(0, 8000)}
+
+YOUR TASK:
+Write a concise market and competitor summary (200-300 words) based ONLY on the search results above.
+
+CRITICAL RULES:
+- Every claim must be traceable to one of the numbered sources above — reference sources using [1], [2] etc.
+- If the search results don't clearly answer something, say so explicitly rather than guessing
+- If sources conflict, note the conflict explicitly (e.g. "Source 2 suggests X while Source 4 suggests Y")
+- Do not invent competitor names, statistics, or facts not present in the search results
+- Structure as: Market Context, Key Competitors, Notable Gap or Opportunity
+
+Return plain text, no markdown headers.`;
+
+  const summary = await askClaude(synthesisPrompt, [{ role: 'user', content: 'Write the research summary now.' }], { feature: 'research_engine', userId });
+
+  return { summary: summary.trim(), sources: uniqueSources, queries };
+}
+
+// ── Research endpoint ────────────────────────────────────────────────────────
+app.post('/api/business/:id/research', authRequired, async (req, res) => {
+  try {
+    const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
+    const plan = user.rows[0]?.plan || 'starter';
+    const limit = RESEARCH_LIMITS[plan] ?? 0;
+
+    if (limit === 0) {
+      return res.status(403).json({ error: 'Market research is available on Arreyon Pro and above.', upgradeRequired: true });
+    }
+    if (limit !== -1) {
+      const usedThisMonth = await pool.query(
+        `SELECT COUNT(*) FROM research_sessions WHERE user_id = $1
+         AND date_trunc('month', created_at) = date_trunc('month', NOW())`,
+        [req.userId]
+      );
+      const used = parseInt(usedThisMonth.rows[0].count, 10);
+      if (used >= limit) {
+        return res.status(403).json({ error: `You've used your ${limit} research reports this month. Upgrade for more.`, upgradeRequired: true });
+      }
+    }
+
+    const biz = await pool.query('SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const { summary, sources, queries } = await runBusinessResearch(biz.rows[0], req.userId);
+
+    const session = await pool.query(
+      `INSERT INTO research_sessions (business_id, user_id, query, summary) VALUES ($1, $2, $3, $4) RETURNING id`,
+      [req.params.id, req.userId, queries.join(' | '), summary]
+    );
+    const sessionId = session.rows[0].id;
+
+    for (const s of sources) {
+      await pool.query(
+        `INSERT INTO research_sources (research_session_id, title, url, snippet, published_date) VALUES ($1, $2, $3, $4, $5)`,
+        [sessionId, s.title, s.url, s.snippet, s.publishedDate]
+      );
+    }
+
+    // Also save the summary as a labeled business fact
+    await pool.query(
+      `INSERT INTO business_facts (business_id, fact_key, fact_value, source_type, source_detail)
+       VALUES ($1, 'market_research', $2, 'research', $3)`,
+      [req.params.id, summary, `${sources.length} sources, ${new Date().toISOString().slice(0,10)}`]
+    );
+
+    res.json({ success: true, sessionId, summary, sources });
+  } catch (err) {
+    console.error('Research error:', err.message);
+    res.status(500).json({ error: err.message || 'Research failed. Please try again.' });
+  }
+});
+
+// ── Get a business's research history ───────────────────────────────────────
+app.get('/api/business/:id/research', authRequired, async (req, res) => {
+  try {
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const sessions = await pool.query(
+      'SELECT * FROM research_sessions WHERE business_id = $1 ORDER BY created_at DESC', [req.params.id]
+    );
+    const sessionsWithSources = [];
+    for (const session of sessions.rows) {
+      const sources = await pool.query('SELECT * FROM research_sources WHERE research_session_id = $1', [session.id]);
+      sessionsWithSources.push({ ...session, sources: sources.rows });
+    }
+    res.json({ sessions: sessionsWithSources });
+  } catch (e) { res.status(500).json({ error: 'Failed to load research history' }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // WEBSITE BUSINESS ANALYZER — Increment 2
 // SSRF-safe fetcher + HTML extractor + AI structuring into business_facts
 // ═══════════════════════════════════════════════════════════════════════════
