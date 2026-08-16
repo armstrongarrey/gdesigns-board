@@ -975,12 +975,59 @@ async function loadAnalyzedBusinesses() {
       return;
     }
     list.innerHTML = data.businesses.map(b => `
-      <div class="history-item" style="cursor:default">
+      <div class="history-item" style="cursor:pointer" onclick="loadBusinessIntoView('${b.id}')">
         <div class="history-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
-        <div style="flex:1"><div class="history-title">${b.name || b.website}</div>
-        <div class="history-meta"><span>${b.website}</span></div></div>
+        <div style="flex:1"><div class="history-title">${b.name || b.website || 'My Business'}</div>
+        <div class="history-meta"><span>${b.website || 'No website'}</span></div></div>
         <div class="history-time">${timeAgo(b.updated_at)}</div>
       </div>`).join('');
+
+    // After a page refresh, nothing is loaded into the main view yet — automatically
+    // restore the most recently analyzed business so work isn't lost on reload.
+    if (!currentBusinessId && data.businesses.length) {
+      loadBusinessIntoView(data.businesses[0].id);
+    }
+  } catch (e) {}
+}
+
+// ── Restore a previously analyzed business (profile + latest research, if any) ──
+async function loadBusinessIntoView(businessId) {
+  try {
+    const bizRes = await fetch(`/api/business/${businessId}`);
+    if (!bizRes.ok) return;
+    const bizData = await bizRes.json();
+
+    // Convert the array-of-rows facts shape into the {key: {value, source_type}} map
+    // that renderAnalysisResults() expects — same shape /api/business/analyze returns.
+    const factsMap = {};
+    (bizData.facts || []).forEach(f => { factsMap[f.fact_key] = { value: f.fact_value, source_type: f.source_type }; });
+
+    renderAnalysisResults({
+      businessId: bizData.business.id,
+      analyzedUrl: bizData.business.website,
+      isDescriptionOnly: !bizData.business.website,
+      pagesAnalyzed: bizData.business.website ? [bizData.business.website] : ['Business description'],
+      facts: factsMap
+    });
+    document.getElementById('analyzerResults').style.display = 'block';
+
+    // Restore the latest research session too, if one exists
+    const researchRes = await fetch(`/api/business/${businessId}/research`);
+    if (researchRes.ok) {
+      const researchData = await researchRes.json();
+      if (researchData.sessions && researchData.sessions.length) {
+        const latest = researchData.sessions[0];
+        if (latest.structured_data) {
+          currentResearchData = { structured: latest.structured_data, sources: latest.sources, scope: latest.scope || 'both' };
+          document.getElementById('researchScope').value = latest.scope || 'both';
+          renderResearchResults(latest.structured_data, latest.sources || []);
+          document.getElementById('researchResults').style.display = 'block';
+        }
+      }
+    }
+
+    // Scroll the restored view into frame
+    document.getElementById('analyzerResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {}
 }
 
