@@ -386,7 +386,14 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             </select>
           </div>
           <button class="btn-primary" style="padding:11px 20px" onclick="runResearch()" id="researchBtn">🔍 Research Market &amp; Competitors</button>
-          <button class="btn-ghost" style="padding:11px 20px" onclick="downloadBusinessReport()" id="downloadReportBtn">⬇ Download Report</button>
+          <div style="position:relative;display:inline-block">
+            <button class="btn-ghost" style="padding:11px 20px" onclick="toggleDownloadMenu()" id="downloadReportBtn">⬇ Download Report</button>
+            <div id="downloadMenu" style="display:none;position:absolute;top:calc(100% + 6px);left:0;background:var(--bg2);border:1px solid var(--border-light);border-radius:10px;padding:6px;min-width:180px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.4)">
+              <button onclick="downloadReport('pdf')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📄 PDF (view/print)</button>
+              <button onclick="downloadReport('docx')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📝 Word (editable)</button>
+              <button onclick="downloadReport('html')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">🌐 HTML (web page)</button>
+            </div>
+          </div>
         </div>
         <div id="researchLimitMsg" style="margin-top:8px;font-size:12px;color:var(--muted);display:none"></div>
 
@@ -427,6 +434,19 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Recommendations by Priority</div>
               <div id="priorityChartWrap"></div>
             </div>
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px">
+              <div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Profile Data: Observed vs Inferred</div>
+              <div id="factSourceChartWrap"></div>
+            </div>
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px">
+              <div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Research Coverage</div>
+              <div id="auditCoverageChartWrap"></div>
+            </div>
+          </div>
+
+          <div id="competitiveGapsWrap" style="display:none;margin-top:16px">
+            <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px">What Competitors Do That You Don't</div>
+            <div id="competitiveGapsList"></div>
           </div>
 
           <div id="opportunityGapWrap" style="display:none;margin-top:16px;background:#0a2a2022;border:1px solid var(--green);border-radius:8px;padding:12px 14px">
@@ -1087,6 +1107,30 @@ function renderResearchResults(structured, sources) {
     ? buildBarChartSVG(priorityData, { width: 300 })
     : '<div style="font-size:12px;color:var(--muted)">No prioritized recommendations</div>';
 
+  // Chart 3: profile data observed vs inferred (uses current analysis facts)
+  const factSourceCounts = { observed: 0, inferred: 0 };
+  if (currentAnalysisData?.facts) {
+    Object.values(currentAnalysisData.facts).forEach(f => { if (f?.source_type && factSourceCounts[f.source_type] !== undefined) factSourceCounts[f.source_type]++; });
+  }
+  const factData = [
+    { label: 'Observed', value: factSourceCounts.observed, color: '#10b981' },
+    { label: 'AI Inferred', value: factSourceCounts.inferred, color: '#8b5cf6' }
+  ].filter(d => d.value > 0);
+  const factChartEl = document.getElementById('factSourceChartWrap');
+  if (factChartEl) factChartEl.innerHTML = factData.length ? buildBarChartSVG(factData, { width: 300 }) : '<div style="font-size:12px;color:var(--muted)">No profile data</div>';
+
+  // Chart 4: research coverage (audit status breakdown)
+  const coverageForChart = structured.audit_coverage || [];
+  const auditCounts = { covered: 0, partial: 0, 'not covered': 0 };
+  coverageForChart.forEach(c => { if (auditCounts[c.status] !== undefined) auditCounts[c.status]++; });
+  const auditData = [
+    { label: 'Covered', value: auditCounts.covered, color: '#10b981' },
+    { label: 'Partial', value: auditCounts.partial, color: '#f59e0b' },
+    { label: 'Not Covered', value: auditCounts['not covered'], color: '#7c78a8' }
+  ].filter(d => d.value > 0);
+  const auditChartEl = document.getElementById('auditCoverageChartWrap');
+  if (auditChartEl) auditChartEl.innerHTML = auditData.length ? buildBarChartSVG(auditData, { width: 300 }) : '<div style="font-size:12px;color:var(--muted)">No audit data</div>';
+
   // Opportunity gap
   const gapWrap = document.getElementById('opportunityGapWrap');
   if (structured.opportunity_gap) {
@@ -1094,6 +1138,20 @@ function renderResearchResults(structured, sources) {
     gapWrap.style.display = 'block';
   } else {
     gapWrap.style.display = 'none';
+  }
+
+  // Competitive gaps — what competitors do that this business doesn't
+  const gapsWrap = document.getElementById('competitiveGapsWrap');
+  const gaps = structured.competitive_gaps || [];
+  if (gaps.length) {
+    document.getElementById('competitiveGapsList').innerHTML = gaps.map(g => `
+      <div style="background:#2a1f0022;border-left:3px solid var(--gold);border-radius:6px;padding:10px 12px;margin-bottom:8px">
+        <div style="font-size:13px;color:var(--text);font-weight:600">${g.gap}</div>
+        ${g.competitor_names?.length ? `<div style="font-size:11.5px;color:var(--muted);margin-top:3px">Seen at: ${g.competitor_names.join(', ')}</div>` : ''}
+      </div>`).join('');
+    gapsWrap.style.display = 'block';
+  } else {
+    gapsWrap.style.display = 'none';
   }
 
   // Summary & audit
@@ -1106,19 +1164,19 @@ function renderResearchResults(structured, sources) {
       <div style="flex:1"><div style="font-size:12.5px;color:var(--text);font-weight:600">${c.area}</div>${c.note ? `<div style="font-size:11.5px;color:var(--muted)">${c.note}</div>` : ''}</div>
     </div>`).join('') : '';
 
-  // Strategic recommendations with priority
+  // Strategic recommendations — sectioned cards with title, problem, solution, bulleted action steps
   const recs = structured.strategic_recommendations || [];
-  const priorityColor = { high: 'var(--red, #ef4444)', medium: 'var(--gold)', low: 'var(--muted)' };
+  const priorityColor = { high: '#ef4444', medium: 'var(--gold)', low: 'var(--muted)' };
   document.getElementById('strategyList').innerHTML = recs.length ? recs.map((r, i) => `
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:12px 14px;display:flex;gap:10px">
-      <div style="width:22px;height:22px;border-radius:50%;background:var(--purple);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">${i+1}</div>
-      <div style="flex:1">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
-          <div style="font-size:13px;font-weight:600;color:var(--text)">${r.action}</div>
-          ${r.priority ? `<div style="font-size:9px;font-weight:700;padding:1px 7px;border-radius:5px;background:${(priorityColor[r.priority]||'var(--muted)')}22;color:${priorityColor[r.priority]||'var(--muted)'};text-transform:uppercase">${r.priority}</div>` : ''}
-        </div>
-        <div style="font-size:12px;color:var(--muted);line-height:1.5">${r.reason || ''}</div>
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <div style="width:24px;height:24px;border-radius:50%;background:var(--purple);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">${i+1}</div>
+        <div style="font-size:14.5px;font-weight:700;color:var(--text);flex:1">${r.title || r.action || ''}</div>
+        ${r.priority ? `<div style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:5px;background:${(priorityColor[r.priority]||'var(--muted)')}22;color:${priorityColor[r.priority]||'var(--muted)'};text-transform:uppercase;white-space:nowrap">${r.priority} priority</div>` : ''}
       </div>
+      ${r.problem_addressed ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-bottom:8px;padding-left:34px">Addresses: ${r.problem_addressed}</div>` : ''}
+      <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:10px;padding-left:34px">${r.solution || r.reason || ''}</div>
+      ${r.action_steps?.length ? `<ul style="margin:0;padding-left:50px;font-size:12.5px;color:var(--text2);line-height:1.8">${r.action_steps.map(step => `<li>${step}</li>`).join('')}</ul>` : ''}
     </div>`).join('') : '<div style="font-size:13px;color:var(--muted)">No specific recommendations could be derived from the available research.</div>';
 
   // Sources
@@ -1128,142 +1186,22 @@ function renderResearchResults(structured, sources) {
     </a>`).join('');
 }
 
-function downloadBusinessReport() {
-  if (!currentAnalysisData) { alert('Please analyze a website first.'); return; }
-
-  const facts = currentAnalysisData.facts || {};
-  const bizName = facts.business_name?.value || currentAnalysisData.analyzedUrl || 'Business Report';
-  const dateStr = new Date().toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
-  const research = currentResearchData;
-  const s = research?.structured;
-
-  const factsHtml = Object.entries(facts).filter(([,f]) => f && f.value).map(([key, fact]) => `
-    <tr>
-      <td style="padding:8px 12px;font-weight:600;width:180px;vertical-align:top">${FACT_LABELS[key] || key}</td>
-      <td style="padding:8px 12px;vertical-align:top">${fact.value} <span style="font-size:10px;color:#888">(${fact.source_type === 'observed' ? 'Observed' : 'AI Inferred'})</span></td>
-    </tr>`).join('');
-
-  const competitorRows = (s?.competitors || []).map(c => `
-    <tr>
-      <td style="padding:8px 12px;font-weight:600">${c.name || '—'}</td>
-      <td style="padding:8px 12px">${c.description || '—'}</td>
-      <td style="padding:8px 12px">${c.differentiator || '—'}</td>
-      <td style="padding:8px 12px;text-transform:capitalize">${c.scope || 'unknown'}</td>
-    </tr>`).join('');
-
-  // Charts for the printable report — light theme to match the white report background
-  function buildPrintBarChart(data) {
-    const maxVal = Math.max(...data.map(d => d.value), 1);
-    const labelW = 110, chartW = 220, barHeight = 22, gap = 10;
-    const height = data.length * (barHeight + gap) + gap;
-    const bars = data.map((d, i) => {
-      const y = gap + i * (barHeight + gap);
-      const barW = Math.max((d.value / maxVal) * chartW, 2);
-      return `<text x="0" y="${y+barHeight/2+4}" font-size="11" fill="#333">${d.label}</text>
-        <rect x="${labelW}" y="${y}" width="${chartW}" height="${barHeight}" fill="#eee" rx="3"></rect>
-        <rect x="${labelW}" y="${y}" width="${barW}" height="${barHeight}" fill="${d.color}" rx="3"></rect>
-        <text x="${labelW+barW+8}" y="${y+barHeight/2+4}" font-size="11" font-weight="700" fill="${d.color}">${d.value}</text>`;
-    }).join('');
-    return `<svg viewBox="0 0 400 ${height}" width="380">${bars}</svg>`;
+function toggleDownloadMenu() {
+  const menu = document.getElementById('downloadMenu');
+  menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+}
+document.addEventListener('click', function(e) {
+  const menu = document.getElementById('downloadMenu');
+  const btn = document.getElementById('downloadReportBtn');
+  if (menu && menu.style.display === 'block' && !menu.contains(e.target) && e.target !== btn) {
+    menu.style.display = 'none';
   }
+});
 
-  let chartsHtml = '';
-  if (s) {
-    const scopeCounts = { local: 0, international: 0 };
-    (s.competitors || []).forEach(c => { if (scopeCounts[c.scope] !== undefined) scopeCounts[c.scope]++; });
-    const scopeChartData = [
-      { label: 'Local', value: scopeCounts.local, color: '#10b981' },
-      { label: 'International', value: scopeCounts.international, color: '#d97706' }
-    ].filter(d => d.value > 0);
-
-    const priorityCounts = { high: 0, medium: 0, low: 0 };
-    (s.strategic_recommendations || []).forEach(r => { if (r.priority) priorityCounts[r.priority]++; });
-    const priorityChartData = [
-      { label: 'High', value: priorityCounts.high, color: '#dc2626' },
-      { label: 'Medium', value: priorityCounts.medium, color: '#d97706' },
-      { label: 'Low', value: priorityCounts.low, color: '#6b7280' }
-    ].filter(d => d.value > 0);
-
-    if (scopeChartData.length || priorityChartData.length) {
-      chartsHtml = `<div style="display:flex;gap:40px;flex-wrap:wrap;margin:16px 0">
-        ${scopeChartData.length ? `<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:8px">Competitors by Scope</div>${buildPrintBarChart(scopeChartData)}</div>` : ''}
-        ${priorityChartData.length ? `<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:8px">Recommendations by Priority</div>${buildPrintBarChart(priorityChartData)}</div>` : ''}
-      </div>`;
-    }
-  }
-
-  const auditRows = (s?.audit_coverage || []).map(c => `
-    <tr><td style="padding:6px 12px;font-weight:600">${c.area}</td><td style="padding:6px 12px;text-transform:capitalize">${c.status}</td><td style="padding:6px 12px">${c.note || ''}</td></tr>`).join('');
-
-  const recsHtml = (s?.strategic_recommendations || []).map((r, i) => `
-    <div style="margin-bottom:14px;padding-left:12px;border-left:3px solid #6C3Bff">
-      <div style="font-weight:700;margin-bottom:3px">${i+1}. ${r.action} ${r.priority ? `<span style="font-size:10px;font-weight:700;text-transform:uppercase;color:#888">[${r.priority} priority]</span>` : ''}</div>
-      <div style="font-size:13px;color:#555">${r.reason || ''}</div>
-    </div>`).join('');
-
-  const sourcesHtml = (research?.sources || []).map((src, i) => `
-    <div style="font-size:12px;margin-bottom:6px"><strong>[${i+1}]</strong> ${src.title || src.url} — <a href="${src.url}">${src.url}</a></div>`).join('');
-
-  const html = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>${bizName} — Business Report</title>
-<style>
-body{font-family:Georgia,serif;color:#1a1a1a;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.6}
-h1{font-size:26px;border-bottom:3px solid #6C3Bff;padding-bottom:12px;margin-bottom:6px}
-h2{font-size:17px;color:#6C3Bff;margin-top:32px;margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em}
-.meta{color:#777;font-size:13px;margin-bottom:24px}
-table{width:100%;border-collapse:collapse;font-size:13px}
-tr{border-bottom:1px solid #e5e5e5}
-th{text-align:left;padding:8px 12px;background:#f5f5f5;font-size:11px;text-transform:uppercase;color:#666}
-p{font-size:14px}
-.footer{margin-top:50px;padding-top:16px;border-top:1px solid #ddd;font-size:11px;color:#999;text-align:center}
-@media print{body{margin:0}}
-</style></head>
-<body>
-<h1>${bizName}</h1>
-<div class="meta">Business Intelligence Report · Generated ${dateStr} · Arreyon Consult by G-DESIGNS LTD</div>
-
-<h2>Business Profile</h2>
-<table>${factsHtml || '<tr><td style="padding:8px 12px">No profile data available</td></tr>'}</table>
-
-${s ? `
-<h2>Market Context</h2>
-<p>${s.market_context || ''}</p>
-
-<h2>Full Detailed Analysis</h2>
-<p>${s.full_analysis || ''}</p>
-${s.local_coverage_note ? `<p style="color:#a06800"><em>Note: ${s.local_coverage_note}</em></p>` : ''}
-
-<h2>Competitor Analysis (${research.scope === 'national' ? 'National' : 'National + International'})</h2>
-<table>
-<tr><th>Competitor</th><th>Offers</th><th>Edge / Weakness</th><th>Scope</th></tr>
-${competitorRows || '<tr><td colspan="4" style="padding:8px 12px">No competitors identified</td></tr>'}
-</table>
-
-${chartsHtml}
-
-${s.opportunity_gap ? `<h2>Opportunity Gap</h2><p>${s.opportunity_gap}</p>` : ''}
-
-<h2>Summary &amp; Audit</h2>
-<p>${s.audit_summary || ''}</p>
-${auditRows ? `<table><tr><th>Area</th><th>Status</th><th>Note</th></tr>${auditRows}</table>` : ''}
-
-<h2>Recommendations, Solutions &amp; Strategy</h2>
-${recsHtml || '<p>No specific recommendations available.</p>'}
-
-<h2>Sources</h2>
-${sourcesHtml || '<p>No sources recorded.</p>'}
-` : `<p style="margin-top:30px;color:#888"><em>Market research was not run for this business. Only the website analysis profile is included above.</em></p>`}
-
-<div class="footer">Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com · This report was AI-generated and should be independently verified before major business decisions.</div>
-</body></html>`;
-
-  const blob = new Blob([html], { type: 'text/html' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${bizName.replace(/[^a-z0-9]/gi, '-')}-report-${Date.now()}.html`;
-  a.click();
-  URL.revokeObjectURL(url);
+function downloadReport(format) {
+  if (!currentBusinessId) { alert('Please analyze a business first.'); return; }
+  document.getElementById('downloadMenu').style.display = 'none';
+  window.location.href = `/api/business/${currentBusinessId}/report?format=${format}`;
 }
 
 init();
