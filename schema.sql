@@ -226,8 +226,13 @@ CREATE TABLE IF NOT EXISTS research_sessions (
   provider VARCHAR(50) DEFAULT 'tavily',
   status VARCHAR(20) DEFAULT 'completed',
   summary TEXT,
+  scope VARCHAR(20) DEFAULT 'both',
+  structured_data JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+-- Safe additive migration for deployments where this table already existed pre-upgrade
+ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS scope VARCHAR(20) DEFAULT 'both';
+ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS structured_data JSONB;
 CREATE INDEX IF NOT EXISTS idx_research_sessions_business ON research_sessions(business_id);
 
 -- Research sources — every source retrieved for a research session, for citation
