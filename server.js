@@ -761,6 +761,80 @@ app.post('/api/board/chat', authRequired, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CHAIRMAN SYNTHESIS — Increment 4, part 3
+// Reviews all director conversations from a live Boardroom session, identifies
+// disagreements between directors, and produces one final synthesized verdict.
+// Pro/Business only — same tier as the multi-director market research feature.
+// ═══════════════════════════════════════════════════════════════════════════
+
+app.post('/api/board/synthesize', authRequired, async (req, res) => {
+  const { conversations } = req.body; // [{ directorName, directorRole, messages: [{from,text}] }]
+
+  if (!conversations || !Array.isArray(conversations) || !conversations.length) {
+    return res.status(400).json({ error: 'No conversations to synthesize. Chat with at least one director first.' });
+  }
+
+  try {
+    const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
+    const plan = user.rows[0]?.plan || 'starter';
+    if (plan === 'starter') {
+      return res.status(403).json({ error: 'Chairman Synthesis (a final board verdict across your conversations) is available on Arreyon Pro and above.', upgradeRequired: true });
+    }
+
+    // Build a transcript per director, capped so a very long session doesn't blow the token budget
+    const transcripts = conversations.map(c => {
+      const lines = (c.messages || []).slice(-16).map(m => `${m.from === 'you' ? 'Founder' : c.directorName}: ${m.text}`).join('\n');
+      return `=== ${c.directorName} (${c.directorRole || 'Board Member'}) ===\n${lines}`;
+    }).join('\n\n');
+
+    const multiDirector = conversations.length > 1;
+
+    const prompt = `You are the Chairman of the Board at Arreyon Consult, synthesizing a live boardroom session into one final decision for the founder.
+
+${multiDirector ? `The founder spoke with ${conversations.length} different board members in this session.` : `The founder spoke with one board member in this session.`}
+
+FULL CONVERSATION TRANSCRIPTS:
+${transcripts.slice(0, 10000)}
+
+YOUR TASK:
+1. Identify the founder's core problem or question, based on what they actually discussed.
+2. Summarize the key advice given${multiDirector ? ' by each director' : ''}.
+${multiDirector ? '3. Identify any disagreements or tensions between what different directors advised — do not paper over conflicting advice, name it explicitly.\n4. Weigh the disagreement and determine which position is better supported by sound business reasoning, or whether it depends on a specific unstated assumption (state what that assumption is).\n5.' : '3.'} Produce ONE final, clear recommendation — the Chairman's verdict — that the founder should act on.
+${multiDirector ? '6.' : '4.'} State your confidence in this verdict and why.
+
+Be decisive. The founder came to the board for a boardroom-grade final answer, not a menu of options.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "core_problem": "the founder's actual problem or question, in one sentence",
+  "key_advice": [
+    {"director": "Director Name", "summary": "their core advice, 1-2 sentences"}
+  ],
+  "disagreements": "Only include this key if multiple directors gave conflicting advice — describe the disagreement and which side has stronger reasoning, or omit this key entirely if directors were aligned or only one director was consulted",
+  "chairman_verdict": "The final, decisive recommendation — 2-4 sentences, clear and actionable",
+  "confidence": "high|medium|low",
+  "confidence_reason": "why this confidence level — what's solid vs. uncertain about this verdict"
+}`;
+
+    const raw = await askClaude(prompt, [{ role: 'user', content: 'Produce the Chairman synthesis now, as JSON only.' }], { feature: 'chairman_synthesis', userId: req.userId }, 2000);
+    const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
+
+    let synthesis;
+    try {
+      synthesis = JSON.parse(cleaned);
+    } catch (e) {
+      console.error('Chairman synthesis JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
+      throw new Error('Could not produce the board verdict — please try again');
+    }
+
+    res.json({ success: true, synthesis });
+  } catch (err) {
+    console.error('Chairman synthesis error:', err.message);
+    res.status(500).json({ error: err.message || 'Synthesis failed. Please try again.' });
+  }
+});
+
 // Save consultation
 app.post('/api/board/save', authRequired, async (req, res) => {
   const { title, businessType, industry, directorsUsed, reportText, synthesis, videoUrl, messages } = req.body;
