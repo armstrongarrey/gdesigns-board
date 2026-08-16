@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const dns = require('dns').promises;
 const PDFDocument = require('pdfkit');
-const { Document: DocxDocument, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, AlignmentType, BorderStyle } = require('docx');
+const { Document: DocxDocument, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, AlignmentType, BorderStyle, ImageRun } = require('docx');
 // nodemailer removed — Render blocks outbound SMTP; using Resend HTTP API instead
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
@@ -1926,6 +1926,73 @@ function sanitizeFilename(name) {
   return (name || 'business-report').replace(/[^a-z0-9]/gi, '-').replace(/-+/g, '-').slice(0, 60);
 }
 
+// ── Generate a real chart PNG via QuickChart (free, no API key) ────────────
+// Used by both PDF and DOCX so embedded charts are pixel-identical and never
+// suffer manual-drawing alignment issues.
+async function fetchChartImage(labels, values, colors, titleText) {
+  const config = {
+    type: 'bar',
+    data: { labels, datasets: [{ data: values, backgroundColor: colors }] },
+    options: {
+      indexAxis: 'y',
+      plugins: { legend: { display: false }, title: { display: true, text: titleText, font: { size: 13 } } },
+      scales: { x: { ticks: { precision: 0 } } }
+    }
+  };
+  const url = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(config))}&width=420&height=${80 + labels.length * 40}&backgroundColor=white&format=png`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Chart image fetch failed');
+  const arrayBuffer = await res.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+// Build the four standard chart datasets from report data, skipping any with no values
+function buildChartDatasets({ facts, structured: s }) {
+  const datasets = [];
+
+  const factCounts = { observed: 0, inferred: 0 };
+  Object.values(facts || {}).forEach(f => { if (f?.source_type && factCounts[f.source_type] !== undefined) factCounts[f.source_type]++; });
+  if (factCounts.observed + factCounts.inferred > 0) {
+    datasets.push({ key: 'facts', title: 'Profile Data: Observed vs Inferred', labels: ['Observed', 'AI Inferred'], values: [factCounts.observed, factCounts.inferred], colors: ['#10b981', '#8b5cf6'] });
+  }
+
+  if (s) {
+    const scopeCounts = { local: 0, international: 0 };
+    (s.competitors || []).forEach(c => { if (scopeCounts[c.scope] !== undefined) scopeCounts[c.scope]++; });
+    if (scopeCounts.local + scopeCounts.international > 0) {
+      datasets.push({ key: 'scope', title: 'Competitors by Scope', labels: ['Local', 'International'], values: [scopeCounts.local, scopeCounts.international], colors: ['#10b981', '#f59e0b'] });
+    }
+
+    const priorityCounts = { high: 0, medium: 0, low: 0 };
+    (s.strategic_recommendations || []).forEach(r => { if (r.priority) priorityCounts[r.priority]++; });
+    if (priorityCounts.high + priorityCounts.medium + priorityCounts.low > 0) {
+      datasets.push({ key: 'priority', title: 'Recommendations by Priority', labels: ['High', 'Medium', 'Low'], values: [priorityCounts.high, priorityCounts.medium, priorityCounts.low], colors: ['#ef4444', '#f59e0b', '#6b7280'] });
+    }
+
+    const auditCounts = { covered: 0, partial: 0, 'not covered': 0 };
+    (s.audit_coverage || []).forEach(c => { if (auditCounts[c.status] !== undefined) auditCounts[c.status]++; });
+    if (auditCounts.covered + auditCounts.partial + auditCounts['not covered'] > 0) {
+      datasets.push({ key: 'audit', title: 'Research Coverage', labels: ['Covered', 'Partial', 'Not Covered'], values: [auditCounts.covered, auditCounts.partial, auditCounts['not covered']], colors: ['#10b981', '#f59e0b', '#6b7280'] });
+    }
+  }
+
+  return datasets;
+}
+
+// Fetch all chart images in parallel; any single failure is dropped, not fatal
+async function fetchAllChartImages(datasets) {
+  const results = await Promise.all(datasets.map(async d => {
+    try {
+      const buffer = await fetchChartImage(d.labels, d.values, d.colors, d.title);
+      return { ...d, buffer };
+    } catch (e) {
+      console.error('Chart image fetch failed for', d.key, e.message);
+      return { ...d, buffer: null };
+    }
+  }));
+  return results.filter(r => r.buffer);
+}
+
 // ── HTML report (existing style, now server-generated from saved data) ─────
 function buildReportHTML({ business, facts, structured: s, sources, scope }) {
   const bizName = business.name || business.website || 'Business Report';
@@ -2041,130 +2108,124 @@ ${recsHtml || '<p>No specific recommendations available.</p>'}
 }
 
 // ── PDF report (pdfkit — pure JS, no native/chromium dependency) ───────────
-function buildReportPDF({ business, facts, structured: s, sources, scope }) {
+async function buildReportPDF({ business, facts, structured: s, sources, scope }) {
   const doc = new PDFDocument({ margin: 50, size: 'A4' });
   const bizName = business.name || business.website || 'Business Report';
   const purple = '#6C3Bff';
+  const MARGIN = 50;
+  const WIDTH = 495;
 
-  doc.fontSize(22).fillColor('#111').text(bizName, { underline: false });
-  doc.moveTo(50, doc.y + 4).lineTo(545, doc.y + 4).strokeColor(purple).lineWidth(2).stroke();
-  doc.moveDown(0.5);
-  doc.fontSize(9).fillColor('#777').text(`Business Intelligence Report · Generated ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} · Arreyon Consult by G-DESIGNS LTD`);
-  doc.moveDown(1);
+  // Fetch chart images up front — embedding real images avoids any manual-drawing
+  // alignment issues and keeps PDF/DOCX visually identical.
+  const chartDatasets = buildChartDatasets({ facts, structured: s });
+  const charts = await fetchAllChartImages(chartDatasets);
 
+  // Every text call below is a single, single-style, single-line (or wrapped) call
+  // at the page margin — no {continued:true} + style-switch combinations, which is
+  // what caused the previous misalignment bug in pdfkit.
+  function line(text, { size = 10, color = '#222', bold = false, gapAfter = 4 } = {}) {
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size).fillColor(color)
+      .text(text, MARGIN, doc.y, { width: WIDTH });
+    doc.moveDown(gapAfter / 10);
+  }
   function h2(text) {
-    doc.moveDown(0.8);
-    doc.fontSize(13).fillColor(purple).text(text.toUpperCase());
-    doc.moveDown(0.3);
-    doc.fontSize(10.5).fillColor('#222');
+    if (doc.y > 700) doc.addPage();
+    doc.moveDown(0.6);
+    line(text.toUpperCase(), { size: 12.5, color: purple, bold: true, gapAfter: 3 });
   }
-  function bar(label, value, maxVal, color, y) {
-    const barW = Math.max((value / maxVal) * 200, 2);
-    doc.fontSize(9).fillColor('#333').text(label, 50, y, { width: 90 });
-    doc.rect(150, y - 2, 200, 14).fill('#eee');
-    doc.rect(150, y - 2, barW, 14).fill(color);
-    doc.fontSize(9).fillColor(color).text(String(value), 355, y);
+  function ensureSpace(minSpace) {
+    if (doc.y > 792 - minSpace) doc.addPage();
   }
+
+  // Title
+  doc.font('Helvetica-Bold').fontSize(22).fillColor('#111').text(bizName, MARGIN, MARGIN, { width: WIDTH });
+  doc.moveTo(MARGIN, doc.y + 6).lineTo(MARGIN + WIDTH, doc.y + 6).strokeColor(purple).lineWidth(2).stroke();
+  doc.moveDown(0.8);
+  line(`Business Intelligence Report · Generated ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} · Arreyon Consult by G-DESIGNS LTD`, { size: 9, color: '#777', gapAfter: 6 });
 
   // Business Profile
   h2('Business Profile');
-  Object.entries(facts).filter(([, f]) => f && f.value).forEach(([key, fact]) => {
-    doc.fontSize(9.5).fillColor('#111').text(`${REPORT_FACT_LABELS[key] || key}: `, { continued: true, width: 495 })
-      .fillColor('#444').text(`${fact.value} (${fact.source_type === 'observed' ? 'Observed' : 'AI Inferred'})`);
-    doc.moveDown(0.2);
-  });
-  if (!Object.keys(facts).length) doc.fontSize(9.5).fillColor('#888').text('No profile data available.');
+  const factEntries = Object.entries(facts).filter(([, f]) => f && f.value);
+  if (factEntries.length) {
+    factEntries.forEach(([key, fact]) => {
+      line(`${REPORT_FACT_LABELS[key] || key}: ${fact.value} (${fact.source_type === 'observed' ? 'Observed' : 'AI Inferred'})`, { size: 9.5 });
+    });
+  } else {
+    line('No profile data available.', { size: 9.5, color: '#888' });
+  }
 
   if (s) {
     h2('Market Context');
-    doc.fontSize(10).fillColor('#222').text(s.market_context || '', { width: 495 });
+    line(s.market_context || '', { size: 10 });
 
     h2('Full Detailed Analysis');
-    doc.fontSize(10).fillColor('#222').text(s.full_analysis || '', { width: 495 });
-    if (s.local_coverage_note) {
-      doc.moveDown(0.3);
-      doc.fontSize(9.5).fillColor('#a06800').text(`Note: ${s.local_coverage_note}`, { width: 495 });
-    }
+    line(s.full_analysis || '', { size: 10 });
+    if (s.local_coverage_note) line(`Note: ${s.local_coverage_note}`, { size: 9.5, color: '#a06800' });
 
     h2(`Competitor Analysis (${scope === 'national' ? 'National' : 'National + International'})`);
-    (s.competitors || []).forEach(c => {
-      doc.fontSize(10).fillColor('#111').text(`${c.name || '—'}  `, { continued: true }).fillColor('#888').fontSize(8).text(`[${(c.scope || 'unknown').toUpperCase()}]`);
-      doc.fontSize(9).fillColor('#444').text(c.description || '', { width: 495 });
-      if (c.differentiator) doc.fontSize(9).fillColor('#666').text(`Edge/weakness: ${c.differentiator}`, { width: 495 });
-      doc.moveDown(0.4);
-    });
-    if (!s.competitors?.length) doc.fontSize(9.5).fillColor('#888').text('No competitors identified.');
-
-    // Charts
-    if (doc.y > 650) doc.addPage();
-    const scopeCounts = { local: 0, international: 0 };
-    (s.competitors || []).forEach(c => { if (scopeCounts[c.scope] !== undefined) scopeCounts[c.scope]++; });
-    const priorityCounts = { high: 0, medium: 0, low: 0 };
-    (s.strategic_recommendations || []).forEach(r => { if (r.priority) priorityCounts[r.priority]++; });
-
-    if (scopeCounts.local + scopeCounts.international > 0) {
-      h2('Chart: Competitors by Scope');
-      const maxV = Math.max(scopeCounts.local, scopeCounts.international, 1);
-      let y = doc.y + 5;
-      bar('Local', scopeCounts.local, maxV, '#10b981', y); y += 20;
-      bar('International', scopeCounts.international, maxV, '#f59e0b', y);
-      doc.y = y + 25;
+    if (s.competitors?.length) {
+      s.competitors.forEach(c => {
+        ensureSpace(60);
+        line(`${c.name || '—'}  [${(c.scope || 'unknown').toUpperCase()}]`, { size: 10.5, bold: true, gapAfter: 2 });
+        if (c.description) line(c.description, { size: 9, color: '#444', gapAfter: 2 });
+        if (c.differentiator) line(`Edge/weakness: ${c.differentiator}`, { size: 9, color: '#666', gapAfter: 5 });
+      });
+    } else {
+      line('No competitors identified.', { size: 9.5, color: '#888' });
     }
-    if (priorityCounts.high + priorityCounts.medium + priorityCounts.low > 0) {
-      h2('Chart: Recommendations by Priority');
-      const maxV = Math.max(priorityCounts.high, priorityCounts.medium, priorityCounts.low, 1);
-      let y = doc.y + 5;
-      bar('High', priorityCounts.high, maxV, '#ef4444', y); y += 20;
-      bar('Medium', priorityCounts.medium, maxV, '#f59e0b', y); y += 20;
-      bar('Low', priorityCounts.low, maxV, '#6b7280', y);
-      doc.y = y + 25;
+
+    // Embedded chart images — real PNGs, guaranteed alignment
+    for (const chart of charts) {
+      ensureSpace(160);
+      doc.moveDown(0.5);
+      doc.image(chart.buffer, MARGIN, doc.y, { width: 300 });
+      doc.moveDown(11);
     }
 
     if (s.competitive_gaps?.length) {
       h2("What Competitors Do That You Don't");
       s.competitive_gaps.forEach(g => {
-        doc.fontSize(9.5).fillColor('#111').text(`• ${g.gap}`, { width: 495 });
-        if (g.competitor_names?.length) doc.fontSize(8.5).fillColor('#888').text(`  Seen at: ${g.competitor_names.join(', ')}`, { width: 495 });
-        doc.moveDown(0.2);
+        line(`• ${g.gap}`, { size: 9.5, gapAfter: 1 });
+        if (g.competitor_names?.length) line(`   Seen at: ${g.competitor_names.join(', ')}`, { size: 8.5, color: '#888', gapAfter: 4 });
       });
     }
 
     if (s.opportunity_gap) {
       h2('Opportunity Gap');
-      doc.fontSize(10).fillColor('#222').text(s.opportunity_gap, { width: 495 });
+      line(s.opportunity_gap, { size: 10 });
     }
 
     h2('Summary & Audit');
-    doc.fontSize(10).fillColor('#222').text(s.audit_summary || '', { width: 495 });
+    line(s.audit_summary || '', { size: 10 });
     (s.audit_coverage || []).forEach(c => {
-      doc.moveDown(0.2);
-      doc.fontSize(9).fillColor('#111').text(`${c.area}: `, { continued: true }).fillColor('#666').text(`${c.status}${c.note ? ' — ' + c.note : ''}`);
+      line(`${c.area}: ${c.status}${c.note ? ' — ' + c.note : ''}`, { size: 9, color: '#555', gapAfter: 2 });
     });
 
-    if (doc.y > 600) doc.addPage();
     h2('Recommendations, Solutions & Strategy');
-    (s.strategic_recommendations || []).forEach((r, i) => {
-      if (doc.y > 700) doc.addPage();
-      doc.fontSize(11).fillColor('#111').text(`${i + 1}. ${r.title || r.action || ''}`, { continued: true })
-        .fontSize(8).fillColor('#888').text(r.priority ? `   [${r.priority.toUpperCase()} PRIORITY]` : '');
-      if (r.problem_addressed) doc.fontSize(9).fillColor('#777').text(`Addresses: ${r.problem_addressed}`, { width: 495 });
-      doc.fontSize(9.5).fillColor('#333').text(r.solution || r.reason || '', { width: 495 });
-      (r.action_steps || []).forEach(step => doc.fontSize(9).fillColor('#444').text(`   • ${step}`, { width: 480 }));
-      doc.moveDown(0.6);
-    });
-    if (!s.strategic_recommendations?.length) doc.fontSize(9.5).fillColor('#888').text('No specific recommendations available.');
+    if (s.strategic_recommendations?.length) {
+      s.strategic_recommendations.forEach((r, i) => {
+        ensureSpace(120);
+        line(`${i + 1}. ${r.title || r.action || ''}${r.priority ? '   [' + r.priority.toUpperCase() + ' PRIORITY]' : ''}`, { size: 11.5, bold: true, gapAfter: 2 });
+        if (r.problem_addressed) line(`Addresses: ${r.problem_addressed}`, { size: 8.5, color: '#888', gapAfter: 2 });
+        line(r.solution || r.reason || '', { size: 9.5, color: '#333', gapAfter: 3 });
+        (r.action_steps || []).forEach(step => line(`   •  ${step}`, { size: 9, color: '#444', gapAfter: 1 }));
+        doc.moveDown(0.5);
+      });
+    } else {
+      line('No specific recommendations available.', { size: 9.5, color: '#888' });
+    }
 
     h2('Sources');
     (sources || []).forEach((src, i) => {
-      doc.fontSize(8.5).fillColor('#444').text(`[${i + 1}] ${src.title || src.url} — ${src.url}`, { width: 495 });
+      line(`[${i + 1}] ${src.title || src.url} — ${src.url}`, { size: 8.5, color: '#444', gapAfter: 2 });
     });
   } else {
     doc.moveDown(1);
-    doc.fontSize(9.5).fillColor('#888').text('Market research was not run for this business. Only the website analysis profile is included above.', { width: 495 });
+    line('Market research was not run for this business. Only the website analysis profile is included above.', { size: 9.5, color: '#888' });
   }
 
-  doc.moveDown(2);
-  doc.fontSize(7.5).fillColor('#aaa').text('Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com · This report was AI-generated and should be independently verified before major business decisions.', { width: 495, align: 'center' });
+  doc.moveDown(1.5);
+  line('Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com · This report was AI-generated and should be independently verified before major business decisions.', { size: 7.5, color: '#aaa' });
 
   return doc;
 }
@@ -2227,14 +2288,16 @@ async function buildReportDOCX({ business, facts, structured: s, sources, scope 
     }
     children.push(new Paragraph({ text: '' }));
 
-    // Data summary (table form, since DOCX charts require embedded images which we skip for simplicity)
-    const scopeCounts = { local: 0, international: 0 };
-    (s.competitors || []).forEach(c => { if (scopeCounts[c.scope] !== undefined) scopeCounts[c.scope]++; });
-    const priorityCounts = { high: 0, medium: 0, low: 0 };
-    (s.strategic_recommendations || []).forEach(r => { if (r.priority) priorityCounts[r.priority]++; });
-    heading('Data Summary');
-    para(`Competitors — Local: ${scopeCounts.local}, International: ${scopeCounts.international}`);
-    para(`Recommendations — High priority: ${priorityCounts.high}, Medium: ${priorityCounts.medium}, Low: ${priorityCounts.low}`);
+    // Embedded chart images — same PNGs used in the PDF, fetched once and reused
+    const chartDatasets = buildChartDatasets({ facts, structured: s });
+    const charts = await fetchAllChartImages(chartDatasets);
+    if (charts.length) {
+      heading('Data Analysis');
+      charts.forEach(chart => {
+        children.push(new Paragraph({ children: [new ImageRun({ data: chart.buffer, transformation: { width: 380, height: 80 + chart.labels.length * 40 } })] }));
+        children.push(new Paragraph({ text: '' }));
+      });
+    }
 
     if (s.competitive_gaps?.length) {
       heading("What Competitors Do That You Don't");
@@ -2322,7 +2385,7 @@ app.get('/api/business/:id/report', authRequired, async (req, res) => {
     if (format === 'pdf') {
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}-report.pdf"`);
-      const doc = buildReportPDF(reportData);
+      const doc = await buildReportPDF(reportData);
       doc.pipe(res);
       doc.end();
       return;
