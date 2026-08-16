@@ -802,13 +802,13 @@ async function logAIUsage({ provider, model, status, errorMessage, durationMs, f
   } catch (e) { /* never let logging break the actual request */ }
 }
 
-async function _askClaudeRaw(persona, messages) {
+async function _askClaudeRaw(persona, messages, maxTokens = 1024) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('Claude API key not configured');
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 1024, system: persona, messages })
+    body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: maxTokens, system: persona, messages })
   });
   if (!response.ok) { const e = await response.json().catch(()=>({})); throw new Error(e?.error?.message || 'Claude error'); }
   const data = await response.json();
@@ -849,10 +849,10 @@ async function _askGeminiRaw(persona, messages) {
 }
 
 // ── Public AI functions — same signatures as before, now with usage logging ──
-async function askClaude(persona, messages, context = {}) {
+async function askClaude(persona, messages, context = {}, maxTokens = 1024) {
   const start = Date.now();
   try {
-    const result = await _askClaudeRaw(persona, messages);
+    const result = await _askClaudeRaw(persona, messages, maxTokens);
     logAIUsage({ provider: 'claude', model: 'claude-haiku-4-5-20251001', status: 'success', durationMs: Date.now() - start, ...context });
     return result;
   } catch (e) {
@@ -1447,12 +1447,13 @@ Return ONLY valid JSON, no markdown formatting, in exactly this structure:
 
 List up to 8 competitors total${includeInternational ? ', aiming for a mix of local and international where results support it' : ' (national only)'}. Up to 4 strategic recommendations, ranked by priority. Up to 4 audit_coverage rows covering the most important research areas (e.g. local competitors, international competitors, pricing data, market size). Omit "local_coverage_note" entirely if results were adequate.`;
 
-  const raw = await askClaude(synthesisPrompt, [{ role: 'user', content: 'Produce the complete structured report now, as JSON only.' }], { feature: 'research_engine', userId });
+  const raw = await askClaude(synthesisPrompt, [{ role: 'user', content: 'Produce the complete structured report now, as JSON only.' }], { feature: 'research_engine', userId }, 3000);
   const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
   let structured;
   try {
     structured = JSON.parse(cleaned);
   } catch (e) {
+    console.error('Research JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
     throw new Error('Could not parse market research — please try again');
   }
 
@@ -1701,8 +1702,21 @@ async function analyzeWebsite(startUrl) {
 // Ask Claude to structure raw page content into labeled business facts
 async function structureBusinessFacts(pages, submittedUrl, userId) {
   const combined = pages.map(p => `PAGE: ${p.url}\nTITLE: ${p.title}\nDESCRIPTION: ${p.description}\nCONTENT: ${p.bodyText}`).join('\n\n---\n\n');
+  const isDescriptionOnly = pages.length === 1 && pages[0].url.startsWith('User-provided description');
 
-  const prompt = `You are a business analyst extracting structured facts from a real website's content. You will be shown raw text scraped from ${pages.length} page(s) of ${submittedUrl}.
+  const prompt = isDescriptionOnly
+    ? `You are a business analyst extracting structured facts from a business owner's own written description of their business. They do not have a website yet.
+
+OWNER'S DESCRIPTION:
+${combined.slice(0, 12000)}
+
+YOUR TASK:
+Extract what the owner has genuinely told you. For EVERY fact, you must label it as one of:
+- "observed" — directly and explicitly stated by the owner in their description
+- "inferred" — a reasonable conclusion you're drawing from context, NOT explicitly stated
+
+`
+    : `You are a business analyst extracting structured facts from a real website's content. You will be shown raw text scraped from ${pages.length} page(s) of ${submittedUrl}.
 
 RAW WEBSITE CONTENT:
 ${combined.slice(0, 12000)}
@@ -1712,7 +1726,8 @@ Extract what you can genuinely observe from this content. For EVERY fact, you mu
 - "observed" — directly and explicitly stated on the page (e.g. a stated business name, a listed price, a stated location)
 - "inferred" — a reasonable conclusion you're drawing from context, NOT explicitly stated (e.g. inferring "small business" from tone and lack of enterprise language)
 
-CRITICAL RULES:
+`;
+  const promptTail = `CRITICAL RULES:
 - NEVER invent information that isn't supported by the text above
 - If something isn't mentioned, omit it entirely — do not guess
 - Prices, contact details, and business names must be "observed" only if literally present in the text
@@ -1729,16 +1744,18 @@ Return this exact JSON structure:
   "location": {"value": "...", "source_type": "observed|inferred"},
   "contact_info": {"value": "...", "source_type": "observed|inferred"},
   "positioning": {"value": "...", "source_type": "observed|inferred"},
-  "notable_gaps": {"value": "What important business information is missing from this website that a customer or investor would want to know", "source_type": "inferred"}
+  "notable_gaps": {"value": "${isDescriptionOnly ? 'What important business information is missing from what the owner shared, that a customer or investor would want to know' : 'What important business information is missing from this website that a customer or investor would want to know'}", "source_type": "inferred"}
 }
 
 Omit any key entirely if you have no supporting evidence for it. Do not include keys with empty or null values.`;
 
-  const raw = await askClaude(prompt, [{ role: 'user', content: 'Extract the structured business facts now, as JSON only.' }], { feature: 'website_analyzer', userId });
+  const fullPrompt = prompt + promptTail;
+  const raw = await askClaude(fullPrompt, [{ role: 'user', content: 'Extract the structured business facts now, as JSON only.' }], { feature: 'website_analyzer', userId }, 1800);
   const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
   try {
     return JSON.parse(cleaned);
   } catch (e) {
+    console.error('Business facts JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
     throw new Error('Could not parse business analysis — please try again');
   }
 }
@@ -1746,10 +1763,15 @@ Omit any key entirely if you have no supporting evidence for it. Do not include 
 // Website Analyzer monthly limits per plan (Section 27 tier matrix, agreed)
 const ANALYZER_LIMITS = { starter: 1, pro: 10, business: -1 };
 
-// ── Website Analyzer endpoint ───────────────────────────────────────────────
+// ── Website Analyzer endpoint (also handles no-website description input) ──
 app.post('/api/business/analyze', authRequired, async (req, res) => {
-  const { url, businessName } = req.body;
-  if (!url) return res.status(400).json({ error: 'Website URL is required' });
+  const { url, description, businessName } = req.body;
+  const hasUrl = url && url.trim();
+  const hasDescription = description && description.trim().length >= 20;
+
+  if (!hasUrl && !hasDescription) {
+    return res.status(400).json({ error: 'Please provide a website URL, or describe your business in at least a few sentences.' });
+  }
 
   try {
     const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
@@ -1765,26 +1787,29 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
       const used = parseInt(usedThisMonth.rows[0].count, 10);
       if (used >= limit) {
         return res.status(403).json({
-          error: `You've used your ${limit} website ${limit === 1 ? 'analysis' : 'analyses'} this month. Upgrade for more.`,
+          error: `You've used your ${limit} business ${limit === 1 ? 'analysis' : 'analyses'} this month. Upgrade for more.`,
           upgradeRequired: true
         });
       }
     }
 
-    let normalizedUrl = url.trim();
-    if (!/^https?:\/\//i.test(normalizedUrl)) normalizedUrl = 'https://' + normalizedUrl;
+    let normalizedUrl = null;
+    let pages, sourceLabel;
 
-    const pages = await analyzeWebsite(normalizedUrl);
-    const facts = await structureBusinessFacts(pages, normalizedUrl, req.userId);
+    if (hasUrl) {
+      normalizedUrl = url.trim();
+      if (!/^https?:\/\//i.test(normalizedUrl)) normalizedUrl = 'https://' + normalizedUrl;
+      pages = await analyzeWebsite(normalizedUrl);
+      sourceLabel = normalizedUrl;
+    } else {
+      // No website — treat the user's own description as the sole "page" to extract facts from
+      pages = [{ url: 'User-provided description (no website)', title: businessName || '', description: '', bodyText: description.trim() }];
+      sourceLabel = 'business description (no website)';
+    }
 
-    // Create or reuse a business profile for this user + URL
-    const existing = await pool.query(
-      'SELECT id FROM businesses WHERE user_id = $1 AND website = $2 AND is_active = true LIMIT 1',
-      [req.userId, normalizedUrl]
-    );
+    const facts = await structureBusinessFacts(pages, sourceLabel, req.userId);
 
-    // Parse the AI-extracted location fact into city/country the research
-    // engine can actually use (e.g. "Buea, Cameroon" -> city=Buea, country=Cameroon)
+    // Parse the AI-extracted location fact into city/country the research engine can use
     let parsedCity = null, parsedCountry = null;
     if (facts.location?.value) {
       const parts = facts.location.value.split(',').map(p => p.trim()).filter(Boolean);
@@ -1794,43 +1819,57 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
     const parsedIndustry = facts.industry?.value || null;
 
     let businessId;
-    if (existing.rows.length) {
-      businessId = existing.rows[0].id;
-      await pool.query(
-        `UPDATE businesses SET updated_at = NOW(),
-         industry = COALESCE($2, industry), city = COALESCE($3, city), country = COALESCE($4, country)
-         WHERE id = $1`,
-        [businessId, parsedIndustry, parsedCity, parsedCountry]
+    if (normalizedUrl) {
+      // URL path: reuse an existing business profile for this user + URL if one exists
+      const existing = await pool.query(
+        'SELECT id FROM businesses WHERE user_id = $1 AND website = $2 AND is_active = true LIMIT 1',
+        [req.userId, normalizedUrl]
       );
+      if (existing.rows.length) {
+        businessId = existing.rows[0].id;
+        await pool.query(
+          `UPDATE businesses SET updated_at = NOW(),
+           industry = COALESCE($2, industry), city = COALESCE($3, city), country = COALESCE($4, country)
+           WHERE id = $1`,
+          [businessId, parsedIndustry, parsedCity, parsedCountry]
+        );
+      } else {
+        const inserted = await pool.query(
+          `INSERT INTO businesses (user_id, name, website, industry, city, country) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+          [req.userId, businessName || facts.business_name?.value || normalizedUrl, normalizedUrl, parsedIndustry, parsedCity, parsedCountry]
+        );
+        businessId = inserted.rows[0].id;
+      }
     } else {
+      // Description-only path: no natural unique key, always create a fresh profile
       const inserted = await pool.query(
-        `INSERT INTO businesses (user_id, name, website, industry, city, country) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-        [req.userId, businessName || facts.business_name?.value || normalizedUrl, normalizedUrl, parsedIndustry, parsedCity, parsedCountry]
+        `INSERT INTO businesses (user_id, name, website, industry, city, country) VALUES ($1, $2, NULL, $3, $4, $5) RETURNING id`,
+        [req.userId, businessName || facts.business_name?.value || 'My Business', parsedIndustry, parsedCity, parsedCountry]
       );
       businessId = inserted.rows[0].id;
     }
 
-    // Store each fact, tagged with its source type — each analysis adds new rows,
-    // preserving history so facts can be tracked as they change over time
+    // Store each fact, tagged with its source type
     for (const [key, data] of Object.entries(facts)) {
       if (!data || !data.value) continue;
       await pool.query(
         `INSERT INTO business_facts (business_id, fact_key, fact_value, source_type, source_detail)
          VALUES ($1, $2, $3, $4, $5)`,
-        [businessId, key, data.value, data.source_type || 'inferred', `Analyzed from ${normalizedUrl}`]
+        [businessId, key, data.value, data.source_type || 'inferred', `Analyzed from ${sourceLabel}`]
       );
     }
 
     res.json({
       success: true,
       businessId,
-      analyzedUrl: normalizedUrl,
-      pagesAnalyzed: pages.map(p => p.url),
+      analyzedUrl: normalizedUrl || null,
+      isDescriptionOnly: !normalizedUrl,
+      pagesAnalyzed: normalizedUrl ? pages.map(p => p.url) : ['Business description'],
       facts
     });
   } catch (err) {
     console.error('Website analysis error:', err.message);
-    res.status(500).json({ error: err.message || 'Analysis failed. Please check the URL and try again.' });
+    res.status(500).json({ error: err.message || 'Analysis failed. Please try again.' });
   }
 });
 
