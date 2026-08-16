@@ -576,6 +576,15 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div id="overallRecText" style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:10px"></div>
           <div id="learnFirstText" style="font-size:12.5px;color:var(--muted)"></div>
         </div>
+
+        <div id="opportunityPlanSection" style="margin-top:20px;max-width:400px">
+          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Build a full plan for one of these</label>
+          <select class="form-input" id="opportunityPlanSelect" style="margin-bottom:8px"></select>
+          <button class="btn-primary" style="width:100%;padding:11px" onclick="generateBusinessPlan()" id="genPlanBtnOpp">📋 Generate Business Plan</button>
+        </div>
+
+        <div id="businessPlanSectionOpp"></div>
+        <div id="discussionSectionOpp"></div>
       </div>
 
       <!-- VALIDATION RESULTS -->
@@ -586,6 +595,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div id="verdictReasoningText" style="font-size:13.5px;line-height:1.6"></div>
         </div>
         <div id="validationDetails" style="display:flex;flex-direction:column;gap:12px"></div>
+
+        <button class="btn-primary" style="width:100%;padding:11px;margin-top:20px" onclick="generateBusinessPlan()" id="genPlanBtnVal">📋 Generate Business Plan</button>
+
+        <div id="businessPlanSectionVal"></div>
+        <div id="discussionSectionVal"></div>
       </div>
 
       <!-- HISTORY -->
@@ -1455,6 +1469,162 @@ function downloadReport(format) {
 
 // ── ENTREPRENEUR MODE ─────────────────────────────────────────────────────────
 let entrepreneurTab = 'opportunity';
+let currentEntrepreneurSessionId = null;
+
+// ── Shared discussion chat UI (used under both opportunity and validation results) ──
+function buildDiscussionChatHTML(suffix) {
+  return `
+    <div style="margin-top:24px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px">
+      <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Discuss These Results</div>
+      <div id="discussionMessages${suffix}" style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px;max-height:320px;overflow-y:auto"></div>
+      <div style="display:flex;gap:8px">
+        <input class="form-input" id="discussionInput${suffix}" placeholder="Ask a question or push back on this..." style="flex:1" onkeydown="if(event.key==='Enter')sendEntrepreneurDiscussion('${suffix}')">
+        <button class="btn-primary" style="padding:10px 18px;white-space:nowrap" onclick="sendEntrepreneurDiscussion('${suffix}')" id="discussionSendBtn${suffix}">Send</button>
+      </div>
+    </div>`;
+}
+
+function renderDiscussionMessages(suffix, messages) {
+  const el = document.getElementById('discussionMessages' + suffix);
+  if (!el) return;
+  el.innerHTML = (messages || []).map(m => `
+    <div style="align-self:${m.from === 'you' ? 'flex-end' : 'flex-start'};max-width:85%;background:${m.from === 'you' ? 'var(--purple)' : 'var(--bg3)'};color:${m.from === 'you' ? '#fff' : 'var(--text2)'};border-radius:10px;padding:9px 12px;font-size:13px;line-height:1.5">
+      ${m.text}
+    </div>`).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendEntrepreneurDiscussion(suffix) {
+  if (!currentEntrepreneurSessionId) return;
+  const input = document.getElementById('discussionInput' + suffix);
+  const message = input.value.trim();
+  if (!message) return;
+
+  const btn = document.getElementById('discussionSendBtn' + suffix);
+  btn.disabled = true;
+  input.value = '';
+
+  // Optimistically show the user's message immediately
+  const el = document.getElementById('discussionMessages' + suffix);
+  el.innerHTML += `<div style="align-self:flex-end;max-width:85%;background:var(--purple);color:#fff;border-radius:10px;padding:9px 12px;font-size:13px">${message}</div>`;
+  el.scrollTop = el.scrollHeight;
+
+  try {
+    const res = await fetch(`/api/entrepreneur/${currentEntrepreneurSessionId}/discuss`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message })
+    });
+    const data = await res.json();
+    btn.disabled = false;
+    if (!res.ok) {
+      el.innerHTML += `<div style="align-self:flex-start;max-width:85%;color:#ff8080;font-size:12.5px">${data.error || 'Failed to respond.'}</div>`;
+      return;
+    }
+    renderDiscussionMessages(suffix, data.discussionMessages);
+  } catch (e) {
+    btn.disabled = false;
+    el.innerHTML += `<div style="align-self:flex-start;color:#ff8080;font-size:12.5px">Connection error. Please try again.</div>`;
+  }
+}
+
+// ── Business Plan generation ────────────────────────────────────────────────
+async function generateBusinessPlan() {
+  if (!currentEntrepreneurSessionId) return;
+  const isOpp = entrepreneurTab === 'opportunity';
+  const btn = document.getElementById(isOpp ? 'genPlanBtnOpp' : 'genPlanBtnVal');
+  const targetDiv = document.getElementById(isOpp ? 'businessPlanSectionOpp' : 'businessPlanSectionVal');
+
+  let body = {};
+  if (isOpp) {
+    const select = document.getElementById('opportunityPlanSelect');
+    if (!select.value) { alert('Please choose which opportunity to build a plan for.'); return; }
+    body.chosenOpportunityName = select.value;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Building your plan...';
+  targetDiv.innerHTML = '';
+
+  try {
+    const res = await fetch(`/api/entrepreneur/${currentEntrepreneurSessionId}/business-plan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    btn.disabled = false;
+    btn.textContent = '📋 Generate Business Plan';
+
+    if (!res.ok) {
+      targetDiv.innerHTML = `<div style="color:#ff8080;font-size:13px;margin-top:12px">${data.error || 'Failed to generate plan.'}</div>`;
+      return;
+    }
+    renderBusinessPlan(targetDiv, data.businessPlan);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = '📋 Generate Business Plan';
+    targetDiv.innerHTML = `<div style="color:#ff8080;font-size:13px;margin-top:12px">Connection error. Please try again.</div>`;
+  }
+}
+
+function renderBusinessPlan(container, plan) {
+  const bm = plan.business_model || {};
+  const st = plan.strategy || {};
+  const mk = plan.marketing_plan || {};
+  const ex = plan.execution_plan || {};
+  const fin = plan.financial_snapshot || {};
+
+  const listRow = (label, val) => val ? `<div style="margin-bottom:8px"><span style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</span><div style="font-size:12.5px;color:var(--text2);line-height:1.5">${Array.isArray(val) ? val.map(v=>`• ${v}`).join('<br>') : val}</div></div>` : '';
+
+  container.innerHTML = `
+    <div style="margin-top:20px;background:var(--bg2);border:1px solid var(--purple);border-radius:12px;padding:20px">
+      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:16px">📋 Business Plan</div>
+
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Business Model</div>
+      <div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:16px">
+        ${listRow('Value Proposition', bm.value_proposition)}
+        ${listRow('Customer Segments', bm.customer_segments)}
+        ${listRow('Revenue Streams', bm.revenue_streams)}
+        ${listRow('Cost Structure', bm.cost_structure)}
+        ${listRow('Key Resources', bm.key_resources)}
+        ${listRow('Key Activities', bm.key_activities)}
+        ${listRow('Key Partners', bm.key_partners)}
+        ${listRow('Channels', bm.channels)}
+      </div>
+
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Strategy</div>
+      <div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:16px">
+        ${listRow('Positioning', st.positioning)}
+        ${listRow('Competitive Advantage', st.competitive_advantage)}
+        ${listRow('Differentiation', st.differentiation)}
+      </div>
+
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Marketing Plan</div>
+      <div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:16px">
+        ${listRow('Target Audience', mk.target_audience)}
+        ${listRow('Key Messaging', mk.key_messaging)}
+        ${listRow('Marketing Channels', mk.marketing_channels)}
+        ${listRow('Content Strategy', mk.content_strategy)}
+        ${listRow('Promotional Tactics', mk.promotional_tactics)}
+        ${listRow('Customer Acquisition Funnel', mk.customer_acquisition_funnel)}
+        ${listRow('Marketing Budget Estimate', mk.marketing_budget_estimate)}
+      </div>
+
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Execution Plan</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
+        <div style="background:var(--bg3);border-radius:8px;padding:12px"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">First 30 Days</div>${(ex.phase_30_days||[]).map(t=>`<div style="font-size:11.5px;color:var(--text2);margin-bottom:4px">• ${t}</div>`).join('')}</div>
+        <div style="background:var(--bg3);border-radius:8px;padding:12px"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">Days 31-60</div>${(ex.phase_60_days||[]).map(t=>`<div style="font-size:11.5px;color:var(--text2);margin-bottom:4px">• ${t}</div>`).join('')}</div>
+        <div style="background:var(--bg3);border-radius:8px;padding:12px"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">Days 61-90</div>${(ex.phase_90_days||[]).map(t=>`<div style="font-size:11.5px;color:var(--text2);margin-bottom:4px">• ${t}</div>`).join('')}</div>
+      </div>
+
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Financial Snapshot</div>
+      <div style="background:var(--bg3);border-radius:8px;padding:14px">
+        ${listRow('Estimated Startup Cost', fin.estimated_startup_cost)}
+        ${listRow('Monthly Operating Cost', fin.monthly_operating_cost)}
+        ${listRow('Breakeven Estimate', fin.breakeven_estimate)}
+        ${listRow('Key Assumption', fin.key_assumption)}
+      </div>
+    </div>`;
+}
+
+
 
 function switchEntrepreneurTab(tab) {
   entrepreneurTab = tab;
@@ -1520,6 +1690,7 @@ async function findOpportunities() {
       return;
     }
 
+    currentEntrepreneurSessionId = data.sessionId;
     renderOpportunities(data.structured, data.researchBacked);
     loadEntrepreneurHistory();
   } catch (e) {
@@ -1559,6 +1730,12 @@ function renderOpportunities(structured, researchBacked) {
   document.getElementById('overallRecText').textContent = structured.overall_recommendation || '';
   document.getElementById('learnFirstText').textContent = structured.what_to_learn_first ? `First, learn: ${structured.what_to_learn_first}` : '';
 
+  const select = document.getElementById('opportunityPlanSelect');
+  select.innerHTML = '<option value="">Choose an opportunity...</option>' + opps.map(o => `<option value="${o.name}">${o.name}</option>`).join('');
+
+  document.getElementById('businessPlanSectionOpp').innerHTML = '';
+  document.getElementById('discussionSectionOpp').innerHTML = buildDiscussionChatHTML('Opp');
+
   document.getElementById('opportunityResults').style.display = 'block';
 }
 
@@ -1597,6 +1774,7 @@ async function validateIdea() {
       return;
     }
 
+    currentEntrepreneurSessionId = data.sessionId;
     renderValidation(data.structured, data.researchBacked);
     loadEntrepreneurHistory();
   } catch (e) {
@@ -1650,6 +1828,9 @@ function renderValidation(s, researchBacked) {
       <div style="font-size:13px;color:var(--text2);line-height:1.6">${val}</div>
     </div>`).join('') + risksHtml;
 
+  document.getElementById('businessPlanSectionVal').innerHTML = '';
+  document.getElementById('discussionSectionVal').innerHTML = buildDiscussionChatHTML('Val');
+
   document.getElementById('validationResults').style.display = 'block';
 }
 
@@ -1681,14 +1862,19 @@ async function loadEntrepreneurHistory() {
 function loadEntrepreneurSession(index) {
   const s = entrepreneurSessionsCache[index];
   if (!s) return;
+  currentEntrepreneurSessionId = s.id;
   let targetId;
   if (s.mode === 'opportunity_finder') {
     switchEntrepreneurTab('opportunity');
     renderOpportunities(s.structured_output, s.research_backed);
+    renderDiscussionMessages('Opp', s.discussion_messages);
+    if (s.business_plan) renderBusinessPlan(document.getElementById('businessPlanSectionOpp'), s.business_plan);
     targetId = 'opportunityResults';
   } else {
     switchEntrepreneurTab('validation');
     renderValidation(s.structured_output, s.research_backed);
+    renderDiscussionMessages('Val', s.discussion_messages);
+    if (s.business_plan) renderBusinessPlan(document.getElementById('businessPlanSectionVal'), s.business_plan);
     targetId = 'validationResults';
   }
   document.getElementById(targetId).scrollIntoView({ behavior: 'smooth', block: 'start' });
