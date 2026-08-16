@@ -1355,22 +1355,23 @@ async function researchSearch(query, options) {
 }
 
 // ── Run market/competitor research for a business, save sources, synthesize ──
-async function runBusinessResearch(business, userId) {
+async function runBusinessResearch(business, userId, scope = 'both') {
   const bizName = business.name || business.website;
   const industry = business.industry || '';
   const country = business.country || '';
   const city = business.city || '';
+  const includeInternational = scope === 'both';
 
   const queries = [];
 
   if (country) {
-    // Explicit local-market query — the single strongest signal for local competitors
     queries.push(`best ${industry} companies in ${city ? city + ', ' : ''}${country}`.trim());
     queries.push(`${industry} competitors ${bizName} ${country}`.trim());
+    if (includeInternational) {
+      queries.push(`international ${industry} companies operating in ${country} Africa`.trim());
+    }
     queries.push(`${industry} market trends ${country} 2026`.trim());
   } else {
-    // No location known — broader query, and the summary prompt below will
-    // be told explicitly that location is unknown so it doesn't imply local relevance
     queries.push(`${bizName} competitors ${industry}`.trim());
     queries.push(`${industry} market trends 2026`.trim());
   }
@@ -1381,7 +1382,6 @@ async function runBusinessResearch(business, userId) {
       const results = await researchSearch(q, { maxResults: 4 });
       allSources.push(...results.map(r => ({ ...r, query: q })));
     } catch (e) {
-      // one query failing shouldn't kill the whole research pass
       continue;
     }
   }
@@ -1390,7 +1390,6 @@ async function runBusinessResearch(business, userId) {
     throw new Error('No research results could be retrieved. Please try again later.');
   }
 
-  // Deduplicate by URL
   const seen = new Set();
   const uniqueSources = allSources.filter(s => {
     if (seen.has(s.url)) return false;
@@ -1404,30 +1403,68 @@ async function runBusinessResearch(business, userId) {
     ? `${bizName} is based in ${city ? city + ', ' : ''}${country}, operating in the ${industry || 'general'} industry.`
     : `${bizName} operates in the ${industry || 'general'} industry. Its specific country/location was not determined during analysis.`;
 
-  const synthesisPrompt = `You are a market research analyst. ${businessContext}
+  const scopeInstruction = includeInternational
+    ? `Include BOTH kinds of competitors found: companies based only in ${country || 'the local market'} ("scope": "local"), and companies that operate across multiple countries or globally while also serving ${country || 'this market'} ("scope": "international"). Do not exclude international competitors.`
+    : `The client asked for NATIONAL research only. Only include competitors based in or primarily operating within ${country || 'the local market'} ("scope": "local"). Exclude international/global-only players even if they appear in search results.`;
 
-Below are real search results from queries aimed at finding this business's competitors and market context${country ? `, specifically searching for local competitors in ${country}` : ''}.
+  const synthesisPrompt = `You are a senior market research analyst and business strategist producing a formal, detailed report. ${businessContext}
+
+Research scope requested by the client: ${includeInternational ? 'National + International' : 'National only'}.
+
+Below are real search results from queries aimed at finding this business's competitors and market context.
 
 SEARCH RESULTS:
 ${sourcesText.slice(0, 8000)}
 
 YOUR TASK:
-Write a concise market and competitor summary (200-300 words) based ONLY on the search results above.
+Produce a complete four-part report based ONLY on the search results above: (1) a full detailed market and competitor analysis, (2) a summary and audit of what was found and how reliable/complete it is, (3) recommendations/solutions/strategy, (4) the underlying data for a downloadable report.
 
 CRITICAL RULES:
-- Every claim must be traceable to one of the numbered sources above — reference sources using [1], [2] etc.
-${country ? `- PRIORITIZE competitors that are actually based in or serve ${country}. If a listed source is an international company with no clear local presence, either omit it or explicitly label it as "international, not confirmed local" rather than presenting it as a direct local competitor.` : ''}
-- If the search results mostly returned international/generic results rather than local ones, say so explicitly (e.g. "The search did not surface clearly local competitors — the following are broader international players offering similar services")
-- If the search results don't clearly answer something, say so explicitly rather than guessing
-- If sources conflict, note the conflict explicitly (e.g. "Source 2 suggests X while Source 4 suggests Y")
-- Do not invent competitor names, statistics, or facts not present in the search results
-- Structure as: Market Context, Key Competitors, Notable Gap or Opportunity
+- Every competitor and claim must be traceable to one of the numbered sources above — cite using the source number in "source_ref"
+- ${scopeInstruction}
+- If the search results don't clearly answer something, say so explicitly rather than guessing — do not invent competitor names, statistics, or facts not present above
+- Recommendations must be DERIVED from the specific competitors and gaps found — not generic advice
+- Each recommendation must be concrete and actionable, not vague
+- The audit section must honestly assess coverage gaps, not just praise the findings
 
-Return plain text, no markdown headers.`;
+Return ONLY valid JSON, no markdown formatting, in exactly this structure:
+{
+  "market_context": "2-3 sentences on the overall market situation",
+  "full_analysis": "A detailed 4-6 sentence analysis covering market dynamics, competitive intensity, and positioning implications for ${bizName} specifically — this is the expanded, full version of the market context",
+  "local_coverage_note": "Only include this key if results were thin overall — explain what was actually found instead",
+  "competitors": [
+    {"name": "...", "description": "what they offer, one sentence", "differentiator": "their apparent edge or weakness", "scope": "local", "source_ref": "1"}
+  ],
+  "opportunity_gap": "The clearest gap or underserved angle this business could exploit",
+  "audit_summary": "2-3 sentences honestly assessing how complete and reliable this research is — note any limitations, thin coverage, or areas needing deeper investigation",
+  "audit_coverage": [
+    {"area": "e.g. Local competitor pricing", "status": "covered|partial|not covered", "note": "brief explanation"}
+  ],
+  "strategic_recommendations": [
+    {"action": "specific action to take", "reason": "why this action, tied to a specific finding above", "priority": "high|medium|low"}
+  ]
+}
 
-  const summary = await askClaude(synthesisPrompt, [{ role: 'user', content: 'Write the research summary now.' }], { feature: 'research_engine', userId });
+List up to 8 competitors total${includeInternational ? ', aiming for a mix of local and international where results support it' : ' (national only)'}. Up to 4 strategic recommendations, ranked by priority. Up to 4 audit_coverage rows covering the most important research areas (e.g. local competitors, international competitors, pricing data, market size). Omit "local_coverage_note" entirely if results were adequate.`;
 
-  return { summary: summary.trim(), sources: uniqueSources, queries };
+  const raw = await askClaude(synthesisPrompt, [{ role: 'user', content: 'Produce the complete structured report now, as JSON only.' }], { feature: 'research_engine', userId });
+  const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
+  let structured;
+  try {
+    structured = JSON.parse(cleaned);
+  } catch (e) {
+    throw new Error('Could not parse market research — please try again');
+  }
+
+  const flatSummary = [
+    structured.market_context,
+    structured.local_coverage_note ? `Note: ${structured.local_coverage_note}` : '',
+    structured.competitors?.length ? 'Competitors: ' + structured.competitors.map(c => c.name).join(', ') : '',
+    structured.opportunity_gap ? `Opportunity: ${structured.opportunity_gap}` : '',
+    structured.strategic_recommendations?.length ? 'Recommendations: ' + structured.strategic_recommendations.map(r => r.action).join('; ') : ''
+  ].filter(Boolean).join('\n\n');
+
+  return { summary: flatSummary, structured, sources: uniqueSources, queries, scope };
 }
 
 // ── Research endpoint ────────────────────────────────────────────────────────
@@ -1455,7 +1492,8 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
     const biz = await pool.query('SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
-    const { summary, sources, queries } = await runBusinessResearch(biz.rows[0], req.userId);
+    const requestedScope = req.body?.scope === 'national' ? 'national' : 'both';
+    const { summary, structured, sources, queries } = await runBusinessResearch(biz.rows[0], req.userId, requestedScope);
 
     const session = await pool.query(
       `INSERT INTO research_sessions (business_id, user_id, query, summary) VALUES ($1, $2, $3, $4) RETURNING id`,
@@ -1477,7 +1515,7 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
       [req.params.id, summary, `${sources.length} sources, ${new Date().toISOString().slice(0,10)}`]
     );
 
-    res.json({ success: true, sessionId, summary, sources });
+    res.json({ success: true, sessionId, summary, structured, sources });
   } catch (err) {
     console.error('Research error:', err.message);
     res.status(500).json({ error: err.message || 'Research failed. Please try again.' });
