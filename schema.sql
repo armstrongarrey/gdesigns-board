@@ -234,6 +234,20 @@ CREATE TABLE IF NOT EXISTS research_sessions (
 ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS scope VARCHAR(20) DEFAULT 'both';
 ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS structured_data JSONB;
 ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS verification_data JSONB;
+
+-- Entrepreneur Mode — Increment 5. Separate from businesses/business_facts since
+-- this is for people who don't have a business yet (no site to analyze, no
+-- existing profile to build on).
+CREATE TABLE IF NOT EXISTS entrepreneur_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  mode VARCHAR(30) NOT NULL, -- 'opportunity_finder' | 'idea_validation'
+  input_data JSONB NOT NULL,
+  structured_output JSONB,
+  research_backed BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_entrepreneur_sessions_user ON entrepreneur_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_research_sessions_business ON research_sessions(business_id);
 
 -- Research sources — every source retrieved for a research session, for citation
