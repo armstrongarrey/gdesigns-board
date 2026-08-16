@@ -461,6 +461,26 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px">Recommendations, Solutions &amp; Strategy</div>
           <div id="strategyList" style="display:flex;flex-direction:column;gap:10px"></div>
 
+          <div id="verificationSection" style="margin-top:20px">
+            <div id="verificationPromptWrap">
+              <button class="btn-ghost" style="padding:10px 18px" onclick="runVerification()" id="verifyBtn">🔎 Verify This Recommendation</button>
+              <span style="font-size:11.5px;color:var(--muted);margin-left:10px">Stress-tests each recommendation against the evidence before you act on it</span>
+            </div>
+            <div id="verificationLoading" style="display:none;padding:16px;background:var(--bg3);border-radius:10px;text-align:center">
+              <div style="font-size:12.5px;color:var(--text2)">Challenging each recommendation against the evidence...</div>
+            </div>
+            <div id="verificationResults" style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:10px">
+              <div style="display:flex;align-items:center;gap:16px;margin-bottom:14px;flex-wrap:wrap">
+                <div id="verifiedBadge" style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;display:flex;align-items:center;gap:5px"></div>
+                <div style="font-size:12px;color:var(--muted)">Evidence quality: <span id="evidenceQualityText" style="font-weight:600"></span></div>
+              </div>
+              <div style="font-size:12.5px;color:var(--text2);margin-bottom:6px"><strong style="color:var(--text)">Main uncertainty:</strong> <span id="mainUncertaintyText"></span></div>
+              <div style="font-size:12.5px;color:var(--text2);margin-bottom:14px"><strong style="color:var(--text)">Missing data:</strong> <span id="dataCompletenessText"></span></div>
+              <div id="verificationChecksList" style="display:flex;flex-direction:column;gap:10px"></div>
+              <button class="btn-ghost" style="padding:8px 16px;font-size:12px;margin-top:12px" onclick="runVerification()">Re-verify</button>
+            </div>
+          </div>
+
           <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 8px">Sources</div>
           <div id="researchSources" style="display:flex;flex-direction:column;gap:6px"></div>
         </div>
@@ -1018,10 +1038,11 @@ async function loadBusinessIntoView(businessId) {
       if (researchData.sessions && researchData.sessions.length) {
         const latest = researchData.sessions[0];
         if (latest.structured_data) {
-          currentResearchData = { structured: latest.structured_data, sources: latest.sources, scope: latest.scope || 'both' };
+          currentResearchData = { sessionId: latest.id, structured: latest.structured_data, sources: latest.sources, scope: latest.scope || 'both' };
           document.getElementById('researchScope').value = latest.scope || 'both';
           renderResearchResults(latest.structured_data, latest.sources || []);
           document.getElementById('researchResults').style.display = 'block';
+          if (latest.verification_data) renderVerificationResults(latest.verification_data);
         }
       }
     }
@@ -1064,9 +1085,17 @@ async function runResearch() {
       return;
     }
 
-    currentResearchData = { structured: data.structured, sources: data.sources, scope };
+    currentResearchData = { sessionId: data.sessionId, structured: data.structured, sources: data.sources, scope };
     renderResearchResults(data.structured, data.sources);
     document.getElementById('researchResults').style.display = 'block';
+
+    // Pro/Business plans get verification run automatically — show results immediately.
+    // Starter sees the manual "Verify" button instead (handled by resetVerificationUI below).
+    if (data.autoVerified && data.verification) {
+      renderVerificationResults(data.verification);
+    } else {
+      resetVerificationUI();
+    }
   } catch (e) {
     document.getElementById('researchLoading').style.display = 'none';
     document.getElementById('researchBtn').disabled = false;
@@ -1097,7 +1126,77 @@ function buildBarChartSVG(data, { width = 480, barHeight = 26, gap = 12 } = {}) 
   return `<svg viewBox="0 0 ${width} ${height}" width="100%" style="max-width:${width}px">${bars}</svg>`;
 }
 
+// ── Verification Pass ────────────────────────────────────────────────────────
+function resetVerificationUI() {
+  document.getElementById('verificationPromptWrap').style.display = 'block';
+  document.getElementById('verificationLoading').style.display = 'none';
+  document.getElementById('verificationResults').style.display = 'none';
+}
+
+async function runVerification() {
+  if (!currentBusinessId || !currentResearchData?.sessionId) return;
+
+  document.getElementById('verificationPromptWrap').style.display = 'none';
+  document.getElementById('verificationResults').style.display = 'none';
+  document.getElementById('verificationLoading').style.display = 'block';
+
+  try {
+    const res = await fetch(`/api/business/${currentBusinessId}/research/${currentResearchData.sessionId}/verify`, { method: 'POST' });
+    const data = await res.json();
+    document.getElementById('verificationLoading').style.display = 'none';
+
+    if (!res.ok) {
+      document.getElementById('verificationPromptWrap').style.display = 'block';
+      alert(data.error || 'Verification failed. Please try again.');
+      return;
+    }
+
+    renderVerificationResults(data.verification);
+  } catch (e) {
+    document.getElementById('verificationLoading').style.display = 'none';
+    document.getElementById('verificationPromptWrap').style.display = 'block';
+    alert('Connection error. Please try again.');
+  }
+}
+
+function renderVerificationResults(v) {
+  document.getElementById('verificationPromptWrap').style.display = 'none';
+  document.getElementById('verificationLoading').style.display = 'none';
+
+  const confColors = { high: 'var(--green)', medium: 'var(--gold)', low: '#ef4444' };
+  const conf = v.overall_confidence || 'medium';
+  const badge = document.getElementById('verifiedBadge');
+  badge.style.background = `${confColors[conf] || 'var(--muted)'}22`;
+  badge.style.color = confColors[conf] || 'var(--muted)';
+  badge.innerHTML = `✓ Verified — ${conf.charAt(0).toUpperCase() + conf.slice(1)} Confidence`;
+
+  document.getElementById('evidenceQualityText').textContent = (v.evidence_quality || 'unknown').charAt(0).toUpperCase() + (v.evidence_quality || 'unknown').slice(1);
+  document.getElementById('mainUncertaintyText').textContent = v.main_uncertainty || 'None noted';
+  document.getElementById('dataCompletenessText').textContent = v.data_completeness_note || 'None noted';
+
+  const verdictStyle = {
+    upheld: { color: 'var(--green)', label: 'Upheld' },
+    weakened: { color: 'var(--gold)', label: 'Weakened' },
+    revise: { color: '#ef4444', label: 'Revise' }
+  };
+  const checks = v.recommendation_checks || [];
+  document.getElementById('verificationChecksList').innerHTML = checks.length ? checks.map(c => {
+    const style = verdictStyle[c.verdict] || { color: 'var(--muted)', label: c.verdict || 'Unknown' };
+    return `<div style="background:var(--bg2);border-left:3px solid ${style.color};border-radius:6px;padding:10px 12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <div style="font-size:12.5px;font-weight:700;color:var(--text)">${c.recommendation_title || ''}</div>
+        <div style="font-size:9px;font-weight:700;padding:1px 7px;border-radius:5px;background:${style.color}22;color:${style.color};text-transform:uppercase">${style.label}</div>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:3px"><em>Strongest objection: ${c.strongest_objection || ''}</em></div>
+      <div style="font-size:12px;color:var(--text2)">${c.note || ''}</div>
+    </div>`;
+  }).join('') : '<div style="font-size:12.5px;color:var(--muted)">No recommendations to verify.</div>';
+
+  document.getElementById('verificationResults').style.display = 'block';
+}
+
 function renderResearchResults(structured, sources) {
+  resetVerificationUI();
   document.getElementById('researchSummary').textContent = structured.market_context || '';
   document.getElementById('fullAnalysisText').textContent = structured.full_analysis || structured.market_context || '';
 
