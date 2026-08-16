@@ -162,6 +162,61 @@ CREATE TABLE IF NOT EXISTS user_sessions (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- BUSINESS INTELLIGENCE LAYER — Increment 1
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- AI usage log — every AI call, for cost visibility and future rate limiting
+CREATE TABLE IF NOT EXISTS ai_usage (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  business_id UUID,
+  feature VARCHAR(100) NOT NULL,
+  provider VARCHAR(50) NOT NULL,
+  model VARCHAR(100),
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  status VARCHAR(20) DEFAULT 'success',
+  error_message TEXT,
+  duration_ms INTEGER,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_user ON ai_usage(user_id);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage(created_at);
+
+-- Business profiles — persistent memory, one per business, scoped to owning user
+CREATE TABLE IF NOT EXISTS businesses (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  name VARCHAR(255),
+  website VARCHAR(500),
+  industry VARCHAR(255),
+  country VARCHAR(100),
+  region VARCHAR(100),
+  city VARCHAR(100),
+  currency VARCHAR(10),
+  business_model VARCHAR(100),
+  stage VARCHAR(50),
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_businesses_user ON businesses(user_id);
+
+-- Business facts — every known fact tagged by source, so fact/inference/assumption never blur
+CREATE TABLE IF NOT EXISTS business_facts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  fact_key VARCHAR(100) NOT NULL,
+  fact_value TEXT,
+  source_type VARCHAR(20) NOT NULL, -- 'user_provided' | 'observed' | 'inferred' | 'research'
+  source_detail TEXT,
+  confidence VARCHAR(10), -- 'high' | 'medium' | 'low', only for inferred/research facts
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_business_facts_business ON business_facts(business_id);
+
 -- ── DEFAULT CMS CONTENT ────────────────────────────────────────────────────
 INSERT INTO cms_content (section, key, value, type) VALUES
 -- Hero section
