@@ -1165,7 +1165,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   }
 }`;
 
-    const raw = await askClaude(prompt, [{ role: 'user', content: 'Build the business plan now, as JSON only.' }], { feature: 'entrepreneur_mode', userId: req.userId }, 3500);
+    const raw = await askClaude(prompt, [{ role: 'user', content: 'Build the business plan now, as JSON only.' }], { feature: 'entrepreneur_mode', userId: req.userId }, 4500);
     const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
     let plan;
     try {
