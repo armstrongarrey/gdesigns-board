@@ -237,15 +237,30 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
 
 <header class="hdr">
   <div class="hdr-logo">
-    <img src="logo.png" id="consultLogoImg" style="width:32px;height:32px;object-fit:contain;display:block" alt="G-DESIGNS" onerror="this.style.display='none';document.getElementById('consultLogoFb').style.display='flex'">
-    <div id="consultLogoFb" class="hdr-mark" style="display:none">G</div>
+    <img src="/assets/logo.png" id="consultLogoImg" style="width:32px;height:32px;object-fit:contain;display:block" alt="Arreyon" onerror="this.style.display='none';document.getElementById('consultLogoFb').style.display='flex'">
+    <div id="consultLogoFb" class="hdr-mark" style="display:none">A</div>
     <div>
-      <div class="hdr-title">G-DESIGNS Board of Directors</div>
+      <div class="hdr-title">Arreyon Consult</div>
       <div class="hdr-sub">Public Consultation</div>
     </div>
   </div>
-  <a href="/" class="hdr-back">← Back</a>
+  <div style="display:flex;align-items:center;gap:8px">
+    <a href="/auth?mode=login" class="hdr-back">Sign In</a>
+    <a href="/auth?mode=signup" class="hdr-back" style="background:var(--purple);color:#fff;border-color:var(--purple)">Sign Up Free</a>
+  </div>
 </header>
+
+<!-- UPGRADE POPUP -->
+<div id="upgradePopup" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:998;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--bg2);border:1px solid var(--border-light);border-radius:16px;padding:32px;max-width:440px;width:100%;text-align:center;position:relative">
+    <button onclick="document.getElementById('upgradePopup').style.display='none'" style="position:absolute;top:14px;right:14px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:20px;line-height:1">×</button>
+    <div style="font-size:32px;margin-bottom:14px">🎬</div>
+    <div style="font-size:19px;font-weight:700;margin-bottom:10px">Want a video presentation of your board?</div>
+    <div style="font-size:13.5px;color:var(--muted);line-height:1.7;margin-bottom:22px">Arreyon Business includes a personalised AI video presentation of your board's recommendations, unlimited consultations, all 29 directors, and full consultation history — starting at $150/month.</div>
+    <a href="/auth?mode=signup&plan=business" class="submit-btn" style="text-decoration:none;display:block;margin-bottom:10px">See Arreyon Business</a>
+    <button onclick="document.getElementById('upgradePopup').style.display='none'" style="background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;padding:8px">Maybe later</button>
+  </div>
+</div>
 
 <!-- STAGE 1: LANDING + FORM -->
 <div class="stage active" id="stage1">
@@ -319,19 +334,6 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
 
 <!-- STAGE 2: LIVE CHAT -->
 <div class="stage" id="stage2">
-  <!-- Welcome Video (shows loading immediately, video loads async) -->
-  <div class="welcome-video-wrap" id="welcomeVideoWrap">
-    <div class="video-badge"><div class="video-badge-dot"></div><span class="video-badge-text">🎬 Personal Welcome from G-DESIGNS</span></div>
-    <div id="welcomeVideoContainer">
-      <div class="video-loading" id="welcomeLoading">
-        <div class="video-loading-icon">🎬</div>
-        <div class="video-loading-text">Preparing your personal welcome video...</div>
-        <div class="video-loading-sub">This takes about 60 seconds. The board secretary will begin while it loads.</div>
-      </div>
-      <div class="video-error" id="welcomeVideoError">Welcome video unavailable — continuing with text consultation.</div>
-    </div>
-  </div>
-
   <div class="chat-wrap">
     <div class="chat-header">
       <div class="chat-header-av">🏛️</div>
@@ -377,17 +379,14 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
       <div class="report-meta">Prepared for <span id="rClient"></span> · <span id="rDate"></span></div>
     </div>
 
-    <!-- VIDEO REPORT (loads async) -->
-    <div class="report-video-wrap" id="reportVideoWrap">
-      <div class="video-label">🎬 Video Presentation from the Board</div>
-      <div id="reportVideoContainer">
-        <div class="video-loading" id="reportVideoLoading">
-          <div class="video-loading-icon">⚙️</div>
-          <div class="video-loading-text">Generating your personalised video board presentation...</div>
-          <div class="video-loading-sub">Armstrong is preparing to deliver your strategic verdict. Takes about 60–90 seconds.</div>
-        </div>
-        <div class="video-error" id="reportVideoError">Video presentation unavailable — please read the written report below.</div>
+        <!-- VIDEO UPSELL (replaces free video generation) -->
+    <div class="report-video-wrap" style="background:linear-gradient(135deg,var(--bg3),var(--bg2));border:1px solid var(--purple);border-radius:14px;padding:20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <div style="font-size:28px">🎬</div>
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:14px;font-weight:700;margin-bottom:4px">Want this delivered as a video presentation?</div>
+        <div style="font-size:12.5px;color:var(--muted)">Arreyon Business includes a personalised AI video of your board's verdict.</div>
       </div>
+      <a href="/auth?mode=signup&plan=business" style="text-decoration:none;background:var(--purple);color:#fff;font-size:13px;font-weight:600;padding:9px 18px;border-radius:8px;white-space:nowrap">Learn More</a>
     </div>
 
     <div class="rsec">
@@ -514,8 +513,6 @@ function startConsult(){
   showStage(2);
   // Log client info immediately
   logClientInfo();
-  // Delay welcome video slightly so stage 2 is fully rendered first
-  setTimeout(() => loadWelcomeVideo(clientInfo.name, bizData.businessType), 2000);
   initChat();
 }
 
@@ -703,8 +700,10 @@ function renderReport(data){
   const full=s.replace(/EXECUTIVE SUMMARY[\s\S]*?(?=KEY STRATEGIC|RISK|90-DAY|FINAL)/i,'').trim();
   document.getElementById('rSynth').textContent=full;
 
-  // Start report video async (runs in background while user reads)
-  loadReportVideo(data.client.name, data.businessData.businessType, data.synthesis);
+  // Show upgrade popup after they've had a moment to read the report
+  if (!isLoggedIn()) {
+    setTimeout(() => { document.getElementById('upgradePopup').style.display = 'flex'; }, 8000);
+  }
 }
 
 // ── REVIEW SYSTEM ──────────────────────────────────────────────────────────
@@ -749,91 +748,6 @@ async function submitReview(){
     btn.disabled=false;btn.textContent='Submit Review';
     alert('Could not submit review. Please try again.');
   }
-}
-
-// ── DEVICE DETECTION ──────────────────────────────────────────────────────
-function getDeviceType() {
-  const w = window.innerWidth;
-  if (w < 768) return 'mobile';
-  if (w < 1024) return 'tablet';
-  return 'desktop';
-}
-
-// ── HEYGEN VIDEO FUNCTIONS ─────────────────────────────────────────────────
-
-async function loadWelcomeVideo(name, businessType) {
-  const deviceType = getDeviceType();
-  try {
-    const res = await fetch('/api/heygen/welcome', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientName: name, businessType, deviceType })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Video generation failed');
-    }
-    const data = await res.json();
-    if (data.videoUrl) {
-      renderVideo('welcomeVideoContainer', 'welcomeLoading', 'welcomeVideoError', data.videoUrl, deviceType);
-    } else {
-      throw new Error('No video URL returned');
-    }
-  } catch(e) {
-    console.log('Welcome video error:', e.message);
-    const loading = document.getElementById('welcomeLoading');
-    const error = document.getElementById('welcomeVideoError');
-    if (loading) loading.style.display = 'none';
-    if (error) error.style.display = 'block';
-  }
-}
-
-async function loadReportVideo(name, businessType, synthesis) {
-  const deviceType = getDeviceType();
-  try {
-    const res = await fetch('/api/heygen/report', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientName: name, businessType, synthesis, deviceType })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Report video failed');
-    }
-    const data = await res.json();
-    if (data.videoUrl) {
-      renderVideo('reportVideoContainer', 'reportVideoLoading', 'reportVideoError', data.videoUrl, deviceType);
-    } else {
-      throw new Error('No video URL returned');
-    }
-  } catch(e) {
-    console.log('Report video error:', e.message);
-    document.getElementById('reportVideoLoading').style.display = 'none';
-    document.getElementById('reportVideoError').style.display = 'block';
-  }
-}
-
-function renderVideo(containerId, loadingId, errorId, videoUrl, deviceType) {
-  const container = document.getElementById(containerId);
-  const loading = document.getElementById(loadingId);
-  const error = document.getElementById(errorId);
-  if (loading) loading.style.display = 'none';
-  if (error) error.style.display = 'none';
-
-  const isMobile = deviceType === 'mobile';
-  const isTablet = deviceType === 'tablet';
-  const maxWidth = isMobile ? '420px' : isTablet ? '620px' : '100%';
-
-  const videoWrap = document.createElement('div');
-  videoWrap.className = 'video-section';
-  videoWrap.style.maxWidth = maxWidth;
-  videoWrap.style.margin = '0 auto';
-  videoWrap.innerHTML = `
-    <video controls autoplay playsinline style="width:100%;border-radius:14px;display:block">
-      <source src="${videoUrl}" type="video/mp4">
-      Your browser does not support video playback.
-    </video>`;
-  container.appendChild(videoWrap);
 }
 
 // ── GOOGLE SHEETS LOGGING ──────────────────────────────────────────────────
