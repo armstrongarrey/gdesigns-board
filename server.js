@@ -835,6 +835,218 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ENTREPRENEUR MODE — Increment 5
+// For users who don't have a business yet. Two paths:
+//   A) Opportunity Finder — no idea yet, find suitable opportunities
+//   B) Idea Validation — has an idea, wants a straight VALIDATE/MODIFY/RECONSIDER
+// Research-backed (Tavily) on Pro/Business; AI-reasoning-only on Starter, clearly
+// labeled as such so nothing looks more grounded than it is.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function formatEntrepreneurContext(input) {
+  const parts = [];
+  if (input.country) parts.push(`Location: ${input.city ? input.city + ', ' : ''}${input.country}`);
+  if (input.skills) parts.push(`Skills: ${input.skills}`);
+  if (input.experience) parts.push(`Experience: ${input.experience}`);
+  if (input.interests) parts.push(`Interests: ${input.interests}`);
+  if (input.capital) parts.push(`Available capital: ${input.capital}`);
+  if (input.time) parts.push(`Available time: ${input.time}`);
+  if (input.incomeTarget) parts.push(`Income target: ${input.incomeTarget}`);
+  if (input.preference) parts.push(`Preference: ${input.preference}`);
+  if (input.riskTolerance) parts.push(`Risk tolerance: ${input.riskTolerance}`);
+  return parts.join('\n');
+}
+
+// ── A) Opportunity Finder ───────────────────────────────────────────────────
+app.post('/api/entrepreneur/find-opportunities', authRequired, async (req, res) => {
+  try {
+    const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
+    const plan = user.rows[0]?.plan || 'starter';
+    const researchBacked = plan === 'pro' || plan === 'business';
+
+    const input = req.body || {};
+    if (!input.country && !input.skills && !input.interests) {
+      return res.status(400).json({ error: 'Please provide at least your location, skills, or interests to find relevant opportunities.' });
+    }
+
+    const context = formatEntrepreneurContext(input);
+    let sourcesText = '', sources = [];
+
+    if (researchBacked) {
+      const queries = [];
+      const locationPart = input.country ? `in ${input.city ? input.city + ', ' : ''}${input.country}` : '';
+      if (input.interests) queries.push(`small business opportunities ${input.interests} ${locationPart} 2026`.trim());
+      if (input.skills) queries.push(`how to start a business with ${input.skills} skills ${locationPart}`.trim());
+      if (!queries.length) queries.push(`profitable small business ideas low capital ${locationPart}`.trim());
+
+      const allSources = [];
+      for (const q of queries) {
+        try {
+          const results = await researchSearch(q, { maxResults: 4 });
+          allSources.push(...results);
+        } catch (e) { continue; }
+      }
+      const seen = new Set();
+      sources = allSources.filter(s => { if (seen.has(s.url)) return false; seen.add(s.url); return true; });
+      sourcesText = sources.map((s, i) => `[${i + 1}] ${s.title}\n${s.snippet || ''}`).join('\n\n');
+    }
+
+    const prompt = `You are a practical business opportunity advisor helping an aspiring entrepreneur find a suitable business to start. Do NOT give generic ideas — ground every suggestion in their actual circumstances below.
+
+THEIR CIRCUMSTANCES:
+${context || 'Limited information provided — work with what is given and note where more detail would sharpen the recommendations.'}
+
+${researchBacked ? `REAL MARKET RESEARCH RESULTS:\n${sourcesText.slice(0, 6000)}\n\nGround your opportunities in this research where relevant — cite using source_ref.` : `NOTE: No live market research was conducted for this request (available on Arreyon Pro and above). Base your suggestions on general business knowledge, and be appropriately humble about demand/competition claims since they are not verified against current market data.`}
+
+YOUR TASK:
+Suggest 3-4 realistic business opportunities that genuinely fit THIS person's skills, capital, time, and risk tolerance — not a generic list. For each one, explain specifically why it fits them.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "opportunities": [
+    {
+      "name": "short opportunity name",
+      "description": "what this business would actually involve, 1-2 sentences",
+      "why_it_fits": "specifically tied to their skills/capital/time/interests — not generic",
+      "demand": "high|medium|low",
+      "competition": "high|medium|low",
+      "startup_cost_estimate": "realistic estimate given their stated capital",
+      "time_to_first_revenue": "realistic estimate given their stated available time",
+      "potential_margin": "high|medium|low",
+      "customer_acquisition_difficulty": "high|medium|low",
+      "scalability": "high|medium|low",
+      "risk": "high|medium|low"${researchBacked ? ',\n      "source_ref": "1 (optional, only if grounded in a specific source above)"' : ''}
+    }
+  ],
+  "overall_recommendation": "which ONE opportunity to prioritize first and why, 2-3 sentences",
+  "what_to_learn_first": "the single most important skill or knowledge gap to close before starting, if any"
+}`;
+
+    const raw = await askClaude(prompt, [{ role: 'user', content: 'Find the opportunities now, as JSON only.' }], { feature: 'entrepreneur_mode', userId: req.userId }, 2800);
+    const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
+    let structured;
+    try {
+      structured = JSON.parse(cleaned);
+    } catch (e) {
+      console.error('Opportunity finder JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
+      throw new Error('Could not generate opportunities — please try again');
+    }
+
+    const session = await pool.query(
+      `INSERT INTO entrepreneur_sessions (user_id, mode, input_data, structured_output, research_backed) VALUES ($1, 'opportunity_finder', $2, $3, $4) RETURNING id, created_at`,
+      [req.userId, JSON.stringify(input), JSON.stringify(structured), researchBacked]
+    );
+
+    res.json({ success: true, sessionId: session.rows[0].id, structured, sources, researchBacked });
+  } catch (err) {
+    console.error('Opportunity finder error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to find opportunities. Please try again.' });
+  }
+});
+
+// ── B) Idea Validation ──────────────────────────────────────────────────────
+app.post('/api/entrepreneur/validate-idea', authRequired, async (req, res) => {
+  try {
+    const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
+    const plan = user.rows[0]?.plan || 'starter';
+    const researchBacked = plan === 'pro' || plan === 'business';
+
+    const input = req.body || {};
+    if (!input.idea || input.idea.trim().length < 10) {
+      return res.status(400).json({ error: 'Please describe your business idea in a bit more detail.' });
+    }
+
+    const context = formatEntrepreneurContext(input);
+    let sourcesText = '', sources = [];
+
+    if (researchBacked) {
+      const locationPart = input.country ? `in ${input.city ? input.city + ', ' : ''}${input.country}` : '';
+      const queries = [
+        `${input.idea} business competitors ${locationPart}`.trim(),
+        `${input.idea} market demand ${locationPart} 2026`.trim()
+      ];
+      const allSources = [];
+      for (const q of queries) {
+        try {
+          const results = await researchSearch(q, { maxResults: 4 });
+          allSources.push(...results);
+        } catch (e) { continue; }
+      }
+      const seen = new Set();
+      sources = allSources.filter(s => { if (seen.has(s.url)) return false; seen.add(s.url); return true; });
+      sourcesText = sources.map((s, i) => `[${i + 1}] ${s.title}\n${s.snippet || ''}`).join('\n\n');
+    }
+
+    const prompt = `You are a rigorous business idea validator. An aspiring entrepreneur has an idea and wants an honest assessment — not encouragement for its own sake.
+
+THEIR IDEA: "${input.idea}"
+
+THEIR CIRCUMSTANCES:
+${context || 'Limited context provided.'}
+
+${researchBacked ? `REAL MARKET RESEARCH RESULTS:\n${sourcesText.slice(0, 6000)}\n\nGround your assessment in this research — cite using source references where relevant.` : `NOTE: No live market research was conducted for this validation (available on Arreyon Pro and above). Base your assessment on general business reasoning, and be explicit that demand/competition claims are not verified against current market data.`}
+
+YOUR TASK:
+Do NOT simply validate the idea. Perform a structured, honest assessment covering: the problem it solves, target customer, demand, existing alternatives, competition, realistic pricing, startup requirements, unit economics, distribution, customer acquisition, risks, differentiation opportunity, and scalability.
+
+Then give ONE final verdict:
+- "validate" — the idea is sound as described, proceed
+- "modify" — the core idea has merit but needs a specific change before proceeding
+- "reconsider" — significant problems make this idea risky as currently conceived
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "problem_addressed": "the real problem this solves, one sentence",
+  "target_customer": "who specifically would pay for this",
+  "demand_assessment": "honest read on demand, with reasoning",
+  "existing_alternatives": ["what people currently do instead"],
+  "competition_level": "high|medium|low, with brief reasoning",
+  "suggested_pricing": "a realistic pricing approach",
+  "startup_requirements": "what's genuinely needed to start, given their stated capital/time",
+  "unit_economics_note": "rough sense of whether the numbers could work",
+  "distribution_channels": "how customers would realistically be reached",
+  "customer_acquisition_strategy": "a concrete first approach",
+  "risks": ["specific risk 1", "specific risk 2"],
+  "differentiation_opportunity": "how this could stand out, if it can",
+  "scalability_note": "growth ceiling and what would need to change to scale",
+  "verdict": "validate|modify|reconsider",
+  "verdict_reasoning": "the core reasoning behind the verdict, 2-3 sentences — be direct"
+}`;
+
+    const raw = await askClaude(prompt, [{ role: 'user', content: 'Validate the idea now, as JSON only.' }], { feature: 'entrepreneur_mode', userId: req.userId }, 2800);
+    const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
+    let structured;
+    try {
+      structured = JSON.parse(cleaned);
+    } catch (e) {
+      console.error('Idea validation JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
+      throw new Error('Could not validate the idea — please try again');
+    }
+
+    const session = await pool.query(
+      `INSERT INTO entrepreneur_sessions (user_id, mode, input_data, structured_output, research_backed) VALUES ($1, 'idea_validation', $2, $3, $4) RETURNING id, created_at`,
+      [req.userId, JSON.stringify(input), JSON.stringify(structured), researchBacked]
+    );
+
+    res.json({ success: true, sessionId: session.rows[0].id, structured, sources, researchBacked });
+  } catch (err) {
+    console.error('Idea validation error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to validate idea. Please try again.' });
+  }
+});
+
+// ── Entrepreneur Mode history ───────────────────────────────────────────────
+app.get('/api/entrepreneur/sessions', authRequired, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, mode, input_data, structured_output, research_backed, created_at FROM entrepreneur_sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20',
+      [req.userId]
+    );
+    res.json({ sessions: result.rows });
+  } catch (e) { res.status(500).json({ error: 'Failed to load sessions' }); }
+});
+
 // Save consultation
 app.post('/api/board/save', authRequired, async (req, res) => {
   const { title, businessType, industry, directorsUsed, reportText, synthesis, videoUrl, messages } = req.body;
