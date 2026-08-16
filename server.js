@@ -1358,12 +1358,22 @@ async function researchSearch(query, options) {
 async function runBusinessResearch(business, userId) {
   const bizName = business.name || business.website;
   const industry = business.industry || '';
-  const location = [business.city, business.country].filter(Boolean).join(', ');
+  const country = business.country || '';
+  const city = business.city || '';
 
-  const queries = [
-    `${bizName} competitors ${industry} ${location}`.trim(),
-    `${industry} market trends ${location} 2026`.trim()
-  ];
+  const queries = [];
+
+  if (country) {
+    // Explicit local-market query — the single strongest signal for local competitors
+    queries.push(`best ${industry} companies in ${city ? city + ', ' : ''}${country}`.trim());
+    queries.push(`${industry} competitors ${bizName} ${country}`.trim());
+    queries.push(`${industry} market trends ${country} 2026`.trim());
+  } else {
+    // No location known — broader query, and the summary prompt below will
+    // be told explicitly that location is unknown so it doesn't imply local relevance
+    queries.push(`${bizName} competitors ${industry}`.trim());
+    queries.push(`${industry} market trends 2026`.trim());
+  }
 
   const allSources = [];
   for (const q of queries) {
@@ -1390,7 +1400,13 @@ async function runBusinessResearch(business, userId) {
 
   const sourcesText = uniqueSources.map((s, i) => `[${i + 1}] ${s.title}\nURL: ${s.url}\n${s.snippet}`).join('\n\n');
 
-  const synthesisPrompt = `You are a market research analyst. Below are real search results about ${bizName}'s competitors and market.
+  const businessContext = country
+    ? `${bizName} is based in ${city ? city + ', ' : ''}${country}, operating in the ${industry || 'general'} industry.`
+    : `${bizName} operates in the ${industry || 'general'} industry. Its specific country/location was not determined during analysis.`;
+
+  const synthesisPrompt = `You are a market research analyst. ${businessContext}
+
+Below are real search results from queries aimed at finding this business's competitors and market context${country ? `, specifically searching for local competitors in ${country}` : ''}.
 
 SEARCH RESULTS:
 ${sourcesText.slice(0, 8000)}
@@ -1400,6 +1416,8 @@ Write a concise market and competitor summary (200-300 words) based ONLY on the 
 
 CRITICAL RULES:
 - Every claim must be traceable to one of the numbered sources above — reference sources using [1], [2] etc.
+${country ? `- PRIORITIZE competitors that are actually based in or serve ${country}. If a listed source is an international company with no clear local presence, either omit it or explicitly label it as "international, not confirmed local" rather than presenting it as a direct local competitor.` : ''}
+- If the search results mostly returned international/generic results rather than local ones, say so explicitly (e.g. "The search did not surface clearly local competitors — the following are broader international players offering similar services")
 - If the search results don't clearly answer something, say so explicitly rather than guessing
 - If sources conflict, note the conflict explicitly (e.g. "Source 2 suggests X while Source 4 suggests Y")
 - Do not invent competitor names, statistics, or facts not present in the search results
@@ -1727,14 +1745,29 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
       [req.userId, normalizedUrl]
     );
 
+    // Parse the AI-extracted location fact into city/country the research
+    // engine can actually use (e.g. "Buea, Cameroon" -> city=Buea, country=Cameroon)
+    let parsedCity = null, parsedCountry = null;
+    if (facts.location?.value) {
+      const parts = facts.location.value.split(',').map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 2) { parsedCity = parts[0]; parsedCountry = parts[parts.length - 1]; }
+      else if (parts.length === 1) { parsedCountry = parts[0]; }
+    }
+    const parsedIndustry = facts.industry?.value || null;
+
     let businessId;
     if (existing.rows.length) {
       businessId = existing.rows[0].id;
-      await pool.query('UPDATE businesses SET updated_at = NOW() WHERE id = $1', [businessId]);
+      await pool.query(
+        `UPDATE businesses SET updated_at = NOW(),
+         industry = COALESCE($2, industry), city = COALESCE($3, city), country = COALESCE($4, country)
+         WHERE id = $1`,
+        [businessId, parsedIndustry, parsedCity, parsedCountry]
+      );
     } else {
       const inserted = await pool.query(
-        `INSERT INTO businesses (user_id, name, website) VALUES ($1, $2, $3) RETURNING id`,
-        [req.userId, businessName || facts.business_name?.value || normalizedUrl, normalizedUrl]
+        `INSERT INTO businesses (user_id, name, website, industry, city, country) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [req.userId, businessName || facts.business_name?.value || normalizedUrl, normalizedUrl, parsedIndustry, parsedCity, parsedCountry]
       );
       businessId = inserted.rows[0].id;
     }
