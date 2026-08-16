@@ -635,6 +635,67 @@ app.put('/api/admin/users/:id/plan', adminRequired, async (req, res) => {
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
 
+// ── AI Usage Dashboard — Increment 6 ─────────────────────────────────────────
+// Rough, clearly-labeled cost estimate per provider. Not exact billing —
+// actual cost depends on token count which we don't currently log per call —
+// but gives a useful relative sense of where usage/spend concentrates.
+const ESTIMATED_COST_PER_CALL = { claude: 0.003, chatgpt: 0.004, gemini: 0.001 };
+
+app.get('/api/admin/usage-stats', adminRequired, async (req, res) => {
+  try {
+    const totals = await pool.query(
+      `SELECT COUNT(*) as total_calls,
+              COUNT(*) FILTER (WHERE status = 'error') as error_calls,
+              COUNT(DISTINCT user_id) as unique_users,
+              AVG(duration_ms) as avg_duration_ms
+       FROM ai_usage WHERE created_at > NOW() - INTERVAL '30 days'`
+    );
+
+    const byProvider = await pool.query(
+      `SELECT provider, COUNT(*) as calls, COUNT(*) FILTER (WHERE status='error') as errors
+       FROM ai_usage WHERE created_at > NOW() - INTERVAL '30 days'
+       GROUP BY provider ORDER BY calls DESC`
+    );
+
+    const byFeature = await pool.query(
+      `SELECT feature, COUNT(*) as calls, COUNT(*) FILTER (WHERE status='error') as errors,
+              AVG(duration_ms) as avg_duration_ms
+       FROM ai_usage WHERE created_at > NOW() - INTERVAL '30 days'
+       GROUP BY feature ORDER BY calls DESC`
+    );
+
+    const dailyTrend = await pool.query(
+      `SELECT date_trunc('day', created_at) as day, COUNT(*) as calls
+       FROM ai_usage WHERE created_at > NOW() - INTERVAL '30 days'
+       GROUP BY day ORDER BY day ASC`
+    );
+
+    const topUsers = await pool.query(
+      `SELECT u.email, u.first_name, u.last_name, u.plan, COUNT(a.*) as calls
+       FROM ai_usage a JOIN users u ON u.id = a.user_id
+       WHERE a.created_at > NOW() - INTERVAL '30 days'
+       GROUP BY u.id, u.email, u.first_name, u.last_name, u.plan
+       ORDER BY calls DESC LIMIT 10`
+    );
+
+    const estimatedCost = byProvider.rows.reduce((sum, r) =>
+      sum + (parseInt(r.calls, 10) * (ESTIMATED_COST_PER_CALL[r.provider] || 0.002)), 0
+    );
+
+    res.json({
+      totals: totals.rows[0],
+      byProvider: byProvider.rows,
+      byFeature: byFeature.rows,
+      dailyTrend: dailyTrend.rows,
+      topUsers: topUsers.rows,
+      estimatedCostUsd: estimatedCost.toFixed(2)
+    });
+  } catch (e) {
+    console.error('Usage stats error:', e.message);
+    res.status(500).json({ error: 'Failed to load usage stats' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // USER API ROUTES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2540,7 +2601,7 @@ async function fetchAllChartImages(datasets) {
 }
 
 // ── HTML report (existing style, now server-generated from saved data) ─────
-function buildReportHTML({ business, facts, structured: s, sources, scope }) {
+function buildReportHTML({ business, facts, structured: s, sources, scope, verification: v }) {
   const bizName = business.name || business.website || 'Business Report';
   const dateStr = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -2647,6 +2708,16 @@ ${s.opportunity_gap ? `<h2>Opportunity Gap</h2><p>${s.opportunity_gap}</p>` : ''
 ${auditRows ? `<table><tr><th>Area</th><th>Status</th><th>Note</th></tr>${auditRows}</table>` : ''}
 <h2>Recommendations, Solutions &amp; Strategy</h2>
 ${recsHtml || '<p>No specific recommendations available.</p>'}
+${v ? `<h2>Verification Pass</h2>
+<p><strong>Overall Confidence:</strong> ${(v.overall_confidence||'').toUpperCase()} &nbsp;|&nbsp; <strong>Evidence Quality:</strong> ${(v.evidence_quality||'').toUpperCase()}</p>
+<p><strong>Main Uncertainty:</strong> ${v.main_uncertainty || ''}</p>
+<p><strong>Missing Data:</strong> ${v.data_completeness_note || ''}</p>
+${(v.recommendation_checks||[]).map(c => `
+<div style="border-left:3px solid ${c.verdict==='upheld'?'#10b981':c.verdict==='weakened'?'#d97706':'#dc2626'};padding:8px 12px;margin-bottom:10px">
+  <strong>${c.recommendation_title||''}</strong> — ${(c.verdict||'').toUpperCase()}<br>
+  <span style="font-size:12px;color:#666">Strongest objection: ${c.strongest_objection||''}</span><br>
+  ${c.note||''}
+</div>`).join('')}` : ''}
 <h2>Sources</h2>${sourcesHtml || '<p>No sources recorded.</p>'}
 ` : `<p style="margin-top:30px;color:#888"><em>Market research was not run for this business. Only the website analysis profile is included above.</em></p>`}
 <div class="footer">Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com · This report was AI-generated and should be independently verified before major business decisions.</div>
@@ -2654,7 +2725,7 @@ ${recsHtml || '<p>No specific recommendations available.</p>'}
 }
 
 // ── PDF report (pdfkit — pure JS, no native/chromium dependency) ───────────
-async function buildReportPDF({ business, facts, structured: s, sources, scope }) {
+async function buildReportPDF({ business, facts, structured: s, sources, scope, verification: v }) {
   const doc = new PDFDocument({ margin: 50, size: 'A4' });
   const bizName = business.name || business.website || 'Business Report';
   const purple = '#6C3Bff';
@@ -2761,6 +2832,20 @@ async function buildReportPDF({ business, facts, structured: s, sources, scope }
       line('No specific recommendations available.', { size: 9.5, color: '#888' });
     }
 
+    if (v) {
+      h2('Verification Pass');
+      const vColor = { high: '#10b981', medium: '#d97706', low: '#dc2626' };
+      line(`Overall Confidence: ${(v.overall_confidence||'').toUpperCase()}  |  Evidence Quality: ${(v.evidence_quality||'').toUpperCase()}`, { size: 10, bold: true, color: vColor[v.overall_confidence]||'#333', gapAfter: 3 });
+      line(`Main Uncertainty: ${v.main_uncertainty || ''}`, { size: 9.5, gapAfter: 2 });
+      line(`Missing Data: ${v.data_completeness_note || ''}`, { size: 9.5, gapAfter: 4 });
+      (v.recommendation_checks || []).forEach(c => {
+        ensureSpace(60);
+        line(`${c.recommendation_title || ''} — ${(c.verdict||'').toUpperCase()}`, { size: 10, bold: true, color: vColor[c.verdict==='upheld'?'high':c.verdict==='weakened'?'medium':'low']||'#333', gapAfter: 2 });
+        line(`Strongest objection: ${c.strongest_objection || ''}`, { size: 8.5, color: '#888', gapAfter: 2 });
+        line(c.note || '', { size: 9, color: '#444', gapAfter: 4 });
+      });
+    }
+
     h2('Sources');
     (sources || []).forEach((src, i) => {
       line(`[${i + 1}] ${src.title || src.url} — ${src.url}`, { size: 8.5, color: '#444', gapAfter: 2 });
@@ -2777,7 +2862,7 @@ async function buildReportPDF({ business, facts, structured: s, sources, scope }
 }
 
 // ── Word/DOCX report (docx library — real editable Word document) ──────────
-async function buildReportDOCX({ business, facts, structured: s, sources, scope }) {
+async function buildReportDOCX({ business, facts, structured: s, sources, scope, verification: v }) {
   const bizName = business.name || business.website || 'Business Report';
   const purple = '6C3Bff';
   const children = [];
@@ -2789,6 +2874,7 @@ async function buildReportDOCX({ business, facts, structured: s, sources, scope 
   children.push(new Paragraph({ text: '' }));
 
   function heading(text) { children.push(new Paragraph({ text, heading: HeadingLevel.HEADING_1 })); }
+  function subheading(text) { children.push(new Paragraph({ text, heading: HeadingLevel.HEADING_2 })); }
   function para(text) { children.push(new Paragraph({ text: text || '', spacing: { after: 150 } })); }
   function bullet(text) { children.push(new Paragraph({ text, bullet: { level: 0 } })); }
 
@@ -2873,6 +2959,18 @@ async function buildReportDOCX({ business, facts, structured: s, sources, scope 
     });
     if (!s.strategic_recommendations?.length) para('No specific recommendations available.');
 
+    if (v) {
+      heading('Verification Pass');
+      para(`Overall Confidence: ${(v.overall_confidence||'').toUpperCase()} | Evidence Quality: ${(v.evidence_quality||'').toUpperCase()}`);
+      para(`Main Uncertainty: ${v.main_uncertainty || ''}`);
+      para(`Missing Data: ${v.data_completeness_note || ''}`);
+      (v.recommendation_checks || []).forEach(c => {
+        subheading(`${c.recommendation_title || ''} — ${(c.verdict||'').toUpperCase()}`);
+        para(`Strongest objection: ${c.strongest_objection || ''}`);
+        para(c.note || '');
+      });
+    }
+
     heading('Sources');
     (sources || []).forEach((src, i) => para(`[${i + 1}] ${src.title || src.url} — ${src.url}`));
   } else {
@@ -2911,16 +3009,17 @@ app.get('/api/business/:id/report', authRequired, async (req, res) => {
       'SELECT * FROM research_sessions WHERE business_id = $1 ORDER BY created_at DESC LIMIT 1',
       [req.params.id]
     );
-    let structured = null, sources = [], scope = 'both';
+    let structured = null, sources = [], scope = 'both', verification = null;
     if (sessionResult.rows.length) {
       const session = sessionResult.rows[0];
       structured = session.structured_data || null;
       scope = session.scope || 'both';
+      verification = session.verification_data || null;
       const sourcesResult = await pool.query('SELECT * FROM research_sources WHERE research_session_id = $1', [session.id]);
       sources = sourcesResult.rows;
     }
 
-    const reportData = { business, facts, structured, sources, scope };
+    const reportData = { business, facts, structured, sources, scope, verification };
     const filename = sanitizeFilename(business.name || business.website);
 
     if (format === 'html') {
@@ -3294,6 +3393,44 @@ app.get('/api/business/:id', authRequired, async (req, res) => {
     );
     res.json({ business: biz.rows[0], facts: facts.rows });
   } catch (e) { res.status(500).json({ error: 'Failed to load business' }); }
+});
+
+// ── Business Memory — let the user directly correct or add a fact ──────────
+// Per Section 11 of the spec: distinguish user-provided facts from AI-derived
+// ones. An edit here is tagged "user_provided" since the founder themself is
+// now the source, not an AI inference or a website scrape.
+app.put('/api/business/:id/facts/:factKey', authRequired, async (req, res) => {
+  const { value } = req.body;
+  if (!value || !value.trim()) return res.status(400).json({ error: 'Value is required' });
+
+  try {
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    await pool.query(
+      `INSERT INTO business_facts (business_id, fact_key, fact_value, source_type, source_detail)
+       VALUES ($1, $2, $3, 'user_provided', 'Manually edited by founder')`,
+      [req.params.id, req.params.factKey, value.trim()]
+    );
+    await pool.query('UPDATE businesses SET updated_at = NOW() WHERE id = $1', [req.params.id]);
+
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to update fact' }); }
+});
+
+// ── Business Memory — see how a specific fact has changed over time ────────
+app.get('/api/business/:id/facts/:factKey/history', authRequired, async (req, res) => {
+  try {
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const history = await pool.query(
+      `SELECT fact_value, source_type, source_detail, created_at FROM business_facts
+       WHERE business_id = $1 AND fact_key = $2 ORDER BY created_at DESC`,
+      [req.params.id, req.params.factKey]
+    );
+    res.json({ history: history.rows });
+  } catch (e) { res.status(500).json({ error: 'Failed to load fact history' }); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
