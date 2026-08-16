@@ -725,7 +725,29 @@ document.addEventListener('DOMContentLoaded',()=>{
     b.addEventListener('mouseenter',()=>renderStars(parseInt(b.dataset.v)));
     b.addEventListener('mouseleave',()=>renderStars(starRating||0));
   });
+  prefillFormForLoggedInUser();
 });
+
+// Logged-in visitors shouldn't have to re-type contact details already on file
+async function prefillFormForLoggedInUser(){
+  if(!isLoggedIn()) return;
+  try{
+    const res = await fetch('/api/auth/me');
+    if(!res.ok) return;
+    const data = await res.json();
+    const user = data.user;
+    if(!user) return;
+
+    const nameField = document.getElementById('fName');
+    const emailField = document.getElementById('fEmail');
+    const phoneField = document.getElementById('fPhone');
+
+    const fullName = [user.first_name, user.last_name].filter(Boolean).join(' ').trim();
+    if(fullName && nameField) nameField.value = fullName;
+    if(user.email && emailField) emailField.value = user.email;
+    if(user.phone && phoneField) phoneField.value = user.phone;
+  }catch(e){ /* not logged in or request failed — leave form blank, no harm done */ }
+}
 
 async function submitReview(){
   if(!starRating){alert('Please select a star rating first.');return;}
