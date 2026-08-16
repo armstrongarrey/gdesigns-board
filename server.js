@@ -3,6 +3,8 @@ const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const dns = require('dns').promises;
+const PDFDocument = require('pdfkit');
+const { Document: DocxDocument, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, AlignmentType, BorderStyle } = require('docx');
 // nodemailer removed — Render blocks outbound SMTP; using Resend HTTP API instead
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
@@ -1355,7 +1357,7 @@ async function researchSearch(query, options) {
 }
 
 // ── Run market/competitor research for a business, save sources, synthesize ──
-async function runBusinessResearch(business, userId, scope = 'both') {
+async function runBusinessResearch(business, userId, scope = 'both', knownFacts = {}) {
   const bizName = business.name || business.website;
   const industry = business.industry || '';
   const country = business.country || '';
@@ -1407,47 +1409,62 @@ async function runBusinessResearch(business, userId, scope = 'both') {
     ? `Include BOTH kinds of competitors found: companies based only in ${country || 'the local market'} ("scope": "local"), and companies that operate across multiple countries or globally while also serving ${country || 'this market'} ("scope": "international"). Do not exclude international competitors.`
     : `The client asked for NATIONAL research only. Only include competitors based in or primarily operating within ${country || 'the local market'} ("scope": "local"). Exclude international/global-only players even if they appear in search results.`;
 
+  // What we already know about the business itself, for a real gap comparison
+  const knownFactsText = Object.entries(knownFacts).filter(([,v]) => v).map(([k, v]) => `- ${k}: ${v}`).join('\n');
+  const knownFactsBlock = knownFactsText
+    ? `\nWHAT WE ALREADY KNOW ABOUT ${bizName.toUpperCase()} (from its own website/description):\n${knownFactsText}\n`
+    : `\n(No detailed profile of ${bizName}'s own offerings was available — skip the competitive gap comparison and omit "competitive_gaps" entirely.)\n`;
+
   const synthesisPrompt = `You are a senior market research analyst and business strategist producing a formal, detailed report. ${businessContext}
 
 Research scope requested by the client: ${includeInternational ? 'National + International' : 'National only'}.
-
+${knownFactsBlock}
 Below are real search results from queries aimed at finding this business's competitors and market context.
 
 SEARCH RESULTS:
 ${sourcesText.slice(0, 8000)}
 
 YOUR TASK:
-Produce a complete four-part report based ONLY on the search results above: (1) a full detailed market and competitor analysis, (2) a summary and audit of what was found and how reliable/complete it is, (3) recommendations/solutions/strategy, (4) the underlying data for a downloadable report.
+Produce a complete report based ONLY on the search results above and the known facts about ${bizName}: (1) full detailed market and competitor analysis, (2) a competitive gap comparison, (3) a summary and audit of research reliability, (4) recommendations broken into clear, structured sections — not one paragraph.
 
 CRITICAL RULES:
 - Every competitor and claim must be traceable to one of the numbered sources above — cite using the source number in "source_ref"
 - ${scopeInstruction}
 - If the search results don't clearly answer something, say so explicitly rather than guessing — do not invent competitor names, statistics, or facts not present above
-- Recommendations must be DERIVED from the specific competitors and gaps found — not generic advice
-- Each recommendation must be concrete and actionable, not vague
+- For "competitive_gaps": compare what competitors are shown doing/offering against what we know ${bizName} offers. Only list a gap if a specific competitor's description clearly shows something ${bizName}'s known facts do NOT mention. Do not guess at gaps with no evidence.
+- Each recommendation must have a short title, a specific solution/strategy (1-2 sentences), and 2-4 concrete action steps — no vague advice
 - The audit section must honestly assess coverage gaps, not just praise the findings
 
 Return ONLY valid JSON, no markdown formatting, in exactly this structure:
 {
   "market_context": "2-3 sentences on the overall market situation",
-  "full_analysis": "A detailed 4-6 sentence analysis covering market dynamics, competitive intensity, and positioning implications for ${bizName} specifically — this is the expanded, full version of the market context",
+  "full_analysis": "A detailed 4-6 sentence analysis covering market dynamics, competitive intensity, and positioning implications for ${bizName} specifically",
   "local_coverage_note": "Only include this key if results were thin overall — explain what was actually found instead",
   "competitors": [
     {"name": "...", "description": "what they offer, one sentence", "differentiator": "their apparent edge or weakness", "scope": "local", "source_ref": "1"}
   ],
+  "competitive_gaps": [
+    {"gap": "specific thing competitors offer that ${bizName} does not appear to", "competitor_names": ["Name1","Name2"], "source_ref": "1"}
+  ],
   "opportunity_gap": "The clearest gap or underserved angle this business could exploit",
-  "audit_summary": "2-3 sentences honestly assessing how complete and reliable this research is — note any limitations, thin coverage, or areas needing deeper investigation",
+  "audit_summary": "2-3 sentences honestly assessing how complete and reliable this research is",
   "audit_coverage": [
     {"area": "e.g. Local competitor pricing", "status": "covered|partial|not covered", "note": "brief explanation"}
   ],
   "strategic_recommendations": [
-    {"action": "specific action to take", "reason": "why this action, tied to a specific finding above", "priority": "high|medium|low"}
+    {
+      "title": "short 3-6 word recommendation title",
+      "problem_addressed": "the specific gap or finding this responds to, one sentence",
+      "solution": "the recommended solution or strategy, 1-2 sentences",
+      "action_steps": ["concrete step 1", "concrete step 2", "concrete step 3"],
+      "priority": "high|medium|low"
+    }
   ]
 }
 
-List up to 8 competitors total${includeInternational ? ', aiming for a mix of local and international where results support it' : ' (national only)'}. Up to 4 strategic recommendations, ranked by priority. Up to 4 audit_coverage rows covering the most important research areas (e.g. local competitors, international competitors, pricing data, market size). Omit "local_coverage_note" entirely if results were adequate.`;
+List up to 8 competitors total${includeInternational ? ', aiming for a mix of local and international where results support it' : ' (national only)'}. Up to 4 competitive_gaps (omit the key entirely if none can be evidenced). Up to 4 strategic_recommendations, ranked by priority. Up to 4 audit_coverage rows. Omit "local_coverage_note" entirely if results were adequate.`;
 
-  const raw = await askClaude(synthesisPrompt, [{ role: 'user', content: 'Produce the complete structured report now, as JSON only.' }], { feature: 'research_engine', userId }, 3000);
+  const raw = await askClaude(synthesisPrompt, [{ role: 'user', content: 'Produce the complete structured report now, as JSON only.' }], { feature: 'research_engine', userId }, 3500);
   const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
   let structured;
   try {
@@ -1462,7 +1479,7 @@ List up to 8 competitors total${includeInternational ? ', aiming for a mix of lo
     structured.local_coverage_note ? `Note: ${structured.local_coverage_note}` : '',
     structured.competitors?.length ? 'Competitors: ' + structured.competitors.map(c => c.name).join(', ') : '',
     structured.opportunity_gap ? `Opportunity: ${structured.opportunity_gap}` : '',
-    structured.strategic_recommendations?.length ? 'Recommendations: ' + structured.strategic_recommendations.map(r => r.action).join('; ') : ''
+    structured.strategic_recommendations?.length ? 'Recommendations: ' + structured.strategic_recommendations.map(r => r.title).join('; ') : ''
   ].filter(Boolean).join('\n\n');
 
   return { summary: flatSummary, structured, sources: uniqueSources, queries, scope };
@@ -1493,12 +1510,22 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
     const biz = await pool.query('SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
+    // Latest known fact per key — this is what lets research compare "what we offer" vs competitors
+    const factsResult = await pool.query(
+      `SELECT DISTINCT ON (fact_key) fact_key, fact_value FROM business_facts
+       WHERE business_id = $1 AND fact_key IN ('products_services', 'value_proposition', 'positioning', 'target_customers', 'pricing_info')
+       ORDER BY fact_key, created_at DESC`,
+      [req.params.id]
+    );
+    const knownFacts = {};
+    factsResult.rows.forEach(r => { knownFacts[r.fact_key] = r.fact_value; });
+
     const requestedScope = req.body?.scope === 'national' ? 'national' : 'both';
-    const { summary, structured, sources, queries } = await runBusinessResearch(biz.rows[0], req.userId, requestedScope);
+    const { summary, structured, sources, queries } = await runBusinessResearch(biz.rows[0], req.userId, requestedScope, knownFacts);
 
     const session = await pool.query(
-      `INSERT INTO research_sessions (business_id, user_id, query, summary) VALUES ($1, $2, $3, $4) RETURNING id`,
-      [req.params.id, req.userId, queries.join(' | '), summary]
+      `INSERT INTO research_sessions (business_id, user_id, query, summary, scope, structured_data) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [req.params.id, req.userId, queries.join(' | '), summary, requestedScope, JSON.stringify(structured)]
     );
     const sessionId = session.rows[0].id;
 
@@ -1882,6 +1909,434 @@ app.get('/api/business', authRequired, async (req, res) => {
     );
     res.json({ businesses: result.rows });
   } catch (e) { res.status(500).json({ error: 'Failed to load businesses' }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REPORT GENERATION — HTML, PDF, and Word (DOCX) downloadable reports
+// ═══════════════════════════════════════════════════════════════════════════
+
+const REPORT_FACT_LABELS = {
+  business_name: 'Business Name', industry: 'Industry', value_proposition: 'Value Proposition',
+  products_services: 'Products & Services', target_customers: 'Target Customers',
+  pricing_info: 'Pricing', location: 'Location', contact_info: 'Contact Info',
+  positioning: 'Positioning', notable_gaps: "What's Missing", market_research: 'Market Research'
+};
+
+function sanitizeFilename(name) {
+  return (name || 'business-report').replace(/[^a-z0-9]/gi, '-').replace(/-+/g, '-').slice(0, 60);
+}
+
+// ── HTML report (existing style, now server-generated from saved data) ─────
+function buildReportHTML({ business, facts, structured: s, sources, scope }) {
+  const bizName = business.name || business.website || 'Business Report';
+  const dateStr = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+
+  const factsHtml = Object.entries(facts).filter(([, f]) => f && f.value).map(([key, fact]) => `
+    <tr><td style="padding:8px 12px;font-weight:600;width:180px;vertical-align:top">${REPORT_FACT_LABELS[key] || key}</td>
+    <td style="padding:8px 12px;vertical-align:top">${fact.value} <span style="font-size:10px;color:#888">(${fact.source_type === 'observed' ? 'Observed' : 'AI Inferred'})</span></td></tr>`).join('');
+
+  const competitorRows = (s?.competitors || []).map(c => `
+    <tr><td style="padding:8px 12px;font-weight:600">${c.name || '—'}</td><td style="padding:8px 12px">${c.description || '—'}</td>
+    <td style="padding:8px 12px">${c.differentiator || '—'}</td><td style="padding:8px 12px;text-transform:capitalize">${c.scope || 'unknown'}</td></tr>`).join('');
+
+  const gapsHtml = (s?.competitive_gaps || []).map(g => `
+    <div style="margin-bottom:10px;padding:10px 12px;background:#fff8e6;border-left:3px solid #d97706">
+      <div style="font-weight:600">${g.gap}</div>
+      ${g.competitor_names?.length ? `<div style="font-size:12px;color:#666">Seen at: ${g.competitor_names.join(', ')}</div>` : ''}
+    </div>`).join('');
+
+  const auditRows = (s?.audit_coverage || []).map(c => `
+    <tr><td style="padding:6px 12px;font-weight:600">${c.area}</td><td style="padding:6px 12px;text-transform:capitalize">${c.status}</td><td style="padding:6px 12px">${c.note || ''}</td></tr>`).join('');
+
+  const recsHtml = (s?.strategic_recommendations || []).map((r, i) => `
+    <div style="margin-bottom:18px;padding:14px 16px;border:1px solid #e5e5e5;border-radius:8px;page-break-inside:avoid">
+      <div style="font-weight:700;font-size:15px;margin-bottom:6px">${i + 1}. ${r.title || r.action || ''} ${r.priority ? `<span style="font-size:10px;font-weight:700;text-transform:uppercase;color:#888;border:1px solid #ccc;border-radius:4px;padding:1px 6px;margin-left:6px">${r.priority} priority</span>` : ''}</div>
+      ${r.problem_addressed ? `<div style="font-size:12.5px;color:#777;margin-bottom:6px"><em>Addresses: ${r.problem_addressed}</em></div>` : ''}
+      <div style="font-size:13.5px;margin-bottom:8px">${r.solution || r.reason || ''}</div>
+      ${r.action_steps?.length ? `<ul style="margin:0;padding-left:20px;font-size:13px">${r.action_steps.map(step => `<li style="margin-bottom:4px">${step}</li>`).join('')}</ul>` : ''}
+    </div>`).join('');
+
+  const sourcesHtml = (sources || []).map((src, i) => `
+    <div style="font-size:12px;margin-bottom:6px"><strong>[${i + 1}]</strong> ${src.title || src.url} — <a href="${src.url}">${src.url}</a></div>`).join('');
+
+  // Charts (light theme for print)
+  function buildChart(data) {
+    const maxVal = Math.max(...data.map(d => d.value), 1);
+    const labelW = 110, chartW = 220, barHeight = 22, gap = 10;
+    const height = data.length * (barHeight + gap) + gap;
+    const bars = data.map((d, i) => {
+      const y = gap + i * (barHeight + gap);
+      const barW = Math.max((d.value / maxVal) * chartW, 2);
+      return `<text x="0" y="${y + barHeight / 2 + 4}" font-size="11" fill="#333">${d.label}</text>
+        <rect x="${labelW}" y="${y}" width="${chartW}" height="${barHeight}" fill="#eee" rx="3"></rect>
+        <rect x="${labelW}" y="${y}" width="${barW}" height="${barHeight}" fill="${d.color}" rx="3"></rect>
+        <text x="${labelW + barW + 8}" y="${y + barHeight / 2 + 4}" font-size="11" font-weight="700" fill="${d.color}">${d.value}</text>`;
+    }).join('');
+    return `<svg viewBox="0 0 400 ${height}" width="380">${bars}</svg>`;
+  }
+
+  let chartsHtml = '';
+  if (s) {
+    const scopeCounts = { local: 0, international: 0 };
+    (s.competitors || []).forEach(c => { if (scopeCounts[c.scope] !== undefined) scopeCounts[c.scope]++; });
+    const scopeData = [{ label: 'Local', value: scopeCounts.local, color: '#10b981' }, { label: 'International', value: scopeCounts.international, color: '#d97706' }].filter(d => d.value > 0);
+
+    const priorityCounts = { high: 0, medium: 0, low: 0 };
+    (s.strategic_recommendations || []).forEach(r => { if (r.priority) priorityCounts[r.priority]++; });
+    const priorityData = [{ label: 'High', value: priorityCounts.high, color: '#dc2626' }, { label: 'Medium', value: priorityCounts.medium, color: '#d97706' }, { label: 'Low', value: priorityCounts.low, color: '#6b7280' }].filter(d => d.value > 0);
+
+    const factSourceCounts = { observed: 0, inferred: 0 };
+    Object.values(facts).forEach(f => { if (f?.source_type && factSourceCounts[f.source_type] !== undefined) factSourceCounts[f.source_type]++; });
+    const factData = [{ label: 'Observed', value: factSourceCounts.observed, color: '#10b981' }, { label: 'AI Inferred', value: factSourceCounts.inferred, color: '#8b5cf6' }].filter(d => d.value > 0);
+
+    const auditCounts = { covered: 0, partial: 0, 'not covered': 0 };
+    (s.audit_coverage || []).forEach(c => { if (auditCounts[c.status] !== undefined) auditCounts[c.status]++; });
+    const auditData = [{ label: 'Covered', value: auditCounts.covered, color: '#10b981' }, { label: 'Partial', value: auditCounts.partial, color: '#d97706' }, { label: 'Not Covered', value: auditCounts['not covered'], color: '#6b7280' }].filter(d => d.value > 0);
+
+    const chartBlocks = [
+      factData.length ? `<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:8px">Profile Data: Observed vs Inferred</div>${buildChart(factData)}</div>` : '',
+      scopeData.length ? `<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:8px">Competitors by Scope</div>${buildChart(scopeData)}</div>` : '',
+      priorityData.length ? `<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:8px">Recommendations by Priority</div>${buildChart(priorityData)}</div>` : '',
+      auditData.length ? `<div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#888;margin-bottom:8px">Research Coverage</div>${buildChart(auditData)}</div>` : ''
+    ].filter(Boolean).join('');
+
+    if (chartBlocks) chartsHtml = `<div style="display:flex;gap:40px;flex-wrap:wrap;margin:16px 0">${chartBlocks}</div>`;
+  }
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>${bizName} — Business Report</title>
+<style>
+body{font-family:Georgia,serif;color:#1a1a1a;max-width:800px;margin:40px auto;padding:0 20px;line-height:1.6}
+h1{font-size:26px;border-bottom:3px solid #6C3Bff;padding-bottom:12px;margin-bottom:6px}
+h2{font-size:17px;color:#6C3Bff;margin-top:32px;margin-bottom:10px;text-transform:uppercase;letter-spacing:.04em}
+.meta{color:#777;font-size:13px;margin-bottom:24px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+tr{border-bottom:1px solid #e5e5e5}
+th{text-align:left;padding:8px 12px;background:#f5f5f5;font-size:11px;text-transform:uppercase;color:#666}
+p{font-size:14px}
+.footer{margin-top:50px;padding-top:16px;border-top:1px solid #ddd;font-size:11px;color:#999;text-align:center}
+@media print{body{margin:0}}
+</style></head><body>
+<h1>${bizName}</h1>
+<div class="meta">Business Intelligence Report · Generated ${dateStr} · Arreyon Consult by G-DESIGNS LTD</div>
+<h2>Business Profile</h2>
+<table>${factsHtml || '<tr><td style="padding:8px 12px">No profile data available</td></tr>'}</table>
+${s ? `
+<h2>Market Context</h2><p>${s.market_context || ''}</p>
+<h2>Full Detailed Analysis</h2><p>${s.full_analysis || ''}</p>
+${s.local_coverage_note ? `<p style="color:#a06800"><em>Note: ${s.local_coverage_note}</em></p>` : ''}
+<h2>Competitor Analysis (${scope === 'national' ? 'National' : 'National + International'})</h2>
+<table><tr><th>Competitor</th><th>Offers</th><th>Edge / Weakness</th><th>Scope</th></tr>${competitorRows || '<tr><td colspan="4" style="padding:8px 12px">No competitors identified</td></tr>'}</table>
+${chartsHtml}
+${gapsHtml ? `<h2>What Competitors Do That You Don't</h2>${gapsHtml}` : ''}
+${s.opportunity_gap ? `<h2>Opportunity Gap</h2><p>${s.opportunity_gap}</p>` : ''}
+<h2>Summary &amp; Audit</h2><p>${s.audit_summary || ''}</p>
+${auditRows ? `<table><tr><th>Area</th><th>Status</th><th>Note</th></tr>${auditRows}</table>` : ''}
+<h2>Recommendations, Solutions &amp; Strategy</h2>
+${recsHtml || '<p>No specific recommendations available.</p>'}
+<h2>Sources</h2>${sourcesHtml || '<p>No sources recorded.</p>'}
+` : `<p style="margin-top:30px;color:#888"><em>Market research was not run for this business. Only the website analysis profile is included above.</em></p>`}
+<div class="footer">Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com · This report was AI-generated and should be independently verified before major business decisions.</div>
+</body></html>`;
+}
+
+// ── PDF report (pdfkit — pure JS, no native/chromium dependency) ───────────
+function buildReportPDF({ business, facts, structured: s, sources, scope }) {
+  const doc = new PDFDocument({ margin: 50, size: 'A4' });
+  const bizName = business.name || business.website || 'Business Report';
+  const purple = '#6C3Bff';
+
+  doc.fontSize(22).fillColor('#111').text(bizName, { underline: false });
+  doc.moveTo(50, doc.y + 4).lineTo(545, doc.y + 4).strokeColor(purple).lineWidth(2).stroke();
+  doc.moveDown(0.5);
+  doc.fontSize(9).fillColor('#777').text(`Business Intelligence Report · Generated ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} · Arreyon Consult by G-DESIGNS LTD`);
+  doc.moveDown(1);
+
+  function h2(text) {
+    doc.moveDown(0.8);
+    doc.fontSize(13).fillColor(purple).text(text.toUpperCase());
+    doc.moveDown(0.3);
+    doc.fontSize(10.5).fillColor('#222');
+  }
+  function bar(label, value, maxVal, color, y) {
+    const barW = Math.max((value / maxVal) * 200, 2);
+    doc.fontSize(9).fillColor('#333').text(label, 50, y, { width: 90 });
+    doc.rect(150, y - 2, 200, 14).fill('#eee');
+    doc.rect(150, y - 2, barW, 14).fill(color);
+    doc.fontSize(9).fillColor(color).text(String(value), 355, y);
+  }
+
+  // Business Profile
+  h2('Business Profile');
+  Object.entries(facts).filter(([, f]) => f && f.value).forEach(([key, fact]) => {
+    doc.fontSize(9.5).fillColor('#111').text(`${REPORT_FACT_LABELS[key] || key}: `, { continued: true, width: 495 })
+      .fillColor('#444').text(`${fact.value} (${fact.source_type === 'observed' ? 'Observed' : 'AI Inferred'})`);
+    doc.moveDown(0.2);
+  });
+  if (!Object.keys(facts).length) doc.fontSize(9.5).fillColor('#888').text('No profile data available.');
+
+  if (s) {
+    h2('Market Context');
+    doc.fontSize(10).fillColor('#222').text(s.market_context || '', { width: 495 });
+
+    h2('Full Detailed Analysis');
+    doc.fontSize(10).fillColor('#222').text(s.full_analysis || '', { width: 495 });
+    if (s.local_coverage_note) {
+      doc.moveDown(0.3);
+      doc.fontSize(9.5).fillColor('#a06800').text(`Note: ${s.local_coverage_note}`, { width: 495 });
+    }
+
+    h2(`Competitor Analysis (${scope === 'national' ? 'National' : 'National + International'})`);
+    (s.competitors || []).forEach(c => {
+      doc.fontSize(10).fillColor('#111').text(`${c.name || '—'}  `, { continued: true }).fillColor('#888').fontSize(8).text(`[${(c.scope || 'unknown').toUpperCase()}]`);
+      doc.fontSize(9).fillColor('#444').text(c.description || '', { width: 495 });
+      if (c.differentiator) doc.fontSize(9).fillColor('#666').text(`Edge/weakness: ${c.differentiator}`, { width: 495 });
+      doc.moveDown(0.4);
+    });
+    if (!s.competitors?.length) doc.fontSize(9.5).fillColor('#888').text('No competitors identified.');
+
+    // Charts
+    if (doc.y > 650) doc.addPage();
+    const scopeCounts = { local: 0, international: 0 };
+    (s.competitors || []).forEach(c => { if (scopeCounts[c.scope] !== undefined) scopeCounts[c.scope]++; });
+    const priorityCounts = { high: 0, medium: 0, low: 0 };
+    (s.strategic_recommendations || []).forEach(r => { if (r.priority) priorityCounts[r.priority]++; });
+
+    if (scopeCounts.local + scopeCounts.international > 0) {
+      h2('Chart: Competitors by Scope');
+      const maxV = Math.max(scopeCounts.local, scopeCounts.international, 1);
+      let y = doc.y + 5;
+      bar('Local', scopeCounts.local, maxV, '#10b981', y); y += 20;
+      bar('International', scopeCounts.international, maxV, '#f59e0b', y);
+      doc.y = y + 25;
+    }
+    if (priorityCounts.high + priorityCounts.medium + priorityCounts.low > 0) {
+      h2('Chart: Recommendations by Priority');
+      const maxV = Math.max(priorityCounts.high, priorityCounts.medium, priorityCounts.low, 1);
+      let y = doc.y + 5;
+      bar('High', priorityCounts.high, maxV, '#ef4444', y); y += 20;
+      bar('Medium', priorityCounts.medium, maxV, '#f59e0b', y); y += 20;
+      bar('Low', priorityCounts.low, maxV, '#6b7280', y);
+      doc.y = y + 25;
+    }
+
+    if (s.competitive_gaps?.length) {
+      h2("What Competitors Do That You Don't");
+      s.competitive_gaps.forEach(g => {
+        doc.fontSize(9.5).fillColor('#111').text(`• ${g.gap}`, { width: 495 });
+        if (g.competitor_names?.length) doc.fontSize(8.5).fillColor('#888').text(`  Seen at: ${g.competitor_names.join(', ')}`, { width: 495 });
+        doc.moveDown(0.2);
+      });
+    }
+
+    if (s.opportunity_gap) {
+      h2('Opportunity Gap');
+      doc.fontSize(10).fillColor('#222').text(s.opportunity_gap, { width: 495 });
+    }
+
+    h2('Summary & Audit');
+    doc.fontSize(10).fillColor('#222').text(s.audit_summary || '', { width: 495 });
+    (s.audit_coverage || []).forEach(c => {
+      doc.moveDown(0.2);
+      doc.fontSize(9).fillColor('#111').text(`${c.area}: `, { continued: true }).fillColor('#666').text(`${c.status}${c.note ? ' — ' + c.note : ''}`);
+    });
+
+    if (doc.y > 600) doc.addPage();
+    h2('Recommendations, Solutions & Strategy');
+    (s.strategic_recommendations || []).forEach((r, i) => {
+      if (doc.y > 700) doc.addPage();
+      doc.fontSize(11).fillColor('#111').text(`${i + 1}. ${r.title || r.action || ''}`, { continued: true })
+        .fontSize(8).fillColor('#888').text(r.priority ? `   [${r.priority.toUpperCase()} PRIORITY]` : '');
+      if (r.problem_addressed) doc.fontSize(9).fillColor('#777').text(`Addresses: ${r.problem_addressed}`, { width: 495 });
+      doc.fontSize(9.5).fillColor('#333').text(r.solution || r.reason || '', { width: 495 });
+      (r.action_steps || []).forEach(step => doc.fontSize(9).fillColor('#444').text(`   • ${step}`, { width: 480 }));
+      doc.moveDown(0.6);
+    });
+    if (!s.strategic_recommendations?.length) doc.fontSize(9.5).fillColor('#888').text('No specific recommendations available.');
+
+    h2('Sources');
+    (sources || []).forEach((src, i) => {
+      doc.fontSize(8.5).fillColor('#444').text(`[${i + 1}] ${src.title || src.url} — ${src.url}`, { width: 495 });
+    });
+  } else {
+    doc.moveDown(1);
+    doc.fontSize(9.5).fillColor('#888').text('Market research was not run for this business. Only the website analysis profile is included above.', { width: 495 });
+  }
+
+  doc.moveDown(2);
+  doc.fontSize(7.5).fillColor('#aaa').text('Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com · This report was AI-generated and should be independently verified before major business decisions.', { width: 495, align: 'center' });
+
+  return doc;
+}
+
+// ── Word/DOCX report (docx library — real editable Word document) ──────────
+async function buildReportDOCX({ business, facts, structured: s, sources, scope }) {
+  const bizName = business.name || business.website || 'Business Report';
+  const purple = '6C3Bff';
+  const children = [];
+
+  children.push(new Paragraph({ text: bizName, heading: HeadingLevel.TITLE }));
+  children.push(new Paragraph({
+    children: [new TextRun({ text: `Business Intelligence Report · Generated ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} · Arreyon Consult by G-DESIGNS LTD`, italics: true, size: 18, color: '777777' })]
+  }));
+  children.push(new Paragraph({ text: '' }));
+
+  function heading(text) { children.push(new Paragraph({ text, heading: HeadingLevel.HEADING_1 })); }
+  function para(text) { children.push(new Paragraph({ text: text || '', spacing: { after: 150 } })); }
+  function bullet(text) { children.push(new Paragraph({ text, bullet: { level: 0 } })); }
+
+  heading('Business Profile');
+  const factRows = Object.entries(facts).filter(([, f]) => f && f.value).map(([key, fact]) => new TableRow({
+    children: [
+      new TableCell({ width: { size: 25, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: REPORT_FACT_LABELS[key] || key, bold: true })] }),
+      new TableCell({ width: { size: 75, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: `${fact.value} (${fact.source_type === 'observed' ? 'Observed' : 'AI Inferred'})` })] })
+    ]
+  }));
+  if (factRows.length) {
+    children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: factRows }));
+  } else {
+    para('No profile data available.');
+  }
+  children.push(new Paragraph({ text: '' }));
+
+  if (s) {
+    heading('Market Context');
+    para(s.market_context);
+
+    heading('Full Detailed Analysis');
+    para(s.full_analysis);
+    if (s.local_coverage_note) para(`Note: ${s.local_coverage_note}`);
+
+    heading(`Competitor Analysis (${scope === 'national' ? 'National' : 'National + International'})`);
+    if (s.competitors?.length) {
+      const compHeaderRow = new TableRow({
+        children: ['Competitor', 'Offers', 'Edge / Weakness', 'Scope'].map(t =>
+          new TableCell({ children: [new Paragraph({ text: t, bold: true })] }))
+      });
+      const compRows = s.competitors.map(c => new TableRow({
+        children: [
+          new TableCell({ children: [new Paragraph({ text: c.name || '—' })] }),
+          new TableCell({ children: [new Paragraph({ text: c.description || '—' })] }),
+          new TableCell({ children: [new Paragraph({ text: c.differentiator || '—' })] }),
+          new TableCell({ children: [new Paragraph({ text: c.scope || 'unknown' })] })
+        ]
+      }));
+      children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [compHeaderRow, ...compRows] }));
+    } else {
+      para('No competitors identified.');
+    }
+    children.push(new Paragraph({ text: '' }));
+
+    // Data summary (table form, since DOCX charts require embedded images which we skip for simplicity)
+    const scopeCounts = { local: 0, international: 0 };
+    (s.competitors || []).forEach(c => { if (scopeCounts[c.scope] !== undefined) scopeCounts[c.scope]++; });
+    const priorityCounts = { high: 0, medium: 0, low: 0 };
+    (s.strategic_recommendations || []).forEach(r => { if (r.priority) priorityCounts[r.priority]++; });
+    heading('Data Summary');
+    para(`Competitors — Local: ${scopeCounts.local}, International: ${scopeCounts.international}`);
+    para(`Recommendations — High priority: ${priorityCounts.high}, Medium: ${priorityCounts.medium}, Low: ${priorityCounts.low}`);
+
+    if (s.competitive_gaps?.length) {
+      heading("What Competitors Do That You Don't");
+      s.competitive_gaps.forEach(g => {
+        bullet(`${g.gap}${g.competitor_names?.length ? ' (seen at: ' + g.competitor_names.join(', ') + ')' : ''}`);
+      });
+      children.push(new Paragraph({ text: '' }));
+    }
+
+    if (s.opportunity_gap) { heading('Opportunity Gap'); para(s.opportunity_gap); }
+
+    heading('Summary & Audit');
+    para(s.audit_summary);
+    (s.audit_coverage || []).forEach(c => bullet(`${c.area}: ${c.status}${c.note ? ' — ' + c.note : ''}`));
+    children.push(new Paragraph({ text: '' }));
+
+    heading('Recommendations, Solutions & Strategy');
+    (s.strategic_recommendations || []).forEach((r, i) => {
+      children.push(new Paragraph({
+        heading: HeadingLevel.HEADING_2,
+        children: [new TextRun({ text: `${i + 1}. ${r.title || r.action || ''}` }), r.priority ? new TextRun({ text: `  [${r.priority.toUpperCase()} PRIORITY]`, size: 16, color: '888888' }) : new TextRun('')]
+      }));
+      if (r.problem_addressed) children.push(new Paragraph({ children: [new TextRun({ text: `Addresses: ${r.problem_addressed}`, italics: true, size: 18 })] }));
+      para(r.solution || r.reason);
+      (r.action_steps || []).forEach(step => bullet(step));
+      children.push(new Paragraph({ text: '' }));
+    });
+    if (!s.strategic_recommendations?.length) para('No specific recommendations available.');
+
+    heading('Sources');
+    (sources || []).forEach((src, i) => para(`[${i + 1}] ${src.title || src.url} — ${src.url}`));
+  } else {
+    para('Market research was not run for this business. Only the website analysis profile is included above.');
+  }
+
+  children.push(new Paragraph({ text: '' }));
+  children.push(new Paragraph({
+    children: [new TextRun({ text: 'Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com · This report was AI-generated and should be independently verified before major business decisions.', size: 15, color: 'AAAAAA', italics: true })],
+    alignment: AlignmentType.CENTER
+  }));
+
+  const doc = new DocxDocument({ sections: [{ children }] });
+  return Packer.toBuffer(doc);
+}
+
+// ── Report download endpoint — supports html, pdf, docx ─────────────────────
+app.get('/api/business/:id/report', authRequired, async (req, res) => {
+  const format = (req.query.format || 'html').toLowerCase();
+  if (!['html', 'pdf', 'docx'].includes(format)) return res.status(400).json({ error: 'Invalid format. Use html, pdf, or docx.' });
+
+  try {
+    const biz = await pool.query('SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    const business = biz.rows[0];
+
+    const factsResult = await pool.query(
+      `SELECT DISTINCT ON (fact_key) fact_key, fact_value, source_type FROM business_facts
+       WHERE business_id = $1 ORDER BY fact_key, created_at DESC`,
+      [req.params.id]
+    );
+    const facts = {};
+    factsResult.rows.forEach(r => { facts[r.fact_key] = { value: r.fact_value, source_type: r.source_type }; });
+
+    const sessionResult = await pool.query(
+      'SELECT * FROM research_sessions WHERE business_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [req.params.id]
+    );
+    let structured = null, sources = [], scope = 'both';
+    if (sessionResult.rows.length) {
+      const session = sessionResult.rows[0];
+      structured = session.structured_data || null;
+      scope = session.scope || 'both';
+      const sourcesResult = await pool.query('SELECT * FROM research_sources WHERE research_session_id = $1', [session.id]);
+      sources = sourcesResult.rows;
+    }
+
+    const reportData = { business, facts, structured, sources, scope };
+    const filename = sanitizeFilename(business.name || business.website);
+
+    if (format === 'html') {
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}-report.html"`);
+      return res.send(buildReportHTML(reportData));
+    }
+    if (format === 'pdf') {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}-report.pdf"`);
+      const doc = buildReportPDF(reportData);
+      doc.pipe(res);
+      doc.end();
+      return;
+    }
+    if (format === 'docx') {
+      const buffer = await buildReportDOCX(reportData);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}-report.docx"`);
+      return res.send(buffer);
+    }
+  } catch (err) {
+    console.error('Report generation error:', err.message);
+    res.status(500).json({ error: 'Failed to generate report. Please try again.' });
+  }
 });
 
 // ── Get one business profile with its current facts (latest value per key) ──
