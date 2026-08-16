@@ -361,6 +361,23 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:18px" id="resultPages"></div>
         <div id="factsGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px"></div>
+
+        <div style="margin-top:20px">
+          <button class="btn-primary" style="padding:11px 20px" onclick="runResearch()" id="researchBtn">🔍 Research Market &amp; Competitors</button>
+          <div id="researchLimitMsg" style="margin-top:8px;font-size:12px;color:var(--muted);display:none"></div>
+        </div>
+
+        <div id="researchLoading" style="display:none;margin-top:16px;padding:20px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;text-align:center">
+          <div style="font-size:22px;margin-bottom:8px;animation:spin 2s linear infinite;display:inline-block">🔍</div>
+          <div style="font-size:13px;color:var(--text2)">Searching the web for competitors and market context...</div>
+        </div>
+
+        <div id="researchResults" style="display:none;margin-top:16px;background:var(--bg2);border:1px solid var(--purple);border-radius:12px;padding:20px">
+          <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px">Market &amp; Competitor Research</div>
+          <div id="researchSummary" style="font-size:13.5px;color:var(--text2);line-height:1.75;margin-bottom:16px;white-space:pre-wrap"></div>
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Sources</div>
+          <div id="researchSources" style="display:flex;flex-direction:column;gap:6px"></div>
+        </div>
       </div>
 
       <!-- Previously analyzed businesses -->
@@ -787,10 +804,17 @@ async function runAnalysis() {
   }
 }
 
+let currentBusinessId = null;
+
 function renderAnalysisResults(data) {
+  currentBusinessId = data.businessId;
   document.getElementById('resultBizName').textContent = data.facts.business_name?.value || 'Business Profile';
   document.getElementById('resultUrl').href = data.analyzedUrl;
   document.getElementById('resultPages').textContent = `Analyzed ${data.pagesAnalyzed.length} page${data.pagesAnalyzed.length > 1 ? 's' : ''}`;
+
+  // Reset any previous research view when a new analysis runs
+  document.getElementById('researchResults').style.display = 'none';
+  document.getElementById('researchLimitMsg').style.display = 'none';
 
   const grid = document.getElementById('factsGrid');
   grid.innerHTML = Object.entries(data.facts).map(([key, fact]) => {
@@ -827,6 +851,46 @@ async function loadAnalyzedBusinesses() {
         <div class="history-time">${timeAgo(b.updated_at)}</div>
       </div>`).join('');
   } catch (e) {}
+}
+
+async function runResearch() {
+  if (!currentBusinessId) return;
+
+  document.getElementById('researchLimitMsg').style.display = 'none';
+  document.getElementById('researchResults').style.display = 'none';
+  document.getElementById('researchLoading').style.display = 'block';
+  document.getElementById('researchBtn').disabled = true;
+
+  try {
+    const res = await fetch(`/api/business/${currentBusinessId}/research`, { method: 'POST' });
+    const data = await res.json();
+    document.getElementById('researchLoading').style.display = 'none';
+    document.getElementById('researchBtn').disabled = false;
+
+    if (!res.ok) {
+      const msg = document.getElementById('researchLimitMsg');
+      if (data.upgradeRequired) {
+        msg.innerHTML = data.error + ' <a href="#" onclick="showSection(\'billing\');return false" style="color:var(--purple-light)">Upgrade now</a>';
+      } else {
+        msg.textContent = data.error || 'Research failed. Please try again.';
+      }
+      msg.style.display = 'block';
+      return;
+    }
+
+    document.getElementById('researchSummary').textContent = data.summary;
+    document.getElementById('researchSources').innerHTML = data.sources.map((s, i) => `
+      <a href="${s.url}" target="_blank" style="display:block;font-size:12px;color:var(--text2);text-decoration:none;padding:8px 10px;background:var(--bg3);border-radius:7px;border:1px solid var(--border)">
+        <span style="color:var(--purple-light);font-weight:700">[${i+1}]</span> ${s.title || s.url}
+      </a>`).join('');
+    document.getElementById('researchResults').style.display = 'block';
+  } catch (e) {
+    document.getElementById('researchLoading').style.display = 'none';
+    document.getElementById('researchBtn').disabled = false;
+    const msg = document.getElementById('researchLimitMsg');
+    msg.textContent = 'Connection error. Please try again.';
+    msg.style.display = 'block';
+  }
 }
 
 init();
