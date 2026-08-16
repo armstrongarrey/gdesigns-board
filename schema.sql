@@ -217,6 +217,31 @@ CREATE TABLE IF NOT EXISTS business_facts (
 );
 CREATE INDEX IF NOT EXISTS idx_business_facts_business ON business_facts(business_id);
 
+-- Research sessions — one row per research query run against a business
+CREATE TABLE IF NOT EXISTS research_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  query TEXT NOT NULL,
+  provider VARCHAR(50) DEFAULT 'tavily',
+  status VARCHAR(20) DEFAULT 'completed',
+  summary TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_research_sessions_business ON research_sessions(business_id);
+
+-- Research sources — every source retrieved for a research session, for citation
+CREATE TABLE IF NOT EXISTS research_sources (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  research_session_id UUID REFERENCES research_sessions(id) ON DELETE CASCADE,
+  title VARCHAR(500),
+  url TEXT NOT NULL,
+  snippet TEXT,
+  published_date VARCHAR(50),
+  retrieved_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_research_sources_session ON research_sources(research_session_id);
+
 -- ── DEFAULT CMS CONTENT ────────────────────────────────────────────────────
 INSERT INTO cms_content (section, key, value, type) VALUES
 -- Hero section
