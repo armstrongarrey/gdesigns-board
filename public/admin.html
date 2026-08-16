@@ -130,6 +130,9 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     <button class="nav-item" onclick="showSection('users')" id="nav-users">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Users
     </button>
+    <button class="nav-item" onclick="showSection('usage')" id="nav-usage">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>AI Usage
+    </button>
     <div class="nav-section">Content</div>
     <button class="nav-item" onclick="showSection('cms')" id="nav-cms">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>CMS Editor
@@ -192,6 +195,41 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
         <div class="table-header"><div class="table-title">All Users</div><button class="btn-primary" onclick="loadUsers()">Refresh</button></div>
         <table><thead><tr><th>Name</th><th>Email</th><th>Plan</th><th>Consultations</th><th>Verified</th><th>Joined</th><th>Action</th></tr></thead>
         <tbody id="allUsers"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">Loading...</td></tr></tbody></table>
+      </div>
+    </div>
+
+    <!-- AI USAGE DASHBOARD -->
+    <div class="section-view" id="section-usage">
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">Last 30 days · Cost figures are rough relative estimates, not exact billing (token counts aren't logged per call)</p>
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-label">Total AI Calls</div><div class="stat-val" id="statTotalCalls">—</div><div class="stat-sub">last 30 days</div></div>
+        <div class="stat-card"><div class="stat-label">Error Rate</div><div class="stat-val" id="statErrorRate">—</div><div class="stat-sub" id="statErrorSub">of total calls</div></div>
+        <div class="stat-card"><div class="stat-label">Active Users</div><div class="stat-val" id="statActiveUsers">—</div><div class="stat-sub">made at least 1 AI call</div></div>
+        <div class="stat-card"><div class="stat-label">Est. Cost</div><div class="stat-val" id="statEstCost">—</div><div class="stat-sub">rough estimate only</div></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+        <div class="table-wrap">
+          <div class="table-header"><div class="table-title">By Provider</div></div>
+          <table><thead><tr><th>Provider</th><th>Calls</th><th>Errors</th></tr></thead>
+          <tbody id="usageByProvider"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table>
+        </div>
+        <div class="table-wrap">
+          <div class="table-header"><div class="table-title">By Feature</div></div>
+          <table><thead><tr><th>Feature</th><th>Calls</th><th>Avg Duration</th></tr></thead>
+          <tbody id="usageByFeature"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="margin-bottom:20px">
+        <div class="table-header"><div class="table-title">Daily Call Volume (30 days)</div></div>
+        <div id="usageDailyChart" style="padding:20px"></div>
+      </div>
+
+      <div class="table-wrap">
+        <div class="table-header"><div class="table-title">Most Active Users</div></div>
+        <table><thead><tr><th>Name</th><th>Email</th><th>Plan</th><th>AI Calls</th></tr></thead>
+        <tbody id="usageTopUsers"><tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table>
       </div>
     </div>
 
@@ -330,8 +368,58 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const nav = document.getElementById('nav-' + name);
   if (nav) nav.classList.add('active');
-  const titles = {overview:'Overview',payments:'Payments',users:'Users',cms:'CMS Editor',announcements:'Announcements',coupons:'Coupon Codes'};
+  const titles = {overview:'Overview',payments:'Payments',users:'Users',usage:'AI Usage',cms:'CMS Editor',announcements:'Announcements',coupons:'Coupon Codes'};
   document.getElementById('topbarTitle').textContent = titles[name] || name;
+  if (name === 'usage') loadUsageStats();
+}
+
+// ── AI USAGE DASHBOARD ────────────────────────────────────────────────────
+async function loadUsageStats() {
+  try {
+    const res = await fetch('/api/admin/usage-stats');
+    const data = await res.json();
+
+    const totals = data.totals || {};
+    const totalCalls = parseInt(totals.total_calls || 0, 10);
+    const errorCalls = parseInt(totals.error_calls || 0, 10);
+    const errorRate = totalCalls > 0 ? ((errorCalls / totalCalls) * 100).toFixed(1) : '0.0';
+
+    document.getElementById('statTotalCalls').textContent = totalCalls.toLocaleString();
+    document.getElementById('statErrorRate').textContent = errorRate + '%';
+    document.getElementById('statErrorSub').textContent = `${errorCalls} of ${totalCalls} calls`;
+    document.getElementById('statActiveUsers').textContent = totals.unique_users || '0';
+    document.getElementById('statEstCost').textContent = '$' + (data.estimatedCostUsd || '0.00');
+
+    document.getElementById('usageByProvider').innerHTML = (data.byProvider || []).map(p => `
+      <tr><td style="text-transform:capitalize">${p.provider}</td><td>${p.calls}</td><td style="color:${parseInt(p.errors)>0?'var(--red)':'var(--muted)'}">${p.errors}</td></tr>
+    `).join('') || '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">No data yet</td></tr>';
+
+    document.getElementById('usageByFeature').innerHTML = (data.byFeature || []).map(f => `
+      <tr><td>${(f.feature||'unspecified').replace(/_/g,' ')}</td><td>${f.calls}</td><td>${f.avg_duration_ms ? Math.round(f.avg_duration_ms) + 'ms' : '—'}</td></tr>
+    `).join('') || '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">No data yet</td></tr>';
+
+    // Simple daily bar chart, no external library
+    const daily = data.dailyTrend || [];
+    if (daily.length) {
+      const maxCalls = Math.max(...daily.map(d => parseInt(d.calls, 10)), 1);
+      const bars = daily.map(d => {
+        const h = Math.max((parseInt(d.calls, 10) / maxCalls) * 60, 3);
+        const dateLabel = new Date(d.day).getDate();
+        return `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1">
+          <div style="font-size:9px;color:var(--muted)">${d.calls}</div>
+          <div style="width:100%;max-width:14px;height:${h}px;background:var(--purple);border-radius:2px 2px 0 0"></div>
+          <div style="font-size:8px;color:var(--muted)">${dateLabel}</div>
+        </div>`;
+      }).join('');
+      document.getElementById('usageDailyChart').innerHTML = `<div style="display:flex;align-items:flex-end;gap:2px;height:100px">${bars}</div>`;
+    } else {
+      document.getElementById('usageDailyChart').innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px">No data yet</div>';
+    }
+
+    document.getElementById('usageTopUsers').innerHTML = (data.topUsers || []).map(u => `
+      <tr><td>${[u.first_name,u.last_name].filter(Boolean).join(' ')||'—'}</td><td>${u.email}</td><td style="text-transform:capitalize">${u.plan}</td><td>${u.calls}</td></tr>
+    `).join('') || '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">No data yet</td></tr>';
+  } catch(e) { console.log('Usage stats error:', e.message); }
 }
 
 // ── OVERVIEW ───────────────────────────────────────────────────────────────
