@@ -1040,11 +1040,148 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 app.get('/api/entrepreneur/sessions', authRequired, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, mode, input_data, structured_output, research_backed, created_at FROM entrepreneur_sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20',
+      'SELECT id, mode, input_data, structured_output, research_backed, discussion_messages, business_plan, created_at FROM entrepreneur_sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20',
       [req.userId]
     );
     res.json({ sessions: result.rows });
   } catch (e) { res.status(500).json({ error: 'Failed to load sessions' }); }
+});
+
+// ── Discuss the results — follow-up chat grounded in that specific session ──
+app.post('/api/entrepreneur/:sessionId/discuss', authRequired, async (req, res) => {
+  const { message } = req.body;
+  if (!message || !message.trim()) return res.status(400).json({ error: 'Message is required' });
+
+  try {
+    const sessionResult = await pool.query(
+      'SELECT * FROM entrepreneur_sessions WHERE id = $1 AND user_id = $2',
+      [req.params.sessionId, req.userId]
+    );
+    if (!sessionResult.rows.length) return res.status(404).json({ error: 'Session not found' });
+    const session = sessionResult.rows[0];
+
+    const priorMessages = session.discussion_messages || [];
+    const isOpp = session.mode === 'opportunity_finder';
+
+    const contextSummary = isOpp
+      ? `The user requested business opportunities matching their circumstances: ${JSON.stringify(session.input_data)}\n\nHere are the opportunities generated:\n${JSON.stringify(session.structured_output)}`
+      : `The user validated this business idea: "${session.input_data.idea}"\n\nHere is the validation result:\n${JSON.stringify(session.structured_output)}`;
+
+    const persona = `You are a knowledgeable, direct business advisor at Arreyon Consult. You already produced the ${isOpp ? 'opportunity analysis' : 'idea validation'} below for this founder, and they now want to discuss it — ask questions, push back, or explore a specific point further.
+
+${contextSummary}
+
+Stay grounded in what was actually generated above — don't contradict it without good reason, but do engage honestly if they raise a fair challenge. Keep responses focused and conversational, 2-4 sentences unless genuinely more detail is needed. Do not restate the entire original report.`;
+
+    const chatMessages = [
+      ...priorMessages.map(m => ({ role: m.from === 'you' ? 'user' : 'assistant', content: m.text })),
+      { role: 'user', content: message }
+    ];
+
+    const reply = await askClaude(persona, chatMessages, { feature: 'entrepreneur_mode', userId: req.userId }, 800);
+
+    const updatedMessages = [...priorMessages, { from: 'you', text: message }, { from: 'them', text: reply }];
+    await pool.query('UPDATE entrepreneur_sessions SET discussion_messages = $1 WHERE id = $2', [JSON.stringify(updatedMessages), req.params.sessionId]);
+
+    res.json({ reply, discussionMessages: updatedMessages });
+  } catch (err) {
+    console.error('Entrepreneur discuss error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to respond. Please try again.' });
+  }
+});
+
+// ── Generate a full business plan from a validated idea or chosen opportunity ──
+app.post('/api/entrepreneur/:sessionId/business-plan', authRequired, async (req, res) => {
+  const { chosenOpportunityName } = req.body; // required if session.mode === 'opportunity_finder'
+
+  try {
+    const sessionResult = await pool.query(
+      'SELECT * FROM entrepreneur_sessions WHERE id = $1 AND user_id = $2',
+      [req.params.sessionId, req.userId]
+    );
+    if (!sessionResult.rows.length) return res.status(404).json({ error: 'Session not found' });
+    const session = sessionResult.rows[0];
+    const isOpp = session.mode === 'opportunity_finder';
+
+    let businessDescription;
+    if (isOpp) {
+      const chosen = (session.structured_output.opportunities || []).find(o => o.name === chosenOpportunityName);
+      if (!chosen) return res.status(400).json({ error: 'Please specify which opportunity to build a plan for.' });
+      businessDescription = `${chosen.name}: ${chosen.description}`;
+    } else {
+      businessDescription = session.input_data.idea;
+    }
+
+    const context = formatEntrepreneurContext(session.input_data);
+
+    const prompt = `You are a business planning consultant at Arreyon Consult. Build a complete, practical business plan for this founder.
+
+BUSINESS: ${businessDescription}
+
+FOUNDER'S CIRCUMSTANCES:
+${context || 'Limited context available.'}
+
+${isOpp ? `PRIOR OPPORTUNITY ANALYSIS:\n${JSON.stringify((session.structured_output.opportunities || []).find(o => o.name === chosenOpportunityName))}` : `PRIOR IDEA VALIDATION:\n${JSON.stringify(session.structured_output)}`}
+
+YOUR TASK:
+Produce a complete, realistic business plan grounded in the founder's actual stated capital and time — not a generic template. Be specific with numbers where the founder's capital/time context allows it. Marketing must be a genuinely separate, detailed section — not a single throwaway line.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "business_model": {
+    "value_proposition": "the core value delivered, one sentence",
+    "customer_segments": "who specifically this serves",
+    "revenue_streams": ["stream 1", "stream 2"],
+    "cost_structure": ["major cost 1", "major cost 2"],
+    "key_resources": ["what's needed to operate"],
+    "key_activities": ["what must be done regularly"],
+    "key_partners": ["who to partner with, if relevant"],
+    "channels": ["how customers are reached"]
+  },
+  "strategy": {
+    "positioning": "how this should be positioned in the market",
+    "competitive_advantage": "the specific edge this has or must build",
+    "differentiation": "what makes this different from alternatives"
+  },
+  "marketing_plan": {
+    "target_audience": "the specific customer profile marketing should focus on",
+    "key_messaging": "the core message/hook that should appear in all marketing",
+    "marketing_channels": ["specific channel 1 (e.g. WhatsApp groups, Instagram)", "specific channel 2"],
+    "content_strategy": "what kind of content to post and how often, concretely",
+    "promotional_tactics": ["specific tactic 1 (e.g. referral discount, launch offer)", "specific tactic 2"],
+    "customer_acquisition_funnel": "the step-by-step path from stranger to paying customer, specific to this business",
+    "marketing_budget_estimate": "realistic monthly marketing spend given their stated capital"
+  },
+  "execution_plan": {
+    "phase_30_days": ["specific task 1", "specific task 2", "specific task 3"],
+    "phase_60_days": ["specific task 1", "specific task 2"],
+    "phase_90_days": ["specific task 1", "specific task 2"]
+  },
+  "financial_snapshot": {
+    "estimated_startup_cost": "realistic figure given their stated capital",
+    "monthly_operating_cost": "realistic estimate",
+    "breakeven_estimate": "realistic timeframe given their income target and time available",
+    "key_assumption": "the single biggest assumption this financial picture depends on"
+  }
+}`;
+
+    const raw = await askClaude(prompt, [{ role: 'user', content: 'Build the business plan now, as JSON only.' }], { feature: 'entrepreneur_mode', userId: req.userId }, 3500);
+    const cleaned = raw.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, '');
+    let plan;
+    try {
+      plan = JSON.parse(cleaned);
+    } catch (e) {
+      console.error('Business plan JSON parse failed. Length:', cleaned.length, '| Last 200 chars:', cleaned.slice(-200));
+      throw new Error('Could not generate the business plan — please try again');
+    }
+
+    await pool.query('UPDATE entrepreneur_sessions SET business_plan = $1 WHERE id = $2', [JSON.stringify(plan), req.params.sessionId]);
+
+    res.json({ success: true, businessPlan: plan });
+  } catch (err) {
+    console.error('Business plan error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate business plan. Please try again.' });
+  }
 });
 
 // Save consultation
