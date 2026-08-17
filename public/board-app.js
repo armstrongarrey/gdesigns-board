@@ -325,6 +325,221 @@ function buildScroll() {
 }
 
 // ── Auto-match director based on described challenge ──────────────────────
+// ── Chairman's Board Verdict ────────────────────────────────────────────────
+function openBoardVerdict() {
+  document.getElementById('verdictModal').style.display = 'flex';
+  document.getElementById('verdictPrompt').style.display = 'block';
+  document.getElementById('verdictLoading').style.display = 'none';
+  document.getElementById('verdictError').style.display = 'none';
+  document.getElementById('verdictResults').style.display = 'none';
+}
+function closeBoardVerdict() { document.getElementById('verdictModal').style.display = 'none'; }
+
+async function generateBoardVerdict() {
+  const conversations = Object.entries(convos)
+    .filter(([id, msgs]) => msgs && msgs.length > 0)
+    .map(([id, msgs]) => {
+      const dir = DIRS.find(d => d.id === id);
+      return { directorName: dir?.name || id, directorRole: dir?.role || '', messages: msgs };
+    });
+
+  if (!conversations.length) {
+    document.getElementById('verdictError').textContent = 'Chat with at least one director before requesting a board verdict.';
+    document.getElementById('verdictError').style.display = 'block';
+    return;
+  }
+
+  document.getElementById('verdictPrompt').style.display = 'none';
+  document.getElementById('verdictError').style.display = 'none';
+  document.getElementById('verdictResults').style.display = 'none';
+  document.getElementById('verdictLoading').style.display = 'block';
+
+  try {
+    const res = await fetch('/api/board-synthesize', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversations })
+    });
+    const data = await res.json();
+    document.getElementById('verdictLoading').style.display = 'none';
+
+    if (!res.ok) {
+      document.getElementById('verdictError').textContent = data.error || 'Synthesis failed. Please try again.';
+      document.getElementById('verdictError').style.display = 'block';
+      document.getElementById('verdictPrompt').style.display = 'block';
+      return;
+    }
+    renderBoardVerdict(data.synthesis);
+  } catch (e) {
+    document.getElementById('verdictLoading').style.display = 'none';
+    document.getElementById('verdictError').textContent = 'Connection error. Please try again.';
+    document.getElementById('verdictError').style.display = 'block';
+    document.getElementById('verdictPrompt').style.display = 'block';
+  }
+}
+
+function renderBoardVerdict(s) {
+  document.getElementById('verdictProblem').textContent = s.core_problem || '';
+  const advice = s.key_advice || [];
+  document.getElementById('verdictKeyAdvice').innerHTML = advice.map(a => `
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+      <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:2px">${a.director}</div>
+      <div style="font-size:12.5px;color:var(--text2);line-height:1.5">${a.summary}</div>
+    </div>`).join('');
+
+  const disagreementWrap = document.getElementById('verdictDisagreementWrap');
+  if (s.disagreements) {
+    document.getElementById('verdictDisagreementText').textContent = s.disagreements;
+    disagreementWrap.style.display = 'block';
+  } else {
+    disagreementWrap.style.display = 'none';
+  }
+
+  document.getElementById('verdictText').textContent = s.chairman_verdict || '';
+  const confColors = { high: '#10b981', medium: '#f59e0b', low: '#ef4444' };
+  const conf = s.confidence || 'medium';
+  const badge = document.getElementById('verdictConfidenceBadge');
+  badge.style.background = `${confColors[conf] || '#888'}22`;
+  badge.style.color = confColors[conf] || '#888';
+  badge.textContent = `${conf.charAt(0).toUpperCase() + conf.slice(1)} Confidence`;
+  document.getElementById('verdictConfidenceReason').textContent = s.confidence_reason || '';
+  document.getElementById('verdictResults').style.display = 'block';
+}
+
+// ── Quick BI Tools: ephemeral Website Analyzer + Market Research ───────────
+let toolsTab = 'analyze';
+let lastResearchResult = null;
+
+function openBoardTools() {
+  document.getElementById('toolsModal').style.display = 'flex';
+  document.getElementById('toolsResults').style.display = 'none';
+  document.getElementById('toolsError').style.display = 'none';
+}
+function closeBoardTools() { document.getElementById('toolsModal').style.display = 'none'; }
+
+function switchToolsTab(tab) {
+  toolsTab = tab;
+  const a = document.getElementById('toolsTabAnalyze'), r = document.getElementById('toolsTabResearch');
+  document.getElementById('toolsAnalyzeWrap').style.display = tab === 'analyze' ? 'block' : 'none';
+  document.getElementById('toolsResearchWrap').style.display = tab === 'research' ? 'block' : 'none';
+  document.getElementById('toolsResults').style.display = 'none';
+  a.style.background = tab === 'analyze' ? '#6C3Bff' : 'transparent';
+  a.style.color = tab === 'analyze' ? '#fff' : 'var(--muted)';
+  r.style.background = tab === 'research' ? '#6C3Bff' : 'transparent';
+  r.style.color = tab === 'research' ? '#fff' : 'var(--muted)';
+}
+
+async function quickAnalyzeWebsite() {
+  const url = document.getElementById('toolsUrlInput').value.trim();
+  if (!url) return;
+  document.getElementById('toolsError').style.display = 'none';
+  document.getElementById('toolsResults').style.display = 'none';
+  document.getElementById('toolsLoadingText').textContent = 'Reading the website...';
+  document.getElementById('toolsLoading').style.display = 'block';
+  document.getElementById('toolsAnalyzeBtn').disabled = true;
+
+  try {
+    const res = await fetch('/api/board-analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+    const data = await res.json();
+    document.getElementById('toolsLoading').style.display = 'none';
+    document.getElementById('toolsAnalyzeBtn').disabled = false;
+    if (!res.ok) { document.getElementById('toolsError').textContent = data.error || 'Analysis failed.'; document.getElementById('toolsError').style.display = 'block'; return; }
+
+    const factLabels = { business_name:'Business Name', industry:'Industry', value_proposition:'Value Proposition', products_services:'Products & Services', target_customers:'Target Customers', pricing_info:'Pricing', location:'Location', contact_info:'Contact Info', positioning:'Positioning', notable_gaps:"What's Missing" };
+    const rows = Object.entries(data.facts).filter(([,f]) => f && f.value).map(([key, fact]) => {
+      const badgeColor = fact.source_type === 'observed' ? '#10b981' : '#f59e0b';
+      const badgeText = fact.source_type === 'observed' ? 'Observed' : 'AI Inferred';
+      return `<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase">${factLabels[key]||key}</span><span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;background:${badgeColor}22;color:${badgeColor}">${badgeText}</span></div>
+        <div style="font-size:12.5px;color:var(--text2)">${fact.value}</div>
+      </div>`;
+    }).join('');
+    document.getElementById('toolsResults').innerHTML = rows;
+    document.getElementById('toolsResults').style.display = 'block';
+  } catch (e) {
+    document.getElementById('toolsLoading').style.display = 'none';
+    document.getElementById('toolsAnalyzeBtn').disabled = false;
+    document.getElementById('toolsError').textContent = 'Connection error. Please try again.';
+    document.getElementById('toolsError').style.display = 'block';
+  }
+}
+
+async function quickResearch() {
+  const businessName = document.getElementById('toolsBizNameInput').value.trim();
+  const industry = document.getElementById('toolsIndustryInput').value.trim();
+  const city = document.getElementById('toolsCityInput').value.trim();
+  const country = document.getElementById('toolsCountryInput').value.trim();
+  const scope = document.getElementById('toolsScopeSelect').value;
+  if (!businessName && !industry) { alert('Please enter at least a business name or industry.'); return; }
+
+  document.getElementById('toolsError').style.display = 'none';
+  document.getElementById('toolsResults').style.display = 'none';
+  document.getElementById('toolsLoadingText').textContent = 'Researching the market...';
+  document.getElementById('toolsLoading').style.display = 'block';
+  document.getElementById('toolsResearchBtn').disabled = true;
+
+  try {
+    const res = await fetch('/api/board-research', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ businessName, industry, city, country, scope }) });
+    const data = await res.json();
+    document.getElementById('toolsLoading').style.display = 'none';
+    document.getElementById('toolsResearchBtn').disabled = false;
+    if (!res.ok) { document.getElementById('toolsError').textContent = data.error || 'Research failed.'; document.getElementById('toolsError').style.display = 'block'; return; }
+
+    lastResearchResult = data;
+    const s = data.structured;
+    const scopeColor = { local: '#10b981', international: '#f59e0b' };
+    const compRows = (s.competitors||[]).map(c => `<div style="background:var(--bg3);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+      <div style="font-size:12.5px;font-weight:700;color:var(--text)">${c.name} <span style="font-size:9px;font-weight:700;color:${scopeColor[c.scope]||'#888'};text-transform:uppercase">[${c.scope||'unknown'}]</span></div>
+      <div style="font-size:12px;color:var(--text2);margin:2px 0">${c.description||''}</div>
+      <div style="font-size:11.5px;color:var(--muted)">Edge/weakness: ${c.differentiator||''}</div>
+    </div>`).join('');
+    const recRows = (s.strategic_recommendations||[]).map((r,i) => `<div style="background:var(--bg3);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+      <div style="font-size:12.5px;font-weight:700;color:var(--text)">${i+1}. ${r.title||r.action||''} ${r.priority?`<span style="font-size:9px;color:#888">[${r.priority.toUpperCase()}]</span>`:''}</div>
+      <div style="font-size:12px;color:var(--text2);margin:2px 0">${r.solution||r.reason||''}</div>
+    </div>`).join('');
+
+    document.getElementById('toolsResults').innerHTML = `
+      <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;margin-bottom:6px">Market Context</div>
+      <div style="font-size:12.5px;color:var(--text2);margin-bottom:14px">${s.market_context||''}</div>
+      <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;margin-bottom:6px">Competitors</div>
+      ${compRows || '<div style="font-size:12px;color:var(--muted)">None found</div>'}
+      <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;margin:14px 0 6px">Recommendations</div>
+      ${recRows || '<div style="font-size:12px;color:var(--muted)">None generated</div>'}
+      <button class="sbtn" style="width:100%;height:auto;padding:10px;border-radius:8px;margin-top:8px;font-size:12.5px" onclick="quickVerify()" id="toolsVerifyBtn">🔎 Verify These Recommendations</button>
+      <div id="toolsVerifyResults" style="margin-top:12px"></div>
+    `;
+    document.getElementById('toolsResults').style.display = 'block';
+  } catch (e) {
+    document.getElementById('toolsLoading').style.display = 'none';
+    document.getElementById('toolsResearchBtn').disabled = false;
+    document.getElementById('toolsError').textContent = 'Connection error. Please try again.';
+    document.getElementById('toolsError').style.display = 'block';
+  }
+}
+
+async function quickVerify() {
+  if (!lastResearchResult) return;
+  const btn = document.getElementById('toolsVerifyBtn');
+  btn.disabled = true; btn.textContent = 'Verifying...';
+
+  try {
+    const res = await fetch('/api/board-verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ structured: lastResearchResult.structured, sources: lastResearchResult.sources }) });
+    const data = await res.json();
+    btn.disabled = false; btn.textContent = '🔎 Verify These Recommendations';
+    if (!res.ok) { alert(data.error || 'Verification failed.'); return; }
+
+    const v = data.verification;
+    const confColors = { high: '#10b981', medium: '#f59e0b', low: '#ef4444' };
+    const checks = (v.recommendation_checks||[]).map(c => `<div style="font-size:12px;color:var(--text2);margin-bottom:6px"><strong style="color:var(--text)">${c.recommendation_title}</strong> — ${(c.verdict||'').toUpperCase()}<br><span style="color:var(--muted)">${c.note||''}</span></div>`).join('');
+    document.getElementById('toolsVerifyResults').innerHTML = `
+      <div style="background:var(--bg4);border-radius:8px;padding:12px">
+        <div style="font-size:11px;font-weight:700;color:${confColors[v.overall_confidence]||'#888'};text-transform:uppercase;margin-bottom:8px">${v.overall_confidence||''} Confidence</div>
+        ${checks}
+      </div>`;
+  } catch (e) {
+    btn.disabled = false; btn.textContent = '🔎 Verify These Recommendations';
+    alert('Connection error. Please try again.');
+  }
+}
+
 async function autoMatchDirector() {
   const input = document.getElementById('autoMatchInput');
   const challenge = input.value.trim();
