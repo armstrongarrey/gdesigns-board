@@ -137,10 +137,12 @@ CREATE TABLE IF NOT EXISTS cms_content (
   section VARCHAR(100) NOT NULL,
   key VARCHAR(100) NOT NULL,
   value TEXT NOT NULL,
+  value_fr TEXT,
   type VARCHAR(50) DEFAULT 'text',
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(section, key)
 );
+ALTER TABLE cms_content ADD COLUMN IF NOT EXISTS value_fr TEXT;
 
 -- Team members table (for Business plan)
 CREATE TABLE IF NOT EXISTS team_members (
