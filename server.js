@@ -430,6 +430,84 @@ app.get('/api/admin/cms-raw', adminRequired, async (req, res) => {
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
 
+// ── Auto-translate CMS content to French using AI ──────────────────────────
+// Reads the ACTUAL current English content from the database (not a guess at
+// what it might be) and produces real French translations. Batched one AI call
+// per section — smaller, more reliable calls rather than one giant one that
+// risks truncation on a large site. By default only translates fields that
+// don't already have French text, so it never silently overwrites manual edits
+// unless the admin explicitly asks it to. IMPORTANT: this returns the
+// translations for review — it does NOT write to the database. The admin must
+// still click "Save All Changes" to actually publish them, same as any other
+// CMS edit, so nothing goes live without a human looking at it first.
+app.post('/api/admin/cms-translate', adminRequired, async (req, res) => {
+  const { overwrite = false } = req.body || {};
+
+  try {
+    const result = await pool.query('SELECT * FROM cms_content ORDER BY section, key');
+    const bySection = {};
+    result.rows.forEach(row => {
+      if (!bySection[row.section]) bySection[row.section] = [];
+      const needsTranslation = overwrite || !row.value_fr;
+      if (needsTranslation) bySection[row.section].push({ key: row.key, value: row.value });
+    });
+
+    const sections = Object.entries(bySection).filter(([, fields]) => fields.length > 0);
+    if (!sections.length) {
+      return res.json({ success: true, translatedCount: 0, sectionsProcessed: 0, translations: {}, message: 'Everything already has a French translation. Nothing to do.' });
+    }
+
+    let translatedCount = 0;
+    const failedSections = [];
+    const translations = {}; // { section: { key: frValue } } — returned for the frontend to merge and let the admin review
+
+    for (const [section, fields] of sections) {
+      const fieldsJson = JSON.stringify(Object.fromEntries(fields.map(f => [f.key, f.value])));
+
+      const prompt = `You are a professional French translator working on marketing copy for a business consulting platform (Arreyon Consult, aimed at African and global founders, based in Cameroon). Translate the following website content from English to French.
+
+CONTENT TO TRANSLATE (JSON, section: "${section}"):
+${fieldsJson}
+
+RULES:
+- Translate naturally, as a native French marketing copywriter would write it — not a literal word-for-word translation
+- Keep the same tone: confident, direct, professional but warm
+- Keep proper nouns, brand names (Arreyon Consult, G-DESIGNS LTD), and person names (e.g. Rockefeller, Ogilvy, Buffett) unchanged
+- Keep any numbers, prices, or currency symbols unchanged
+- Preserve any HTML tags exactly as they appear in the source (e.g. <br>, <strong>)
+- Return ONLY a JSON object with the EXACT SAME keys as the input, mapped to their French translations. No markdown, no commentary, no extra keys.`;
+
+      try {
+        const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Translate now, as JSON only.' }], complexity: 'complex', context: { feature: 'cms_translation' }, maxTokens: 3000 });
+        const translated = extractJSON(raw);
+
+        translations[section] = {};
+        for (const field of fields) {
+          const frValue = translated[field.key];
+          if (frValue) {
+            translations[section][field.key] = frValue;
+            translatedCount++;
+          }
+        }
+      } catch (sectionErr) {
+        console.error(`CMS translation failed for section "${section}":`, sectionErr.message);
+        failedSections.push(section);
+      }
+    }
+
+    res.json({
+      success: true,
+      translatedCount,
+      sectionsProcessed: sections.length,
+      translations,
+      failedSections: failedSections.length ? failedSections : undefined
+    });
+  } catch (err) {
+    console.error('CMS auto-translate error:', err.message);
+    res.status(500).json({ error: err.message || 'Translation failed. Please try again.' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ANNOUNCEMENT ROUTES
 // ═══════════════════════════════════════════════════════════════════════════
