@@ -271,9 +271,87 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
         </button>
       </div>
       <div class="spill"><div class="sdot"></div>Live</div>
+      <button class="sbtn" style="width:auto;height:auto;padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600" onclick="openBoardVerdict()">🏛️ Board Verdict</button>
+      <button class="sbtn" style="width:auto;height:auto;padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600;background:var(--bg3);border:1px solid var(--border)" onclick="openBoardTools()">🔧 BI Tools</button>
       <button class="logout-btn" id="logoutBtn">Lock</button>
     </div>
   </header>
+
+  <!-- CHAIRMAN SYNTHESIS MODAL -->
+  <div id="verdictModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:999;align-items:center;justify-content:center;padding:20px">
+    <div style="background:var(--bg2);border:1px solid var(--border-light);border-radius:16px;padding:28px;max-width:640px;width:100%;max-height:85vh;overflow-y:auto;position:relative">
+      <button onclick="closeBoardVerdict()" style="position:absolute;top:16px;right:16px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;line-height:1">×</button>
+      <div style="font-size:20px;font-weight:700;margin-bottom:4px">🏛️ Chairman's Board Verdict</div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:20px">A final synthesis across your conversation with the board</div>
+      <div id="verdictPrompt" style="text-align:center;padding:30px 10px">
+        <div style="font-size:13.5px;color:var(--text2);margin-bottom:18px">Ready to synthesize your board session into one final, decisive recommendation.</div>
+        <button class="sbtn" style="width:auto;height:auto;padding:11px 24px;border-radius:9px;font-size:14px;font-weight:600" onclick="generateBoardVerdict()">Generate Verdict</button>
+      </div>
+      <div id="verdictLoading" style="display:none;text-align:center;padding:40px 10px">
+        <div style="font-size:28px;margin-bottom:12px">⚖️</div>
+        <div style="font-size:13.5px;color:var(--text2)">The Chairman is reviewing your conversation...</div>
+      </div>
+      <div id="verdictError" style="display:none;padding:16px;background:#1a0808;border:1px solid #3a1010;border-radius:10px;font-size:13px;color:#ff8080"></div>
+      <div id="verdictResults" style="display:none">
+        <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">The Problem</div>
+        <div id="verdictProblem" style="font-size:13.5px;color:var(--text2);margin-bottom:18px"></div>
+        <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Key Advice</div>
+        <div id="verdictKeyAdvice" style="display:flex;flex-direction:column;gap:8px;margin-bottom:18px"></div>
+        <div id="verdictDisagreementWrap" style="display:none;background:#2a1f0022;border-left:3px solid #f59e0b;border-radius:6px;padding:12px 14px;margin-bottom:18px">
+          <div style="font-size:10.5px;font-weight:700;color:#f59e0b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Disagreement Among Directors</div>
+          <div id="verdictDisagreementText" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
+        </div>
+        <div style="background:var(--bg3);border:1px solid #6C3Bff;border-radius:10px;padding:16px;margin-bottom:14px">
+          <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Chairman's Verdict</div>
+          <div id="verdictText" style="font-size:14.5px;color:var(--text);line-height:1.7;font-weight:500"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div id="verdictConfidenceBadge" style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px"></div>
+          <div id="verdictConfidenceReason" style="font-size:12px;color:var(--muted)"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BI TOOLS MODAL: Quick Website Analyzer + Market Research -->
+  <div id="toolsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:999;align-items:center;justify-content:center;padding:20px">
+    <div style="background:var(--bg2);border:1px solid var(--border-light);border-radius:16px;padding:28px;max-width:680px;width:100%;max-height:85vh;overflow-y:auto;position:relative">
+      <button onclick="closeBoardTools()" style="position:absolute;top:16px;right:16px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;line-height:1">×</button>
+      <div style="font-size:20px;font-weight:700;margin-bottom:4px">🔧 Quick BI Tools</div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:20px">Nothing here is saved — for saved, ongoing profiles use your dashboard account instead.</div>
+
+      <div style="display:flex;gap:0;background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:3px;margin-bottom:18px">
+        <button type="button" id="toolsTabAnalyze" onclick="switchToolsTab('analyze')" style="flex:1;padding:9px;border:none;background:#6C3Bff;color:#fff;font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit">Analyze Website</button>
+        <button type="button" id="toolsTabResearch" onclick="switchToolsTab('research')" style="flex:1;padding:9px;border:none;background:transparent;color:var(--muted);font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit">Market Research</button>
+      </div>
+
+      <div id="toolsAnalyzeWrap">
+        <input id="toolsUrlInput" placeholder="e.g. yourbusiness.com" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;margin-bottom:10px;font-family:inherit">
+        <button class="sbtn" style="width:100%;height:auto;padding:11px;border-radius:9px;font-size:13.5px;font-weight:600" onclick="quickAnalyzeWebsite()" id="toolsAnalyzeBtn">Analyze Website</button>
+      </div>
+
+      <div id="toolsResearchWrap" style="display:none">
+        <input id="toolsBizNameInput" placeholder="Business name" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;margin-bottom:8px;font-family:inherit">
+        <input id="toolsIndustryInput" placeholder="Industry (e.g. Digital Marketing Agency)" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;margin-bottom:8px;font-family:inherit">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <input id="toolsCityInput" placeholder="City" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;font-family:inherit">
+          <input id="toolsCountryInput" placeholder="Country" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;font-family:inherit">
+        </div>
+        <select id="toolsScopeSelect" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;margin-bottom:10px;font-family:inherit">
+          <option value="both">National + International</option>
+          <option value="national">National only</option>
+        </select>
+        <button class="sbtn" style="width:100%;height:auto;padding:11px;border-radius:9px;font-size:13.5px;font-weight:600" onclick="quickResearch()" id="toolsResearchBtn">Research Market &amp; Competitors</button>
+      </div>
+
+      <div id="toolsLoading" style="display:none;text-align:center;padding:30px 10px">
+        <div style="font-size:24px;margin-bottom:10px">⚙️</div>
+        <div id="toolsLoadingText" style="font-size:13px;color:var(--text2)">Working...</div>
+      </div>
+      <div id="toolsError" style="display:none;margin-top:12px;padding:14px 16px;background:#1a0808;border:1px solid #3a1010;border-radius:10px;font-size:13px;color:#ff8080"></div>
+      <div id="toolsResults" style="display:none;margin-top:16px"></div>
+    </div>
+  </div>
 
   <!-- DIRECTOR SCROLL -->
   <nav class="dir-scroll" id="dirScroll" aria-label="Board members"></nav>
