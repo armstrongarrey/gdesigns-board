@@ -76,6 +76,44 @@ const I18N_DICT = {
     // Language switcher itself
     "lang.switch": "Language",
 
+    // Dashboard sidebar nav
+    "dash.nav_dashboard": "Dashboard",
+    "dash.nav_boardroom": "Boardroom",
+    "dash.nav_analyzer": "Analyze My Business",
+    "dash.nav_entrepreneur": "Start a Business",
+    "dash.nav_financial": "Financial Tools",
+    "dash.nav_scenario": "Compare Scenarios",
+    "dash.nav_history": "History",
+    "dash.nav_account": "Account",
+    "dash.nav_profile": "Profile",
+    "dash.nav_billing": "Billing & Plan",
+    "dash.nav_public_consult": "Public Consult",
+    "dash.current_plan": "Current Plan",
+    "dash.manage_plan": "Manage Plan",
+    "dash.upgrade_plan": "Upgrade Plan",
+    "dash.new_session": "New Session",
+
+    // Dashboard home view
+    "dash.good_morning": "Good morning",
+    "dash.good_afternoon": "Good afternoon",
+    "dash.good_evening": "Good evening",
+    "dash.home_intro": "Your board is assembled and ready. What challenge are you bringing to them today?",
+    "dash.ask_board": "Ask the Board",
+    "dash.view_history": "View History",
+    "dash.consultations_used": "Consultations Used",
+    "dash.of_this_month": "of this month",
+    "dash.directors_available": "Directors Available",
+    "dash.legendary_advisors": "legendary advisors",
+    "dash.member_since": "Member Since",
+    "dash.welcome_aboard": "welcome aboard",
+    "dash.start_consultation": "Start a consultation",
+    "dash.recent_sessions": "Recent sessions",
+
+    // Boardroom
+    "board.dashboard_link": "Dashboard",
+    "board.get_verdict": "Get Board Verdict",
+    "board.consultations_left": "consultations left",
+
     // Downloadable report text labels
     "report.title": "G-DESIGNS LTD — BOARD CONSULTATION REPORT",
     "report.client": "Client",
@@ -153,6 +191,44 @@ const I18N_DICT = {
 
     // Language switcher itself
     "lang.switch": "Langue",
+
+    // Dashboard sidebar nav
+    "dash.nav_dashboard": "Tableau de bord",
+    "dash.nav_boardroom": "Salle du conseil",
+    "dash.nav_analyzer": "Analyser mon entreprise",
+    "dash.nav_entrepreneur": "Démarrer une entreprise",
+    "dash.nav_financial": "Outils financiers",
+    "dash.nav_scenario": "Comparer des scénarios",
+    "dash.nav_history": "Historique",
+    "dash.nav_account": "Compte",
+    "dash.nav_profile": "Profil",
+    "dash.nav_billing": "Facturation et forfait",
+    "dash.nav_public_consult": "Consultation publique",
+    "dash.current_plan": "Forfait actuel",
+    "dash.manage_plan": "Gérer le forfait",
+    "dash.upgrade_plan": "Mettre à niveau",
+    "dash.new_session": "Nouvelle session",
+
+    // Dashboard home view
+    "dash.good_morning": "Bonjour",
+    "dash.good_afternoon": "Bon après-midi",
+    "dash.good_evening": "Bonsoir",
+    "dash.home_intro": "Votre conseil est prêt. Quel défi leur soumettez-vous aujourd'hui ?",
+    "dash.ask_board": "Consulter le conseil",
+    "dash.view_history": "Voir l'historique",
+    "dash.consultations_used": "Consultations utilisées",
+    "dash.of_this_month": "ce mois-ci",
+    "dash.directors_available": "Directeurs disponibles",
+    "dash.legendary_advisors": "conseillers légendaires",
+    "dash.member_since": "Membre depuis",
+    "dash.welcome_aboard": "bienvenue à bord",
+    "dash.start_consultation": "Démarrer une consultation",
+    "dash.recent_sessions": "Sessions récentes",
+
+    // Boardroom
+    "board.dashboard_link": "Tableau de bord",
+    "board.get_verdict": "Verdict du conseil",
+    "board.consultations_left": "consultations restantes",
 
     // Downloadable report text labels
     "report.title": "G-DESIGNS LTD — RAPPORT DE CONSULTATION DU CONSEIL",
