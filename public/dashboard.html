@@ -641,19 +641,44 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div class="section-sub">Real calculations, not AI guesses — every number here is computed by exact math, verifiable independently.</div>
 
       <div style="max-width:640px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:24px">
-        <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:8px">Choose a Calculator</label>
-        <select class="form-input" id="calcTypeSelect" onchange="renderCalculatorForm()" style="margin-bottom:18px">
-          <option value="revenue">Revenue</option>
-          <option value="profit_margin">Gross &amp; Net Profit Margin</option>
-          <option value="breakeven">Break-Even Point</option>
-          <option value="roi">Return on Investment (ROI)</option>
-          <option value="cac">Customer Acquisition Cost (CAC)</option>
-          <option value="ltv">Customer Lifetime Value (LTV)</option>
-          <option value="ltv_cac_ratio">LTV : CAC Ratio</option>
-          <option value="roas">Return on Ad Spend (ROAS)</option>
-          <option value="growth_projection">Growth Projection</option>
-          <option value="cashflow_projection">Cash Flow Projection</option>
-        </select>
+        <div class="form-row" style="margin-bottom:18px">
+          <div class="form-group" style="margin-bottom:0">
+            <label>Choose a Calculator</label>
+            <select class="form-input" id="calcTypeSelect" onchange="renderCalculatorForm()">
+              <option value="revenue">Revenue</option>
+              <option value="profit_margin">Gross &amp; Net Profit Margin</option>
+              <option value="breakeven">Break-Even Point</option>
+              <option value="roi">Return on Investment (ROI)</option>
+              <option value="cac">Customer Acquisition Cost (CAC)</option>
+              <option value="ltv">Customer Lifetime Value (LTV)</option>
+              <option value="ltv_cac_ratio">LTV : CAC Ratio</option>
+              <option value="roas">Return on Ad Spend (ROAS)</option>
+              <option value="growth_projection">Growth Projection</option>
+              <option value="cashflow_projection">Cash Flow Projection</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0;max-width:170px">
+            <label>Currency</label>
+            <select class="form-input" id="calcCurrencySelect" onchange="saveCurrencyPreference()">
+              <option value="XAF">FCFA (XAF)</option>
+              <option value="USD">US Dollar ($)</option>
+              <option value="EUR">Euro (€)</option>
+              <option value="GBP">British Pound (£)</option>
+              <option value="NGN">Naira (₦)</option>
+              <option value="GHS">Cedi (₵)</option>
+              <option value="KES">Kenyan Shilling (KSh)</option>
+              <option value="ZAR">Rand (R)</option>
+              <option value="AED">UAE Dirham (AED)</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </div>
+        </div>
+        <div id="calcOtherCurrencyWrap" style="display:none;margin-bottom:14px">
+          <div class="form-group" style="margin-bottom:0">
+            <label>Currency Symbol / Code</label>
+            <input class="form-input" id="calcOtherCurrencyInput" placeholder="e.g. CHF, R$, ₹" maxlength="6" oninput="saveCurrencyPreference()">
+          </div>
+        </div>
 
         <div id="calcFormFields" style="display:flex;flex-direction:column;gap:12px;margin-bottom:16px"></div>
         <button class="btn-primary" style="width:100%;padding:12px" onclick="runCalculator()" id="runCalcBtn">Calculate</button>
@@ -925,7 +950,7 @@ function showSection(name) {
   if (window.innerWidth < 900) document.getElementById('sidebar').classList.remove('open');
   if (name === 'analyzer') loadAnalyzedBusinesses();
   if (name === 'entrepreneur') loadEntrepreneurHistory();
-  if (name === 'financial') renderCalculatorForm();
+  if (name === 'financial') { renderCalculatorForm(); restoreCurrencyPreference(); }
 }
 
 function openPayment(plan) {
@@ -2070,6 +2095,56 @@ const CALC_FIELD_DEFS = {
   ]
 };
 
+// ── Currency handling for Financial Tools ───────────────────────────────────
+const CURRENCY_SYMBOLS = { XAF: 'FCFA', USD: '$', EUR: '€', GBP: '£', NGN: '₦', GHS: '₵', KES: 'KSh', ZAR: 'R', AED: 'AED' };
+
+function getCurrentCurrencySymbol() {
+  const select = document.getElementById('calcCurrencySelect');
+  if (!select) return '$';
+  if (select.value === 'OTHER') {
+    const custom = document.getElementById('calcOtherCurrencyInput').value.trim();
+    return custom || '$';
+  }
+  return CURRENCY_SYMBOLS[select.value] || select.value;
+}
+
+function saveCurrencyPreference() {
+  const select = document.getElementById('calcCurrencySelect');
+  const isOther = select.value === 'OTHER';
+  document.getElementById('calcOtherCurrencyWrap').style.display = isOther ? 'block' : 'none';
+  const toSave = isOther ? document.getElementById('calcOtherCurrencyInput').value.trim() : select.value;
+  try { localStorage.setItem('arreyon_calc_currency', toSave); } catch (e) {}
+  // Re-render existing results (if any) with the new currency, without re-running the calculation
+  if (lastCalcType && lastCalcResult) renderCalculatorResult(lastCalcType, lastCalcResult);
+}
+
+function restoreCurrencyPreference() {
+  let saved;
+  try { saved = localStorage.getItem('arreyon_calc_currency'); } catch (e) {}
+  if (!saved) return;
+  const select = document.getElementById('calcCurrencySelect');
+  const isKnown = Object.keys(CURRENCY_SYMBOLS).includes(saved);
+  if (isKnown) {
+    select.value = saved;
+  } else {
+    select.value = 'OTHER';
+    document.getElementById('calcOtherCurrencyWrap').style.display = 'block';
+    document.getElementById('calcOtherCurrencyInput').value = saved;
+  }
+}
+
+function formatMoney(n) {
+  const symbol = getCurrentCurrencySymbol();
+  const formatted = Number(n).toLocaleString();
+  const select = document.getElementById('calcCurrencySelect');
+  // FCFA conventionally follows the number; symbol-style currencies precede it
+  if (select && (select.value === 'XAF' || symbol === 'FCFA')) return `${formatted} ${symbol}`;
+  return `${symbol}${formatted}`;
+}
+
+let lastCalcType = null;
+let lastCalcResult = null;
+
 function renderCalculatorForm() {
   const type = document.getElementById('calcTypeSelect').value;
   const fields = CALC_FIELD_DEFS[type] || [];
@@ -2080,6 +2155,7 @@ function renderCalculatorForm() {
     </div>`).join('');
   document.getElementById('calcResults').style.display = 'none';
   document.getElementById('calcError').style.display = 'none';
+  lastCalcType = null; lastCalcResult = null;
 }
 
 async function runCalculator() {
@@ -2128,21 +2204,23 @@ function calcResultRow(label, value) {
 }
 
 function renderCalculatorResult(type, r) {
+  lastCalcType = type;
+  lastCalcResult = r;
   const box = document.getElementById('calcResults');
   let html = '<div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px">Result</div>';
 
   if (type === 'revenue') {
-    html += calcResultRow('Revenue', '$' + r.revenue.toLocaleString());
+    html += calcResultRow('Revenue', formatMoney(r.revenue));
   } else if (type === 'profit_margin') {
-    html += calcResultRow('Gross Profit', '$' + r.grossProfit.toLocaleString()) + calcResultRow('Gross Margin', r.grossMarginPct + '%') + calcResultRow('Net Profit', '$' + r.netProfit.toLocaleString()) + calcResultRow('Net Margin', r.netMarginPct + '%');
+    html += calcResultRow('Gross Profit', formatMoney(r.grossProfit)) + calcResultRow('Gross Margin', r.grossMarginPct + '%') + calcResultRow('Net Profit', formatMoney(r.netProfit)) + calcResultRow('Net Margin', r.netMarginPct + '%');
   } else if (type === 'breakeven') {
-    html += calcResultRow('Contribution Margin / Unit', '$' + r.contributionMarginPerUnit) + calcResultRow('Break-Even Units', r.breakevenUnits.toLocaleString()) + calcResultRow('Break-Even Revenue', '$' + r.breakevenRevenue.toLocaleString());
+    html += calcResultRow('Contribution Margin / Unit', formatMoney(r.contributionMarginPerUnit)) + calcResultRow('Break-Even Units', r.breakevenUnits.toLocaleString()) + calcResultRow('Break-Even Revenue', formatMoney(r.breakevenRevenue));
   } else if (type === 'roi') {
-    html += calcResultRow('Net Gain', '$' + r.netGain.toLocaleString()) + calcResultRow('ROI', r.roiPct + '%');
+    html += calcResultRow('Net Gain', formatMoney(r.netGain)) + calcResultRow('ROI', r.roiPct + '%');
   } else if (type === 'cac') {
-    html += calcResultRow('Customer Acquisition Cost', '$' + r.cac.toLocaleString());
+    html += calcResultRow('Customer Acquisition Cost', formatMoney(r.cac));
   } else if (type === 'ltv') {
-    html += calcResultRow('Customer Lifetime Value', '$' + r.ltv.toLocaleString());
+    html += calcResultRow('Customer Lifetime Value', formatMoney(r.ltv));
   } else if (type === 'ltv_cac_ratio') {
     html += calcResultRow('LTV : CAC Ratio', r.ratio + ' : 1');
     html += `<div style="margin-top:12px;font-size:12.5px;color:var(--text2);background:var(--bg3);border-radius:8px;padding:10px 12px">${r.verdict}</div>`;
@@ -2152,12 +2230,12 @@ function renderCalculatorResult(type, r) {
     const last = r.projection[r.projection.length - 1];
     const first = r.projection[0];
     const totalGrowthPct = first.value !== 0 ? (((last.value / first.value) - 1) * 100).toFixed(1) : '—';
-    html += calcResultRow('Final Month Value', last.value.toLocaleString()) + calcResultRow(`Growth (Month 1 → ${last.month})`, totalGrowthPct + '%');
+    html += calcResultRow('Final Month Value', formatMoney(last.value)) + calcResultRow(`Growth (Month 1 → ${last.month})`, totalGrowthPct + '%');
     const chartData = r.projection.filter((p,i) => i % Math.ceil(r.projection.length/8) === 0 || i === r.projection.length-1).map(p => ({ label: 'M'+p.month, value: p.value, color: '#8b5cf6' }));
     html += `<div style="margin-top:16px">${buildBarChartSVG(chartData, { width: 500 })}</div>`;
   } else if (type === 'cashflow_projection') {
     const last = r.projection[r.projection.length - 1];
-    html += calcResultRow('Final Balance', '$' + last.runningBalance.toLocaleString());
+    html += calcResultRow('Final Balance', formatMoney(last.runningBalance));
     if (r.warning) {
       html += `<div style="margin-top:12px;font-size:12.5px;color:var(--gold);background:#2a1f0022;border:1px solid var(--gold);border-radius:8px;padding:10px 12px">⚠ ${r.warning}</div>`;
     } else {
