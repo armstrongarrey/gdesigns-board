@@ -145,6 +145,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <button class="nav-item" onclick="showSection('entrepreneur')" id="nav-entrepreneur">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/><path d="M17 7c0 2.5-2.5 5-5 5s-5-2.5-5-5"/></svg>Start a Business
     </button>
+    <button class="nav-item" onclick="showSection('financial')" id="nav-financial">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>Financial Tools
+    </button>
     <button class="nav-item" onclick="showSection('history')" id="nav-history">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>History
     </button>
@@ -378,6 +381,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <a id="resultUrl" href="#" target="_blank" style="font-size:12px;color:var(--purple-light);text-decoration:none">visit site ↗</a>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:18px" id="resultPages"></div>
+        <div id="socialLimitNotice" style="display:none;font-size:12.5px;color:var(--gold);background:#2a1f0022;border:1px solid var(--gold);border-radius:8px;padding:12px 14px;margin-bottom:18px"></div>
         <div id="factsGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px"></div>
 
         <div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
@@ -629,6 +633,34 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">No sessions yet</div>
         </div>
       </div>
+    </div>
+
+    <!-- FINANCIAL TOOLS SECTION -->
+    <div class="section-view" id="section-financial">
+      <div class="section-title">Financial Tools</div>
+      <div class="section-sub">Real calculations, not AI guesses — every number here is computed by exact math, verifiable independently.</div>
+
+      <div style="max-width:640px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:24px">
+        <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:8px">Choose a Calculator</label>
+        <select class="form-input" id="calcTypeSelect" onchange="renderCalculatorForm()" style="margin-bottom:18px">
+          <option value="revenue">Revenue</option>
+          <option value="profit_margin">Gross &amp; Net Profit Margin</option>
+          <option value="breakeven">Break-Even Point</option>
+          <option value="roi">Return on Investment (ROI)</option>
+          <option value="cac">Customer Acquisition Cost (CAC)</option>
+          <option value="ltv">Customer Lifetime Value (LTV)</option>
+          <option value="ltv_cac_ratio">LTV : CAC Ratio</option>
+          <option value="roas">Return on Ad Spend (ROAS)</option>
+          <option value="growth_projection">Growth Projection</option>
+          <option value="cashflow_projection">Cash Flow Projection</option>
+        </select>
+
+        <div id="calcFormFields" style="display:flex;flex-direction:column;gap:12px;margin-bottom:16px"></div>
+        <button class="btn-primary" style="width:100%;padding:12px" onclick="runCalculator()" id="runCalcBtn">Calculate</button>
+        <div id="calcError" style="display:none;margin-top:10px;font-size:12.5px;color:#ff8080"></div>
+      </div>
+
+      <div id="calcResults" style="display:none;max-width:640px;background:var(--bg2);border:1px solid var(--purple);border-radius:14px;padding:24px"></div>
     </div>
 
   </div>
@@ -888,11 +920,12 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const navEl = document.getElementById('nav-' + name);
   if (navEl) navEl.classList.add('active');
-  const titles = {home:'Dashboard',history:'History',profile:'Profile',billing:'Billing & Plan',boardroom:'Boardroom',analyzer:'Analyze My Business',entrepreneur:'Start a Business'};
+  const titles = {home:'Dashboard',history:'History',profile:'Profile',billing:'Billing & Plan',boardroom:'Boardroom',analyzer:'Analyze My Business',entrepreneur:'Start a Business',financial:'Financial Tools'};
   document.querySelector('.topbar-title').textContent = titles[name] || 'Dashboard';
   if (window.innerWidth < 900) document.getElementById('sidebar').classList.remove('open');
   if (name === 'analyzer') loadAnalyzedBusinesses();
   if (name === 'entrepreneur') loadEntrepreneurHistory();
+  if (name === 'financial') renderCalculatorForm();
 }
 
 function openPayment(plan) {
@@ -1099,6 +1132,14 @@ function renderAnalysisResults(data) {
   document.getElementById('resultPages').textContent = data.isDescriptionOnly
     ? 'Based on your business description'
     : `Analyzed ${data.pagesAnalyzed.length} page${data.pagesAnalyzed.length > 1 ? 's' : ''}`;
+
+  const socialNotice = document.getElementById('socialLimitNotice');
+  if (data.socialInfo) {
+    socialNotice.innerHTML = `⚠ <strong>${data.socialInfo.platform} profile detected.</strong> ${data.socialInfo.limitationNote}`;
+    socialNotice.style.display = 'block';
+  } else {
+    socialNotice.style.display = 'none';
+  }
 
   // Reset any previous research view when a new analysis runs
   document.getElementById('researchResults').style.display = 'none';
@@ -1977,6 +2018,157 @@ function loadEntrepreneurSession(index) {
     targetId = 'validationResults';
   }
   document.getElementById(targetId).scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── FINANCIAL TOOLS ─────────────────────────────────────────────────────────
+const CALC_FIELD_DEFS = {
+  revenue: [
+    { key: 'unitsSold', label: 'Units Sold', placeholder: 'e.g. 500' },
+    { key: 'pricePerUnit', label: 'Price Per Unit', placeholder: 'e.g. 25' }
+  ],
+  profit_margin: [
+    { key: 'revenue', label: 'Total Revenue', placeholder: 'e.g. 100000' },
+    { key: 'cogs', label: 'Cost of Goods Sold (COGS)', placeholder: 'e.g. 40000' },
+    { key: 'operatingExpenses', label: 'Operating Expenses (optional)', placeholder: 'e.g. 30000', optional: true }
+  ],
+  breakeven: [
+    { key: 'fixedCosts', label: 'Fixed Costs (monthly)', placeholder: 'e.g. 50000' },
+    { key: 'pricePerUnit', label: 'Price Per Unit', placeholder: 'e.g. 100' },
+    { key: 'variableCostPerUnit', label: 'Variable Cost Per Unit', placeholder: 'e.g. 60' }
+  ],
+  roi: [
+    { key: 'gain', label: 'Total Gain / Return', placeholder: 'e.g. 15000' },
+    { key: 'costOfInvestment', label: 'Cost of Investment', placeholder: 'e.g. 10000' }
+  ],
+  cac: [
+    { key: 'totalAcquisitionCost', label: 'Total Acquisition Cost (marketing + sales spend)', placeholder: 'e.g. 20000' },
+    { key: 'newCustomers', label: 'Number of New Customers Acquired', placeholder: 'e.g. 100' }
+  ],
+  ltv: [
+    { key: 'avgOrderValue', label: 'Average Order Value', placeholder: 'e.g. 50' },
+    { key: 'purchaseFrequencyPerYear', label: 'Purchases Per Customer Per Year', placeholder: 'e.g. 6' },
+    { key: 'avgCustomerLifespanYears', label: 'Average Customer Lifespan (years)', placeholder: 'e.g. 3' }
+  ],
+  ltv_cac_ratio: [
+    { key: 'ltv', label: 'Customer Lifetime Value (LTV)', placeholder: 'e.g. 900' },
+    { key: 'cac', label: 'Customer Acquisition Cost (CAC)', placeholder: 'e.g. 200' }
+  ],
+  roas: [
+    { key: 'revenueFromAds', label: 'Revenue Generated From Ads', placeholder: 'e.g. 8000' },
+    { key: 'adSpend', label: 'Total Ad Spend', placeholder: 'e.g. 2000' }
+  ],
+  growth_projection: [
+    { key: 'startValue', label: 'Starting Value (revenue, users, etc.)', placeholder: 'e.g. 1000' },
+    { key: 'monthlyGrowthRatePct', label: 'Monthly Growth Rate (%)', placeholder: 'e.g. 10' },
+    { key: 'months', label: 'Number of Months (max 36)', placeholder: 'e.g. 12', optional: true }
+  ],
+  cashflow_projection: [
+    { key: 'startingCash', label: 'Starting Cash', placeholder: 'e.g. 5000' },
+    { key: 'monthlyRevenue', label: 'Expected Monthly Revenue', placeholder: 'e.g. 2000' },
+    { key: 'monthlyExpenses', label: 'Expected Monthly Expenses', placeholder: 'e.g. 3000' },
+    { key: 'months', label: 'Number of Months (max 36)', placeholder: 'e.g. 12', optional: true }
+  ]
+};
+
+function renderCalculatorForm() {
+  const type = document.getElementById('calcTypeSelect').value;
+  const fields = CALC_FIELD_DEFS[type] || [];
+  document.getElementById('calcFormFields').innerHTML = fields.map(f => `
+    <div class="form-group">
+      <label>${f.label}${f.optional ? ' <span style="color:var(--muted);font-weight:400">(optional)</span>' : ''}</label>
+      <input class="form-input" type="number" step="any" id="calcInput_${f.key}" placeholder="${f.placeholder}">
+    </div>`).join('');
+  document.getElementById('calcResults').style.display = 'none';
+  document.getElementById('calcError').style.display = 'none';
+}
+
+async function runCalculator() {
+  const type = document.getElementById('calcTypeSelect').value;
+  const fields = CALC_FIELD_DEFS[type] || [];
+  const inputs = {};
+  for (const f of fields) {
+    const val = document.getElementById('calcInput_' + f.key).value;
+    if (!f.optional && val === '') {
+      document.getElementById('calcError').textContent = `Please fill in "${f.label}".`;
+      document.getElementById('calcError').style.display = 'block';
+      return;
+    }
+    if (val !== '') inputs[f.key] = val;
+  }
+
+  document.getElementById('calcError').style.display = 'none';
+  const btn = document.getElementById('runCalcBtn');
+  btn.disabled = true; btn.textContent = 'Calculating...';
+
+  try {
+    const res = await fetch('/api/financial/calculate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, inputs })
+    });
+    const data = await res.json();
+    btn.disabled = false; btn.textContent = 'Calculate';
+
+    if (!res.ok) {
+      document.getElementById('calcError').textContent = data.error || 'Calculation failed.';
+      document.getElementById('calcError').style.display = 'block';
+      return;
+    }
+    renderCalculatorResult(type, data.result);
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Calculate';
+    document.getElementById('calcError').textContent = 'Connection error. Please try again.';
+    document.getElementById('calcError').style.display = 'block';
+  }
+}
+
+function calcResultRow(label, value) {
+  return `<div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
+    <span style="font-size:13px;color:var(--text2)">${label}</span>
+    <span style="font-size:14px;font-weight:700;color:var(--text)">${value}</span>
+  </div>`;
+}
+
+function renderCalculatorResult(type, r) {
+  const box = document.getElementById('calcResults');
+  let html = '<div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px">Result</div>';
+
+  if (type === 'revenue') {
+    html += calcResultRow('Revenue', '$' + r.revenue.toLocaleString());
+  } else if (type === 'profit_margin') {
+    html += calcResultRow('Gross Profit', '$' + r.grossProfit.toLocaleString()) + calcResultRow('Gross Margin', r.grossMarginPct + '%') + calcResultRow('Net Profit', '$' + r.netProfit.toLocaleString()) + calcResultRow('Net Margin', r.netMarginPct + '%');
+  } else if (type === 'breakeven') {
+    html += calcResultRow('Contribution Margin / Unit', '$' + r.contributionMarginPerUnit) + calcResultRow('Break-Even Units', r.breakevenUnits.toLocaleString()) + calcResultRow('Break-Even Revenue', '$' + r.breakevenRevenue.toLocaleString());
+  } else if (type === 'roi') {
+    html += calcResultRow('Net Gain', '$' + r.netGain.toLocaleString()) + calcResultRow('ROI', r.roiPct + '%');
+  } else if (type === 'cac') {
+    html += calcResultRow('Customer Acquisition Cost', '$' + r.cac.toLocaleString());
+  } else if (type === 'ltv') {
+    html += calcResultRow('Customer Lifetime Value', '$' + r.ltv.toLocaleString());
+  } else if (type === 'ltv_cac_ratio') {
+    html += calcResultRow('LTV : CAC Ratio', r.ratio + ' : 1');
+    html += `<div style="margin-top:12px;font-size:12.5px;color:var(--text2);background:var(--bg3);border-radius:8px;padding:10px 12px">${r.verdict}</div>`;
+  } else if (type === 'roas') {
+    html += calcResultRow('Return on Ad Spend', r.roas + 'x');
+  } else if (type === 'growth_projection') {
+    const last = r.projection[r.projection.length - 1];
+    const first = r.projection[0];
+    const totalGrowthPct = first.value !== 0 ? (((last.value / first.value) - 1) * 100).toFixed(1) : '—';
+    html += calcResultRow('Final Month Value', last.value.toLocaleString()) + calcResultRow(`Growth (Month 1 → ${last.month})`, totalGrowthPct + '%');
+    const chartData = r.projection.filter((p,i) => i % Math.ceil(r.projection.length/8) === 0 || i === r.projection.length-1).map(p => ({ label: 'M'+p.month, value: p.value, color: '#8b5cf6' }));
+    html += `<div style="margin-top:16px">${buildBarChartSVG(chartData, { width: 500 })}</div>`;
+  } else if (type === 'cashflow_projection') {
+    const last = r.projection[r.projection.length - 1];
+    html += calcResultRow('Final Balance', '$' + last.runningBalance.toLocaleString());
+    if (r.warning) {
+      html += `<div style="margin-top:12px;font-size:12.5px;color:var(--gold);background:#2a1f0022;border:1px solid var(--gold);border-radius:8px;padding:10px 12px">⚠ ${r.warning}</div>`;
+    } else {
+      html += `<div style="margin-top:12px;font-size:12.5px;color:var(--green);background:#0a2a2022;border-radius:8px;padding:10px 12px">✓ Cash stays positive throughout this projection.</div>`;
+    }
+    const chartData = r.projection.filter((p,i) => i % Math.ceil(r.projection.length/8) === 0 || i === r.projection.length-1).map(p => ({ label: 'M'+p.month, value: Math.max(p.runningBalance, 0), color: p.runningBalance < 0 ? '#ef4444' : '#10b981' }));
+    html += `<div style="margin-top:16px">${buildBarChartSVG(chartData, { width: 500 })}</div>`;
+  }
+
+  box.innerHTML = html;
+  box.style.display = 'block';
 }
 
 init();
