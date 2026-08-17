@@ -1704,7 +1704,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 // ═══════════════════════════════════════════════════════════════════════════
 
 app.post('/api/consult/qualify', async (req, res) => {
-  const { businessData, conversationHistory = [] } = req.body;
+  const { businessData, conversationHistory = [], language = 'en' } = req.body;
   if (!businessData) return res.status(400).json({ error: 'Missing business data' });
 
   const userExchanges = conversationHistory.filter(m => m.role === 'user').length;
@@ -1738,7 +1738,7 @@ CLIENT JUST SAID: "${lastUserMsg}"
 
 ${isSmallTalk ? 'Acknowledge warmly in 1 sentence, then ask a business question.' : 'React briefly to what was said, then ask ONE follow-up question.'}
 ${nextTopicHint}
-RULES: ONE question only. Under 60 words total. Warm and conversational. Return plain text only.`;
+RULES: ONE question only. Under 60 words total. Warm and conversational. Return plain text only.${language === 'fr' ? ' Respond entirely in French (Français) — every word of your reply must be in French.' : ''}`;
 
   try {
     const q = await askClaude(qualifyPrompt, [{ role: 'user', content: lastUserMsg || 'Continue.' }], { feature: 'consult_secretary' });
@@ -1843,7 +1843,7 @@ app.get('/api/consult/directors', (req, res) => {
 });
 
 app.post('/api/consult/run', async (req, res) => {
-  const { businessData, clientInfo, conversationHistory = [], selectedDirectorIds = [] } = req.body;
+  const { businessData, clientInfo, conversationHistory = [], selectedDirectorIds = [], language = 'en' } = req.body;
   if (!businessData || !clientInfo) return res.status(400).json({ error: 'Missing business data or client info' });
 
 
@@ -1908,7 +1908,7 @@ Provide YOUR UNIQUE perspective as ${director.name}, focused on your area: ${dir
 - Be direct and decisive
 - Maximum 250 words
 
-Format your response as plain text paragraphs. No headers. No bullet points.`;
+Format your response as plain text paragraphs. No headers. No bullet points.${language === 'fr' ? ' Respond entirely in French (Français) — every word of your reply must be in French, written as ' + director.name + ' would express it in French.' : ''}`;
 
       let insight;
       try {
@@ -1948,7 +1948,7 @@ The 2 biggest risks identified by the board, and how to mitigate them.
 FINAL VERDICT
 One bold, direct statement about what this business needs most right now.
 
-Keep each section concise and actionable. Total: 400-500 words.`;
+Keep each section concise and actionable. Total: 400-500 words.${language === 'fr' ? '\n\nIMPORTANT: Keep the five section header labels EXACTLY as written above, in English (EXECUTIVE SUMMARY, KEY STRATEGIC RECOMMENDATIONS, RISK ANALYSIS, 90-DAY ACTION PLAN, FINAL VERDICT) — the application parses the report by matching these exact English labels. But write ALL the actual content under each header entirely in French (Français).' : ''}`;
 
     const synthesis = await askClaude(synthesisPrompt, [{ role: 'user', content: 'Synthesise the board consultation.' }], { feature: 'consult_board' });
 
