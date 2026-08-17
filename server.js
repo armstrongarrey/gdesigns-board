@@ -375,33 +375,6 @@ app.post('/api/admin/logout', (req, res) => {
 // CMS ROUTES (Admin only)
 // ═══════════════════════════════════════════════════════════════════════════
 
-app.get('/api/cms', async (req, res) => {
-  const lang = req.query.lang === 'fr' ? 'fr' : 'en';
-  try {
-    const result = await pool.query('SELECT * FROM cms_content ORDER BY section, key');
-    const content = {};
-    result.rows.forEach(row => {
-      if (!content[row.section]) content[row.section] = {};
-      // Fall back to English if no French translation has been entered yet for this field —
-      // means a page never shows blank text, just untranslated text until an admin fills it in.
-      content[row.section][row.key] = (lang === 'fr' && row.value_fr) ? row.value_fr : row.value;
-    });
-    res.json({ content, lang });
-  } catch(e) { res.status(500).json({ error: 'Failed' }); }
-});
-
-app.put('/api/cms', adminRequired, async (req, res) => {
-  const { section, key, value, value_fr } = req.body;
-  try {
-    await pool.query(
-      `INSERT INTO cms_content (section, key, value, value_fr) VALUES ($1, $2, $3, $4)
-       ON CONFLICT (section, key) DO UPDATE SET value = $3, value_fr = COALESCE($4, cms_content.value_fr), updated_at = NOW()`,
-      [section, key, value, value_fr || null]
-    );
-    res.json({ success: true });
-  } catch(e) { res.status(500).json({ error: 'Failed' }); }
-});
-
 // Bulk CMS update
 app.put('/api/cms/bulk', adminRequired, async (req, res) => {
   const { updates } = req.body; // [{section, key, value, value_fr}]
@@ -440,6 +413,107 @@ app.get('/api/admin/cms-raw', adminRequired, async (req, res) => {
 // translations for review — it does NOT write to the database. The admin must
 // still click "Save All Changes" to actually publish them, same as any other
 // CMS edit, so nothing goes live without a human looking at it first.
+// ── Shared: translate one section's fields to French via AI ────────────────
+// Used by both the automatic on-demand path (GET /api/cms) and the manual
+// admin re-translate button (still available for forcing a refresh).
+async function translateCmsSection(section, fields) {
+  const fieldsJson = JSON.stringify(Object.fromEntries(fields.map(f => [f.key, f.value])));
+
+  const prompt = `You are a professional French translator working on marketing copy for a business consulting platform (Arreyon Consult, aimed at African and global founders, based in Cameroon). Translate the following website content from English to French.
+
+CONTENT TO TRANSLATE (JSON, section: "${section}"):
+${fieldsJson}
+
+RULES:
+- Translate naturally, as a native French marketing copywriter would write it — not a literal word-for-word translation
+- Keep the same tone: confident, direct, professional but warm
+- Keep proper nouns, brand names (Arreyon Consult, G-DESIGNS LTD), and person names (e.g. Rockefeller, Ogilvy, Buffett) unchanged
+- Keep any numbers, prices, or currency symbols unchanged
+- Preserve any HTML tags exactly as they appear in the source (e.g. <br>, <strong>)
+- Return ONLY a JSON object with the EXACT SAME keys as the input, mapped to their French translations. No markdown, no commentary, no extra keys.`;
+
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Translate now, as JSON only.' }], complexity: 'complex', context: { feature: 'cms_translation' }, maxTokens: 6000 });
+  return extractJSON(raw); // { key: frValue, ... }
+}
+
+// ── Public CMS content endpoint — fully automatic French, no admin action needed ──
+// If a French request hits a field with no cached translation yet, it's
+// translated right then (parallelized across sections) and saved to the
+// database, so every subsequent request — French or not — is instant. Only
+// the very first French visitor after a content change experiences the
+// one-time translation delay.
+app.get('/api/cms', async (req, res) => {
+  const lang = req.query.lang === 'fr' ? 'fr' : 'en';
+  try {
+    const result = await pool.query('SELECT * FROM cms_content ORDER BY section, key');
+
+    if (lang === 'fr') {
+      const missingBySection = {};
+      result.rows.forEach(row => {
+        if (!row.value_fr) {
+          if (!missingBySection[row.section]) missingBySection[row.section] = [];
+          missingBySection[row.section].push({ key: row.key, value: row.value });
+        }
+      });
+
+      const sectionsNeedingTranslation = Object.entries(missingBySection);
+      if (sectionsNeedingTranslation.length) {
+        // Translate all missing sections in parallel — bounded by the slowest
+        // single section rather than the sum of all of them
+        const results = await Promise.allSettled(
+          sectionsNeedingTranslation.map(([section, fields]) => translateCmsSection(section, fields))
+        );
+
+        const updates = []; // flatten to a list of {section, key, value_fr} for the DB write + in-memory patch
+        sectionsNeedingTranslation.forEach(([section, fields], i) => {
+          const outcome = results[i];
+          if (outcome.status !== 'fulfilled') {
+            console.error(`Auto-translate failed for section "${section}":`, outcome.reason?.message);
+            return;
+          }
+          const translated = outcome.value;
+          fields.forEach(field => {
+            const frValue = translated[field.key];
+            if (frValue) updates.push({ section, key: field.key, value_fr: frValue });
+          });
+        });
+
+        // Save to DB (cache for next time) and patch the in-memory rows so this
+        // very request already returns the freshly-translated text, not a stale fallback
+        for (const u of updates) {
+          await pool.query('UPDATE cms_content SET value_fr = $1 WHERE section = $2 AND key = $3', [u.value_fr, u.section, u.key]);
+          const row = result.rows.find(r => r.section === u.section && r.key === u.key);
+          if (row) row.value_fr = u.value_fr;
+        }
+      }
+    }
+
+    const content = {};
+    result.rows.forEach(row => {
+      if (!content[row.section]) content[row.section] = {};
+      // Still falls back to English if a specific field's translation failed —
+      // never shows blank text even if one section had trouble
+      content[row.section][row.key] = (lang === 'fr' && row.value_fr) ? row.value_fr : row.value;
+    });
+    res.json({ content, lang });
+  } catch(e) {
+    console.error('CMS load error:', e.message);
+    res.status(500).json({ error: 'Failed' });
+  }
+});
+
+app.put('/api/cms', adminRequired, async (req, res) => {
+  const { section, key, value, value_fr } = req.body;
+  try {
+    await pool.query(
+      `INSERT INTO cms_content (section, key, value, value_fr) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (section, key) DO UPDATE SET value = $3, value_fr = COALESCE($4, cms_content.value_fr), updated_at = NOW()`,
+      [section, key, value, value_fr || null]
+    );
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: 'Failed' }); }
+});
+
 app.post('/api/admin/cms-translate', adminRequired, async (req, res) => {
   const { overwrite = false } = req.body || {};
 
@@ -459,34 +533,19 @@ app.post('/api/admin/cms-translate', adminRequired, async (req, res) => {
 
     let translatedCount = 0;
     const failedSections = [];
-    const translations = {}; // { section: { key: frValue } } — returned for the frontend to merge and let the admin review
+    const translations = {};
 
     for (const [section, fields] of sections) {
-      const fieldsJson = JSON.stringify(Object.fromEntries(fields.map(f => [f.key, f.value])));
-
-      const prompt = `You are a professional French translator working on marketing copy for a business consulting platform (Arreyon Consult, aimed at African and global founders, based in Cameroon). Translate the following website content from English to French.
-
-CONTENT TO TRANSLATE (JSON, section: "${section}"):
-${fieldsJson}
-
-RULES:
-- Translate naturally, as a native French marketing copywriter would write it — not a literal word-for-word translation
-- Keep the same tone: confident, direct, professional but warm
-- Keep proper nouns, brand names (Arreyon Consult, G-DESIGNS LTD), and person names (e.g. Rockefeller, Ogilvy, Buffett) unchanged
-- Keep any numbers, prices, or currency symbols unchanged
-- Preserve any HTML tags exactly as they appear in the source (e.g. <br>, <strong>)
-- Return ONLY a JSON object with the EXACT SAME keys as the input, mapped to their French translations. No markdown, no commentary, no extra keys.`;
-
       try {
-        const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Translate now, as JSON only.' }], complexity: 'complex', context: { feature: 'cms_translation' }, maxTokens: 3000 });
-        const translated = extractJSON(raw);
-
+        const translated = await translateCmsSection(section, fields);
         translations[section] = {};
         for (const field of fields) {
           const frValue = translated[field.key];
           if (frValue) {
             translations[section][field.key] = frValue;
             translatedCount++;
+          } else {
+            console.error(`CMS translation: section "${section}" succeeded but field "${field.key}" was missing from the AI's response.`);
           }
         }
       } catch (sectionErr) {
