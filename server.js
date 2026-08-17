@@ -1451,6 +1451,147 @@ async function callAI({ persona, messages, complexity = 'moderate', context = {}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// FINANCIAL CALCULATION ENGINE
+// Per Section 23 of the spec: the AI must never do arithmetic itself. These are
+// pure, deterministic functions — same inputs always produce the same outputs,
+// verifiable independently of any AI call. Used both as a standalone tool users
+// can run directly, and (going forward) as the source of truth any AI-generated
+// report should defer to rather than estimating numbers in prose.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function round2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+function calcRevenue({ unitsSold, pricePerUnit }) {
+  const revenue = unitsSold * pricePerUnit;
+  return { revenue: round2(revenue) };
+}
+
+function calcProfitMargin({ revenue, cogs, operatingExpenses = 0 }) {
+  const grossProfit = revenue - cogs;
+  const grossMarginPct = revenue !== 0 ? (grossProfit / revenue) * 100 : 0;
+  const netProfit = grossProfit - operatingExpenses;
+  const netMarginPct = revenue !== 0 ? (netProfit / revenue) * 100 : 0;
+  return {
+    grossProfit: round2(grossProfit),
+    grossMarginPct: round2(grossMarginPct),
+    netProfit: round2(netProfit),
+    netMarginPct: round2(netMarginPct)
+  };
+}
+
+function calcBreakeven({ fixedCosts, pricePerUnit, variableCostPerUnit }) {
+  const contributionMargin = pricePerUnit - variableCostPerUnit;
+  if (contributionMargin <= 0) {
+    return { error: 'Price per unit must be greater than variable cost per unit — otherwise break-even is never reached, no matter how many units are sold.' };
+  }
+  const breakevenUnits = fixedCosts / contributionMargin;
+  const breakevenRevenue = breakevenUnits * pricePerUnit;
+  return {
+    contributionMarginPerUnit: round2(contributionMargin),
+    breakevenUnits: Math.ceil(breakevenUnits),
+    breakevenRevenue: round2(breakevenRevenue)
+  };
+}
+
+function calcROI({ gain, costOfInvestment }) {
+  if (costOfInvestment === 0) return { error: 'Cost of investment cannot be zero.' };
+  const netGain = gain - costOfInvestment;
+  const roiPct = (netGain / costOfInvestment) * 100;
+  return { netGain: round2(netGain), roiPct: round2(roiPct) };
+}
+
+function calcCAC({ totalAcquisitionCost, newCustomers }) {
+  if (newCustomers === 0) return { error: 'Number of new customers cannot be zero.' };
+  return { cac: round2(totalAcquisitionCost / newCustomers) };
+}
+
+function calcLTV({ avgOrderValue, purchaseFrequencyPerYear, avgCustomerLifespanYears }) {
+  const ltv = avgOrderValue * purchaseFrequencyPerYear * avgCustomerLifespanYears;
+  return { ltv: round2(ltv) };
+}
+
+function calcLTVtoCAC({ ltv, cac }) {
+  if (cac === 0) return { error: 'CAC cannot be zero.' };
+  const ratio = ltv / cac;
+  let verdict;
+  if (ratio < 1) verdict = 'Losing money on every customer — CAC exceeds LTV. Unsustainable as-is.';
+  else if (ratio < 3) verdict = 'Below the commonly-cited healthy threshold of 3:1 — margins are thin once other costs are factored in.';
+  else if (ratio <= 5) verdict = 'Healthy — this ratio is generally considered a sustainable range.';
+  else verdict = 'Very high ratio — could mean strong efficiency, or that you are under-investing in growth and leaving acquisition opportunity on the table.';
+  return { ratio: round2(ratio), verdict };
+}
+
+function calcROAS({ revenueFromAds, adSpend }) {
+  if (adSpend === 0) return { error: 'Ad spend cannot be zero.' };
+  return { roas: round2(revenueFromAds / adSpend) };
+}
+
+function calcGrowthProjection({ startValue, monthlyGrowthRatePct, months }) {
+  months = Math.min(Math.max(parseInt(months, 10) || 12, 1), 36);
+  const rate = monthlyGrowthRatePct / 100;
+  const projection = [];
+  let value = startValue;
+  for (let m = 1; m <= months; m++) {
+    value = value * (1 + rate);
+    projection.push({ month: m, value: round2(value) });
+  }
+  return { projection };
+}
+
+function calcCashFlowProjection({ startingCash, monthlyRevenue, monthlyExpenses, months }) {
+  months = Math.min(Math.max(parseInt(months, 10) || 12, 1), 36);
+  const projection = [];
+  let balance = startingCash;
+  let negativeMonth = null;
+  for (let m = 1; m <= months; m++) {
+    const netChange = monthlyRevenue - monthlyExpenses;
+    balance = balance + netChange;
+    if (balance < 0 && negativeMonth === null) negativeMonth = m;
+    projection.push({ month: m, inflow: round2(monthlyRevenue), outflow: round2(monthlyExpenses), netChange: round2(netChange), runningBalance: round2(balance) });
+  }
+  return { projection, negativeMonth, warning: negativeMonth ? `Cash goes negative in month ${negativeMonth} at this rate — revisit costs or revenue assumptions before this point.` : null };
+}
+
+const FINANCIAL_CALCULATORS = {
+  revenue: { fn: calcRevenue, requiredInputs: ['unitsSold', 'pricePerUnit'] },
+  profit_margin: { fn: calcProfitMargin, requiredInputs: ['revenue', 'cogs'] },
+  breakeven: { fn: calcBreakeven, requiredInputs: ['fixedCosts', 'pricePerUnit', 'variableCostPerUnit'] },
+  roi: { fn: calcROI, requiredInputs: ['gain', 'costOfInvestment'] },
+  cac: { fn: calcCAC, requiredInputs: ['totalAcquisitionCost', 'newCustomers'] },
+  ltv: { fn: calcLTV, requiredInputs: ['avgOrderValue', 'purchaseFrequencyPerYear', 'avgCustomerLifespanYears'] },
+  ltv_cac_ratio: { fn: calcLTVtoCAC, requiredInputs: ['ltv', 'cac'] },
+  roas: { fn: calcROAS, requiredInputs: ['revenueFromAds', 'adSpend'] },
+  growth_projection: { fn: calcGrowthProjection, requiredInputs: ['startValue', 'monthlyGrowthRatePct'] },
+  cashflow_projection: { fn: calcCashFlowProjection, requiredInputs: ['startingCash', 'monthlyRevenue', 'monthlyExpenses'] }
+};
+
+// ── Financial Calculator endpoint — pure math, no AI call, available to all plans ──
+app.post('/api/financial/calculate', authRequired, async (req, res) => {
+  const { type, inputs } = req.body;
+  const calculator = FINANCIAL_CALCULATORS[type];
+  if (!calculator) return res.status(400).json({ error: 'Unknown calculator type.' });
+
+  const missing = calculator.requiredInputs.filter(key => inputs?.[key] === undefined || inputs[key] === '' || inputs[key] === null);
+  if (missing.length) return res.status(400).json({ error: `Missing required input(s): ${missing.join(', ')}` });
+
+  const numericInputs = {};
+  for (const [key, val] of Object.entries(inputs)) {
+    const num = parseFloat(val);
+    if (isNaN(num)) return res.status(400).json({ error: `"${key}" must be a number.` });
+    numericInputs[key] = num;
+  }
+
+  try {
+    const result = calculator.fn(numericInputs);
+    if (result.error) return res.status(400).json({ error: result.error });
+    res.json({ success: true, type, inputs: numericInputs, result });
+  } catch (e) {
+    console.error('Financial calculator error:', e.message);
+    res.status(500).json({ error: 'Calculation failed. Please check your inputs.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // CONSULT BOARD ROUTES (from existing platform)
 // ═══════════════════════════════════════════════════════════════════════════
 
