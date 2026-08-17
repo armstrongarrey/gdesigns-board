@@ -640,6 +640,15 @@ app.put('/api/admin/users/:id/plan', adminRequired, async (req, res) => {
 // actual cost depends on token count which we don't currently log per call —
 // but gives a useful relative sense of where usage/spend concentrates.
 const ESTIMATED_COST_PER_CALL = { claude: 0.003, chatgpt: 0.004, gemini: 0.001 };
+// Rough per-call estimates by exact model — Sonnet (used for 'complex' tier tasks)
+// costs noticeably more per call than Haiku, given its larger typical token usage
+// for structured, multi-section reasoning tasks. Still an estimate, not billing.
+const ESTIMATED_COST_PER_MODEL = {
+  'claude-haiku-4-5-20251001': 0.003,
+  'claude-sonnet-4-6': 0.018,
+  'gpt-4o-mini': 0.004,
+  'gemini-1.5-flash-latest': 0.001
+};
 
 app.get('/api/admin/usage-stats', adminRequired, async (req, res) => {
   try {
@@ -664,6 +673,12 @@ app.get('/api/admin/usage-stats', adminRequired, async (req, res) => {
        GROUP BY feature ORDER BY calls DESC`
     );
 
+    const byModel = await pool.query(
+      `SELECT model, provider, COUNT(*) as calls
+       FROM ai_usage WHERE created_at > NOW() - INTERVAL '30 days' AND model IS NOT NULL
+       GROUP BY model, provider ORDER BY calls DESC`
+    );
+
     const dailyTrend = await pool.query(
       `SELECT date_trunc('day', created_at) as day, COUNT(*) as calls
        FROM ai_usage WHERE created_at > NOW() - INTERVAL '30 days'
@@ -678,13 +693,16 @@ app.get('/api/admin/usage-stats', adminRequired, async (req, res) => {
        ORDER BY calls DESC LIMIT 10`
     );
 
-    const estimatedCost = byProvider.rows.reduce((sum, r) =>
-      sum + (parseInt(r.calls, 10) * (ESTIMATED_COST_PER_CALL[r.provider] || 0.002)), 0
+    // Model-aware cost estimate — Sonnet (complex-reasoning tier) costs meaningfully
+    // more per call than Haiku, so lump-summing by provider alone understates this
+    const estimatedCost = byModel.rows.reduce((sum, r) =>
+      sum + (parseInt(r.calls, 10) * (ESTIMATED_COST_PER_MODEL[r.model] || ESTIMATED_COST_PER_CALL[r.provider] || 0.002)), 0
     );
 
     res.json({
       totals: totals.rows[0],
       byProvider: byProvider.rows,
+      byModel: byModel.rows,
       byFeature: byFeature.rows,
       dailyTrend: dailyTrend.rows,
       topUsers: topUsers.rows,
@@ -878,7 +896,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   "confidence_reason": "why this confidence level — what's solid vs. uncertain about this verdict"
 }`;
 
-    const raw = await askClaude(prompt, [{ role: 'user', content: 'Produce the Chairman synthesis now, as JSON only.' }], { feature: 'chairman_synthesis', userId: req.userId }, 2000);
+    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Produce the Chairman synthesis now, as JSON only.' }], complexity: 'complex', context: { feature: 'chairman_synthesis', userId: req.userId }, maxTokens: 2000 });
     let synthesis;
 
     try {
@@ -1078,7 +1096,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   "verdict_reasoning": "the core reasoning behind the verdict, 2-3 sentences — be direct"
 }`;
 
-    const raw = await askClaude(prompt, [{ role: 'user', content: 'Validate the idea now, as JSON only.' }], { feature: 'entrepreneur_mode', userId: req.userId }, 2800);
+    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Validate the idea now, as JSON only.' }], complexity: 'complex', context: { feature: 'entrepreneur_mode', userId: req.userId }, maxTokens: 2800 });
     let structured;
     try {
       structured = extractJSON(raw);
@@ -1230,7 +1248,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   }
 }`;
 
-    const raw = await askClaude(prompt, [{ role: 'user', content: 'Build the business plan now, as JSON only. Keep every field to one short sentence as instructed.' }], { feature: 'entrepreneur_mode', userId: req.userId }, 6500);
+    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Build the business plan now, as JSON only. Keep every field to one short sentence as instructed.' }], complexity: 'complex', context: { feature: 'entrepreneur_mode', userId: req.userId }, maxTokens: 6500 });
     let plan;
     try {
       plan = extractJSON(raw);
@@ -1312,13 +1330,13 @@ function extractJSON(raw) {
   return JSON.parse(jsonSlice);
 }
 
-async function _askClaudeRaw(persona, messages, maxTokens = 1024) {
+async function _askClaudeRaw(persona, messages, maxTokens = 1024, model = 'claude-haiku-4-5-20251001') {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('Claude API key not configured');
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: maxTokens, system: persona, messages })
+    body: JSON.stringify({ model, max_tokens: maxTokens, system: persona, messages })
   });
   if (!response.ok) { const e = await response.json().catch(()=>({})); throw new Error(e?.error?.message || 'Claude error'); }
   const data = await response.json();
@@ -1359,14 +1377,14 @@ async function _askGeminiRaw(persona, messages) {
 }
 
 // ── Public AI functions — same signatures as before, now with usage logging ──
-async function askClaude(persona, messages, context = {}, maxTokens = 1024) {
+async function askClaude(persona, messages, context = {}, maxTokens = 1024, model = 'claude-haiku-4-5-20251001') {
   const start = Date.now();
   try {
-    const result = await _askClaudeRaw(persona, messages, maxTokens);
-    logAIUsage({ provider: 'claude', model: 'claude-haiku-4-5-20251001', status: 'success', durationMs: Date.now() - start, ...context });
+    const result = await _askClaudeRaw(persona, messages, maxTokens, model);
+    logAIUsage({ provider: 'claude', model, status: 'success', durationMs: Date.now() - start, ...context });
     return result;
   } catch (e) {
-    logAIUsage({ provider: 'claude', model: 'claude-haiku-4-5-20251001', status: 'error', errorMessage: e.message, durationMs: Date.now() - start, ...context });
+    logAIUsage({ provider: 'claude', model, status: 'error', errorMessage: e.message, durationMs: Date.now() - start, ...context });
     throw e;
   }
 }
@@ -1393,6 +1411,43 @@ async function askGemini(persona, messages) {
     logAIUsage({ provider: 'gemini', model: 'gemini-1.5-flash-latest', status: 'error', errorMessage: e.message, durationMs: Date.now() - start });
     throw e;
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODEL ROUTER
+// Routes each request to the model tier that actually fits the task, instead
+// of every feature reaching for the same model by default. Two genuine tiers:
+//
+//   'simple'   → Claude Haiku — single-fact lookups, short chat turns, director
+//                selection. Fast and cheap; more than adequate for these.
+//   'moderate' → Claude Haiku — default. Most director conversations, standard
+//                extraction/summarization tasks.
+//   'complex'  → Claude Sonnet — tasks that need real multi-step reasoning
+//                and hold up a decision: the Verification Pass (arguing against
+//                its own recommendation), Chairman Synthesis (weighing
+//                disagreement between directors), Business Plan generation
+//                (financial + strategic reasoning across 5 sections), and Idea
+//                Validation (an honest VALIDATE/MODIFY/RECONSIDER call).
+//
+// This intentionally does NOT touch the existing per-director model choice
+// (Claude/ChatGPT/Gemini, chosen per-persona in the DIRECTORS registry) — that
+// routing already exists and works. This layer sits underneath it, on top of
+// whichever provider a given call already uses.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const MODEL_TIERS = {
+  simple:   { model: 'claude-haiku-4-5-20251001', maxTokens: 600 },
+  moderate: { model: 'claude-haiku-4-5-20251001', maxTokens: 1024 },
+  complex:  { model: 'claude-sonnet-4-6',          maxTokens: 4000 }
+};
+
+// callAI — the router entry point. `maxTokens` can still be overridden per call
+// (some complex tasks, like the business plan, need more room than the tier
+// default) but the MODEL itself is chosen by complexity, not hand-picked per call.
+async function callAI({ persona, messages, complexity = 'moderate', context = {}, maxTokens }) {
+  const tier = MODEL_TIERS[complexity] || MODEL_TIERS.moderate;
+  const tokenBudget = maxTokens || tier.maxTokens;
+  return askClaude(persona, messages, { ...context, complexity }, tokenBudget, tier.model);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1934,7 +1989,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   "confidence_reason": "why this confidence level — what's solid vs. uncertain about this verdict"
 }`;
 
-    const raw = await askClaude(prompt, [{ role: 'user', content: 'Produce the Chairman synthesis now, as JSON only.' }], { feature: 'chairman_synthesis' }, 2000);
+    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Produce the Chairman synthesis now, as JSON only.' }], complexity: 'complex', context: { feature: 'chairman_synthesis' }, maxTokens: 2000 });
     const synthesis = extractJSON(raw);
     res.json({ success: true, synthesis });
   } catch (err) {
@@ -2259,7 +2314,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   ]
 }`;
 
-  const raw = await askClaude(prompt, [{ role: 'user', content: 'Perform the verification pass now, as JSON only.' }], { feature: 'verification_engine', userId }, 2500);
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Perform the verification pass now, as JSON only.' }], complexity: 'complex', context: { feature: 'verification_engine', userId }, maxTokens: 2500 });
   try {
     return extractJSON(raw);
   } catch (e) {
@@ -2428,6 +2483,48 @@ function extractFromHTML(html) {
 }
 
 // Fetch homepage + up to 4 key sub-pages (about/services/pricing/contact), within crawl budget
+// ── Source Adapter registry ─────────────────────────────────────────────────
+// The spec calls for different adapters per source type rather than one
+// generic crawler. WebsiteSourceAdapter (below, existing behavior) handles
+// normal websites; SocialSourceAdapter handles known social platforms, whose
+// real content is JS-rendered and inaccessible to a plain server-side fetch —
+// it extracts only what's genuinely available (Open Graph meta tags) and is
+// explicit with the user about that limitation rather than pretending a full
+// profile read happened.
+const SOCIAL_PLATFORMS = {
+  'instagram.com': 'Instagram', 'www.instagram.com': 'Instagram',
+  'facebook.com': 'Facebook', 'www.facebook.com': 'Facebook', 'fb.com': 'Facebook',
+  'tiktok.com': 'TikTok', 'www.tiktok.com': 'TikTok',
+  'linkedin.com': 'LinkedIn', 'www.linkedin.com': 'LinkedIn',
+  'twitter.com': 'Twitter/X', 'x.com': 'Twitter/X',
+  'youtube.com': 'YouTube', 'www.youtube.com': 'YouTube'
+};
+
+function detectSourceType(urlStr) {
+  try {
+    const hostname = new URL(urlStr).hostname.toLowerCase();
+    if (SOCIAL_PLATFORMS[hostname]) return { type: 'social', platform: SOCIAL_PLATFORMS[hostname] };
+    return { type: 'website' };
+  } catch (e) {
+    return { type: 'website' };
+  }
+}
+
+// SocialSourceAdapter — best-effort OG-tag extraction only, explicitly labeled
+async function analyzeSocialProfile(url, platform) {
+  const { html, finalUrl } = await safeFetch(url, { timeoutMs: 6000 });
+  const extracted = extractFromHTML(html);
+  const hasRealContent = (extracted.title && extracted.title.length > 3) || (extracted.description && extracted.description.length > 10);
+
+  return {
+    pages: [{ url: finalUrl, ...extracted }],
+    isSocialProfile: true,
+    platform,
+    limitedData: !hasRealContent,
+    limitationNote: `${platform} profiles are JavaScript-rendered — only the page title and description metadata could be read, not the full bio, posts, or follower count. For a fuller analysis, paste your main website if you have one.`
+  };
+}
+
 async function analyzeWebsite(startUrl) {
   const { html, finalUrl } = await safeFetch(startUrl);
   const home = extractFromHTML(html);
@@ -2548,12 +2645,22 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
 
     let normalizedUrl = null;
     let pages, sourceLabel;
+    let socialInfo = null;
 
     if (hasUrl) {
       normalizedUrl = url.trim();
       if (!/^https?:\/\//i.test(normalizedUrl)) normalizedUrl = 'https://' + normalizedUrl;
-      pages = await analyzeWebsite(normalizedUrl);
-      sourceLabel = normalizedUrl;
+
+      const sourceType = detectSourceType(normalizedUrl);
+      if (sourceType.type === 'social') {
+        const socialResult = await analyzeSocialProfile(normalizedUrl, sourceType.platform);
+        pages = socialResult.pages;
+        sourceLabel = `${sourceType.platform} profile (${normalizedUrl})`;
+        socialInfo = { platform: sourceType.platform, limitedData: socialResult.limitedData, limitationNote: socialResult.limitationNote };
+      } else {
+        pages = await analyzeWebsite(normalizedUrl);
+        sourceLabel = normalizedUrl;
+      }
     } else {
       // No website — treat the user's own description as the sole "page" to extract facts from
       pages = [{ url: 'User-provided description (no website)', title: businessName || '', description: '', bodyText: description.trim() }];
@@ -2618,7 +2725,8 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
       analyzedUrl: normalizedUrl || null,
       isDescriptionOnly: !normalizedUrl,
       pagesAnalyzed: normalizedUrl ? pages.map(p => p.url) : ['Business description'],
-      facts
+      facts,
+      socialInfo
     });
   } catch (err) {
     console.error('Website analysis error:', err.message);
