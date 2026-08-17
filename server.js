@@ -950,7 +950,7 @@ Pick the ONE director whose specialty best matches this challenge. Return ONLY t
 });
 
 app.post('/api/board/chat', authRequired, async (req, res) => {
-  const { persona, messages, ai, directorId, consultationId } = req.body;
+  const { persona, messages, ai, directorId, consultationId, language = 'en' } = req.body;
 
   try {
     const user = await pool.query('SELECT * FROM users WHERE id = $1', [req.userId]);
@@ -974,16 +974,18 @@ app.post('/api/board/chat', authRequired, async (req, res) => {
       return res.status(403).json({ error: `Monthly consultation limit reached (${limits.consultations}/month). Upgrade for more.`, upgradeRequired: true });
     }
 
+    const localizedPersona = persona + frenchInstruction(language);
+
     // Call the appropriate AI
     let reply;
     const selectedAI = ai || 'claude';
 
     if (selectedAI === 'chatgpt') {
-      reply = await askChatGPT(persona, messages, { feature: 'boardroom_chat', userId: req.userId });
+      reply = await askChatGPT(localizedPersona, messages, { feature: 'boardroom_chat', userId: req.userId });
     } else if (selectedAI === 'gemini') {
-      reply = await askGemini(persona, messages, { feature: 'boardroom_chat', userId: req.userId });
+      reply = await askGemini(localizedPersona, messages, { feature: 'boardroom_chat', userId: req.userId });
     } else {
-      reply = await askClaude(persona, messages, { feature: 'boardroom_chat', userId: req.userId });
+      reply = await askClaude(localizedPersona, messages, { feature: 'boardroom_chat', userId: req.userId });
     }
 
     res.json({ reply, ai: selectedAI });
@@ -1001,7 +1003,7 @@ app.post('/api/board/chat', authRequired, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 app.post('/api/board/synthesize', authRequired, async (req, res) => {
-  const { conversations } = req.body; // [{ directorName, directorRole, messages: [{from,text}] }]
+  const { conversations, language = 'en' } = req.body; // [{ directorName, directorRole, messages: [{from,text}] }]
 
   if (!conversations || !Array.isArray(conversations) || !conversations.length) {
     return res.status(400).json({ error: 'No conversations to synthesize. Chat with at least one director first.' });
@@ -1049,7 +1051,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   "confidence_reason": "why this confidence level — what's solid vs. uncertain about this verdict"
 }`;
 
-    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Produce the Chairman synthesis now, as JSON only.' }], complexity: 'complex', context: { feature: 'chairman_synthesis', userId: req.userId }, maxTokens: 2000 });
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Produce the Chairman synthesis now, as JSON only.' }], complexity: 'complex', context: { feature: 'chairman_synthesis', userId: req.userId }, maxTokens: 2000 });
     let synthesis;
 
     try {
@@ -1159,7 +1161,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   "what_to_learn_first": "the single most important skill or knowledge gap to close before starting, if any"
 }`;
 
-    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Find the opportunities now, as JSON only.' }], complexity: 'complex', context: { feature: 'entrepreneur_mode', userId: req.userId }, maxTokens: 2800 });
+    const raw = await callAI({ persona: prompt + frenchInstruction(input.language, { jsonMode: true }), messages: [{ role: 'user', content: 'Find the opportunities now, as JSON only.' }], complexity: 'complex', context: { feature: 'entrepreneur_mode', userId: req.userId }, maxTokens: 2800 });
     let structured;
     try {
       structured = extractJSON(raw);
@@ -1249,7 +1251,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   "verdict_reasoning": "the core reasoning behind the verdict, 2-3 sentences — be direct"
 }`;
 
-    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Validate the idea now, as JSON only.' }], complexity: 'complex', context: { feature: 'entrepreneur_mode', userId: req.userId }, maxTokens: 2800 });
+    const raw = await callAI({ persona: prompt + frenchInstruction(input.language, { jsonMode: true }), messages: [{ role: 'user', content: 'Validate the idea now, as JSON only.' }], complexity: 'complex', context: { feature: 'entrepreneur_mode', userId: req.userId }, maxTokens: 2800 });
     let structured;
     try {
       structured = extractJSON(raw);
@@ -1283,7 +1285,7 @@ app.get('/api/entrepreneur/sessions', authRequired, async (req, res) => {
 
 // ── Discuss the results — follow-up chat grounded in that specific session ──
 app.post('/api/entrepreneur/:sessionId/discuss', authRequired, async (req, res) => {
-  const { message } = req.body;
+  const { message, language = 'en' } = req.body;
   if (!message || !message.trim()) return res.status(400).json({ error: 'Message is required' });
 
   try {
@@ -1305,7 +1307,7 @@ app.post('/api/entrepreneur/:sessionId/discuss', authRequired, async (req, res) 
 
 ${contextSummary}
 
-Stay grounded in what was actually generated above — don't contradict it without good reason, but do engage honestly if they raise a fair challenge. Keep responses focused and conversational, 2-4 sentences unless genuinely more detail is needed. Do not restate the entire original report.`;
+Stay grounded in what was actually generated above — don't contradict it without good reason, but do engage honestly if they raise a fair challenge. Keep responses focused and conversational, 2-4 sentences unless genuinely more detail is needed. Do not restate the entire original report.${frenchInstruction(language)}`;
 
     const chatMessages = [
       ...priorMessages.map(m => ({ role: m.from === 'you' ? 'user' : 'assistant', content: m.text })),
@@ -1326,7 +1328,7 @@ Stay grounded in what was actually generated above — don't contradict it witho
 
 // ── Generate a full business plan from a validated idea or chosen opportunity ──
 app.post('/api/entrepreneur/:sessionId/business-plan', authRequired, async (req, res) => {
-  const { chosenOpportunityName } = req.body; // required if session.mode === 'opportunity_finder'
+  const { chosenOpportunityName, language = 'en' } = req.body; // required if session.mode === 'opportunity_finder'
 
   try {
     const sessionResult = await pool.query(
@@ -1401,7 +1403,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   }
 }`;
 
-    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Build the business plan now, as JSON only. Keep every field to one short sentence as instructed.' }], complexity: 'complex', context: { feature: 'entrepreneur_mode', userId: req.userId }, maxTokens: 6500 });
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Build the business plan now, as JSON only. Keep every field to one short sentence as instructed.' }], complexity: 'complex', context: { feature: 'entrepreneur_mode', userId: req.userId }, maxTokens: 6500 });
     let plan;
     try {
       plan = extractJSON(raw);
@@ -1603,6 +1605,17 @@ async function callAI({ persona, messages, complexity = 'moderate', context = {}
   return askClaude(persona, messages, { ...context, complexity }, tokenBudget, tier.model);
 }
 
+// ── Shared French-language instruction, appended to prompts when requested ──
+// Two variants: one for free-text/conversational responses, one for structured
+// JSON responses where the keys must stay in English for the app to parse them
+// but the actual text VALUES should be in French.
+function frenchInstruction(language, { jsonMode = false } = {}) {
+  if (language !== 'fr') return '';
+  return jsonMode
+    ? ' Respond entirely in French (Français) — every text VALUE in your JSON response must be written in French. Keep the JSON KEYS exactly as specified in English, since the application parses them by name.'
+    : ' Respond entirely in French (Français) — every word of your reply must be in French.';
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // FINANCIAL CALCULATION ENGINE
 // Per Section 23 of the spec: the AI must never do arithmetic itself. These are
@@ -1789,7 +1802,7 @@ function computeScenarioFinancials({ monthlyRevenueImpact, monthlyCostImpact, on
 }
 
 app.post('/api/scenario/compare', authRequired, async (req, res) => {
-  const { options, context: decisionContext } = req.body;
+  const { options, context: decisionContext, language = 'en' } = req.body;
   if (!options || !Array.isArray(options) || options.length < 2 || options.length > 4) {
     return res.status(400).json({ error: 'Please provide between 2 and 4 options to compare.' });
   }
@@ -1842,7 +1855,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   "confidence": "high|medium|low"
 }`;
 
-    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Compare the options now, as JSON only.' }], complexity: 'complex', context: { feature: 'scenario_analysis', userId: req.userId }, maxTokens: 2500 });
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Compare the options now, as JSON only.' }], complexity: 'complex', context: { feature: 'scenario_analysis', userId: req.userId }, maxTokens: 2500 });
     const analysis = extractJSON(raw);
 
     res.json({ success: true, optionsWithFinancials, analysis });
@@ -2441,7 +2454,7 @@ async function researchSearch(query, options) {
 }
 
 // ── Run market/competitor research for a business, save sources, synthesize ──
-async function runBusinessResearch(business, userId, scope = 'both', knownFacts = {}) {
+async function runBusinessResearch(business, userId, scope = 'both', knownFacts = {}, language = 'en') {
   const bizName = business.name || business.website;
   const industry = business.industry || '';
   const country = business.country || '';
@@ -2548,7 +2561,7 @@ Return ONLY valid JSON, no markdown formatting, in exactly this structure:
 
 List up to 8 competitors total${includeInternational ? ', aiming for a mix of local and international where results support it' : ' (national only)'}. Up to 4 competitive_gaps (omit the key entirely if none can be evidenced). Up to 4 strategic_recommendations, ranked by priority. Up to 4 audit_coverage rows. Omit "local_coverage_note" entirely if results were adequate.`;
 
-  const raw = await askClaude(synthesisPrompt, [{ role: 'user', content: 'Produce the complete structured report now, as JSON only.' }], { feature: 'research_engine', userId }, 3500);
+  const raw = await askClaude(synthesisPrompt + frenchInstruction(language, { jsonMode: true }), [{ role: 'user', content: 'Produce the complete structured report now, as JSON only.' }], { feature: 'research_engine', userId }, 3500);
   let structured;
   try {
     structured = extractJSON(raw);
@@ -2604,7 +2617,8 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
     factsResult.rows.forEach(r => { knownFacts[r.fact_key] = r.fact_value; });
 
     const requestedScope = req.body?.scope === 'national' ? 'national' : 'both';
-    const { summary, structured, sources, queries } = await runBusinessResearch(biz.rows[0], req.userId, requestedScope, knownFacts);
+    const requestedLanguage = req.body?.language === 'fr' ? 'fr' : 'en';
+    const { summary, structured, sources, queries } = await runBusinessResearch(biz.rows[0], req.userId, requestedScope, knownFacts, requestedLanguage);
 
     const session = await pool.query(
       `INSERT INTO research_sessions (business_id, user_id, query, summary, scope, structured_data) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
@@ -2631,7 +2645,7 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
     let verification = null;
     if (plan === 'pro' || plan === 'business') {
       try {
-        verification = await runVerificationPass(structured, sources, req.userId);
+        verification = await runVerificationPass(structured, sources, req.userId, requestedLanguage);
         await pool.query('UPDATE research_sessions SET verification_data = $1 WHERE id = $2', [JSON.stringify(verification), sessionId]);
       } catch (e) {
         console.error('Auto-verification failed (non-fatal):', e.message);
@@ -2672,7 +2686,7 @@ app.get('/api/business/:id/research', authRequired, async (req, res) => {
 // revise the recommendation if the objection holds. Produces a confidence report.
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function runVerificationPass(structured, sources, userId) {
+async function runVerificationPass(structured, sources, userId, language = 'en') {
   const recs = structured.strategic_recommendations || [];
   if (!recs.length) {
     return { overall_confidence: 'low', evidence_quality: 'low', data_completeness_note: 'No recommendations were generated to verify.', main_uncertainty: 'No recommendations available.', recommendation_checks: [] };
@@ -2716,7 +2730,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   ]
 }`;
 
-  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Perform the verification pass now, as JSON only.' }], complexity: 'complex', context: { feature: 'verification_engine', userId }, maxTokens: 2500 });
+  const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Perform the verification pass now, as JSON only.' }], complexity: 'complex', context: { feature: 'verification_engine', userId }, maxTokens: 2500 });
   try {
     return extractJSON(raw);
   } catch (e) {
@@ -2741,7 +2755,8 @@ app.post('/api/business/:id/research/:sessionId/verify', authRequired, async (re
 
     const sourcesResult = await pool.query('SELECT * FROM research_sources WHERE research_session_id = $1', [req.params.sessionId]);
 
-    const verification = await runVerificationPass(sessionRow.structured_data, sourcesResult.rows, req.userId);
+    const requestedLanguage = req.body?.language === 'fr' ? 'fr' : 'en';
+    const verification = await runVerificationPass(sessionRow.structured_data, sourcesResult.rows, req.userId, requestedLanguage);
 
     await pool.query('UPDATE research_sessions SET verification_data = $1 WHERE id = $2', [JSON.stringify(verification), req.params.sessionId]);
 
@@ -2953,7 +2968,7 @@ async function analyzeWebsite(startUrl) {
 }
 
 // Ask Claude to structure raw page content into labeled business facts
-async function structureBusinessFacts(pages, submittedUrl, userId) {
+async function structureBusinessFacts(pages, submittedUrl, userId, language = 'en') {
   const combined = pages.map(p => `PAGE: ${p.url}\nTITLE: ${p.title}\nDESCRIPTION: ${p.description}\nCONTENT: ${p.bodyText}`).join('\n\n---\n\n');
   const isDescriptionOnly = pages.length === 1 && pages[0].url.startsWith('User-provided description');
 
@@ -3002,7 +3017,7 @@ Return this exact JSON structure:
 
 Omit any key entirely if you have no supporting evidence for it. Do not include keys with empty or null values.`;
 
-  const fullPrompt = prompt + promptTail;
+  const fullPrompt = prompt + promptTail + frenchInstruction(language, { jsonMode: true });
   const raw = await askClaude(fullPrompt, [{ role: 'user', content: 'Extract the structured business facts now, as JSON only.' }], { feature: 'website_analyzer', userId }, 1800);
   try {
     return extractJSON(raw);
@@ -3069,7 +3084,8 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
       sourceLabel = 'business description (no website)';
     }
 
-    const facts = await structureBusinessFacts(pages, sourceLabel, req.userId);
+    const requestedLanguage = req.body?.language === 'fr' ? 'fr' : 'en';
+    const facts = await structureBusinessFacts(pages, sourceLabel, req.userId, requestedLanguage);
 
     // Parse the AI-extracted location fact into city/country the research engine can use
     let parsedCity = null, parsedCountry = null;
