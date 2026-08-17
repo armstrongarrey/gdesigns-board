@@ -336,10 +336,10 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
     <!-- BOARDROOM REDIRECT SECTION -->
     <div class="section-view" id="section-boardroom">
-      <div class="section-title">Boardroom</div>
-      <div class="section-sub">Open a live session with your board of directors.</div>
+      <div class="section-title" data-i18n="dash.nav_boardroom">Boardroom</div>
+      <div class="section-sub" data-i18n="dash.boardroom_sub">Open a live session with your board of directors.</div>
       <div style="text-align:center;padding:40px">
-        <a href="/boardroom" class="btn-primary btn-large" style="font-size:15px;padding:14px 32px">Open Boardroom</a>
+        <a href="/boardroom" class="btn-primary btn-large" style="font-size:15px;padding:14px 32px" data-i18n="dash.open_boardroom">Open Boardroom</a>
       </div>
     </div>
 
@@ -1150,7 +1150,7 @@ async function runAnalysis() {
   try {
     const res = await fetch('/api/business/analyze', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(isWebsite ? { url } : { description })
+      body: JSON.stringify(Object.assign(isWebsite ? { url } : { description }, { language: window.currentLang || 'en' }))
     });
     const data = await res.json();
     clearInterval(progressTimer);
@@ -1368,7 +1368,7 @@ async function runResearch() {
     const res = await fetch(`/api/business/${currentBusinessId}/research`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scope })
+      body: JSON.stringify({ scope, language: window.currentLang || 'en' })
     });
     const data = await res.json();
     document.getElementById('researchLoading').style.display = 'none';
@@ -1441,7 +1441,9 @@ async function runVerification() {
   document.getElementById('verificationLoading').style.display = 'block';
 
   try {
-    const res = await fetch(`/api/business/${currentBusinessId}/research/${currentResearchData.sessionId}/verify`, { method: 'POST' });
+    const res = await fetch(`/api/business/${currentBusinessId}/research/${currentResearchData.sessionId}/verify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: window.currentLang || 'en' })
+    });
     const data = await res.json();
     document.getElementById('verificationLoading').style.display = 'none';
 
@@ -1716,7 +1718,7 @@ async function sendEntrepreneurDiscussion(suffix) {
 
   try {
     const res = await fetch(`/api/entrepreneur/${currentEntrepreneurSessionId}/discuss`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, language: window.currentLang || 'en' })
     });
     const data = await res.json();
     btn.disabled = false;
@@ -1738,7 +1740,7 @@ async function generateBusinessPlan() {
   const btn = document.getElementById(isOpp ? 'genPlanBtnOpp' : 'genPlanBtnVal');
   const targetDiv = document.getElementById(isOpp ? 'businessPlanSectionOpp' : 'businessPlanSectionVal');
 
-  let body = {};
+  let body = { language: window.currentLang || 'en' };
   if (isOpp) {
     const select = document.getElementById('opportunityPlanSelect');
     if (!select.value) { alert('Please choose which opportunity to build a plan for.'); return; }
@@ -1866,7 +1868,8 @@ async function findOpportunities() {
     time: document.getElementById('entTime').value.trim(),
     incomeTarget: document.getElementById('entIncomeTarget').value.trim(),
     preference: document.getElementById('entPreference').value,
-    riskTolerance: document.getElementById('entRiskTolerance').value
+    riskTolerance: document.getElementById('entRiskTolerance').value,
+    language: window.currentLang || 'en'
   };
 
   if (!input.country && !input.skills && !input.interests) {
@@ -1950,7 +1953,8 @@ async function validateIdea() {
     country: document.getElementById('entIdeaCountry').value.trim(),
     city: document.getElementById('entIdeaCity').value.trim(),
     capital: document.getElementById('entIdeaCapital').value.trim(),
-    time: document.getElementById('entIdeaTime').value.trim()
+    time: document.getElementById('entIdeaTime').value.trim(),
+    language: window.currentLang || 'en'
   };
 
   if (input.idea.length < 10) {
@@ -2362,7 +2366,7 @@ async function runScenarioComparison() {
   try {
     const res = await fetch('/api/scenario/compare', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ options, context: document.getElementById('scenarioContext').value.trim() })
+      body: JSON.stringify({ options, context: document.getElementById('scenarioContext').value.trim(), language: window.currentLang || 'en' })
     });
     const data = await res.json();
     document.getElementById('scenarioLoading').style.display = 'none';
