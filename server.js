@@ -376,24 +376,27 @@ app.post('/api/admin/logout', (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 app.get('/api/cms', async (req, res) => {
+  const lang = req.query.lang === 'fr' ? 'fr' : 'en';
   try {
     const result = await pool.query('SELECT * FROM cms_content ORDER BY section, key');
     const content = {};
     result.rows.forEach(row => {
       if (!content[row.section]) content[row.section] = {};
-      content[row.section][row.key] = row.value;
+      // Fall back to English if no French translation has been entered yet for this field —
+      // means a page never shows blank text, just untranslated text until an admin fills it in.
+      content[row.section][row.key] = (lang === 'fr' && row.value_fr) ? row.value_fr : row.value;
     });
-    res.json({ content });
+    res.json({ content, lang });
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
 
 app.put('/api/cms', adminRequired, async (req, res) => {
-  const { section, key, value } = req.body;
+  const { section, key, value, value_fr } = req.body;
   try {
     await pool.query(
-      `INSERT INTO cms_content (section, key, value) VALUES ($1, $2, $3)
-       ON CONFLICT (section, key) DO UPDATE SET value = $3, updated_at = NOW()`,
-      [section, key, value]
+      `INSERT INTO cms_content (section, key, value, value_fr) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (section, key) DO UPDATE SET value = $3, value_fr = COALESCE($4, cms_content.value_fr), updated_at = NOW()`,
+      [section, key, value, value_fr || null]
     );
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
@@ -401,16 +404,29 @@ app.put('/api/cms', adminRequired, async (req, res) => {
 
 // Bulk CMS update
 app.put('/api/cms/bulk', adminRequired, async (req, res) => {
-  const { updates } = req.body; // [{section, key, value}]
+  const { updates } = req.body; // [{section, key, value, value_fr}]
   try {
-    for (const { section, key, value } of updates) {
+    for (const { section, key, value, value_fr } of updates) {
       await pool.query(
-        `INSERT INTO cms_content (section, key, value) VALUES ($1, $2, $3)
-         ON CONFLICT (section, key) DO UPDATE SET value = $3, updated_at = NOW()`,
-        [section, key, value]
+        `INSERT INTO cms_content (section, key, value, value_fr) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (section, key) DO UPDATE SET value = $3, value_fr = COALESCE($4, cms_content.value_fr), updated_at = NOW()`,
+        [section, key, value, value_fr || null]
       );
     }
     res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: 'Failed' }); }
+});
+
+// ── Admin-only: raw CMS data with both English and French values, for editing ──
+app.get('/api/admin/cms-raw', adminRequired, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM cms_content ORDER BY section, key');
+    const content = {};
+    result.rows.forEach(row => {
+      if (!content[row.section]) content[row.section] = {};
+      content[row.section][row.key] = { value: row.value, value_fr: row.value_fr || '' };
+    });
+    res.json({ content });
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
 
