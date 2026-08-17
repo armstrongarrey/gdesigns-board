@@ -647,7 +647,7 @@ const ESTIMATED_COST_PER_MODEL = {
   'claude-haiku-4-5-20251001': 0.003,
   'claude-sonnet-4-6': 0.018,
   'gpt-4o-mini': 0.004,
-  'gemini-2.5-flash': 0.001
+  'gemini-flash-latest': 0.001
 };
 
 app.get('/api/admin/usage-stats', adminRequired, async (req, res) => {
@@ -1360,7 +1360,7 @@ async function _askGeminiRaw(persona, messages) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('Gemini API key not configured');
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1405,10 +1405,10 @@ async function askGemini(persona, messages, context = {}) {
   const start = Date.now();
   try {
     const result = await _askGeminiRaw(persona, messages);
-    logAIUsage({ provider: 'gemini', model: 'gemini-2.5-flash', status: 'success', durationMs: Date.now() - start, ...context });
+    logAIUsage({ provider: 'gemini', model: 'gemini-flash-latest', status: 'success', durationMs: Date.now() - start, ...context });
     return result;
   } catch (e) {
-    logAIUsage({ provider: 'gemini', model: 'gemini-2.5-flash', status: 'error', errorMessage: e.message, durationMs: Date.now() - start, ...context });
+    logAIUsage({ provider: 'gemini', model: 'gemini-flash-latest', status: 'error', errorMessage: e.message, durationMs: Date.now() - start, ...context });
     throw e;
   }
 }
