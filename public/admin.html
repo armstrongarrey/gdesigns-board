@@ -243,7 +243,21 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     <!-- CMS EDITOR -->
     <div class="section-view" id="section-cms">
       <div class="msg-box msg-success" id="cmsMsg"></div>
-      <p style="font-size:13px;color:var(--text2);margin-bottom:20px;line-height:1.6">Edit all landing page content here. Every section is listed automatically. Changes go live immediately after saving.</p>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.6">Edit all landing page content here. Every section is listed automatically. Changes go live immediately after saving.</p>
+
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--text)">🇫🇷 Auto-Translate to French</div>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:2px">Reads your current English content and generates French translations with AI. Review and edit below before saving.</div>
+          </div>
+          <button class="btn-primary" style="padding:9px 18px;font-size:12.5px;white-space:nowrap" onclick="runCmsAutoTranslate()" id="autoTranslateBtn">Translate All Fields</button>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11.5px;color:var(--muted);cursor:pointer">
+          <input type="checkbox" id="cmsOverwriteCheck" style="cursor:pointer"> Overwrite existing French text (otherwise only empty fields are filled in)
+        </label>
+        <div id="autoTranslateStatus" style="display:none;margin-top:10px;font-size:12px"></div>
+      </div>
 
       <div id="cmsAllSections"></div>
 
@@ -536,6 +550,61 @@ async function updateUserPlan(userId, plan) {
 }
 
 // ── CMS ────────────────────────────────────────────────────────────────────
+async function runCmsAutoTranslate() {
+  const overwrite = document.getElementById('cmsOverwriteCheck').checked;
+  const btn = document.getElementById('autoTranslateBtn');
+  const status = document.getElementById('autoTranslateStatus');
+
+  if (overwrite && !confirm('This will overwrite any French text you\'ve already entered or edited. Continue?')) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Translating...';
+  status.style.display = 'block';
+  status.style.color = 'var(--muted)';
+  status.textContent = 'Reading your content and translating with AI — this can take a minute for a full site...';
+
+  try {
+    const res = await fetch('/api/admin/cms-translate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ overwrite })
+    });
+    const data = await res.json();
+    btn.disabled = false;
+    btn.textContent = 'Translate All Fields';
+
+    if (!res.ok) {
+      status.style.color = 'var(--red)';
+      status.textContent = data.error || 'Translation failed.';
+      return;
+    }
+
+    if (data.translatedCount === 0) {
+      status.style.color = 'var(--muted)';
+      status.textContent = data.message || 'Nothing to translate.';
+    } else {
+      status.style.color = 'var(--green)';
+      status.textContent = `Translated ${data.translatedCount} field(s) across ${data.sectionsProcessed} section(s) below. Review and edit as needed, then click "Save All Changes" to publish them — nothing is live yet.` +
+        (data.failedSections ? ` (Some sections failed and were skipped: ${data.failedSections.join(', ')} — try again.)` : '');
+
+      // Merge the returned translations into the in-memory CMS data and re-render —
+      // do NOT re-fetch from the server, since these translations aren't saved yet
+      Object.entries(data.translations).forEach(([section, fields]) => {
+        if (!cmsData[section]) cmsData[section] = {};
+        Object.entries(fields).forEach(([key, frValue]) => {
+          const existing = cmsData[section][key];
+          const enValue = typeof existing === 'object' ? existing.value : (existing || '');
+          cmsData[section][key] = { value: enValue, value_fr: frValue };
+        });
+      });
+      renderAllCmsSections(cmsData);
+    }
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = 'Translate All Fields';
+    status.style.color = 'var(--red)';
+    status.textContent = 'Connection error. Please try again.';
+  }
+}
+
 async function loadCMS() {
   try {
     const res = await fetch('/api/admin/cms-raw');
