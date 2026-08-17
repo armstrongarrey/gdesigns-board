@@ -647,7 +647,7 @@ const ESTIMATED_COST_PER_MODEL = {
   'claude-haiku-4-5-20251001': 0.003,
   'claude-sonnet-4-6': 0.018,
   'gpt-4o-mini': 0.004,
-  'gemini-1.5-flash-latest': 0.001
+  'gemini-2.5-flash': 0.001
 };
 
 app.get('/api/admin/usage-stats', adminRequired, async (req, res) => {
@@ -1405,10 +1405,10 @@ async function askGemini(persona, messages, context = {}) {
   const start = Date.now();
   try {
     const result = await _askGeminiRaw(persona, messages);
-    logAIUsage({ provider: 'gemini', model: 'gemini-1.5-flash-latest', status: 'success', durationMs: Date.now() - start, ...context });
+    logAIUsage({ provider: 'gemini', model: 'gemini-2.5-flash', status: 'success', durationMs: Date.now() - start, ...context });
     return result;
   } catch (e) {
-    logAIUsage({ provider: 'gemini', model: 'gemini-1.5-flash-latest', status: 'error', errorMessage: e.message, durationMs: Date.now() - start, ...context });
+    logAIUsage({ provider: 'gemini', model: 'gemini-2.5-flash', status: 'error', errorMessage: e.message, durationMs: Date.now() - start, ...context });
     throw e;
   }
 }
@@ -1588,6 +1588,114 @@ app.post('/api/financial/calculate', authRequired, async (req, res) => {
   } catch (e) {
     console.error('Financial calculator error:', e.message);
     res.status(500).json({ error: 'Calculation failed. Please check your inputs.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SCENARIO ANALYSIS
+// Compare 2-3 options (Option A vs B vs C). Any financial figures the user
+// provides per option are computed deterministically (pure math, same engine
+// as the Financial Calculator) — the AI is given those exact numbers as fact
+// and only handles what it's actually good at: qualitative judgment (pros,
+// cons, risk, fit against the founder's stated priorities) and a final
+// recommendation. It is explicitly instructed not to recalculate or invent
+// different figures than what was computed.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Pure, deterministic per-option financial summary — no AI involved.
+// Only computed when enough numeric fields are actually provided; otherwise
+// the option is compared on qualitative grounds alone.
+function computeScenarioFinancials({ monthlyRevenueImpact, monthlyCostImpact, oneTimeInvestment, timeframeMonths }) {
+  const hasCore = [monthlyRevenueImpact, monthlyCostImpact].every(v => v !== undefined && v !== null && v !== '');
+  if (!hasCore) return null;
+
+  const revenue = parseFloat(monthlyRevenueImpact);
+  const cost = parseFloat(monthlyCostImpact);
+  if (isNaN(revenue) || isNaN(cost)) return null;
+
+  const netMonthlyGain = round2(revenue - cost);
+  const investment = oneTimeInvestment !== undefined && oneTimeInvestment !== '' ? parseFloat(oneTimeInvestment) : 0;
+  const months = timeframeMonths !== undefined && timeframeMonths !== '' ? Math.min(Math.max(parseInt(timeframeMonths, 10) || 12, 1), 60) : 12;
+
+  const totalGainOverTimeframe = round2(netMonthlyGain * months);
+  let paybackMonths = null;
+  if (investment > 0 && netMonthlyGain > 0) paybackMonths = Math.ceil(investment / netMonthlyGain);
+  else if (investment > 0 && netMonthlyGain <= 0) paybackMonths = null; // never pays back at this rate
+
+  let roiPct = null;
+  if (investment > 0) roiPct = round2(((totalGainOverTimeframe - investment) / investment) * 100);
+
+  return {
+    netMonthlyGain,
+    investment: investment || null,
+    timeframeMonths: months,
+    totalGainOverTimeframe,
+    paybackMonths,
+    roiPct
+  };
+}
+
+app.post('/api/scenario/compare', authRequired, async (req, res) => {
+  const { options, context: decisionContext } = req.body;
+  if (!options || !Array.isArray(options) || options.length < 2 || options.length > 4) {
+    return res.status(400).json({ error: 'Please provide between 2 and 4 options to compare.' });
+  }
+  for (const o of options) {
+    if (!o.name || !o.description) return res.status(400).json({ error: 'Each option needs at least a name and description.' });
+  }
+
+  try {
+    // Compute real financials per option first — deterministic, before any AI involvement
+    const optionsWithFinancials = options.map(o => ({
+      name: o.name,
+      description: o.description,
+      financials: computeScenarioFinancials(o)
+    }));
+
+    const optionsText = optionsWithFinancials.map((o, i) => {
+      let block = `OPTION ${String.fromCharCode(65 + i)}: ${o.name}\nDescription: ${o.description}`;
+      if (o.financials) {
+        block += `\nCOMPUTED FINANCIALS (exact, already calculated — do not recompute or alter these numbers):
+  - Net monthly gain: ${o.financials.netMonthlyGain}
+  - One-time investment: ${o.financials.investment ?? 'none stated'}
+  - Total gain over ${o.financials.timeframeMonths} months: ${o.financials.totalGainOverTimeframe}
+  - Payback period: ${o.financials.paybackMonths !== null ? o.financials.paybackMonths + ' months' : (o.financials.investment ? 'does not pay back at this rate' : 'no investment stated')}
+  - ROI over timeframe: ${o.financials.roiPct !== null ? o.financials.roiPct + '%' : 'not applicable — no investment stated'}`;
+      } else {
+        block += `\n(No financial figures provided for this option — compare on qualitative grounds only.)`;
+      }
+      return block;
+    }).join('\n\n');
+
+    const prompt = `You are a business strategist helping a founder decide between ${options.length} options. ${decisionContext ? `Their situation: ${decisionContext}` : ''}
+
+${optionsText}
+
+YOUR TASK:
+For each option, give a genuine qualitative assessment — pros, cons, and risk level. Where computed financials are provided above, treat them as fact and reference them directly; do not invent different numbers or recalculate. Where no financials were given, compare on strategic/qualitative grounds only, and say so.
+
+Then give ONE final recommendation: which option to choose and why, weighing both the numbers (where available) and the qualitative factors (risk, effort, fit with their stated situation).
+
+Be decisive — the founder wants a clear answer, not a list of "it depends."
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "options_analysis": [
+    {"option_name": "...", "pros": ["...", "..."], "cons": ["...", "..."], "risk_level": "low|medium|high"}
+  ],
+  "comparison_summary": "2-3 sentences directly comparing the options against each other",
+  "recommended_option": "the exact name of the recommended option",
+  "recommendation_reasoning": "why this one, referencing the specific numbers or qualitative factors that decided it",
+  "confidence": "high|medium|low"
+}`;
+
+    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Compare the options now, as JSON only.' }], complexity: 'complex', context: { feature: 'scenario_analysis', userId: req.userId }, maxTokens: 2500 });
+    const analysis = extractJSON(raw);
+
+    res.json({ success: true, optionsWithFinancials, analysis });
+  } catch (err) {
+    console.error('Scenario analysis error:', err.message);
+    res.status(500).json({ error: err.message || 'Comparison failed. Please try again.' });
   }
 });
 
