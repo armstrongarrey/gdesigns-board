@@ -231,7 +231,9 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
 .report-video-wrap{margin-bottom:20px}
 
 @media(max-width:520px){.form-row{grid-template-columns:1fr}.report-actions{flex-direction:column}}
+.lang-switch-btn.active{background:var(--purple)!important;border-color:var(--purple)!important;color:#fff!important}
 </style>
+<script src="/i18n.js"></script>
 </head>
 <body>
 
@@ -245,7 +247,9 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
     </div>
   </div>
   <div style="display:flex;align-items:center;gap:8px">
-    <a href="/auth?mode=login" class="hdr-back">Sign In</a>
+    <button class="lang-switch-btn" data-lang-option="en" onclick="setLanguage('en')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit">EN</button>
+    <button class="lang-switch-btn" data-lang-option="fr" onclick="setLanguage('fr')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;margin-right:4px">FR</button>
+    <a href="/auth?mode=login" class="hdr-back" data-i18n="nav.sign_in">Sign In</a>
     <a href="/auth?mode=signup" class="hdr-back" style="background:var(--purple);color:#fff;border-color:var(--purple)">Sign Up Free</a>
   </div>
 </header>
@@ -266,9 +270,9 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
 <div class="stage active" id="stage1">
   <div class="landing">
     <div class="landing-hero">
-      <div class="landing-badge"><div class="bdot"></div><span class="badge-text">Board Available Now</span></div>
-      <h1 class="landing-h1">Get Advice From<br><span>29 Legendary Minds</span></h1>
-      <p class="landing-sub">Have a real strategic conversation with our AI Board of Directors. Rockefeller, Ogilvy, Buffett, Porter and more will engage with your business — asking questions, challenging your thinking, and delivering a full report.</p>
+      <div class="landing-badge"><div class="bdot"></div><span class="badge-text" data-i18n="consult.badge">Board Available Now</span></div>
+      <h1 class="landing-h1"><span data-i18n="consult.title1">Get Advice From</span><br><span data-i18n="consult.title2">29 Legendary Minds</span></h1>
+      <p class="landing-sub" data-i18n="consult.subtitle">Have a real strategic conversation with our AI Board of Directors. Rockefeller, Ogilvy, Buffett, Porter and more will engage with your business — asking questions, challenging your thinking, and delivering a full report.</p>
       <div class="dir-pills">
         <div class="dir-pill"><div class="dav" style="background:#2a4a1a;color:#7fcc50">JR</div><span class="dir-pill-name">Rockefeller</span></div>
         <div class="dir-pill"><div class="dav" style="background:#1a0500;color:#ff7040">DO</div><span class="dir-pill-name">Ogilvy</span></div>
@@ -288,20 +292,20 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
     </div>
 
     <div class="consult-form">
-      <div class="form-title">Start Your Consultation</div>
-      <div class="form-sub">Fill in your details — then have a real conversation with the board before they generate your report.</div>
+      <div class="form-title" data-i18n="consult.start_title">Start Your Consultation</div>
+      <div class="form-sub" data-i18n="consult.start_sub">Fill in your details — then have a real conversation with the board before they generate your report.</div>
       <div class="form-row">
-        <div class="form-field"><label>Your Name *</label><input class="form-input" id="fName" placeholder="e.g. John Doe" required></div>
-        <div class="form-field"><label>Phone Number *</label><input class="form-input" type="tel" id="fPhone" placeholder="+237 6 75 78 15 17" required></div>
+        <div class="form-field"><label data-i18n="consult.your_name">Your Name *</label><input class="form-input" id="fName" placeholder="e.g. John Doe" required></div>
+        <div class="form-field"><label data-i18n="consult.phone_number">Phone Number *</label><input class="form-input" type="tel" id="fPhone" placeholder="+237 6 75 78 15 17" required></div>
       </div>
       <div class="form-row">
-        <div class="form-field"><label>Email Address *</label><input class="form-input" type="email" id="fEmail" placeholder="you@example.com" required></div>
-        <div class="form-field"><label>Business Type *</label><input class="form-input" id="fBizType" placeholder="e.g. Digital Agency, Restaurant" required></div>
+        <div class="form-field"><label data-i18n="consult.email_address">Email Address *</label><input class="form-input" type="email" id="fEmail" placeholder="you@example.com" required></div>
+        <div class="form-field"><label data-i18n="consult.business_type">Business Type *</label><input class="form-input" id="fBizType" placeholder="e.g. Digital Agency, Restaurant" required></div>
       </div>
       <div class="form-row">
-        <div class="form-field"><label>Industry</label>
+        <div class="form-field"><label data-i18n="consult.industry">Industry</label>
           <select class="form-input" id="fIndustry">
-            <option value="">Select industry...</option>
+            <option value="" data-i18n="consult.select_industry">Select industry...</option>
             <option>Technology & Digital</option><option>Marketing & Advertising</option>
             <option>Retail & E-commerce</option><option>Food & Hospitality</option>
             <option>Education & Training</option><option>Health & Wellness</option>
@@ -312,36 +316,36 @@ select.form-input{appearance:none;background-image:url("data:image/svg+xml,%3Csv
             <option>Other</option>
           </select>
         </div>
-        <div class="form-field"><label>Growth Stage</label>
+        <div class="form-field"><label data-i18n="consult.growth_stage">Growth Stage</label>
           <select class="form-input" id="fStage">
-            <option value="">Select stage...</option>
+            <option value="" data-i18n="consult.select_stage">Select stage...</option>
             <option>Idea / Pre-launch</option><option>Early Stage (0–1 year)</option>
             <option>Growth Stage (1–3 years)</option><option>Established (3+ years)</option>
             <option>Scaling / Expansion</option>
           </select>
         </div>
       </div>
-      <div class="form-field"><label>Location</label><input class="form-input" id="fLocation" placeholder="e.g. Buea, Cameroon"></div>
+      <div class="form-field"><label data-i18n="consult.location">Location</label><input class="form-input" id="fLocation" placeholder="e.g. Buea, Cameroon"></div>
       <hr class="form-divider">
-      <div class="form-field"><label>Main Challenge / Problem *</label><textarea class="form-input" id="fChallenge" placeholder="What is the biggest challenge your business is facing right now?" rows="3" required></textarea></div>
-      <div class="form-field"><label>Goal / What You Want to Achieve *</label><textarea class="form-input" id="fGoal" placeholder="What outcome do you want from this consultation?" rows="2" required></textarea></div>
+      <div class="form-field"><label data-i18n="consult.main_challenge">Main Challenge / Problem *</label><textarea class="form-input" id="fChallenge" data-i18n-placeholder="consult.main_challenge_placeholder" placeholder="What is the biggest challenge your business is facing right now?" rows="3" required></textarea></div>
+      <div class="form-field"><label data-i18n="consult.goal">Goal / What You Want to Achieve *</label><textarea class="form-input" id="fGoal" data-i18n-placeholder="consult.goal_placeholder" placeholder="What outcome do you want from this consultation?" rows="2" required></textarea></div>
 
       <hr class="form-divider">
       <div class="form-field">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <label style="margin:0">Choose Your Board Members <span style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0">(optional)</span></label>
-          <button type="button" onclick="toggleDirectorPicker()" id="pickerToggleBtn" style="background:none;border:1px solid var(--border);border-radius:7px;color:var(--purple-light);font-size:11.5px;padding:5px 10px;cursor:pointer;font-family:inherit">Browse Directors</button>
+          <label style="margin:0"><span data-i18n="consult.choose_directors">Choose Your Board Members</span> <span style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0" data-i18n="consult.optional">(optional)</span></label>
+          <button type="button" onclick="toggleDirectorPicker()" id="pickerToggleBtn" data-i18n="consult.browse_directors" style="background:none;border:1px solid var(--border);border-radius:7px;color:var(--purple-light);font-size:11.5px;padding:5px 10px;cursor:pointer;font-family:inherit">Browse Directors</button>
         </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Not sure who to pick? Leave this blank and the Board Secretary will automatically choose the directors best suited to your challenge.</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px" data-i18n="consult.picker_hint">Not sure who to pick? Leave this blank and the Board Secretary will automatically choose the directors best suited to your challenge.</div>
         <div id="directorPickerWrap" style="display:none">
           <div id="directorPickerGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;max-height:280px;overflow-y:auto;padding:10px;background:var(--bg4);border-radius:10px;margin-bottom:8px"></div>
-          <div style="font-size:11.5px;color:var(--muted)"><span id="pickerCount">0</span> of 6 selected</div>
+          <div style="font-size:11.5px;color:var(--muted)"><span id="pickerCount">0</span> <span data-i18n="consult.selected_of_6">of 6 selected</span></div>
         </div>
       </div>
 
       <div class="form-err" id="formErr"></div>
-      <button class="submit-btn" onclick="startConsult()">🏛️ Begin Consultation</button>
-      <div class="privacy-note">🔒 Your information is kept confidential and used only for this consultation.</div>
+      <button class="submit-btn" onclick="startConsult()">🏛️ <span data-i18n="consult.begin_consultation">Begin Consultation</span></button>
+      <div class="privacy-note">🔒 <span data-i18n="consult.privacy_note">Your information is kept confidential and used only for this consultation.</span></div>
     </div>
   </div>
 </div>
@@ -518,7 +522,7 @@ function toggleDirectorPicker() {
   const wrap = document.getElementById('directorPickerWrap');
   const isOpen = wrap.style.display === 'block';
   wrap.style.display = isOpen ? 'none' : 'block';
-  document.getElementById('pickerToggleBtn').textContent = isOpen ? 'Browse Directors' : 'Hide List';
+  document.getElementById('pickerToggleBtn').textContent = isOpen ? t('consult.browse_directors') : t('consult.hide_list');
   if (!isOpen && !allDirectors.length) loadConsultDirectors().then(renderDirectorPicker);
   else if (!isOpen) renderDirectorPicker();
 }
@@ -609,7 +613,7 @@ async function initChat(){
 async function getFirstQuestion(){
   try{
     const res=await fetch('/api/consult/qualify',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({businessData:bizData,conversationHistory:[]})});
+      body:JSON.stringify({businessData:bizData,conversationHistory:[],language:window.currentLang||'en'})});
     const d=await res.json();
     return d.question||`What is the single biggest obstacle standing between you and your goal of "${bizData.goal}" right now?`;
   }catch{return `What is the single biggest obstacle standing between you and your goal of "${bizData.goal}" right now?`;}
@@ -630,7 +634,7 @@ async function sendChat(){
 
   try{
     const res=await fetch('/api/consult/qualify',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({businessData:bizData,conversationHistory:chatHistory})});
+      body:JSON.stringify({businessData:bizData,conversationHistory:chatHistory,language:window.currentLang||'en'})});
     const d=await res.json();
     removeTyping();
 
@@ -707,7 +711,7 @@ async function generateReport(){
 
   try{
     const res=await fetch('/api/consult/run',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({businessData:bizData,clientInfo,conversationHistory:chatHistory,selectedDirectorIds})});
+      body:JSON.stringify({businessData:bizData,clientInfo,conversationHistory:chatHistory,selectedDirectorIds,language:window.currentLang||'en'})});
     if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error||'Server error');}
     const data=await res.json();
 
@@ -943,32 +947,32 @@ function printReport(){window.print();}
 function downloadReport(){
   if(!reportData)return;
   const lines=[
-    'G-DESIGNS LTD — BOARD CONSULTATION REPORT',
+    t('report.title'),
     '='.repeat(50),
-    `Client: ${reportData.client.name}`,
-    `Email: ${reportData.client.email}`,
-    `Phone: ${reportData.client.phone||''}`,
-    `Date: ${new Date(reportData.generatedAt).toLocaleDateString()}`,
-    `Business: ${reportData.businessData.businessType}`,
-    `Industry: ${reportData.businessData.industry||''}`,
-    `Challenge: ${reportData.businessData.challenge}`,
-    `Goal: ${reportData.businessData.goal}`,
+    `${t('report.client')}: ${reportData.client.name}`,
+    `${t('report.email')}: ${reportData.client.email}`,
+    `${t('report.phone')}: ${reportData.client.phone||''}`,
+    `${t('report.date')}: ${new Date(reportData.generatedAt).toLocaleDateString()}`,
+    `${t('report.business')}: ${reportData.businessData.businessType}`,
+    `${t('report.industry')}: ${reportData.businessData.industry||''}`,
+    `${t('report.challenge')}: ${reportData.businessData.challenge}`,
+    `${t('report.goal')}: ${reportData.businessData.goal}`,
     '',
-    'BOARD MEMBERS CONSULTED:',
+    t('report.members_consulted'),
     reportData.directors.map(d=>`• ${d.name} — ${d.role}`).join('\n'),
     '',
     '='.repeat(50),
-    'BOARD MEMBER INSIGHTS:',
+    t('report.member_insights'),
     '='.repeat(50),
     ...reportData.insights.map(i=>`\n${i.name.toUpperCase()} (${i.role})\n${'-'.repeat(40)}\n${i.insight}`),
     '',
     '='.repeat(50),
-    'SYNTHESISED RECOMMENDATION:',
+    t('report.synthesised_recommendation'),
     '='.repeat(50),
     reportData.synthesis,
     '',
     '='.repeat(50),
-    'Powered by G-DESIGNS LTD AI Board of Directors',
+    t('report.powered_by'),
     'board.gdesignsme.com | gdesignsme.com | Learn. Create. Innovate.'
   ];
   const blob=new Blob([lines.join('\n')],{type:'text/plain'});
