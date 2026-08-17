@@ -379,6 +379,31 @@ async function init() {
     const remaining = limit === -1 ? '∞' : Math.max(0, limit - (user.consultations_used||0));
     document.getElementById('usagePill').textContent = remaining + ' consultations left';
     buildDirList();
+
+    // Arriving from a dashboard category card ("Business Strategy", "Marketing &
+    // Brand", etc.) — automatically match a director for that topic instead of
+    // showing the generic "not sure who to ask" splash. Direct visits to
+    // /boardroom (no topic param) keep the normal splash with manual + auto choice.
+    const topic = new URLSearchParams(window.location.search).get('topic');
+    const topicChallenges = {
+      strategy: 'I need help with market positioning, competitive advantage, and growth planning for my business.',
+      marketing: 'I need help with brand building, advertising, social media, and copywriting for my business.',
+      finance: 'I need help with pricing, funding, financial strategy, and building an economic moat for my business.',
+      sales: 'I need help with sales psychology, closing deals, and customer acquisition for my business.',
+      operations: 'I need help with process building, management, and scaling operations for my business.',
+      innovation: 'I need help with product design, disruption, and first principles thinking for my business.'
+    };
+    if (topic && topicChallenges[topic]) {
+      document.getElementById('splash').innerHTML = `
+        <div class="splash-icon">🏛️</div>
+        <div class="splash-title">Matching you with the right director...</div>
+        <div class="splash-sub">Finding the best board member for ${topic === 'innovation' ? 'Innovation & Product' : topic.charAt(0).toUpperCase() + topic.slice(1)}.</div>`;
+      const ok = await matchAndOpenDirector(topicChallenges[topic], false);
+      if (!ok) {
+        // Fall back to the normal manual/auto splash if matching failed for any reason
+        location.href = '/boardroom';
+      }
+    }
   } catch(e) { window.location.href = '/auth'; }
 }
 
@@ -488,15 +513,9 @@ function renderBoardVerdict(s) {
   document.getElementById('verdictResults').style.display = 'block';
 }
 
-async function autoMatchDirector() {
-  const input = document.getElementById('autoMatchInput');
-  const challenge = input.value.trim();
-  if (!challenge) { input.focus(); return; }
-
-  const btn = document.getElementById('autoMatchBtn');
-  btn.disabled = true;
-  btn.innerHTML = 'Matching you with a director...';
-
+// Shared matching logic — used both by the manual "Match Me" button and by
+// automatic topic-based matching when arriving from a dashboard category card
+async function matchAndOpenDirector(challenge, autoSendMessage) {
   const isStarter = (user.plan||'starter') === 'starter';
   const available = DIRS.filter(d => !(isStarter && d.locked)).map(d => ({ id: d.id, name: d.name, role: d.role }));
 
@@ -509,14 +528,29 @@ async function autoMatchDirector() {
     const matchedId = data.directorId || available[0].id;
 
     selectDir(matchedId);
-    // Pre-fill their challenge as the first message and send it automatically
-    setTimeout(() => {
-      document.getElementById('chatInput').value = challenge;
-      sendMsg();
-    }, 300);
+    if (autoSendMessage) {
+      setTimeout(() => {
+        document.getElementById('chatInput').value = challenge;
+        sendMsg();
+      }, 300);
+    }
+    return true;
   } catch(e) {
-    alert('Could not auto-match right now — please pick a director manually from the panel.');
+    return false;
   }
+}
+
+async function autoMatchDirector() {
+  const input = document.getElementById('autoMatchInput');
+  const challenge = input.value.trim();
+  if (!challenge) { input.focus(); return; }
+
+  const btn = document.getElementById('autoMatchBtn');
+  btn.disabled = true;
+  btn.innerHTML = 'Matching you with a director...';
+
+  const ok = await matchAndOpenDirector(challenge, true);
+  if (!ok) alert('Could not auto-match right now — please pick a director manually from the panel.');
 
   btn.disabled = false;
   btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 7.2H22l-6 4.4 2.3 7.2-6.3-4.6-6.3 4.6 2.3-7.2-6-4.4h7.6z"/></svg> Match Me With a Director';
