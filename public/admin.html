@@ -538,7 +538,7 @@ async function updateUserPlan(userId, plan) {
 // ── CMS ────────────────────────────────────────────────────────────────────
 async function loadCMS() {
   try {
-    const res = await fetch('/api/cms');
+    const res = await fetch('/api/admin/cms-raw');
     const { content } = await res.json();
     cmsData = content;
     renderAllCmsSections(content);
@@ -562,13 +562,29 @@ function renderAllCmsSections(content) {
   container.innerHTML = ordered.map(section => {
     const data = content[section];
     const label = SECTION_LABELS[section] || section.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
-    const fields = Object.entries(data || {}).map(([key, value]) => {
+    const fields = Object.entries(data || {}).map(([key, fieldData]) => {
+      // Support both the raw {value, value_fr} shape and a bare-string shape
+      // (e.g. right after addNewCmsField adds an unsaved field client-side)
+      const value = typeof fieldData === 'object' ? fieldData.value : fieldData;
+      const valueFr = typeof fieldData === 'object' ? (fieldData.value_fr || '') : '';
       const isLong = (value || '').length > 80;
+      const tag = isLong ? 'textarea' : 'input';
+      const valueAttr = isLong ? '' : `value="${(value||'').replace(/"/g,'&quot;')}"`;
+      const valueFrAttr = isLong ? '' : `value="${(valueFr||'').replace(/"/g,'&quot;')}"`;
+      const enInner = isLong ? (value||'').replace(/</g,'&lt;') : '';
+      const frInner = isLong ? (valueFr||'').replace(/</g,'&lt;') : '';
       return `<div class="cms-field">
         <div class="cms-field-key">${key.replace(/_/g,' ')}</div>
-        ${isLong
-          ? `<textarea class="cms-field-input" data-section="${section}" data-key="${key}" placeholder="${key}">${(value||'').replace(/</g,'&lt;')}</textarea>`
-          : `<input class="cms-field-input" data-section="${section}" data-key="${key}" value="${(value||'').replace(/"/g,'&quot;')}" placeholder="${key}">`}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:4px">🇬🇧 English</div>
+            <${tag} class="cms-field-input" data-lang="en" data-section="${section}" data-key="${key}" ${valueAttr} placeholder="${key}">${enInner}</${tag}>
+          </div>
+          <div>
+            <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:4px">🇫🇷 Français ${!valueFr ? '<span style="color:var(--gold)">(not translated — shows English until filled in)</span>' : ''}</div>
+            <${tag} class="cms-field-input" data-lang="fr" data-section="${section}" data-key="${key}" ${valueFrAttr} placeholder="Traduction française...">${frInner}</${tag}>
+          </div>
+        </div>
       </div>`;
     }).join('');
     return `<div class="cms-section"><div class="cms-section-title">${label}</div>${fields}</div>`;
@@ -591,7 +607,15 @@ function addNewCmsField() {
 
 async function saveCMS() {
   const inputs = document.querySelectorAll('.cms-field-input');
-  const updates = Array.from(inputs).map(inp => ({ section: inp.dataset.section, key: inp.dataset.key, value: inp.value }));
+  // Group by section+key since each field now has two inputs (en, fr)
+  const grouped = {};
+  inputs.forEach(inp => {
+    const id = inp.dataset.section + '::' + inp.dataset.key;
+    if (!grouped[id]) grouped[id] = { section: inp.dataset.section, key: inp.dataset.key, value: '', value_fr: null };
+    if (inp.dataset.lang === 'fr') grouped[id].value_fr = inp.value;
+    else grouped[id].value = inp.value;
+  });
+  const updates = Object.values(grouped);
   try {
     const res = await fetch('/api/cms/bulk', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({updates}) });
     const data = await res.json();
