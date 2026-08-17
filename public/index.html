@@ -603,7 +603,7 @@ function toggleMobileMenu() {
 
 async function loadCMS() {
   try {
-    const res = await fetch('/api/cms');
+    const res = await fetch('/api/cms?lang=' + (window.currentLang || 'en'));
     const data = await res.json();
     const content = data.content;
 
@@ -727,8 +727,20 @@ async function loadAnnouncements() {
   } catch(e) {}
 }
 
-loadCMS();
-loadAnnouncements();
+// loadAnnouncements doesn't depend on language, so it's safe to run immediately
+// on DOMContentLoaded. loadCMS() is intentionally NOT called here — i18n.js's
+// own DOMContentLoaded listener (registered first, since it loads in <head>)
+// runs applyTranslations() first and dispatches 'arreyon:langchange', which the
+// listener below picks up to do the initial CMS fetch in the correct language.
+// Calling loadCMS() again here would just be a redundant duplicate fetch.
+document.addEventListener('DOMContentLoaded', () => {
+  loadAnnouncements();
+});
+
+// Fetch CMS content in the current language — covers both the initial load
+// (triggered by i18n.js's first language-detection dispatch) and any manual
+// language switch afterward.
+document.addEventListener('arreyon:langchange', () => { loadCMS(); });
 </script>
 </body>
 </html>
