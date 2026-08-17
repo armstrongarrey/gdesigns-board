@@ -357,19 +357,19 @@ INSERT INTO cms_content (section, key, value, type) VALUES
 ('stats', 'stat4_label', 'Models Combined', 'text'),
 
 -- Features section
-('features', 'headline', 'Everything you need for strategic clarity', 'text'),
-('features', 'feature1_title', 'Auto Director Matching', 'text'),
-('features', 'feature1_desc', 'Describe your challenge and get matched instantly with the most relevant director — or browse and pick manually.', 'text'),
-('features', 'feature2_title', 'Live Board Conversation', 'text'),
-('features', 'feature2_desc', 'Real back-and-forth dialogue with each director. They ask follow-up questions and adapt to your specific answers.', 'text'),
-('features', 'feature3_title', 'Structured Report', 'text'),
-('features', 'feature3_desc', 'Executive summary, board insights, risk analysis, and a 90-day action plan — all in one downloadable report.', 'text'),
-('features', 'feature4_title', 'Video Presentation', 'text'),
-('features', 'feature4_desc', 'Get a personalised video presentation of your board key recommendations — optimised for your device.', 'text'),
-('features', 'feature5_title', 'Consultation History', 'text'),
-('features', 'feature5_desc', 'Full replay of every consultation — conversation, report, and video — stored securely in your dashboard.', 'text'),
-('features', 'feature6_title', 'Three AI Models', 'text'),
-('features', 'feature6_desc', 'Claude, ChatGPT, and Gemini — each director is matched with the AI that best fits their thinking style.', 'text'),
+('features', 'headline', 'A full AI business intelligence platform', 'text'),
+('features', 'feature1_title', 'Website Business Analyzer', 'text'),
+('features', 'feature1_desc', 'Paste your website and Arreyon reads it automatically — extracting your positioning, offers, and gaps, clearly labeled as observed fact or AI inference.', 'text'),
+('features', 'feature2_title', 'Real Market & Competitor Research', 'text'),
+('features', 'feature2_desc', 'Live web research finds your local and international competitors, with every claim cited to a real source — not invented statistics.', 'text'),
+('features', 'feature3_title', 'Verification Pass', 'text'),
+('features', 'feature3_desc', 'Every recommendation is stress-tested against the evidence before you see it — the board argues against itself first, so you don''t have to.', 'text'),
+('features', 'feature4_title', 'Chairman''s Board Verdict', 'text'),
+('features', 'feature4_desc', 'After talking with multiple directors, get one final synthesized decision — disagreements named openly, not smoothed over.', 'text'),
+('features', 'feature5_title', 'Entrepreneur Mode', 'text'),
+('features', 'feature5_desc', 'No business yet? Get opportunities matched to your skills and capital, or a straight VALIDATE / MODIFY / RECONSIDER verdict on your idea.', 'text'),
+('features', 'feature6_title', 'Full Business Plan & Downloads', 'text'),
+('features', 'feature6_desc', 'Business model, marketing plan, and a 90-day execution plan — generated and downloadable as PDF, Word, or HTML.', 'text'),
 
 -- Pricing feature bullet lists (one per line, shown exactly as written)
 ('pricing', 'starter_features', '3 consultations per month
@@ -398,6 +398,25 @@ Full consultation history', 'textarea'),
 ('footer', 'copyright', '2026 Arreyon Consult by G-DESIGNS LTD. All rights reserved.', 'text')
 
 ON CONFLICT (section, key) DO NOTHING;
+
+-- One-time refresh: the "features" section originally described the platform
+-- before the Business Intelligence upgrade (Website Analyzer, Research,
+-- Verification, Entrepreneur Mode, etc). This updates only rows still holding
+-- that old default text — any admin customization already in place is left
+-- untouched, since the WHERE clause only matches the exact old value.
+UPDATE cms_content SET value = 'A full AI business intelligence platform' WHERE section='features' AND key='headline' AND value='Everything you need for strategic clarity';
+UPDATE cms_content SET value = 'Website Business Analyzer' WHERE section='features' AND key='feature1_title' AND value='Auto Director Matching';
+UPDATE cms_content SET value = 'Paste your website and Arreyon reads it automatically — extracting your positioning, offers, and gaps, clearly labeled as observed fact or AI inference.' WHERE section='features' AND key='feature1_desc' AND value='Describe your challenge and get matched instantly with the most relevant director — or browse and pick manually.';
+UPDATE cms_content SET value = 'Real Market & Competitor Research' WHERE section='features' AND key='feature2_title' AND value='Live Board Conversation';
+UPDATE cms_content SET value = 'Live web research finds your local and international competitors, with every claim cited to a real source — not invented statistics.' WHERE section='features' AND key='feature2_desc' AND value='Real back-and-forth dialogue with each director. They ask follow-up questions and adapt to your specific answers.';
+UPDATE cms_content SET value = 'Verification Pass' WHERE section='features' AND key='feature3_title' AND value='Structured Report';
+UPDATE cms_content SET value = 'Every recommendation is stress-tested against the evidence before you see it — the board argues against itself first, so you don''t have to.' WHERE section='features' AND key='feature3_desc' AND value='Executive summary, board insights, risk analysis, and a 90-day action plan — all in one downloadable report.';
+UPDATE cms_content SET value = 'Chairman''s Board Verdict' WHERE section='features' AND key='feature4_title' AND value='Video Presentation';
+UPDATE cms_content SET value = 'After talking with multiple directors, get one final synthesized decision — disagreements named openly, not smoothed over.' WHERE section='features' AND key='feature4_desc' AND value='Get a personalised video presentation of your board key recommendations — optimised for your device.';
+UPDATE cms_content SET value = 'Entrepreneur Mode' WHERE section='features' AND key='feature5_title' AND value='Consultation History';
+UPDATE cms_content SET value = 'No business yet? Get opportunities matched to your skills and capital, or a straight VALIDATE / MODIFY / RECONSIDER verdict on your idea.' WHERE section='features' AND key='feature5_desc' AND value='Full replay of every consultation — conversation, report, and video — stored securely in your dashboard.';
+UPDATE cms_content SET value = 'Full Business Plan & Downloads' WHERE section='features' AND key='feature6_title' AND value='Three AI Models';
+UPDATE cms_content SET value = 'Business model, marketing plan, and a 90-day execution plan — generated and downloadable as PDF, Word, or HTML.' WHERE section='features' AND key='feature6_desc' AND value='Claude, ChatGPT, and Gemini — each director is matched with the AI that best fits their thinking style.';
 
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
