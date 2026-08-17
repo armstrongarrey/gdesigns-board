@@ -786,7 +786,7 @@ ${directors.map(d => `- ${d.id}: ${d.name} — ${d.role}`).join('\n')}
 Pick the ONE director whose specialty best matches this challenge. Return ONLY the director's id (the short lowercase code before the colon), nothing else — no explanation, no punctuation.`;
 
   try {
-    const result = await askClaude(matchPrompt, [{ role: 'user', content: 'Which director id matches best?' }]);
+    const result = await askClaude(matchPrompt, [{ role: 'user', content: 'Which director id matches best?' }], { feature: 'board_match' });
     const matchedId = result.trim().toLowerCase().replace(/[^a-z]/g, '');
     const valid = directors.find(d => d.id === matchedId);
     res.json({ directorId: valid ? matchedId : directors[0].id });
@@ -826,11 +826,11 @@ app.post('/api/board/chat', authRequired, async (req, res) => {
     const selectedAI = ai || 'claude';
 
     if (selectedAI === 'chatgpt') {
-      reply = await askChatGPT(persona, messages);
+      reply = await askChatGPT(persona, messages, { feature: 'boardroom_chat', userId: req.userId });
     } else if (selectedAI === 'gemini') {
-      reply = await askGemini(persona, messages);
+      reply = await askGemini(persona, messages, { feature: 'boardroom_chat', userId: req.userId });
     } else {
-      reply = await askClaude(persona, messages);
+      reply = await askClaude(persona, messages, { feature: 'boardroom_chat', userId: req.userId });
     }
 
     res.json({ reply, ai: selectedAI });
@@ -1006,7 +1006,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   "what_to_learn_first": "the single most important skill or knowledge gap to close before starting, if any"
 }`;
 
-    const raw = await askClaude(prompt, [{ role: 'user', content: 'Find the opportunities now, as JSON only.' }], { feature: 'entrepreneur_mode', userId: req.userId }, 2800);
+    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Find the opportunities now, as JSON only.' }], complexity: 'complex', context: { feature: 'entrepreneur_mode', userId: req.userId }, maxTokens: 2800 });
     let structured;
     try {
       structured = extractJSON(raw);
@@ -1389,26 +1389,26 @@ async function askClaude(persona, messages, context = {}, maxTokens = 1024, mode
   }
 }
 
-async function askChatGPT(persona, messages) {
+async function askChatGPT(persona, messages, context = {}) {
   const start = Date.now();
   try {
     const result = await _askChatGPTRaw(persona, messages);
-    logAIUsage({ provider: 'chatgpt', model: 'gpt-4o-mini', status: 'success', durationMs: Date.now() - start });
+    logAIUsage({ provider: 'chatgpt', model: 'gpt-4o-mini', status: 'success', durationMs: Date.now() - start, ...context });
     return result;
   } catch (e) {
-    logAIUsage({ provider: 'chatgpt', model: 'gpt-4o-mini', status: 'error', errorMessage: e.message, durationMs: Date.now() - start });
+    logAIUsage({ provider: 'chatgpt', model: 'gpt-4o-mini', status: 'error', errorMessage: e.message, durationMs: Date.now() - start, ...context });
     throw e;
   }
 }
 
-async function askGemini(persona, messages) {
+async function askGemini(persona, messages, context = {}) {
   const start = Date.now();
   try {
     const result = await _askGeminiRaw(persona, messages);
-    logAIUsage({ provider: 'gemini', model: 'gemini-1.5-flash-latest', status: 'success', durationMs: Date.now() - start });
+    logAIUsage({ provider: 'gemini', model: 'gemini-1.5-flash-latest', status: 'success', durationMs: Date.now() - start, ...context });
     return result;
   } catch (e) {
-    logAIUsage({ provider: 'gemini', model: 'gemini-1.5-flash-latest', status: 'error', errorMessage: e.message, durationMs: Date.now() - start });
+    logAIUsage({ provider: 'gemini', model: 'gemini-1.5-flash-latest', status: 'error', errorMessage: e.message, durationMs: Date.now() - start, ...context });
     throw e;
   }
 }
@@ -1492,7 +1492,7 @@ ${nextTopicHint}
 RULES: ONE question only. Under 60 words total. Warm and conversational. Return plain text only.`;
 
   try {
-    const q = await askClaude(qualifyPrompt, [{ role: 'user', content: lastUserMsg || 'Continue.' }]);
+    const q = await askClaude(qualifyPrompt, [{ role: 'user', content: lastUserMsg || 'Continue.' }], { feature: 'consult_secretary' });
     res.json({ ready: false, question: q.trim().replace(/^["']|["']$/g, '') });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -1663,11 +1663,11 @@ Format your response as plain text paragraphs. No headers. No bullet points.`;
 
       let insight;
       try {
-        if (director.ai === 'chatgpt') insight = await askChatGPT(directorPrompt, [{ role: 'user', content: `As ${director.name}, what is your specific advice for this business?` }]);
-        else if (director.ai === 'gemini') insight = await askGemini(directorPrompt, [{ role: 'user', content: `As ${director.name}, what is your specific advice for this business?` }]);
-        else insight = await askClaude(directorPrompt, [{ role: 'user', content: `As ${director.name}, what is your specific advice for this business?` }]);
+        if (director.ai === 'chatgpt') insight = await askChatGPT(directorPrompt, [{ role: 'user', content: `As ${director.name}, what is your specific advice for this business?` }], { feature: 'consult_board' });
+        else if (director.ai === 'gemini') insight = await askGemini(directorPrompt, [{ role: 'user', content: `As ${director.name}, what is your specific advice for this business?` }], { feature: 'consult_board' });
+        else insight = await askClaude(directorPrompt, [{ role: 'user', content: `As ${director.name}, what is your specific advice for this business?` }], { feature: 'consult_board' });
       } catch (dirErr) {
-        try { insight = await askClaude(directorPrompt, [{ role: 'user', content: `As ${director.name}, what is your specific advice for this business?` }]); }
+        try { insight = await askClaude(directorPrompt, [{ role: 'user', content: `As ${director.name}, what is your specific advice for this business?` }], { feature: 'consult_board' }); }
         catch (fallbackErr) { insight = `${director.name} was unavailable for this consultation.`; }
       }
 
@@ -1701,7 +1701,7 @@ One bold, direct statement about what this business needs most right now.
 
 Keep each section concise and actionable. Total: 400-500 words.`;
 
-    const synthesis = await askClaude(synthesisPrompt, [{ role: 'user', content: 'Synthesise the board consultation.' }]);
+    const synthesis = await askClaude(synthesisPrompt, [{ role: 'user', content: 'Synthesise the board consultation.' }], { feature: 'consult_board' });
 
     res.json({
       success: true, client: clientInfo, businessData,
@@ -1799,7 +1799,7 @@ STRICT RULES:
 Example length/style: "Welcome ${clientName}. Your board is ready. Let's understand your ${businessType} business and get you real strategic advice."`;
 
   try {
-    const script = await askClaude(welcomeScriptPrompt, [{ role: 'user', content: 'Write the welcome script now. Maximum 22 words — hard limit, must be under 10 seconds spoken.' }]);
+    const script = await askClaude(welcomeScriptPrompt, [{ role: 'user', content: 'Write the welcome script now. Maximum 22 words — hard limit, must be under 10 seconds spoken.' }], { feature: 'heygen_video' });
     const { videoUrl } = await generateHeyGenVideo(script.trim(), deviceType);
     res.json({ success: true, videoUrl, deviceType });
   } catch (err) {
@@ -1829,7 +1829,7 @@ SCRIPT RULES:
 - Return ONLY the script text, nothing else`;
 
   try {
-    const script = await askClaude(scriptPrompt, [{ role: 'user', content: 'Generate the video script now.' }]);
+    const script = await askClaude(scriptPrompt, [{ role: 'user', content: 'Generate the video script now.' }], { feature: 'heygen_video' });
     const { videoUrl } = await generateHeyGenVideo(script.trim(), deviceType);
     res.json({ success: true, videoUrl, deviceType });
   } catch (err) {
@@ -1858,9 +1858,9 @@ app.post('/api/chat', async (req, res) => {
   try {
     let reply;
     const model = ai || 'claude';
-    if (model === 'chatgpt') reply = await askChatGPT(persona, messages);
-    else if (model === 'gemini') reply = await askGemini(persona, messages);
-    else reply = await askClaude(persona, messages);
+    if (model === 'chatgpt') reply = await askChatGPT(persona, messages, { feature: 'internal_board_chat' });
+    else if (model === 'gemini') reply = await askGemini(persona, messages, { feature: 'internal_board_chat' });
+    else reply = await askClaude(persona, messages, { feature: 'internal_board_chat' });
     res.json({ reply, ai: model });
   } catch (err) {
     console.error('Chat error:', err.message);
@@ -1881,7 +1881,7 @@ ${directors.map(d => `- ${d.id}: ${d.name} — ${d.role}`).join('\n')}
 
 Pick the ONE director whose specialty best matches this challenge. Return ONLY the director's id, nothing else.`;
   try {
-    const result = await askClaude(matchPrompt, [{ role: 'user', content: 'Which director id matches best?' }]);
+    const result = await askClaude(matchPrompt, [{ role: 'user', content: 'Which director id matches best?' }], { feature: 'internal_board_match' });
     const matchedId = result.trim().toLowerCase().replace(/[^a-z]/g, '');
     const valid = directors.find(d => d.id === matchedId);
     res.json({ directorId: valid ? matchedId : directors[0].id });
