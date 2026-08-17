@@ -1837,6 +1837,113 @@ Pick the ONE director whose specialty best matches this challenge. Return ONLY t
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// INTERNAL BOARD — ephemeral BI utilities (no auth, nothing persisted to DB)
+// Password-gated at the UI level, same as /api/chat and /api/board-match above.
+// Website Analyzer, Research, and Chairman Synthesis are genuinely portable
+// here since they don't depend on a saved account/business profile. Entrepreneur
+// Mode and Business Plans are intentionally NOT duplicated here — they're
+// multi-step, saved workflows already fully available on the real dashboard.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Quick Website Analyzer — same extraction logic, nothing saved ──────────
+app.post('/api/board-analyze', async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'Website URL is required' });
+
+  let normalizedUrl = url.trim();
+  if (!/^https?:\/\//i.test(normalizedUrl)) normalizedUrl = 'https://' + normalizedUrl;
+
+  try {
+    const pages = await analyzeWebsite(normalizedUrl);
+    const facts = await structureBusinessFacts(pages, normalizedUrl, null);
+    res.json({ success: true, analyzedUrl: normalizedUrl, pagesAnalyzed: pages.map(p => p.url), facts });
+  } catch (err) {
+    console.error('Board website analysis error:', err.message);
+    res.status(500).json({ error: err.message || 'Analysis failed. Please check the URL and try again.' });
+  }
+});
+
+// ── Quick Market Research — takes ad-hoc business info, nothing saved ──────
+app.post('/api/board-research', async (req, res) => {
+  const { businessName, industry, city, country, scope } = req.body;
+  if (!businessName && !industry) return res.status(400).json({ error: 'Please provide at least a business name or industry.' });
+
+  try {
+    const adHocBusiness = { name: businessName || 'This business', industry: industry || '', city: city || '', country: country || '' };
+    const { structured, sources } = await runBusinessResearch(adHocBusiness, null, scope === 'national' ? 'national' : 'both', {});
+    res.json({ success: true, structured, sources });
+  } catch (err) {
+    console.error('Board research error:', err.message);
+    res.status(500).json({ error: err.message || 'Research failed. Please try again.' });
+  }
+});
+
+// ── Quick Verification — verify a set of recommendations just generated ────
+app.post('/api/board-verify', async (req, res) => {
+  const { structured, sources } = req.body;
+  if (!structured) return res.status(400).json({ error: 'No research results to verify.' });
+
+  try {
+    const verification = await runVerificationPass(structured, sources || [], null);
+    res.json({ success: true, verification });
+  } catch (err) {
+    console.error('Board verification error:', err.message);
+    res.status(500).json({ error: err.message || 'Verification failed. Please try again.' });
+  }
+});
+
+// ── Chairman's Board Verdict — same synthesis as Boardroom, no auth needed ──
+app.post('/api/board-synthesize', async (req, res) => {
+  const { conversations } = req.body;
+  if (!conversations || !Array.isArray(conversations) || !conversations.length) {
+    return res.status(400).json({ error: 'No conversations to synthesize. Chat with at least one director first.' });
+  }
+
+  try {
+    const transcripts = conversations.map(c => {
+      const lines = (c.messages || []).slice(-16).map(m => `${m.from === 'you' ? 'Founder' : c.directorName}: ${m.text}`).join('\n');
+      return `=== ${c.directorName} (${c.directorRole || 'Board Member'}) ===\n${lines}`;
+    }).join('\n\n');
+
+    const multiDirector = conversations.length > 1;
+
+    const prompt = `You are the Chairman of the Board at Arreyon Consult, synthesizing a live boardroom session into one final decision for the founder.
+
+${multiDirector ? `The founder spoke with ${conversations.length} different board members in this session.` : `The founder spoke with one board member in this session.`}
+
+FULL CONVERSATION TRANSCRIPTS:
+${transcripts.slice(0, 10000)}
+
+YOUR TASK:
+1. Identify the founder's core problem or question, based on what they actually discussed.
+2. Summarize the key advice given${multiDirector ? ' by each director' : ''}.
+${multiDirector ? '3. Identify any disagreements or tensions between what different directors advised — do not paper over conflicting advice, name it explicitly.\n4. Weigh the disagreement and determine which position is better supported by sound business reasoning, or whether it depends on a specific unstated assumption (state what that assumption is).\n5.' : '3.'} Produce ONE final, clear recommendation — the Chairman's verdict — that the founder should act on.
+${multiDirector ? '6.' : '4.'} State your confidence in this verdict and why.
+
+Be decisive. The founder came to the board for a boardroom-grade final answer, not a menu of options.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "core_problem": "the founder's actual problem or question, in one sentence",
+  "key_advice": [
+    {"director": "Director Name", "summary": "their core advice, 1-2 sentences"}
+  ],
+  "disagreements": "Only include this key if multiple directors gave conflicting advice — describe the disagreement and which side has stronger reasoning, or omit this key entirely if directors were aligned or only one director was consulted",
+  "chairman_verdict": "The final, decisive recommendation — 2-4 sentences, clear and actionable",
+  "confidence": "high|medium|low",
+  "confidence_reason": "why this confidence level — what's solid vs. uncertain about this verdict"
+}`;
+
+    const raw = await askClaude(prompt, [{ role: 'user', content: 'Produce the Chairman synthesis now, as JSON only.' }], { feature: 'chairman_synthesis' }, 2000);
+    const synthesis = extractJSON(raw);
+    res.json({ success: true, synthesis });
+  } catch (err) {
+    console.error('Board synthesis error:', err.message);
+    res.status(500).json({ error: err.message || 'Synthesis failed. Please try again.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // RESEARCH ENGINE — Increment 3
 // Provider-agnostic ResearchProvider abstraction. Tavily is the first (and
 // currently only) implementation — switching providers later means adding
