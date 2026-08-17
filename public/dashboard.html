@@ -123,7 +123,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
   .topbar{padding:12px 16px}
   .welcome-card{flex-direction:column}
 }
+.lang-switch-btn.active{background:var(--purple)!important;border-color:var(--purple)!important;color:#fff!important}
 </style>
+<script src="/i18n.js"></script>
 </head>
 <body>
 
@@ -134,39 +136,39 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
   </div>
   <nav class="sidebar-nav">
     <button class="nav-item active" onclick="showSection('home')" id="nav-home">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg><span data-i18n="dash.nav_dashboard">Dashboard</span>
     </button>
     <button class="nav-item" onclick="showSection('boardroom')" id="nav-boardroom">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Boardroom
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span data-i18n="dash.nav_boardroom">Boardroom</span>
     </button>
     <button class="nav-item" onclick="showSection('analyzer')" id="nav-analyzer">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Analyze My Business
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span data-i18n="dash.nav_analyzer">Analyze My Business</span>
     </button>
     <button class="nav-item" onclick="showSection('entrepreneur')" id="nav-entrepreneur">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/><path d="M17 7c0 2.5-2.5 5-5 5s-5-2.5-5-5"/></svg>Start a Business
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/><path d="M17 7c0 2.5-2.5 5-5 5s-5-2.5-5-5"/></svg><span data-i18n="dash.nav_entrepreneur">Start a Business</span>
     </button>
     <button class="nav-item" onclick="showSection('financial')" id="nav-financial">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>Financial Tools
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span data-i18n="dash.nav_financial">Financial Tools</span>
     </button>
     <button class="nav-item" onclick="showSection('scenario')" id="nav-scenario">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><line x1="12" y1="3" x2="12" y2="21"/></svg>Compare Scenarios
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><line x1="12" y1="3" x2="12" y2="21"/></svg><span data-i18n="dash.nav_scenario">Compare Scenarios</span>
     </button>
     <button class="nav-item" onclick="showSection('history')" id="nav-history">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>History
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="dash.nav_history">History</span>
     </button>
-    <div class="nav-section">Account</div>
+    <div class="nav-section" data-i18n="dash.nav_account">Account</div>
     <button class="nav-item" onclick="showSection('profile')" id="nav-profile">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Profile
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg><span data-i18n="dash.nav_profile">Profile</span>
     </button>
     <button class="nav-item" onclick="showSection('billing')" id="nav-billing">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>Billing &amp; Plan
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg><span data-i18n="dash.nav_billing">Billing &amp; Plan</span>
     </button>
     <a href="/consult" class="nav-item">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Public Consult
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg><span data-i18n="dash.nav_public_consult">Public Consult</span>
     </a>
   </nav>
   <div class="sidebar-plan" id="sidebarPlan">
-    <div class="plan-name">Current Plan</div>
+    <div class="plan-name" data-i18n="dash.current_plan">Current Plan</div>
     <div class="plan-badge starter" id="sidebarPlanBadge">Starter</div>
     <a href="#" onclick="showSection('billing');return false" class="upgrade-btn" id="upgradeBtn">Upgrade Plan</a>
   </div>
@@ -191,9 +193,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     </div>
     <div id="topbarTitle"><div class="topbar-title">Dashboard</div><div class="topbar-sub" id="topbarSub">Good to see you</div></div>
     <div class="topbar-actions">
+      <button class="lang-switch-btn" data-lang-option="en" onclick="setLanguage('en')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;margin-right:4px">EN</button>
+      <button class="lang-switch-btn" data-lang-option="fr" onclick="setLanguage('fr')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;margin-right:10px">FR</button>
       <a href="/boardroom" class="btn-primary">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        New Session
+        <span data-i18n="dash.new_session">New Session</span>
       </a>
     </div>
   </div>
@@ -205,38 +209,38 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div class="welcome-card">
         <div class="welcome-text">
           <h2 id="welcomeMsg">Good day!</h2>
-          <p>Your board is assembled and ready. What challenge are you bringing to them today?</p>
+          <p data-i18n="dash.home_intro">Your board is assembled and ready. What challenge are you bringing to them today?</p>
           <div class="welcome-actions">
-            <a href="/boardroom" class="btn-primary">Ask the Board</a>
-            <button class="btn-ghost" onclick="showSection('history')">View History</button>
+            <a href="/boardroom" class="btn-primary" data-i18n="dash.ask_board">Ask the Board</a>
+            <button class="btn-ghost" onclick="showSection('history')" data-i18n="dash.view_history">View History</button>
           </div>
         </div>
       </div>
 
       <div class="stats-grid">
         <div class="stat-card">
-          <div class="stat-label">Consultations Used</div>
+          <div class="stat-label" data-i18n="dash.consultations_used">Consultations Used</div>
           <div class="stat-value" id="statUsed">0</div>
-          <div class="stat-sub" id="statLimit">of 3 this month</div>
+          <div class="stat-sub" id="statLimit">of 3 <span data-i18n="dash.of_this_month">this month</span></div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Directors Available</div>
+          <div class="stat-label" data-i18n="dash.directors_available">Directors Available</div>
           <div class="stat-value" id="statDirs">5</div>
-          <div class="stat-sub">legendary advisors</div>
+          <div class="stat-sub" data-i18n="dash.legendary_advisors">legendary advisors</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Current Plan</div>
+          <div class="stat-label" data-i18n="dash.current_plan">Current Plan</div>
           <div class="stat-value" id="statPlan" style="font-size:18px;margin-top:4px">Starter</div>
           <div class="stat-sub">active</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Member Since</div>
+          <div class="stat-label" data-i18n="dash.member_since">Member Since</div>
           <div class="stat-value" id="statSince" style="font-size:16px;margin-top:6px">—</div>
-          <div class="stat-sub">welcome aboard</div>
+          <div class="stat-sub" data-i18n="dash.welcome_aboard">welcome aboard</div>
         </div>
       </div>
 
-      <div class="section-title">Start a consultation</div>
+      <div class="section-title" data-i18n="dash.start_consultation">Start a consultation</div>
       <div class="consult-domains">
         <a href="/boardroom?topic=strategy" class="domain-card">
           <div class="domain-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
@@ -836,14 +840,16 @@ function renderUser() {
   document.getElementById('userName').textContent = name;
   document.getElementById('userEmail').textContent = user.email;
   document.getElementById('userAv').textContent = initials;
+  window.currentUserFirstName = user.first_name;
   document.getElementById('welcomeMsg').textContent = getGreeting() + ', ' + user.first_name + '!';
   document.getElementById('topbarSub').textContent = getDateStr();
 
   const plan = user.plan || 'starter';
+  window.currentUserPlan = plan; // needed to correctly re-apply this label if the user switches language later
   const badge = document.getElementById('sidebarPlanBadge');
   badge.textContent = plan.charAt(0).toUpperCase() + plan.slice(1);
   badge.className = 'plan-badge ' + plan;
-  if (plan !== 'starter') document.getElementById('upgradeBtn').textContent = 'Manage Plan';
+  document.getElementById('upgradeBtn').textContent = plan !== 'starter' ? t('dash.manage_plan') : t('dash.upgrade_plan');
 
   document.getElementById('statPlan').textContent = plan.charAt(0).toUpperCase() + plan.slice(1);
   document.getElementById('statUsed').textContent = user.consultations_used || 0;
@@ -854,9 +860,9 @@ function renderUser() {
 
 function getGreeting() {
   const h = new Date().getHours();
-  if (h < 12) return 'Good morning';
-  if (h < 17) return 'Good afternoon';
-  return 'Good evening';
+  if (h < 12) return t('dash.good_morning');
+  if (h < 17) return t('dash.good_afternoon');
+  return t('dash.good_evening');
 }
 
 function getDateStr() {
@@ -2415,6 +2421,18 @@ function renderScenarioResults(optionsWithFinancials, analysis) {
     </div>`;
   document.getElementById('scenarioResults').style.display = 'block';
 }
+
+// Re-apply the plan-aware "Upgrade Plan"/"Manage Plan" label whenever language
+// switches — it can't be a plain data-i18n tag since its text also depends on
+// plan state, not language alone.
+document.addEventListener('arreyon:langchange', () => {
+  if (window.currentUserPlan) {
+    document.getElementById('upgradeBtn').textContent = window.currentUserPlan !== 'starter' ? t('dash.manage_plan') : t('dash.upgrade_plan');
+  }
+  if (window.currentUserFirstName) {
+    document.getElementById('welcomeMsg').textContent = getGreeting() + ', ' + window.currentUserFirstName + '!';
+  }
+});
 
 init();
 </script>
