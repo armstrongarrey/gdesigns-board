@@ -287,7 +287,9 @@ footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 4
 @media(max-width:768px) { .hero { grid-template-columns: 1fr; padding: 60px 5% 40px; } .hero-visual { display: none; } .pricing-grid, .features-grid, .steps, .testimonials-grid { grid-template-columns: 1fr; } .contact-grid { grid-template-columns: 1fr; } .nav-links { display: none; } .nav-hamburger { display: block; } .stats-inner { grid-template-columns: repeat(2,1fr); gap: 24px; } .footer-top { grid-template-columns: 1fr; } .cta-section { padding: 40px 24px; } .directors-grid { grid-template-columns: repeat(2,1fr); } }
 @media(max-width:480px) { .nav-logo-sub { display: none; } .nav-logo-text { font-size: 13px; } .nav-actions { gap: 6px; } .btn-ghost { padding: 7px 12px; font-size: 12.5px; } .btn-primary { padding: 8px 14px; font-size: 12.5px; } .nav-inner { padding: 0; } }
 @media(max-width:360px) { .btn-ghost { display: none; } }
+.lang-switch-btn.active{background:var(--purple,#6C3Bff)!important;border-color:var(--purple,#6C3Bff)!important;color:#fff!important}
 </style>
+<script src="/i18n.js"></script>
 </head>
 <body>
 
@@ -312,14 +314,16 @@ footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 4
       <div><div class="nav-logo-text">Arreyon Consult</div><span class="nav-logo-sub">by G-DESIGNS LTD</span></div>
     </a>
     <div class="nav-links">
-      <a href="#how-it-works">How It Works</a>
-      <a href="#directors">The Board</a>
-      <a href="#pricing">Pricing</a>
-      <a href="#contact">Contact</a>
+      <a href="#how-it-works" data-i18n="nav.how_it_works">How It Works</a>
+      <a href="#directors" data-i18n="nav.the_board">The Board</a>
+      <a href="#pricing" data-i18n="nav.pricing">Pricing</a>
+      <a href="#contact" data-i18n="nav.contact">Contact</a>
     </div>
     <div class="nav-actions">
-      <a href="/auth?mode=login" class="btn-ghost">Sign In</a>
-      <a href="/auth?mode=signup" class="btn-primary">Start Free</a>
+      <button class="lang-switch-btn" data-lang-option="en" onclick="setLanguage('en')" style="background:none;border:1px solid var(--border-light,#333);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:inherit;cursor:pointer;margin-right:4px">EN</button>
+      <button class="lang-switch-btn" data-lang-option="fr" onclick="setLanguage('fr')" style="background:none;border:1px solid var(--border-light,#333);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:inherit;cursor:pointer;margin-right:10px">FR</button>
+      <a href="/auth?mode=login" class="btn-ghost" data-i18n="nav.sign_in">Sign In</a>
+      <a href="/auth?mode=signup" class="btn-primary" data-i18n="nav.start_free">Start Free</a>
     </div>
     <button class="nav-hamburger" onclick="toggleMobileMenu()"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
   </div>
@@ -337,7 +341,7 @@ footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 4
       </div>
       <div class="hero-proof">
         <div class="hero-proof-avatars"><span>RK</span><span>DO</span><span>WB</span><span>EM</span><span>SJ</span></div>
-        <div class="hero-proof-text"><strong>29 legendary advisors</strong> ready for your challenge</div>
+        <div class="hero-proof-text"><strong>29</strong> <span data-i18n="hero.advisors_ready">legendary advisors ready for your challenge</span></div>
       </div>
     </div>
     <div class="hero-visual">
@@ -558,9 +562,9 @@ footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 4
           </a>
         </div>
       </div>
-      <div class="footer-col"><h4>Product</h4><a href="#how-it-works">How It Works</a><a href="#directors">The Board</a><a href="#pricing">Pricing</a><a href="/consult">Public Consult</a></div>
-      <div class="footer-col"><h4>Account</h4><a href="/auth?mode=signup">Sign Up</a><a href="/auth?mode=login">Sign In</a><a href="/dashboard">Dashboard</a><a href="/boardroom">Boardroom</a></div>
-      <div class="footer-col"><h4>Company</h4><a href="#contact">Contact Us</a><a href="https://gdesignsme.com" target="_blank">G-DESIGNS LTD</a><a href="https://wa.me/237675781517" target="_blank">WhatsApp</a></div>
+      <div class="footer-col"><h4 data-i18n="footer.product">Product</h4><a href="#how-it-works" data-i18n="nav.how_it_works">How It Works</a><a href="#directors" data-i18n="nav.the_board">The Board</a><a href="#pricing" data-i18n="nav.pricing">Pricing</a><a href="/consult" data-i18n="footer.public_consult">Public Consult</a></div>
+      <div class="footer-col"><h4 data-i18n="footer.account">Account</h4><a href="/auth?mode=signup" data-i18n="footer.sign_up">Sign Up</a><a href="/auth?mode=login" data-i18n="footer.sign_in">Sign In</a><a href="/dashboard" data-i18n="footer.dashboard">Dashboard</a><a href="/boardroom" data-i18n="footer.boardroom">Boardroom</a></div>
+      <div class="footer-col"><h4 data-i18n="footer.company">Company</h4><a href="#contact" data-i18n="footer.contact_us">Contact Us</a><a href="https://gdesignsme.com" target="_blank">G-DESIGNS LTD</a><a href="https://wa.me/237675781517" target="_blank">WhatsApp</a></div>
     </div>
     <div class="footer-bottom">
       <p id="footerCopyright">© 2026 Arreyon Consult by G-DESIGNS LTD. All rights reserved.</p>
