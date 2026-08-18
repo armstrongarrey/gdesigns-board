@@ -163,6 +163,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <button class="nav-item" onclick="showSection('billing')" id="nav-billing">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg><span data-i18n="dash.nav_billing">Billing &amp; Plan</span>
     </button>
+    <button class="nav-item" onclick="showSection('team')" id="nav-team" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span data-i18n="team.nav_title">Team</span>
+    </button>
     <a href="/consult" class="nav-item">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg><span data-i18n="dash.nav_public_consult">Public Consult</span>
     </a>
@@ -330,6 +333,39 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div style="font-size:13px;color:var(--text2);margin-bottom:8px" data-i18n="billing.consultations">Consultations</div>
           <div class="usage-bar"><div class="usage-fill" id="usageFill" style="width:0%"></div></div>
           <div class="usage-text" id="usageText">0 of 3 used</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TEAM SECTION (owners only) -->
+    <div class="section-view" id="section-team">
+      <div class="section-title" data-i18n="team.title">Team</div>
+      <div class="section-sub" data-i18n="team.subtitle">Invite people to work inside your account — choose exactly what each person can access.</div>
+
+      <div id="teamSeatsInfo" style="max-width:500px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em" data-i18n="team.seats_used">Seats Used</div>
+          <div style="font-size:20px;font-weight:800;color:var(--text)" id="teamSeatsCount">1 / 1</div>
+        </div>
+        <a href="#" onclick="showSection('billing');return false" class="btn-ghost" style="padding:8px 16px;font-size:12.5px" data-i18n="team.upgrade_for_seats">Upgrade for more seats</a>
+      </div>
+
+      <div style="max-width:500px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:24px">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px" data-i18n="team.invite_someone">Invite Someone</div>
+        <div class="form-group">
+          <label data-i18n="team.email_address">Email Address</label>
+          <input class="form-input" id="teamInviteEmail" type="email" placeholder="colleague@example.com">
+        </div>
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px" data-i18n="team.grant_access_to">Grant access to</div>
+        <div id="teamPermissionCheckboxes" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px"></div>
+        <button class="btn-primary" style="width:100%;padding:11px" onclick="sendTeamInvite()" id="teamInviteBtn" data-i18n="team.send_invite">Send Invite</button>
+        <div id="teamInviteMsg" style="margin-top:10px;font-size:12.5px;display:none"></div>
+      </div>
+
+      <div style="max-width:600px">
+        <div class="section-title" style="font-size:15px" data-i18n="team.your_team">Your Team</div>
+        <div id="teamMembersList" style="display:flex;flex-direction:column;gap:10px">
+          <div style="text-align:center;padding:24px;color:var(--muted);font-size:13px" data-i18n="team.no_members">You haven't invited anyone yet.</div>
         </div>
       </div>
     </div>
@@ -831,6 +867,19 @@ async function init() {
     loadHistory();
     renderBilling();
     loadProfile();
+    loadFinancialAccess();
+
+    if (data.isTeamMember) {
+      // Team members never manage a team themselves — nav-team stays hidden.
+      // Instead, restrict their own nav to whatever the owner granted them.
+      applyTeamPermissionsToNav(data.permissions);
+    } else {
+      // Account owner — show the Team nav item and load the team panel data
+      const teamNav = document.getElementById('nav-team');
+      if (teamNav) teamNav.style.display = '';
+      renderTeamPermissionCheckboxes();
+      loadTeamSection();
+    }
   } catch(e) { window.location.href = '/auth'; }
 }
 
@@ -947,6 +996,161 @@ async function saveProfile() {
   } catch(e) { msg.style.display='block'; msg.style.color='var(--red)'; msg.textContent='Update failed.'; }
 }
 
+// ── TEAM MANAGEMENT ──────────────────────────────────────────────────────
+const TEAM_PERMISSION_DEFS = [
+  { key: 'boardroom', labelKey: 'team.perm_boardroom' },
+  { key: 'analyzer', labelKey: 'team.perm_analyzer' },
+  { key: 'entrepreneur', labelKey: 'team.perm_entrepreneur' },
+  { key: 'financial', labelKey: 'team.perm_financial' },
+  { key: 'scenario', labelKey: 'team.perm_scenario' },
+  { key: 'history', labelKey: 'team.perm_history' }
+];
+
+function renderTeamPermissionCheckboxes() {
+  const wrap = document.getElementById('teamPermissionCheckboxes');
+  if (!wrap) return;
+  wrap.innerHTML = TEAM_PERMISSION_DEFS.map(p => `
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);cursor:pointer">
+      <input type="checkbox" class="team-perm-checkbox" value="${p.key}" checked style="cursor:pointer">
+      ${t(p.labelKey)}
+    </label>`).join('');
+}
+
+async function loadTeamSection() {
+  try {
+    const res = await fetch('/api/team');
+    if (!res.ok) return; // 403 for team members — nav item stays hidden for them anyway
+    const data = await res.json();
+
+    document.getElementById('teamSeatsCount').textContent = `${data.seatsUsed} ${t('team.of')} ${data.seatLimit}`;
+
+    const list = document.getElementById('teamMembersList');
+    if (!data.members.length) {
+      list.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">${t('team.no_members')}</div>`;
+    } else {
+      list.innerHTML = data.members.map(m => renderTeamMemberCard(m)).join('');
+    }
+
+    const seatsFull = data.seatsUsed >= data.seatLimit;
+    document.getElementById('teamInviteBtn').disabled = seatsFull;
+    document.getElementById('teamInviteBtn').style.opacity = seatsFull ? '0.5' : '1';
+  } catch (e) {}
+}
+
+function renderTeamMemberCard(m) {
+  const statusColor = m.status === 'active' ? 'var(--green)' : 'var(--gold)';
+  const statusLabel = m.status === 'active' ? t('team.status_active') : t('team.status_invited');
+  const perms = m.permissions || {};
+  return `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px" id="teamMember_${m.id}">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="font-size:13.5px;font-weight:600;color:var(--text)">${m.member_email}</div>
+          <div style="font-size:11px;font-weight:700;color:${statusColor};text-transform:uppercase;letter-spacing:.04em;margin-top:2px">${statusLabel}</div>
+        </div>
+        <button onclick="removeTeamMember('${m.id}')" style="background:none;border:1px solid var(--border);border-radius:7px;color:#ef4444;font-size:11.5px;padding:5px 12px;cursor:pointer;font-family:inherit">${t('team.remove')}</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px">
+        ${TEAM_PERMISSION_DEFS.map(p => `
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer">
+            <input type="checkbox" class="team-edit-perm" data-member="${m.id}" value="${p.key}" ${perms[p.key] ? 'checked' : ''} style="cursor:pointer">
+            ${t(p.labelKey)}
+          </label>`).join('')}
+      </div>
+      <button onclick="saveTeamMemberPermissions('${m.id}')" class="btn-ghost" style="padding:6px 14px;font-size:11.5px">${t('team.save')}</button>
+      <span id="teamMemberMsg_${m.id}" style="margin-left:10px;font-size:11.5px"></span>
+    </div>`;
+}
+
+async function sendTeamInvite() {
+  const email = document.getElementById('teamInviteEmail').value.trim();
+  const msgEl = document.getElementById('teamInviteMsg');
+  if (!email || !email.includes('@')) {
+    msgEl.textContent = t('team.invalid_email');
+    msgEl.style.color = '#ff8080';
+    msgEl.style.display = 'block';
+    return;
+  }
+
+  const permissions = {};
+  document.querySelectorAll('.team-perm-checkbox').forEach(cb => { permissions[cb.value] = cb.checked; });
+
+  const btn = document.getElementById('teamInviteBtn');
+  btn.disabled = true;
+  btn.textContent = t('team.sending');
+
+  try {
+    const res = await fetch('/api/team/invite', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, permissions })
+    });
+    const data = await res.json();
+    btn.disabled = false;
+    btn.textContent = t('team.send_invite');
+
+    if (!res.ok) {
+      msgEl.textContent = data.error || 'Failed to send invite.';
+      msgEl.style.color = '#ff8080';
+      msgEl.style.display = 'block';
+      return;
+    }
+
+    msgEl.textContent = t('team.invite_sent');
+    msgEl.style.color = 'var(--green)';
+    msgEl.style.display = 'block';
+    document.getElementById('teamInviteEmail').value = '';
+    loadTeamSection();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = t('team.send_invite');
+    msgEl.textContent = t('team.connection_error');
+    msgEl.style.color = '#ff8080';
+    msgEl.style.display = 'block';
+  }
+}
+
+async function saveTeamMemberPermissions(memberId) {
+  const permissions = {};
+  document.querySelectorAll(`.team-edit-perm[data-member="${memberId}"]`).forEach(cb => { permissions[cb.value] = cb.checked; });
+
+  const msgEl = document.getElementById('teamMemberMsg_' + memberId);
+  try {
+    const res = await fetch(`/api/team/${memberId}/permissions`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissions })
+    });
+    if (res.ok) {
+      msgEl.textContent = t('team.permissions_saved');
+      msgEl.style.color = 'var(--green)';
+    } else {
+      msgEl.textContent = 'Failed to save.';
+      msgEl.style.color = '#ff8080';
+    }
+  } catch (e) {
+    msgEl.textContent = 'Connection error.';
+    msgEl.style.color = '#ff8080';
+  }
+}
+
+async function removeTeamMember(memberId) {
+  if (!confirm(t('team.confirm_remove'))) return;
+  try {
+    const res = await fetch(`/api/team/${memberId}`, { method: 'DELETE' });
+    if (res.ok) loadTeamSection();
+  } catch (e) {}
+}
+
+// Hide dashboard sections the current user's team permissions don't grant —
+// only relevant for team members; owners always see everything they're
+// entitled to by their plan.
+function applyTeamPermissionsToNav(permissions) {
+  const navMap = { boardroom: 'nav-boardroom', analyzer: 'nav-analyzer', entrepreneur: 'nav-entrepreneur', financial: 'nav-financial', scenario: 'nav-scenario', history: 'nav-history' };
+  Object.entries(navMap).forEach(([permKey, navId]) => {
+    const navEl = document.getElementById(navId);
+    if (navEl && permissions && permissions[permKey] === false) navEl.style.display = 'none';
+  });
+}
+
 function renderBilling() {
   if (!user) return;
   const plan = user.plan || 'starter';
@@ -984,7 +1188,7 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const navEl = document.getElementById('nav-' + name);
   if (navEl) navEl.classList.add('active');
-  const titleKeys = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title'};
+  const titleKeys = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title'};
   document.querySelector('.topbar-title').textContent = titleKeys[name] ? t(titleKeys[name]) : t('dash.nav_dashboard');
   if (window.innerWidth < 900) document.getElementById('sidebar').classList.remove('open');
   if (name === 'analyzer') loadAnalyzedBusinesses();
@@ -1187,6 +1391,9 @@ document.addEventListener('arreyon:langchange', () => {
   if (document.getElementById('section-entrepreneur')?.classList.contains('active')) {
     loadEntrepreneurHistory();
   }
+  // applyTranslations() re-tags every data-i18n element, which would wipe out
+  // the 🔒 lock prefix we add on top of the base label — re-apply it after.
+  applyFinancialCalcLocks();
 });
 let currentAnalysisData = null;
 
@@ -2199,8 +2406,41 @@ function formatMoney(n) {
 let lastCalcType = null;
 let lastCalcResult = null;
 
+let financialAllowedCalcs = null; // null = not yet loaded; array once fetched
+
+async function loadFinancialAccess() {
+  try {
+    const res = await fetch('/api/financial/access');
+    const data = await res.json();
+    financialAllowedCalcs = data.allowed || [];
+    applyFinancialCalcLocks();
+  } catch (e) { financialAllowedCalcs = []; }
+}
+
+function applyFinancialCalcLocks() {
+  if (!financialAllowedCalcs) return;
+  document.querySelectorAll('#calcTypeSelect option').forEach(opt => {
+    if (!opt.value) return; // skip any placeholder option
+    const locked = !financialAllowedCalcs.includes(opt.value);
+    opt.disabled = locked;
+    const baseLabel = t(opt.getAttribute('data-i18n'));
+    opt.textContent = locked ? `🔒 ${baseLabel} ${t('fin.locked_suffix')}` : baseLabel;
+  });
+}
+
 function renderCalculatorForm() {
-  const type = document.getElementById('calcTypeSelect').value;
+  const select = document.getElementById('calcTypeSelect');
+  const type = select.value;
+
+  if (financialAllowedCalcs && !financialAllowedCalcs.includes(type)) {
+    document.getElementById('calcFormFields').innerHTML = '';
+    document.getElementById('calcError').textContent = t('fin.locked_message');
+    document.getElementById('calcError').style.display = 'block';
+    document.getElementById('runCalcBtn').disabled = true;
+    return;
+  }
+  document.getElementById('runCalcBtn').disabled = false;
+
   const fields = CALC_FIELD_DEFS[type] || [];
   document.getElementById('calcFormFields').innerHTML = fields.map(f => `
     <div class="form-group">
