@@ -400,19 +400,22 @@ INSERT INTO cms_content (section, key, value, type) VALUES
 5 starter directors
 Board Secretary Q&A
 Basic board report
+3 core financial calculators
 1 team member', 'textarea'),
 ('pricing', 'pro_features', '10 consultations per month
 All 29 directors
 Report download (PDF)
 Full consultation history
-3 team members
+Full financial calculator suite (10 tools)
+2 team members
 Priority email support
 Board Secretary deep-dive', 'textarea'),
 ('pricing', 'business_features', 'Unlimited consultations
 All 29 directors
 PDF + Word download
 Video report (HeyGen)
-6 team members
+Full financial calculator suite (10 tools)
+5 team members
 Custom AI director personas
 Priority WhatsApp support
 Full consultation history', 'textarea'),
@@ -441,6 +444,53 @@ UPDATE cms_content SET value = 'Entrepreneur Mode' WHERE section='features' AND 
 UPDATE cms_content SET value = 'No business yet? Get opportunities matched to your skills and capital, or a straight VALIDATE / MODIFY / RECONSIDER verdict on your idea.' WHERE section='features' AND key='feature5_desc' AND value='Full replay of every consultation — conversation, report, and video — stored securely in your dashboard.';
 UPDATE cms_content SET value = 'Full Business Plan & Downloads' WHERE section='features' AND key='feature6_title' AND value='Three AI Models';
 UPDATE cms_content SET value = 'Business model, marketing plan, and a 90-day execution plan — generated and downloadable as PDF, Word, or HTML.' WHERE section='features' AND key='feature6_desc' AND value='Claude, ChatGPT, and Gemini — each director is matched with the AI that best fits their thinking style.';
+
+-- Pricing feature lists: reflect the new Financial Tools tiering and corrected
+-- team seat counts (Pro is 2 total seats including the owner, Business is 5).
+-- Only overwrites if the value still matches the original seed text below —
+-- if you've since edited these in the CMS editor, this will NOT clobber that.
+UPDATE cms_content SET value = '3 consultations per month
+5 starter directors
+Board Secretary Q&A
+Basic board report
+3 core financial calculators
+1 team member', value_fr = NULL WHERE section='pricing' AND key='starter_features' AND value='3 consultations per month
+5 starter directors
+Board Secretary Q&A
+Basic board report
+1 team member';
+
+UPDATE cms_content SET value = '10 consultations per month
+All 29 directors
+Report download (PDF)
+Full consultation history
+Full financial calculator suite (10 tools)
+2 team members
+Priority email support
+Board Secretary deep-dive', value_fr = NULL WHERE section='pricing' AND key='pro_features' AND value='10 consultations per month
+All 29 directors
+Report download (PDF)
+Full consultation history
+3 team members
+Priority email support
+Board Secretary deep-dive';
+
+UPDATE cms_content SET value = 'Unlimited consultations
+All 29 directors
+PDF + Word download
+Video report (HeyGen)
+Full financial calculator suite (10 tools)
+5 team members
+Custom AI director personas
+Priority WhatsApp support
+Full consultation history', value_fr = NULL WHERE section='pricing' AND key='business_features' AND value='Unlimited consultations
+All 29 directors
+PDF + Word download
+Video report (HeyGen)
+6 team members
+Custom AI director personas
+Priority WhatsApp support
+Full consultation history';
 
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
