@@ -559,10 +559,10 @@ function startConsult(){
   const err=document.getElementById('formErr');
 
   if(!name||!phone||!email||!biz||!challenge||!goal){
-    err.textContent='Please fill in all required fields marked with *.';
+    err.textContent=t('consult.err_required_fields');
     err.classList.add('show');return;
   }
-  if(!email.includes('@')){err.textContent='Please enter a valid email address.';err.classList.add('show');return;}
+  if(!email.includes('@')){err.textContent=t('consult.err_invalid_email');err.classList.add('show');return;}
   err.classList.remove('show');
 
   clientInfo={name,phone,email};
@@ -587,9 +587,9 @@ function addMsg(text,from){
     row.innerHTML=`<div class="cmsg-bub">${text.replace(/\n/g,'<br>')}</div><div class="cmsg-av user-av">YOU</div>`;
   }
   box.appendChild(row);
-  const t=document.createElement('div');
-  t.className='cmsg-time';t.style.textAlign=from==='board'?'left':'right';
-  t.textContent=ts();box.appendChild(t);
+  const timeEl=document.createElement('div');
+  timeEl.className='cmsg-time';timeEl.style.textAlign=from==='board'?'left':'right';
+  timeEl.textContent=ts();box.appendChild(timeEl);
   box.scrollTop=box.scrollHeight;
 }
 
@@ -604,7 +604,7 @@ function removeTyping(){const t=document.getElementById('ctyp');if(t)t.remove();
 
 async function initChat(){
   const firstQ = await getFirstQuestion();
-  const welcomeMsg = `Welcome ${clientInfo.name}! I'm the Board Secretary. I've reviewed your submission about ${bizData.businessType}.\n\nBefore I assemble your board, I need to ask you a few focused questions so the directors can give you truly tailored advice — not generic answers. This is a real conversation, so take your time.\n\nLet's start: ${firstQ}`;
+  const welcomeMsg = tf('consult.welcome_msg', { name: clientInfo.name, business: bizData.businessType, question: firstQ });
   addMsg(welcomeMsg, 'board');
   // Seed chatHistory so server sees full conversation from the start
   chatHistory.push({role:'assistant', content: welcomeMsg});
@@ -640,7 +640,7 @@ async function sendChat(){
 
     if(d.ready){
       readyForReport=true;
-      addMsg(`Excellent. I now have a thorough understanding of your situation. The board is ready to convene.\n\nI'm preparing to brief ${selectPreviewCount()} directors who are most relevant to your challenge. Click the button below when you're ready for your full strategic report.`,'board');
+      addMsg(tf('consult.ready_msg', { count: selectPreviewCount() }),'board');
       chatHistory.push({role:'assistant',content:'Context gathered. Ready for report.'});
       document.getElementById('reportBtn').classList.add('show');
       document.getElementById('contextBadge').textContent='✓ Ready for report';
@@ -652,7 +652,7 @@ async function sendChat(){
     }
   }catch(e){
     removeTyping();
-    addMsg('I encountered a brief interruption. Please try sending your message again.','board');
+    addMsg(t('consult.chat_error'),'board');
   }
 
   document.getElementById('chatSend').disabled=false;
@@ -751,7 +751,7 @@ function showSignupGate() {
 
 async function renderReport(data){
   showStage(4);
-  document.getElementById('rTitle').textContent='Strategic Report: '+data.businessData.businessType;
+  document.getElementById('rTitle').textContent=t('consult.strategic_report_prefix')+' '+data.businessData.businessType;
   document.getElementById('rClient').textContent=data.client.name;
   document.getElementById('rDate').textContent=new Date(data.generatedAt).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'});
 
@@ -834,7 +834,7 @@ async function submitReview(){
   if(!comment){alert('Please write a brief comment about your experience.');return;}
 
   const btn=document.getElementById('reviewSubmit');
-  btn.disabled=true;btn.textContent='Submitting...';
+  btn.disabled=true;btn.textContent=t('consult.submitting');
 
   try{
     await fetch(WEBHOOK,{method:'POST',mode:'no-cors',
@@ -846,7 +846,7 @@ async function submitReview(){
     document.getElementById('reviewText').disabled=true;
     document.querySelectorAll('.star-btn').forEach(b=>b.disabled=true);
   }catch(e){
-    btn.disabled=false;btn.textContent='Submit Review';
+    btn.disabled=false;btn.textContent=t('consult.submit_review');
     alert('Could not submit review. Please try again.');
   }
 }
@@ -901,7 +901,7 @@ async function loadReviews(){
 
 // ── STAGE 5: DASHBOARD ─────────────────────────────────────────────────────
 function showDashboard(){
-  document.getElementById('dashName').textContent='Welcome back, '+clientInfo.name+'!';
+  document.getElementById('dashName').textContent=t('consult.welcome_back')+' '+clientInfo.name+'!';
   document.getElementById('dashSub').textContent=clientInfo.email+' · '+bizData.businessType;
 
   if(reportData){
@@ -931,14 +931,14 @@ async function startNewTopic(){
 
   document.getElementById('chatMsgs').innerHTML='';
   document.getElementById('reportBtn').classList.remove('show');
-  document.getElementById('contextBadge').textContent='Building context...';
+  document.getElementById('contextBadge').textContent=t('consult.building_context');
   document.getElementById('contextBadge').className='context-badge';
   document.getElementById('chatIn').disabled=false;
   document.getElementById('chatSend').disabled=false;
 
   showStage(2);
 
-  addMsg(`Welcome back, ${clientInfo.name}! I can see you want to discuss: "${topic}"\n\nLet's dive right in. ${await getFirstQuestion()}`, 'board');
+  addMsg(tf('consult.welcome_back_topic', { name: clientInfo.name, topic: topic, question: await getFirstQuestion() }), 'board');
 }
 
 // ── EXPORT ─────────────────────────────────────────────────────────────────
