@@ -150,10 +150,25 @@ CREATE TABLE IF NOT EXISTS team_members (
   owner_id UUID REFERENCES users(id) ON DELETE CASCADE,
   member_email VARCHAR(255) NOT NULL,
   member_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  status VARCHAR(50) DEFAULT 'invited',
+  status VARCHAR(50) DEFAULT 'invited', -- 'invited' | 'active' | 'removed'
+  invite_token VARCHAR(255) UNIQUE,
+  invite_token_expires_at TIMESTAMPTZ,
+  permissions JSONB DEFAULT '{"boardroom":true,"analyzer":true,"entrepreneur":true,"financial":true,"scenario":true,"history":true}',
   invited_at TIMESTAMPTZ DEFAULT NOW(),
   joined_at TIMESTAMPTZ
 );
+ALTER TABLE team_members ADD COLUMN IF NOT EXISTS invite_token VARCHAR(255) UNIQUE;
+ALTER TABLE team_members ADD COLUMN IF NOT EXISTS invite_token_expires_at TIMESTAMPTZ;
+ALTER TABLE team_members ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"boardroom":true,"analyzer":true,"entrepreneur":true,"financial":true,"scenario":true,"history":true}';
+CREATE INDEX IF NOT EXISTS idx_team_members_owner ON team_members(owner_id);
+CREATE INDEX IF NOT EXISTS idx_team_members_token ON team_members(invite_token);
+
+-- users.team_owner_id: when set, this user is a team member operating under
+-- that owner's account — their plan limits, consultation usage, and director
+-- access all resolve to the OWNER's record, not their own. NULL means this
+-- user is a normal account (or a team owner themselves).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS team_owner_id UUID REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_users_team_owner ON users(team_owner_id);
 
 -- Sessions table
 CREATE TABLE IF NOT EXISTS user_sessions (
