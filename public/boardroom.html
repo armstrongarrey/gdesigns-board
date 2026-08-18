@@ -456,7 +456,7 @@ async function generateBoardVerdict() {
     });
 
   if (!conversations.length) {
-    document.getElementById('verdictError').textContent = 'Chat with at least one director before requesting a board verdict.';
+    document.getElementById('verdictError').textContent = t('board.chat_first_required');
     document.getElementById('verdictError').style.display = 'block';
     return;
   }
@@ -479,7 +479,7 @@ async function generateBoardVerdict() {
       if (data.upgradeRequired) {
         errEl.innerHTML = data.error + ' <a href="/dashboard#billing" style="color:var(--purple-light)">Upgrade now</a>';
       } else {
-        errEl.textContent = data.error || 'Synthesis failed. Please try again.';
+        errEl.textContent = data.error || t('board.synthesis_failed');
       }
       errEl.style.display = 'block';
       document.getElementById('verdictPrompt').style.display = 'block';
@@ -489,7 +489,7 @@ async function generateBoardVerdict() {
     renderBoardVerdict(data.synthesis);
   } catch (e) {
     document.getElementById('verdictLoading').style.display = 'none';
-    document.getElementById('verdictError').textContent = 'Connection error. Please try again.';
+    document.getElementById('verdictError').textContent = t('board.connection_error');
     document.getElementById('verdictError').style.display = 'block';
     document.getElementById('verdictPrompt').style.display = 'block';
   }
@@ -649,7 +649,7 @@ async function sendMsg() {
         document.getElementById('limitBanner').innerHTML = data.error + ' <a href="/dashboard">Upgrade now</a>';
         document.getElementById('limitBanner').classList.add('show');
       } else {
-        convos[active.id].push({ from:'them', text:'I apologize, there was an issue processing your request. Please try again.', time:ts() });
+        convos[active.id].push({ from:'them', text:t('board.chat_error'), time:ts() });
         renderMsgs();
       }
     } else {
@@ -658,7 +658,7 @@ async function sendMsg() {
     }
   } catch(e) {
     removeTyping();
-    convos[active.id].push({ from:'them', text:'Connection error. Please try again.', time:ts() });
+    convos[active.id].push({ from:'them', text:t('board.connection_error'), time:ts() });
     renderMsgs();
   }
 
