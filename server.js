@@ -3751,6 +3751,7 @@ async function buildReportDOCX({ business, facts, structured: s, sources, scope,
 app.get('/api/business/:id/report', authRequired, async (req, res) => {
   const format = (req.query.format || 'html').toLowerCase();
   if (!['html', 'pdf', 'docx'].includes(format)) return res.status(400).json({ error: 'Invalid format. Use html, pdf, or docx.' });
+  const lang = req.query.lang === 'fr' ? 'fr' : 'en';
 
   try {
     const biz = await pool.query('SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
@@ -3758,12 +3759,29 @@ app.get('/api/business/:id/report', authRequired, async (req, res) => {
     const business = biz.rows[0];
 
     const factsResult = await pool.query(
-      `SELECT DISTINCT ON (fact_key) fact_key, fact_value, source_type FROM business_facts
+      `SELECT DISTINCT ON (fact_key) id, fact_key, fact_value, fact_value_fr, source_type FROM business_facts
        WHERE business_id = $1 ORDER BY fact_key, created_at DESC`,
       [req.params.id]
     );
+
+    if (lang === 'fr') {
+      const missing = factsResult.rows.filter(f => f.fact_value && !f.fact_value_fr);
+      if (missing.length) {
+        try {
+          const toTranslate = Object.fromEntries(missing.map(f => [f.fact_key, f.fact_value]));
+          const translated = await translateBusinessFacts(toTranslate);
+          for (const f of missing) {
+            const frValue = translated[f.fact_key];
+            if (frValue) {
+              await pool.query('UPDATE business_facts SET fact_value_fr = $1 WHERE id = $2', [frValue, f.id]);
+              f.fact_value_fr = frValue;
+            }
+          }
+        } catch (e) { console.error('Report facts auto-translate failed (non-fatal, falling back to English):', e.message); }
+      }
+    }
     const facts = {};
-    factsResult.rows.forEach(r => { facts[r.fact_key] = { value: r.fact_value, source_type: r.source_type }; });
+    factsResult.rows.forEach(r => { facts[r.fact_key] = { value: (lang === 'fr' && r.fact_value_fr) ? r.fact_value_fr : r.fact_value, source_type: r.source_type }; });
 
     const sessionResult = await pool.query(
       'SELECT * FROM research_sessions WHERE business_id = $1 ORDER BY created_at DESC LIMIT 1',
@@ -3772,9 +3790,25 @@ app.get('/api/business/:id/report', authRequired, async (req, res) => {
     let structured = null, sources = [], scope = 'both', verification = null;
     if (sessionResult.rows.length) {
       const session = sessionResult.rows[0];
-      structured = session.structured_data || null;
       scope = session.scope || 'both';
-      verification = session.verification_data || null;
+
+      if (lang === 'fr') {
+        try {
+          if (session.structured_data && !session.structured_data_fr) {
+            const translated = await translateStructuredContent(session.structured_data, 'market research report');
+            await pool.query('UPDATE research_sessions SET structured_data_fr = $1 WHERE id = $2', [JSON.stringify(translated), session.id]);
+            session.structured_data_fr = translated;
+          }
+          if (session.verification_data && !session.verification_data_fr) {
+            const translatedV = await translateStructuredContent(session.verification_data, 'verification report');
+            await pool.query('UPDATE research_sessions SET verification_data_fr = $1 WHERE id = $2', [JSON.stringify(translatedV), session.id]);
+            session.verification_data_fr = translatedV;
+          }
+        } catch (e) { console.error('Report research auto-translate failed (non-fatal, falling back to English):', e.message); }
+      }
+      structured = (lang === 'fr' && session.structured_data_fr) ? session.structured_data_fr : (session.structured_data || null);
+      verification = (lang === 'fr' && session.verification_data_fr) ? session.verification_data_fr : (session.verification_data || null);
+
       const sourcesResult = await pool.query('SELECT * FROM research_sources WHERE research_session_id = $1', [session.id]);
       sources = sourcesResult.rows;
     }
@@ -4104,11 +4138,30 @@ async function buildEntrepreneurReportDOCX(session) {
 app.get('/api/entrepreneur/:sessionId/report', authRequired, async (req, res) => {
   const format = (req.query.format || 'html').toLowerCase();
   if (!['html', 'pdf', 'docx'].includes(format)) return res.status(400).json({ error: 'Invalid format. Use html, pdf, or docx.' });
+  const lang = req.query.lang === 'fr' ? 'fr' : 'en';
 
   try {
     const result = await pool.query('SELECT * FROM entrepreneur_sessions WHERE id = $1 AND user_id = $2', [req.params.sessionId, req.userId]);
     if (!result.rows.length) return res.status(404).json({ error: 'Session not found' });
     const session = result.rows[0];
+
+    if (lang === 'fr') {
+      try {
+        if (session.structured_output && !session.structured_output_fr) {
+          const translated = await translateStructuredContent(session.structured_output, session.mode === 'opportunity_finder' ? 'business opportunity report' : 'business idea validation report');
+          await pool.query('UPDATE entrepreneur_sessions SET structured_output_fr = $1 WHERE id = $2', [JSON.stringify(translated), session.id]);
+          session.structured_output_fr = translated;
+        }
+        if (session.business_plan && !session.business_plan_fr) {
+          const translatedPlan = await translateStructuredContent(session.business_plan, 'business plan');
+          await pool.query('UPDATE entrepreneur_sessions SET business_plan_fr = $1 WHERE id = $2', [JSON.stringify(translatedPlan), session.id]);
+          session.business_plan_fr = translatedPlan;
+        }
+      } catch (e) { console.error('Entrepreneur report auto-translate failed (non-fatal, falling back to English):', e.message); }
+      if (session.structured_output_fr) session.structured_output = session.structured_output_fr;
+      if (session.business_plan_fr) session.business_plan = session.business_plan_fr;
+    }
+
     const filename = sanitizeFilename(session.mode === 'opportunity_finder' ? 'opportunity-report' : (session.input_data?.idea || 'idea-validation'));
 
     if (format === 'html') {
