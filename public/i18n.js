@@ -72,6 +72,17 @@ const I18N_DICT = {
     "consult.download_report": "Download Report",
     "consult.new_consultation": "New Consultation",
     "consult.copy": "Copy",
+    "consult.err_required_fields": "Please fill in all required fields marked with *.",
+    "consult.err_invalid_email": "Please enter a valid email address.",
+    "consult.welcome_msg": "Welcome {name}! I'm the Board Secretary. I've reviewed your submission about {business}.\n\nBefore I assemble your board, I need to ask you a few focused questions so the directors can give you truly tailored advice — not generic answers. This is a real conversation, so take your time.\n\nLet's start: {question}",
+    "consult.ready_msg": "Excellent. I now have a thorough understanding of your situation. The board is ready to convene.\n\nI'm preparing to brief {count} directors who are most relevant to your challenge. Click the button below when you're ready for your full strategic report.",
+    "consult.chat_error": "I encountered a brief interruption. Please try sending your message again.",
+    "consult.strategic_report_prefix": "Strategic Report:",
+    "consult.submitting": "Submitting...",
+    "consult.submit_review": "Submit Review",
+    "consult.welcome_back": "Welcome back,",
+    "consult.building_context": "Building context...",
+    "consult.welcome_back_topic": "Welcome back, {name}! I can see you want to discuss: \"{topic}\"\n\nLet's dive right in. {question}",
 
     // Language switcher itself
     "lang.switch": "Language",
@@ -115,6 +126,22 @@ const I18N_DICT = {
     "board.dashboard_link": "Dashboard",
     "board.get_verdict": "Get Board Verdict",
     "board.consultations_left": "consultations left",
+    "board.chat_error": "I apologize, there was an issue processing your request. Please try again.",
+    "board.synthesis_failed": "Synthesis failed. Please try again.",
+    "board.connection_error": "Connection error. Please try again.",
+    "board.chat_first_required": "Chat with at least one director before requesting a board verdict.",
+    "dash.cat_strategy_name": "Business Strategy",
+    "dash.cat_strategy_desc": "Market positioning, competitive advantage, growth planning",
+    "dash.cat_marketing_name": "Marketing & Brand",
+    "dash.cat_marketing_desc": "Brand building, advertising, social media, copywriting",
+    "dash.cat_finance_name": "Finance & Investment",
+    "dash.cat_finance_desc": "Pricing, funding, financial strategy, economic moats",
+    "dash.cat_sales_name": "Sales & Closing",
+    "dash.cat_sales_desc": "Sales psychology, closing deals, customer acquisition",
+    "dash.cat_operations_name": "Operations & Systems",
+    "dash.cat_operations_desc": "Process building, management, scaling operations",
+    "dash.cat_innovation_name": "Innovation & Product",
+    "dash.cat_innovation_desc": "Product design, disruption, first principles thinking",
 
     // Financial Tools
     "fin.title": "Financial Tools",
@@ -528,6 +555,17 @@ const I18N_DICT = {
     "consult.download_report": "Télécharger le rapport",
     "consult.new_consultation": "Nouvelle consultation",
     "consult.copy": "Copier",
+    "consult.err_required_fields": "Veuillez remplir tous les champs obligatoires marqués d'un *.",
+    "consult.err_invalid_email": "Veuillez saisir une adresse e-mail valide.",
+    "consult.welcome_msg": "Bienvenue {name} ! Je suis le Secrétaire du Conseil. J'ai examiné votre soumission concernant {business}.\n\nAvant d'assembler votre conseil, je dois vous poser quelques questions ciblées afin que les directeurs puissent vous donner des conseils vraiment adaptés — pas des réponses génériques. Ceci est une vraie conversation, prenez votre temps.\n\nCommençons : {question}",
+    "consult.ready_msg": "Excellent. J'ai maintenant une compréhension approfondie de votre situation. Le conseil est prêt à se réunir.\n\nJe prépare le briefing de {count} directeurs les plus pertinents pour votre défi. Cliquez sur le bouton ci-dessous lorsque vous êtes prêt pour votre rapport stratégique complet.",
+    "consult.chat_error": "J'ai rencontré une brève interruption. Veuillez réessayer d'envoyer votre message.",
+    "consult.strategic_report_prefix": "Rapport stratégique :",
+    "consult.submitting": "Envoi en cours...",
+    "consult.submit_review": "Soumettre l'avis",
+    "consult.welcome_back": "Bon retour,",
+    "consult.building_context": "Construction du contexte...",
+    "consult.welcome_back_topic": "Bon retour, {name} ! Je vois que vous souhaitez discuter de : « {topic} »\n\nEntrons directement dans le vif du sujet. {question}",
 
     // Language switcher itself
     "lang.switch": "Langue",
@@ -571,6 +609,22 @@ const I18N_DICT = {
     "board.dashboard_link": "Tableau de bord",
     "board.get_verdict": "Verdict du conseil",
     "board.consultations_left": "consultations restantes",
+    "board.chat_error": "Je suis désolé, un problème est survenu lors du traitement de votre demande. Veuillez réessayer.",
+    "board.synthesis_failed": "Échec de la synthèse. Veuillez réessayer.",
+    "board.connection_error": "Erreur de connexion. Veuillez réessayer.",
+    "board.chat_first_required": "Discutez avec au moins un directeur avant de demander un verdict du conseil.",
+    "dash.cat_strategy_name": "Stratégie d'entreprise",
+    "dash.cat_strategy_desc": "Positionnement sur le marché, avantage concurrentiel, planification de la croissance",
+    "dash.cat_marketing_name": "Marketing et marque",
+    "dash.cat_marketing_desc": "Construction de marque, publicité, réseaux sociaux, rédaction",
+    "dash.cat_finance_name": "Finance et investissement",
+    "dash.cat_finance_desc": "Tarification, financement, stratégie financière, avantages économiques durables",
+    "dash.cat_sales_name": "Ventes et conclusion",
+    "dash.cat_sales_desc": "Psychologie de la vente, conclusion de contrats, acquisition de clients",
+    "dash.cat_operations_name": "Opérations et systèmes",
+    "dash.cat_operations_desc": "Mise en place de processus, gestion, mise à l'échelle des opérations",
+    "dash.cat_innovation_name": "Innovation et produit",
+    "dash.cat_innovation_desc": "Conception produit, disruption, pensée par principes fondamentaux",
 
     // Financial Tools
     "fin.title": "Outils financiers",
@@ -942,6 +996,17 @@ function detectLanguage() {
 function t(key) {
   const lang = window.currentLang || detectLanguage();
   return (I18N_DICT[lang] && I18N_DICT[lang][key]) || (I18N_DICT.en[key]) || key;
+}
+
+// Like t(), but substitutes {paramName} tokens with values from params —
+// for strings that need dynamic content mixed with translated wrapper text
+// (e.g. "Welcome {name}! ... {question}").
+function tf(key, params) {
+  let str = t(key);
+  Object.entries(params || {}).forEach(([k, v]) => {
+    str = str.split('{' + k + '}').join(v);
+  });
+  return str;
 }
 
 function applyTranslations(lang) {
