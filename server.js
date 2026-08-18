@@ -1171,14 +1171,14 @@ app.delete('/api/team/:id', authRequired, async (req, res) => {
 
 app.get('/api/user/consultations', authRequired, async (req, res) => {
   try {
-    const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
-    const plan = user.rows[0]?.plan || 'starter';
+    const account = await resolveAccount(req.userId); // shared history across the whole team
+    const plan = account?.plan || 'starter';
     if (!PLAN_LIMITS[plan]?.history) {
       return res.json({ consultations: [], upgradeRequired: true });
     }
     const result = await pool.query(
       'SELECT * FROM consultations WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50',
-      [req.userId]
+      [account.id]
     );
     res.json({ consultations: result.rows });
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
@@ -1382,8 +1382,8 @@ function formatEntrepreneurContext(input) {
 // ── A) Opportunity Finder ───────────────────────────────────────────────────
 app.post('/api/entrepreneur/find-opportunities', authRequired, async (req, res) => {
   try {
-    const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
-    const plan = user.rows[0]?.plan || 'starter';
+    const account = await resolveAccount(req.userId);
+    const plan = account?.plan || 'starter';
     const researchBacked = plan === 'pro' || plan === 'business';
 
     const input = req.body || {};
@@ -1468,8 +1468,8 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 // ── B) Idea Validation ──────────────────────────────────────────────────────
 app.post('/api/entrepreneur/validate-idea', authRequired, async (req, res) => {
   try {
-    const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
-    const plan = user.rows[0]?.plan || 'starter';
+    const account = await resolveAccount(req.userId);
+    const plan = account?.plan || 'starter';
     const researchBacked = plan === 'pro' || plan === 'business';
 
     const input = req.body || {};
@@ -1752,13 +1752,13 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 app.post('/api/board/save', authRequired, async (req, res) => {
   const { title, businessType, industry, directorsUsed, reportText, synthesis, videoUrl, messages } = req.body;
   try {
-    const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
-    const plan = user.rows[0]?.plan || 'starter';
+    const account = await resolveAccount(req.userId); // team members' consultations are saved under the shared account
+    const plan = account?.plan || 'starter';
 
     const consult = await pool.query(
       `INSERT INTO consultations (user_id, title, business_type, industry, directors_used, report_text, synthesis, video_url, status, completed_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'completed', NOW()) RETURNING *`,
-      [req.userId, title, businessType, industry, JSON.stringify(directorsUsed), reportText, synthesis, videoUrl]
+      [account.id, title, businessType, industry, JSON.stringify(directorsUsed), reportText, synthesis, videoUrl]
     );
 
     if (messages && messages.length) {
@@ -2617,16 +2617,17 @@ app.post('/api/board-auth', (req, res) => {
 
 // ── Internal board single-director chat (no auth/plan limits — password-gated) ──
 app.post('/api/chat', async (req, res) => {
-  const { persona, messages, ai } = req.body;
+  const { persona, messages, ai, language = 'en' } = req.body;
   if (!persona || !messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: 'Missing persona or messages' });
   }
   try {
+    const localizedPersona = persona + frenchInstruction(language);
     let reply;
     const model = ai || 'claude';
-    if (model === 'chatgpt') reply = await askChatGPT(persona, messages, { feature: 'internal_board_chat' });
-    else if (model === 'gemini') reply = await askGemini(persona, messages, { feature: 'internal_board_chat' });
-    else reply = await askClaude(persona, messages, { feature: 'internal_board_chat' });
+    if (model === 'chatgpt') reply = await askChatGPT(localizedPersona, messages, { feature: 'internal_board_chat' });
+    else if (model === 'gemini') reply = await askGemini(localizedPersona, messages, { feature: 'internal_board_chat' });
+    else reply = await askClaude(localizedPersona, messages, { feature: 'internal_board_chat' });
     res.json({ reply, ai: model });
   } catch (err) {
     console.error('Chat error:', err.message);
@@ -2677,7 +2678,7 @@ Pick the ONE director whose specialty best matches this challenge. Return ONLY t
 
 // ── Quick Website Analyzer — same extraction logic, nothing saved ──────────
 app.post('/api/board-analyze', async (req, res) => {
-  const { url } = req.body;
+  const { url, language = 'en' } = req.body;
   if (!url) return res.status(400).json({ error: 'Website URL is required' });
 
   let normalizedUrl = url.trim();
@@ -2685,7 +2686,7 @@ app.post('/api/board-analyze', async (req, res) => {
 
   try {
     const pages = await analyzeWebsite(normalizedUrl);
-    const facts = await structureBusinessFacts(pages, normalizedUrl, null);
+    const facts = await structureBusinessFacts(pages, normalizedUrl, null, language);
     res.json({ success: true, analyzedUrl: normalizedUrl, pagesAnalyzed: pages.map(p => p.url), facts });
   } catch (err) {
     console.error('Board website analysis error:', err.message);
@@ -2695,12 +2696,12 @@ app.post('/api/board-analyze', async (req, res) => {
 
 // ── Quick Market Research — takes ad-hoc business info, nothing saved ──────
 app.post('/api/board-research', async (req, res) => {
-  const { businessName, industry, city, country, scope } = req.body;
+  const { businessName, industry, city, country, scope, language = 'en' } = req.body;
   if (!businessName && !industry) return res.status(400).json({ error: 'Please provide at least a business name or industry.' });
 
   try {
     const adHocBusiness = { name: businessName || 'This business', industry: industry || '', city: city || '', country: country || '' };
-    const { structured, sources } = await runBusinessResearch(adHocBusiness, null, scope === 'national' ? 'national' : 'both', {});
+    const { structured, sources } = await runBusinessResearch(adHocBusiness, null, scope === 'national' ? 'national' : 'both', {}, language);
     res.json({ success: true, structured, sources });
   } catch (err) {
     console.error('Board research error:', err.message);
@@ -2710,11 +2711,11 @@ app.post('/api/board-research', async (req, res) => {
 
 // ── Quick Verification — verify a set of recommendations just generated ────
 app.post('/api/board-verify', async (req, res) => {
-  const { structured, sources } = req.body;
+  const { structured, sources, language = 'en' } = req.body;
   if (!structured) return res.status(400).json({ error: 'No research results to verify.' });
 
   try {
-    const verification = await runVerificationPass(structured, sources || [], null);
+    const verification = await runVerificationPass(structured, sources || [], null, language);
     res.json({ success: true, verification });
   } catch (err) {
     console.error('Board verification error:', err.message);
@@ -2724,7 +2725,7 @@ app.post('/api/board-verify', async (req, res) => {
 
 // ── Chairman's Board Verdict — same synthesis as Boardroom, no auth needed ──
 app.post('/api/board-synthesize', async (req, res) => {
-  const { conversations } = req.body;
+  const { conversations, language = 'en' } = req.body;
   if (!conversations || !Array.isArray(conversations) || !conversations.length) {
     return res.status(400).json({ error: 'No conversations to synthesize. Chat with at least one director first.' });
   }
@@ -2764,7 +2765,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   "confidence_reason": "why this confidence level — what's solid vs. uncertain about this verdict"
 }`;
 
-    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Produce the Chairman synthesis now, as JSON only.' }], complexity: 'complex', context: { feature: 'chairman_synthesis' }, maxTokens: 2000 });
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Produce the Chairman synthesis now, as JSON only.' }], complexity: 'complex', context: { feature: 'chairman_synthesis' }, maxTokens: 2000 });
     const synthesis = extractJSON(raw);
     res.json({ success: true, synthesis });
   } catch (err) {
@@ -2944,8 +2945,8 @@ List up to 8 competitors total${includeInternational ? ', aiming for a mix of lo
 // ── Research endpoint ────────────────────────────────────────────────────────
 app.post('/api/business/:id/research', authRequired, async (req, res) => {
   try {
-    const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
-    const plan = user.rows[0]?.plan || 'starter';
+    const account = await resolveAccount(req.userId);
+    const plan = account?.plan || 'starter';
     const limit = RESEARCH_LIMITS[plan] ?? 0;
 
     if (limit === 0) {
@@ -3426,8 +3427,8 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
   }
 
   try {
-    const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
-    const plan = user.rows[0]?.plan || 'starter';
+    const account = await resolveAccount(req.userId);
+    const plan = account?.plan || 'starter';
     const limit = ANALYZER_LIMITS[plan] ?? 1;
 
     if (limit !== -1) {
