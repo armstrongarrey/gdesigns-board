@@ -436,6 +436,52 @@ RULES:
   return extractJSON(raw); // { key: frValue, ... }
 }
 
+// ── Generic French translation for a flat business-facts key/value set ─────
+// Same one-call, whole-set batching pattern as CMS translation.
+async function translateBusinessFacts(facts) {
+  const factsJson = JSON.stringify(facts); // { fact_key: fact_value, ... }
+
+  const prompt = `You are a professional French translator working for a business consulting platform. Translate the following business profile facts from English to French.
+
+FACTS TO TRANSLATE (JSON):
+${factsJson}
+
+RULES:
+- Translate naturally, as a native French business consultant would write it
+- Keep proper nouns, business/brand names, and person names unchanged
+- Keep any numbers, prices, currency symbols, URLs, and email addresses unchanged
+- Return ONLY a JSON object with the EXACT SAME keys as the input, mapped to their French translations. No markdown, no commentary, no extra keys.`;
+
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Translate now, as JSON only.' }], complexity: 'complex', context: { feature: 'content_translation' }, maxTokens: 3000 });
+  return extractJSON(raw);
+}
+
+// ── Generic French translation for a deeply-nested structured JSON object ──
+// Used for research/verification/entrepreneur-mode results, which have arrays
+// of objects (competitors, recommendations, checks, etc) rather than a flat
+// key/value set. Carries the same enum-protection rule as live generation —
+// translating a status/priority/scope/verdict ENUM value would silently break
+// the frontend's color-coding and filtering logic, which matches by exact
+// English string. Only free-text narrative fields get translated.
+async function translateStructuredContent(obj, contextLabel) {
+  const objJson = JSON.stringify(obj);
+
+  const prompt = `You are a professional French translator working for a business consulting platform. Translate the following ${contextLabel} content from English to French.
+
+CONTENT TO TRANSLATE (JSON):
+${objJson.slice(0, 12000)}
+
+RULES:
+- Translate every free-text/narrative string value naturally into French, as a native French business consultant would write it
+- Keep the EXACT SAME JSON structure and the EXACT SAME keys — do not add, remove, or rename any key
+- Keep proper nouns, business/brand/person names, numbers, prices, currency symbols, URLs unchanged
+- CRITICAL: any field holding a fixed English enum value (for example "high"/"medium"/"low", "local"/"international", "covered"/"partial"/"not covered", "upheld"/"weakened"/"revise", "validate"/"modify"/"reconsider", "observed"/"inferred"/"user_provided", "you"/"them") must keep that EXACT English word unchanged — the application matches these values by exact string for color-coding, message alignment, and filtering, and translating them would silently break that logic. Only the surrounding descriptive text should become French.
+- Return ONLY the translated JSON object, no markdown, no commentary.`;
+
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Translate now, as JSON only.' }], complexity: 'complex', context: { feature: 'content_translation' }, maxTokens: 6500 });
+  return extractJSON(raw);
+}
+
 // ── Public CMS content endpoint — fully automatic French, no admin action needed ──
 // If a French request hits a field with no cached translation yet, it's
 // translated right then (parallelized across sections) and saved to the
@@ -1274,11 +1320,55 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 
 // ── Entrepreneur Mode history ───────────────────────────────────────────────
 app.get('/api/entrepreneur/sessions', authRequired, async (req, res) => {
+  const lang = req.query.lang === 'fr' ? 'fr' : 'en';
   try {
     const result = await pool.query(
-      'SELECT id, mode, input_data, structured_output, research_backed, discussion_messages, business_plan, created_at FROM entrepreneur_sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20',
+      'SELECT id, mode, input_data, structured_output, structured_output_fr, research_backed, discussion_messages, discussion_messages_fr, business_plan, business_plan_fr, created_at FROM entrepreneur_sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 20',
       [req.userId]
     );
+
+    if (lang === 'fr' && result.rows.length) {
+      // Each session can need up to 3 separate translations (main result,
+      // business plan, discussion thread) — run everything needed in
+      // parallel, bounded by the slowest single call rather than the sum.
+      const jobs = [];
+      for (const session of result.rows) {
+        if (session.structured_output && !session.structured_output_fr) {
+          jobs.push({ session, field: 'structured_output', promise: translateStructuredContent(session.structured_output, session.mode === 'opportunity_finder' ? 'business opportunity report' : 'business idea validation report') });
+        }
+        if (session.business_plan && !session.business_plan_fr) {
+          jobs.push({ session, field: 'business_plan', promise: translateStructuredContent(session.business_plan, 'business plan') });
+        }
+        if (session.discussion_messages?.length && !session.discussion_messages_fr) {
+          jobs.push({ session, field: 'discussion_messages', promise: translateStructuredContent(session.discussion_messages, 'discussion chat thread') });
+        }
+      }
+
+      if (jobs.length) {
+        const outcomes = await Promise.allSettled(jobs.map(j => j.promise));
+        for (let i = 0; i < jobs.length; i++) {
+          const { session, field } = jobs[i];
+          const outcome = outcomes[i];
+          if (outcome.status !== 'fulfilled') {
+            console.error(`Entrepreneur session translation failed for ${field}:`, outcome.reason?.message);
+            continue;
+          }
+          const translated = outcome.value;
+          const column = field + '_fr';
+          try {
+            await pool.query(`UPDATE entrepreneur_sessions SET ${column} = $1 WHERE id = $2`, [JSON.stringify(translated), session.id]);
+          } catch (e) { /* non-fatal — still return the translated content for this response even if the cache write fails */ }
+          session[column] = translated;
+        }
+      }
+
+      result.rows.forEach(session => {
+        if (session.structured_output_fr) session.structured_output = session.structured_output_fr;
+        if (session.business_plan_fr) session.business_plan = session.business_plan_fr;
+        if (session.discussion_messages_fr) session.discussion_messages = session.discussion_messages_fr;
+      });
+    }
+
     res.json({ sessions: result.rows });
   } catch (e) { res.status(500).json({ error: 'Failed to load sessions' }); }
 });
@@ -1612,7 +1702,7 @@ async function callAI({ persona, messages, complexity = 'moderate', context = {}
 function frenchInstruction(language, { jsonMode = false } = {}) {
   if (language !== 'fr') return '';
   return jsonMode
-    ? ' Respond entirely in French (Français) — every text VALUE in your JSON response must be written in French. Keep the JSON KEYS exactly as specified in English, since the application parses them by name.'
+    ? ' Respond entirely in French (Français) — every free-text/narrative VALUE in your JSON response must be written in French. Keep the JSON KEYS exactly as specified in English, since the application parses them by name. CRITICAL EXCEPTION: any field whose schema restricts it to a fixed set of English enum options (for example "high|medium|low", "local|international", "covered|partial|not covered", "upheld|weakened|revise", "validate|modify|reconsider") must keep using those EXACT English enum words unchanged — the application matches these values by exact string for color-coding and filtering, and translating them (e.g. "high" → "élevée") would silently break that logic. Only the surrounding descriptive text should be in French.'
     : ' Respond entirely in French (Français) — every word of your reply must be in French.';
 }
 
@@ -2663,6 +2753,7 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
 
 // ── Get a business's research history ───────────────────────────────────────
 app.get('/api/business/:id/research', authRequired, async (req, res) => {
+  const lang = req.query.lang === 'fr' ? 'fr' : 'en';
   try {
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
@@ -2675,6 +2766,30 @@ app.get('/api/business/:id/research', authRequired, async (req, res) => {
       const sources = await pool.query('SELECT * FROM research_sources WHERE research_session_id = $1', [session.id]);
       sessionsWithSources.push({ ...session, sources: sources.rows });
     }
+
+    // Only the LATEST session is ever actually displayed in the UI (older ones
+    // sit in history, rarely re-opened) — translate just that one on demand
+    // rather than burning AI calls on an entire history nobody's viewing.
+    if (lang === 'fr' && sessionsWithSources.length) {
+      const latest = sessionsWithSources[0];
+      try {
+        if (latest.structured_data && !latest.structured_data_fr) {
+          const translated = await translateStructuredContent(latest.structured_data, 'market research report');
+          await pool.query('UPDATE research_sessions SET structured_data_fr = $1 WHERE id = $2', [JSON.stringify(translated), latest.id]);
+          latest.structured_data_fr = translated;
+        }
+        if (latest.verification_data && !latest.verification_data_fr) {
+          const translatedV = await translateStructuredContent(latest.verification_data, 'verification report');
+          await pool.query('UPDATE research_sessions SET verification_data_fr = $1 WHERE id = $2', [JSON.stringify(translatedV), latest.id]);
+          latest.verification_data_fr = translatedV;
+        }
+      } catch (e) {
+        console.error('Research auto-translate failed (non-fatal, falling back to English):', e.message);
+      }
+      if (latest.structured_data_fr) latest.structured_data = latest.structured_data_fr;
+      if (latest.verification_data_fr) latest.verification_data = latest.verification_data_fr;
+    }
+
     res.json({ sessions: sessionsWithSources });
   } catch (e) { res.status(500).json({ error: 'Failed to load research history' }); }
 });
@@ -4023,6 +4138,7 @@ app.get('/api/entrepreneur/:sessionId/report', authRequired, async (req, res) =>
 
 // ── Get one business profile with its current facts (latest value per key) ──
 app.get('/api/business/:id', authRequired, async (req, res) => {
+  const lang = req.query.lang === 'fr' ? 'fr' : 'en';
   try {
     const biz = await pool.query(
       'SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]
@@ -4031,11 +4147,32 @@ app.get('/api/business/:id', authRequired, async (req, res) => {
 
     // Latest fact per key — DISTINCT ON gives current state; full history stays in the table
     const facts = await pool.query(
-      `SELECT DISTINCT ON (fact_key) fact_key, fact_value, source_type, source_detail, created_at
+      `SELECT DISTINCT ON (fact_key) id, fact_key, fact_value, fact_value_fr, source_type, source_detail, created_at
        FROM business_facts WHERE business_id = $1
        ORDER BY fact_key, created_at DESC`,
       [req.params.id]
     );
+
+    if (lang === 'fr') {
+      const missing = facts.rows.filter(f => f.fact_value && !f.fact_value_fr);
+      if (missing.length) {
+        try {
+          const toTranslate = Object.fromEntries(missing.map(f => [f.fact_key, f.fact_value]));
+          const translated = await translateBusinessFacts(toTranslate);
+          for (const f of missing) {
+            const frValue = translated[f.fact_key];
+            if (frValue) {
+              await pool.query('UPDATE business_facts SET fact_value_fr = $1 WHERE id = $2', [frValue, f.id]);
+              f.fact_value_fr = frValue;
+            }
+          }
+        } catch (e) {
+          console.error('Business facts auto-translate failed (non-fatal, falling back to English):', e.message);
+        }
+      }
+      facts.rows.forEach(f => { if (f.fact_value_fr) f.fact_value = f.fact_value_fr; });
+    }
+
     res.json({ business: biz.rows[0], facts: facts.rows });
   } catch (e) { res.status(500).json({ error: 'Failed to load business' }); }
 });
