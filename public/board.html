@@ -188,7 +188,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
   .bub{max-width:86%;font-size:12.5px}
   .hdr{padding:8px 10px}
 }
+.lang-switch-btn.active{background:var(--purple,#6C3Bff)!important;border-color:var(--purple,#6C3Bff)!important;color:#fff!important}
 </style>
+<script src="/i18n.js"></script>
 </head>
 <body>
 
@@ -199,23 +201,27 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
       <img src="/assets/logo.png" class="mode-logo-img" alt="G-DESIGNS"
         onerror="this.style.display='none';document.getElementById('mlFb').style.display='flex'">
       <div class="mode-logo-fallback" id="mlFb" style="display:none">G</div>
-      <div class="mode-title">G-DESIGNS Board of Directors</div>
-      <div class="mode-sub">Strategic Intelligence Council · 29 Legendary Business Minds</div>
+      <div class="mode-title" data-i18n="internal.brand_title">G-DESIGNS Board of Directors</div>
+      <div class="mode-sub" data-i18n="internal.brand_sub">Strategic Intelligence Council · 29 Legendary Business Minds</div>
+    </div>
+    <div style="display:flex;justify-content:center;gap:6px;margin-bottom:16px">
+      <button class="lang-switch-btn" data-lang-option="en" onclick="setLanguage('en')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit">EN</button>
+      <button class="lang-switch-btn" data-lang-option="fr" onclick="setLanguage('fr')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit">FR</button>
     </div>
     <div class="mode-cards">
       <div class="mode-card" onclick="showLogin()">
         <div class="mode-card-icon">🔒</div>
         <div>
-          <div class="mode-card-title">Enter the Boardroom</div>
-          <div class="mode-card-desc">Internal access for G-DESIGNS team. Password required. Full chat with all 29 directors.</div>
+          <div class="mode-card-title" data-i18n="internal.enter_boardroom">Enter the Boardroom</div>
+          <div class="mode-card-desc" data-i18n="internal.enter_boardroom_desc">Internal access for G-DESIGNS team. Password required. Full chat with all 29 directors.</div>
         </div>
         <div class="mode-card-arrow">→</div>
       </div>
       <a class="mode-card" href="/consult" style="text-decoration:none">
         <div class="mode-card-icon">🌐</div>
         <div>
-          <div class="mode-card-title">Consult the Board</div>
-          <div class="mode-card-desc">Public access. Get a full strategic report from multiple board members on your business challenge.</div>
+          <div class="mode-card-title" data-i18n="internal.consult_board">Consult the Board</div>
+          <div class="mode-card-desc" data-i18n="internal.consult_board_desc">Public access. Get a full strategic report from multiple board members on your business challenge.</div>
         </div>
         <div class="mode-card-arrow">→</div>
       </a>
@@ -230,14 +236,14 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
     <img src="/assets/logo.png" class="login-logo-img" alt="G-DESIGNS"
       onerror="this.style.display='none';document.getElementById('llFb').style.display='flex'">
     <div class="login-logo-fallback" id="llFb" style="display:none">G</div>
-    <div class="login-title">G-DESIGNS Board of Directors</div>
-    <div class="login-sub">Strategic Intelligence Council — Private Access</div>
+    <div class="login-title" data-i18n="internal.brand_title">G-DESIGNS Board of Directors</div>
+    <div class="login-sub" data-i18n="internal.login_sub">Strategic Intelligence Council — Private Access</div>
     <div class="login-field">
-      <label>Access Password</label>
-      <input class="login-input" type="password" id="pwInput" placeholder="Enter password..." autocomplete="current-password">
+      <label data-i18n="internal.access_password">Access Password</label>
+      <input class="login-input" type="password" id="pwInput" data-i18n-placeholder="internal.enter_password" placeholder="Enter password..." autocomplete="current-password">
     </div>
-    <div class="login-err" id="loginErr">Incorrect password. Please try again.</div>
-    <button class="login-btn" id="loginBtn">Enter the Boardroom</button>
+    <div class="login-err" id="loginErr" data-i18n="internal.incorrect_password">Incorrect password. Please try again.</div>
+    <button class="login-btn" id="loginBtn" data-i18n="internal.enter_boardroom">Enter the Boardroom</button>
     <div class="login-brand">G-DESIGNS LTD · Learn. Create. Innovate.</div>
   </div>
 </div>
@@ -251,14 +257,16 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
         onerror="this.style.display='none';document.getElementById('hFb').style.display='flex'">
       <div class="lmark-fallback" id="hFb" style="display:none">G</div>
       <div class="ltitle">
-        <h1>G-DESIGNS Board of Directors</h1>
-        <p>Strategic Intelligence Council</p>
+        <h1 data-i18n="internal.brand_title">G-DESIGNS Board of Directors</h1>
+        <p data-i18n="internal.strategic_council">Strategic Intelligence Council</p>
       </div>
     </div>
     <div class="hdr-right">
+      <button class="lang-switch-btn" data-lang-option="en" onclick="setLanguage('en')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit">EN</button>
+      <button class="lang-switch-btn" data-lang-option="fr" onclick="setLanguage('fr')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;margin-right:6px">FR</button>
       <div class="ai-toggle" id="aiToggle">
         <button class="ai-btn active-auto" data-ai="auto" onclick="setAI('auto')">
-          <div class="ai-dot"></div><span>Auto</span>
+          <div class="ai-dot"></div><span data-i18n="internal.ai_auto">Auto</span>
         </button>
         <button class="ai-btn" data-ai="claude" onclick="setAI('claude')">
           <div class="ai-dot"></div><span>Claude</span>
@@ -270,10 +278,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
           <div class="ai-dot"></div><span>Gemini</span>
         </button>
       </div>
-      <div class="spill"><div class="sdot"></div>Live</div>
-      <button class="sbtn" style="width:auto;height:auto;padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600" onclick="openBoardVerdict()">🏛️ Board Verdict</button>
-      <button class="sbtn" style="width:auto;height:auto;padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600;background:var(--bg3);border:1px solid var(--border)" onclick="openBoardTools()">🔧 BI Tools</button>
-      <button class="logout-btn" id="logoutBtn">Lock</button>
+      <div class="spill"><div class="sdot"></div><span data-i18n="internal.live">Live</span></div>
+      <button class="sbtn" style="width:auto;height:auto;padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600" onclick="openBoardVerdict()">🏛️ <span data-i18n="internal.board_verdict">Board Verdict</span></button>
+      <button class="sbtn" style="width:auto;height:auto;padding:8px 14px;border-radius:8px;font-size:12.5px;font-weight:600;background:var(--bg3);border:1px solid var(--border)" onclick="openBoardTools()">🔧 <span data-i18n="internal.bi_tools">BI Tools</span></button>
+      <button class="logout-btn" id="logoutBtn" data-i18n="internal.lock">Lock</button>
     </div>
   </header>
 
@@ -281,28 +289,28 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
   <div id="verdictModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:999;align-items:center;justify-content:center;padding:20px">
     <div style="background:var(--bg2);border:1px solid var(--border-light);border-radius:16px;padding:28px;max-width:640px;width:100%;max-height:85vh;overflow-y:auto;position:relative">
       <button onclick="closeBoardVerdict()" style="position:absolute;top:16px;right:16px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;line-height:1">×</button>
-      <div style="font-size:20px;font-weight:700;margin-bottom:4px">🏛️ Chairman's Board Verdict</div>
-      <div style="font-size:12.5px;color:var(--muted);margin-bottom:20px">A final synthesis across your conversation with the board</div>
+      <div style="font-size:20px;font-weight:700;margin-bottom:4px">🏛️ <span data-i18n="internal.chairman_verdict_title">Chairman's Board Verdict</span></div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:20px" data-i18n="internal.chairman_verdict_sub">A final synthesis across your conversation with the board</div>
       <div id="verdictPrompt" style="text-align:center;padding:30px 10px">
-        <div style="font-size:13.5px;color:var(--text2);margin-bottom:18px">Ready to synthesize your board session into one final, decisive recommendation.</div>
-        <button class="sbtn" style="width:auto;height:auto;padding:11px 24px;border-radius:9px;font-size:14px;font-weight:600" onclick="generateBoardVerdict()">Generate Verdict</button>
+        <div style="font-size:13.5px;color:var(--text2);margin-bottom:18px" data-i18n="internal.ready_synthesize">Ready to synthesize your board session into one final, decisive recommendation.</div>
+        <button class="sbtn" style="width:auto;height:auto;padding:11px 24px;border-radius:9px;font-size:14px;font-weight:600" onclick="generateBoardVerdict()" data-i18n="internal.generate_verdict">Generate Verdict</button>
       </div>
       <div id="verdictLoading" style="display:none;text-align:center;padding:40px 10px">
         <div style="font-size:28px;margin-bottom:12px">⚖️</div>
-        <div style="font-size:13.5px;color:var(--text2)">The Chairman is reviewing your conversation...</div>
+        <div style="font-size:13.5px;color:var(--text2)" data-i18n="internal.chairman_reviewing">The Chairman is reviewing your conversation...</div>
       </div>
       <div id="verdictError" style="display:none;padding:16px;background:#1a0808;border:1px solid #3a1010;border-radius:10px;font-size:13px;color:#ff8080"></div>
       <div id="verdictResults" style="display:none">
-        <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">The Problem</div>
+        <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px" data-i18n="internal.the_problem">The Problem</div>
         <div id="verdictProblem" style="font-size:13.5px;color:var(--text2);margin-bottom:18px"></div>
-        <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Key Advice</div>
+        <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px" data-i18n="internal.key_advice">Key Advice</div>
         <div id="verdictKeyAdvice" style="display:flex;flex-direction:column;gap:8px;margin-bottom:18px"></div>
         <div id="verdictDisagreementWrap" style="display:none;background:#2a1f0022;border-left:3px solid #f59e0b;border-radius:6px;padding:12px 14px;margin-bottom:18px">
-          <div style="font-size:10.5px;font-weight:700;color:#f59e0b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Disagreement Among Directors</div>
+          <div style="font-size:10.5px;font-weight:700;color:#f59e0b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px" data-i18n="internal.disagreement_title">Disagreement Among Directors</div>
           <div id="verdictDisagreementText" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
         </div>
         <div style="background:var(--bg3);border:1px solid #6C3Bff;border-radius:10px;padding:16px;margin-bottom:14px">
-          <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Chairman's Verdict</div>
+          <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px" data-i18n="internal.chairman_verdict_label">Chairman's Verdict</div>
           <div id="verdictText" style="font-size:14.5px;color:var(--text);line-height:1.7;font-weight:500"></div>
         </div>
         <div style="display:flex;align-items:center;gap:10px">
@@ -317,36 +325,36 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
   <div id="toolsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:999;align-items:center;justify-content:center;padding:20px">
     <div style="background:var(--bg2);border:1px solid var(--border-light);border-radius:16px;padding:28px;max-width:680px;width:100%;max-height:85vh;overflow-y:auto;position:relative">
       <button onclick="closeBoardTools()" style="position:absolute;top:16px;right:16px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;line-height:1">×</button>
-      <div style="font-size:20px;font-weight:700;margin-bottom:4px">🔧 Quick BI Tools</div>
-      <div style="font-size:12.5px;color:var(--muted);margin-bottom:20px">Nothing here is saved — for saved, ongoing profiles use your dashboard account instead.</div>
+      <div style="font-size:20px;font-weight:700;margin-bottom:4px" data-i18n="internal.quick_bi_tools">🔧 Quick BI Tools</div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:20px" data-i18n="internal.bi_tools_note">Nothing here is saved — for saved, ongoing profiles use your dashboard account instead.</div>
 
       <div style="display:flex;gap:0;background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:3px;margin-bottom:18px">
-        <button type="button" id="toolsTabAnalyze" onclick="switchToolsTab('analyze')" style="flex:1;padding:9px;border:none;background:#6C3Bff;color:#fff;font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit">Analyze Website</button>
-        <button type="button" id="toolsTabResearch" onclick="switchToolsTab('research')" style="flex:1;padding:9px;border:none;background:transparent;color:var(--muted);font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit">Market Research</button>
+        <button type="button" id="toolsTabAnalyze" onclick="switchToolsTab('analyze')" style="flex:1;padding:9px;border:none;background:#6C3Bff;color:#fff;font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit" data-i18n="internal.analyze_website_tab">Analyze Website</button>
+        <button type="button" id="toolsTabResearch" onclick="switchToolsTab('research')" style="flex:1;padding:9px;border:none;background:transparent;color:var(--muted);font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit" data-i18n="internal.market_research_tab">Market Research</button>
       </div>
 
       <div id="toolsAnalyzeWrap">
-        <input id="toolsUrlInput" placeholder="e.g. yourbusiness.com" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;margin-bottom:10px;font-family:inherit">
-        <button class="sbtn" style="width:100%;height:auto;padding:11px;border-radius:9px;font-size:13.5px;font-weight:600" onclick="quickAnalyzeWebsite()" id="toolsAnalyzeBtn">Analyze Website</button>
+        <input id="toolsUrlInput" data-i18n-placeholder="internal.website_url_placeholder" placeholder="e.g. yourbusiness.com" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;margin-bottom:10px;font-family:inherit">
+        <button class="sbtn" style="width:100%;height:auto;padding:11px;border-radius:9px;font-size:13.5px;font-weight:600" onclick="quickAnalyzeWebsite()" id="toolsAnalyzeBtn" data-i18n="internal.analyze_website_tab">Analyze Website</button>
       </div>
 
       <div id="toolsResearchWrap" style="display:none">
-        <input id="toolsBizNameInput" placeholder="Business name" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;margin-bottom:8px;font-family:inherit">
-        <input id="toolsIndustryInput" placeholder="Industry (e.g. Digital Marketing Agency)" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;margin-bottom:8px;font-family:inherit">
+        <input id="toolsBizNameInput" data-i18n-placeholder="internal.business_name_placeholder" placeholder="Business name" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;margin-bottom:8px;font-family:inherit">
+        <input id="toolsIndustryInput" data-i18n-placeholder="internal.industry_placeholder" placeholder="Industry (e.g. Digital Marketing Agency)" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;margin-bottom:8px;font-family:inherit">
         <div style="display:flex;gap:8px;margin-bottom:8px">
-          <input id="toolsCityInput" placeholder="City" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;font-family:inherit">
-          <input id="toolsCountryInput" placeholder="Country" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;font-family:inherit">
+          <input id="toolsCityInput" data-i18n-placeholder="internal.city_placeholder" placeholder="City" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;font-family:inherit">
+          <input id="toolsCountryInput" data-i18n-placeholder="internal.country_placeholder" placeholder="Country" style="flex:1;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;font-family:inherit">
         </div>
         <select id="toolsScopeSelect" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-size:13px;margin-bottom:10px;font-family:inherit">
-          <option value="both">National + International</option>
-          <option value="national">National only</option>
+          <option value="both" data-i18n="internal.national_international">National + International</option>
+          <option value="national" data-i18n="internal.national_only">National only</option>
         </select>
-        <button class="sbtn" style="width:100%;height:auto;padding:11px;border-radius:9px;font-size:13.5px;font-weight:600" onclick="quickResearch()" id="toolsResearchBtn">Research Market &amp; Competitors</button>
+        <button class="sbtn" style="width:100%;height:auto;padding:11px;border-radius:9px;font-size:13.5px;font-weight:600" onclick="quickResearch()" id="toolsResearchBtn" data-i18n="internal.research_market_btn">Research Market &amp; Competitors</button>
       </div>
 
       <div id="toolsLoading" style="display:none;text-align:center;padding:30px 10px">
         <div style="font-size:24px;margin-bottom:10px">⚙️</div>
-        <div id="toolsLoadingText" style="font-size:13px;color:var(--text2)">Working...</div>
+        <div id="toolsLoadingText" style="font-size:13px;color:var(--text2)" data-i18n="internal.working">Working...</div>
       </div>
       <div id="toolsError" style="display:none;margin-top:12px;padding:14px 16px;background:#1a0808;border:1px solid #3a1010;border-radius:10px;font-size:13px;color:#ff8080"></div>
       <div id="toolsResults" style="display:none;margin-top:16px"></div>
@@ -360,13 +368,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
   <div class="board-main">
     <div class="splash" id="splash">
       <div class="sp-icon">🏛️</div>
-      <div class="sp-t">Not sure who to ask?</div>
-      <div class="sp-s" style="margin-bottom:16px">Describe your challenge and we'll match you with the right director instantly — or pick one from the row above.</div>
+      <div class="sp-t" data-i18n="internal.not_sure_who">Not sure who to ask?</div>
+      <div class="sp-s" style="margin-bottom:16px" data-i18n="internal.splash_sub">Describe your challenge and we'll match you with the right director instantly — or pick one from the row above.</div>
       <div style="width:100%;max-width:420px;display:flex;flex-direction:column;gap:10px">
-        <textarea id="autoMatchInput" placeholder="e.g. I'm struggling to close deals with enterprise clients..." rows="3" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;outline:none;color:var(--text);font-size:13.5px;font-family:inherit;padding:12px 14px;resize:vertical" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();autoMatchDirector()}"></textarea>
+        <textarea id="autoMatchInput" data-i18n-placeholder="internal.automatch_placeholder" placeholder="e.g. I'm struggling to close deals with enterprise clients..." rows="3" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:10px;outline:none;color:var(--text);font-size:13.5px;font-family:inherit;padding:12px 14px;resize:vertical" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();autoMatchDirector()}"></textarea>
         <button class="sbtn" style="width:100%;height:auto;padding:11px;border-radius:9px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:13.5px;font-weight:600" onclick="autoMatchDirector()" id="autoMatchBtn">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 7.2H22l-6 4.4 2.3 7.2-6.3-4.6-6.3 4.6 2.3-7.2-6-4.4h7.6z"/></svg>
-          Match Me With a Director
+          <span data-i18n="internal.match_me">Match Me With a Director</span>
         </button>
       </div>
     </div>
@@ -377,15 +385,15 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
       <div class="err-bar" id="errBar"></div>
       <div class="qrow" id="qrow"></div>
       <div class="inrow">
-        <textarea id="ti" placeholder="Type your message..." rows="1" aria-label="Your message"></textarea>
+        <textarea id="ti" data-i18n-placeholder="internal.type_message" placeholder="Type your message..." rows="1" aria-label="Your message"></textarea>
         <button class="sbtn" id="sbtn" aria-label="Send">↑</button>
       </div>
     </section>
   </div>
 
   <footer class="ftr">
-    <span>Powered by Claude · ChatGPT · Gemini</span>
-    <span>G-DESIGNS LTD · Learn. Create. Innovate.</span>
+    <span data-i18n="internal.powered_by">Powered by Claude · ChatGPT · Gemini</span>
+    <span data-i18n="internal.brand_footer">G-DESIGNS LTD · Learn. Create. Innovate.</span>
   </footer>
 </div>
 
