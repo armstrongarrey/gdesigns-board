@@ -211,12 +211,14 @@ CREATE TABLE IF NOT EXISTS business_facts (
   business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
   fact_key VARCHAR(100) NOT NULL,
   fact_value TEXT,
+  fact_value_fr TEXT,
   source_type VARCHAR(20) NOT NULL, -- 'user_provided' | 'observed' | 'inferred' | 'research'
   source_detail TEXT,
   confidence VARCHAR(10), -- 'high' | 'medium' | 'low', only for inferred/research facts
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE business_facts ADD COLUMN IF NOT EXISTS fact_value_fr TEXT;
 CREATE INDEX IF NOT EXISTS idx_business_facts_business ON business_facts(business_id);
 
 -- Research sessions — one row per research query run against a business
@@ -236,6 +238,8 @@ CREATE TABLE IF NOT EXISTS research_sessions (
 ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS scope VARCHAR(20) DEFAULT 'both';
 ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS structured_data JSONB;
 ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS verification_data JSONB;
+ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS structured_data_fr JSONB;
+ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS verification_data_fr JSONB;
 
 -- Entrepreneur Mode — Increment 5. Separate from businesses/business_facts since
 -- this is for people who don't have a business yet (no site to analyze, no
@@ -253,6 +257,9 @@ CREATE TABLE IF NOT EXISTS entrepreneur_sessions (
 );
 ALTER TABLE entrepreneur_sessions ADD COLUMN IF NOT EXISTS discussion_messages JSONB DEFAULT '[]';
 ALTER TABLE entrepreneur_sessions ADD COLUMN IF NOT EXISTS business_plan JSONB;
+ALTER TABLE entrepreneur_sessions ADD COLUMN IF NOT EXISTS structured_output_fr JSONB;
+ALTER TABLE entrepreneur_sessions ADD COLUMN IF NOT EXISTS business_plan_fr JSONB;
+ALTER TABLE entrepreneur_sessions ADD COLUMN IF NOT EXISTS discussion_messages_fr JSONB;
 CREATE INDEX IF NOT EXISTS idx_entrepreneur_sessions_user ON entrepreneur_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_research_sessions_business ON research_sessions(business_id);
 
