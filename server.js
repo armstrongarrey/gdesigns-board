@@ -2,6 +2,7 @@ const express = require('express');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const dns = require('dns').promises;
 const PDFDocument = require('pdfkit');
 const { Document: DocxDocument, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, AlignmentType, BorderStyle, ImageRun } = require('docx');
@@ -72,8 +73,16 @@ const BASE_URL = process.env.BASE_URL || 'https://consult.gdesignsme.com';
 
 const PLAN_LIMITS = {
   starter:  { consultations: 3,  directors: 5,   download: false, video: false, history: false, team: 1 },
-  pro:      { consultations: 10, directors: 29,  download: true,  video: false, history: true,  team: 3 },
-  business: { consultations: -1, directors: 29,  download: true,  video: true,  history: true,  team: 6 }
+  pro:      { consultations: 10, directors: 29,  download: true,  video: false, history: true,  team: 2 },
+  business: { consultations: -1, directors: 29,  download: true,  video: true,  history: true,  team: 5 }
+};
+
+// Financial Tools: which calculators each plan can access. Starter gets the
+// three most fundamental ones; Pro and Business get the full engine.
+const FINANCIAL_TOOLS_ACCESS = {
+  starter:  ['roi', 'breakeven', 'growth_projection'],
+  pro:      ['revenue', 'profit_margin', 'breakeven', 'roi', 'cac', 'ltv', 'ltv_cac_ratio', 'roas', 'growth_projection', 'cashflow_projection'],
+  business: ['revenue', 'profit_margin', 'breakeven', 'roi', 'cac', 'ltv', 'ltv_cac_ratio', 'roas', 'growth_projection', 'cashflow_projection']
 };
 
 const STARTER_DIRECTORS = ['rockefeller', 'ogilvy', 'buffett', 'dangote', 'kotler'];
@@ -156,6 +165,24 @@ function authRequired(req, res, next) {
     req.userPlan = decoded.plan;
     next();
   } catch(e) { res.status(401).json({ error: 'Invalid or expired token' }); }
+}
+
+// ── Team accounts: resolve the EFFECTIVE account for plan/limits purposes ──
+// A team member has their own login, but their plan tier, consultation usage,
+// director access, and feature gating (Financial Tools, downloads, etc.) all
+// come from the OWNER's account, not their own — they're operating inside a
+// shared account, not a separate subscription. req.userId always stays the
+// actual logged-in person (for attribution); req.accountId/req.account are
+// the resolved owner-or-self record everything else should check against.
+async function resolveAccount(userId) {
+  const result = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+  const user = result.rows[0];
+  if (!user) return null;
+  if (user.team_owner_id) {
+    const ownerResult = await pool.query('SELECT * FROM users WHERE id = $1', [user.team_owner_id]);
+    if (ownerResult.rows[0]) return ownerResult.rows[0];
+  }
+  return user;
 }
 
 function adminRequired(req, res, next) {
@@ -356,10 +383,26 @@ app.get('/auth/google/callback',
 // ── GET CURRENT USER ────────────────────────────────────────────────────────
 app.get('/api/auth/me', authRequired, async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, email, first_name, last_name, phone, avatar_url, plan, consultations_used, created_at FROM users WHERE id = $1', [req.userId]);
+    const result = await pool.query('SELECT id, email, first_name, last_name, phone, avatar_url, plan, consultations_used, created_at, team_owner_id FROM users WHERE id = $1', [req.userId]);
     const user = result.rows[0];
     if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ user });
+
+    if (user.team_owner_id) {
+      // Team member: plan/consultations/history/etc. all reflect the OWNER's
+      // account (shared pool), plus this member's own granted permissions.
+      const ownerResult = await pool.query('SELECT id, first_name, last_name, plan, consultations_used FROM users WHERE id = $1', [user.team_owner_id]);
+      const owner = ownerResult.rows[0];
+      const memberResult = await pool.query('SELECT permissions FROM team_members WHERE owner_id = $1 AND member_id = $2 AND status = $3', [user.team_owner_id, req.userId, 'active']);
+      const permissions = memberResult.rows[0]?.permissions || {};
+      return res.json({
+        user: { ...user, plan: owner?.plan || 'starter', consultations_used: owner?.consultations_used || 0 },
+        isTeamMember: true,
+        teamOwnerName: owner ? [owner.first_name, owner.last_name].filter(Boolean).join(' ') : null,
+        permissions
+      });
+    }
+
+    res.json({ user, isTeamMember: false });
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
 
@@ -841,6 +884,23 @@ app.get('/api/admin/users', adminRequired, async (req, res) => {
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
 
+// ── Admin: platform-wide visibility into every team, across every account ──
+app.get('/api/admin/team-members', adminRequired, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT tm.id, tm.member_email, tm.status, tm.permissions, tm.invited_at, tm.joined_at,
+              owner.email as owner_email, owner.first_name as owner_first_name, owner.last_name as owner_last_name, owner.plan as owner_plan,
+              member.email as member_actual_email
+       FROM team_members tm
+       JOIN users owner ON owner.id = tm.owner_id
+       LEFT JOIN users member ON member.id = tm.member_id
+       WHERE tm.status != 'removed'
+       ORDER BY tm.invited_at DESC`
+    );
+    res.json({ teamMembers: result.rows });
+  } catch (e) { res.status(500).json({ error: 'Failed to load team members' }); }
+});
+
 app.put('/api/admin/users/:id/plan', adminRequired, async (req, res) => {
   const { plan } = req.body;
   try {
@@ -953,6 +1013,162 @@ app.put('/api/user/profile', authRequired, async (req, res) => {
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// TEAM MEMBERS — invite, list, permissions, removal
+// Only account owners (users with no team_owner_id of their own) can manage
+// a team. A team member operates inside the owner's account for plan/limits
+// purposes (see resolveAccount above), with the owner controlling which
+// features they're allowed to touch via per-member permissions.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const TEAM_PERMISSION_KEYS = ['boardroom', 'analyzer', 'entrepreneur', 'financial', 'scenario', 'history'];
+function sanitizePermissions(input) {
+  const perms = {};
+  TEAM_PERMISSION_KEYS.forEach(k => { perms[k] = !!(input && input[k]); });
+  return perms; // Billing is deliberately never included — team members can never touch billing/subscription, regardless of what the owner grants
+}
+
+app.get('/api/team', authRequired, async (req, res) => {
+  try {
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [req.userId]);
+    const user = userResult.rows[0];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.team_owner_id) return res.status(403).json({ error: 'Only the account owner can manage team members' });
+
+    const limits = PLAN_LIMITS[user.plan] || PLAN_LIMITS.starter;
+    const members = await pool.query(
+      `SELECT id, member_email, member_id, status, permissions, invited_at, joined_at FROM team_members
+       WHERE owner_id = $1 AND status != 'removed' ORDER BY invited_at ASC`,
+      [req.userId]
+    );
+    res.json({ members: members.rows, seatLimit: limits.team, seatsUsed: members.rows.length + 1 }); // +1 for the owner's own seat
+  } catch (e) { res.status(500).json({ error: 'Failed to load team' }); }
+});
+
+app.post('/api/team/invite', authRequired, async (req, res) => {
+  const { email, permissions } = req.body;
+  if (!email || !email.includes('@')) return res.status(400).json({ error: 'Please provide a valid email address' });
+
+  try {
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [req.userId]);
+    const user = userResult.rows[0];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.team_owner_id) return res.status(403).json({ error: 'Only the account owner can invite team members' });
+    if (email.toLowerCase() === user.email.toLowerCase()) return res.status(400).json({ error: "You can't invite yourself" });
+
+    const limits = PLAN_LIMITS[user.plan] || PLAN_LIMITS.starter;
+    const existing = await pool.query(`SELECT COUNT(*) FROM team_members WHERE owner_id = $1 AND status != 'removed'`, [req.userId]);
+    const seatsUsed = parseInt(existing.rows[0].count, 10) + 1; // +1 for the owner
+    if (seatsUsed >= limits.team) {
+      return res.status(403).json({ error: `Your ${user.plan} plan includes ${limits.team} seat${limits.team===1?'':'s'} total (including you). Upgrade your plan to add more team members.`, upgradeRequired: true });
+    }
+
+    const dupe = await pool.query(`SELECT id FROM team_members WHERE owner_id = $1 AND member_email = $2 AND status != 'removed'`, [req.userId, email.toLowerCase()]);
+    if (dupe.rows.length) return res.status(400).json({ error: 'This person has already been invited' });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    const perms = sanitizePermissions(permissions);
+
+    const inserted = await pool.query(
+      `INSERT INTO team_members (owner_id, member_email, status, invite_token, invite_token_expires_at, permissions)
+       VALUES ($1, $2, 'invited', $3, $4, $5) RETURNING id`,
+      [req.userId, email.toLowerCase(), token, expiresAt, JSON.stringify(perms)]
+    );
+
+    const ownerName = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.email;
+    const inviteUrl = `${BASE_URL}/team-invite?token=${token}`;
+    await sendEmail(email, `${ownerName} invited you to join their Arreyon Consult team`,
+      `<p>${ownerName} has invited you to join their team on Arreyon Consult.</p>
+       <p><a href="${inviteUrl}" style="background:#6C3BFF;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block">Accept Invitation</a></p>
+       <p>Or copy this link: ${inviteUrl}</p>
+       <p style="color:#888;font-size:13px">This invitation expires in 7 days.</p>`
+    );
+
+    res.json({ success: true, id: inserted.rows[0].id });
+  } catch (e) {
+    console.error('Team invite error:', e.message);
+    res.status(500).json({ error: 'Failed to send invite' });
+  }
+});
+
+app.get('/api/team/invite/:token', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT tm.*, u.first_name, u.last_name, u.email as owner_email
+       FROM team_members tm JOIN users u ON u.id = tm.owner_id
+       WHERE tm.invite_token = $1`,
+      [req.params.token]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Invalid invite link' });
+    const invite = result.rows[0];
+    if (invite.status !== 'invited') return res.status(400).json({ error: 'This invite has already been used' });
+    if (new Date(invite.invite_token_expires_at) < new Date()) return res.status(400).json({ error: 'This invite has expired' });
+
+    const ownerName = [invite.first_name, invite.last_name].filter(Boolean).join(' ') || invite.owner_email;
+    res.json({ ownerName, memberEmail: invite.member_email });
+  } catch (e) { res.status(500).json({ error: 'Failed to load invite' }); }
+});
+
+app.post('/api/team/invite/:token/accept', authRequired, async (req, res) => {
+  try {
+    const inviteResult = await pool.query('SELECT * FROM team_members WHERE invite_token = $1', [req.params.token]);
+    if (!inviteResult.rows.length) return res.status(404).json({ error: 'Invalid invite link' });
+    const invite = inviteResult.rows[0];
+    if (invite.status !== 'invited') return res.status(400).json({ error: 'This invite has already been used' });
+    if (new Date(invite.invite_token_expires_at) < new Date()) return res.status(400).json({ error: 'This invite has expired' });
+
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [req.userId]);
+    const acceptingUser = userResult.rows[0];
+    if (!acceptingUser) return res.status(404).json({ error: 'User not found' });
+    if (acceptingUser.email.toLowerCase() !== invite.member_email.toLowerCase()) {
+      return res.status(403).json({ error: 'This invite was sent to a different email address. Please log in with that account instead.' });
+    }
+    if (acceptingUser.team_owner_id) {
+      return res.status(400).json({ error: 'You are already a member of another team. Leave that team before joining a new one.' });
+    }
+
+    await pool.query('UPDATE team_members SET status = $1, member_id = $2, joined_at = NOW() WHERE id = $3', ['active', req.userId, invite.id]);
+    await pool.query('UPDATE users SET team_owner_id = $1 WHERE id = $2', [invite.owner_id, req.userId]);
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Team accept error:', e.message);
+    res.status(500).json({ error: 'Failed to accept invite' });
+  }
+});
+
+app.put('/api/team/:id/permissions', authRequired, async (req, res) => {
+  try {
+    const userResult = await pool.query('SELECT team_owner_id FROM users WHERE id = $1', [req.userId]);
+    if (userResult.rows[0]?.team_owner_id) return res.status(403).json({ error: 'Only the account owner can manage permissions' });
+
+    const perms = sanitizePermissions(req.body.permissions);
+    const result = await pool.query(
+      `UPDATE team_members SET permissions = $1 WHERE id = $2 AND owner_id = $3 RETURNING id`,
+      [JSON.stringify(perms), req.params.id, req.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Team member not found' });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to update permissions' }); }
+});
+
+app.delete('/api/team/:id', authRequired, async (req, res) => {
+  try {
+    const userResult = await pool.query('SELECT team_owner_id FROM users WHERE id = $1', [req.userId]);
+    if (userResult.rows[0]?.team_owner_id) return res.status(403).json({ error: 'Only the account owner can remove team members' });
+
+    const memberResult = await pool.query('SELECT member_id FROM team_members WHERE id = $1 AND owner_id = $2', [req.params.id, req.userId]);
+    if (!memberResult.rows.length) return res.status(404).json({ error: 'Team member not found' });
+
+    await pool.query(`UPDATE team_members SET status = 'removed' WHERE id = $1`, [req.params.id]);
+    if (memberResult.rows[0].member_id) {
+      await pool.query('UPDATE users SET team_owner_id = NULL WHERE id = $1', [memberResult.rows[0].member_id]);
+    }
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to remove team member' }); }
+});
+
 app.get('/api/user/consultations', authRequired, async (req, res) => {
   try {
     const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
@@ -1020,8 +1236,8 @@ app.post('/api/board/chat', authRequired, async (req, res) => {
   const { persona, messages, ai, directorId, consultationId, language = 'en' } = req.body;
 
   try {
-    const user = await pool.query('SELECT * FROM users WHERE id = $1', [req.userId]);
-    const u = user.rows[0];
+    const u = await resolveAccount(req.userId); // team members share the owner's plan/limits
+    if (!u) return res.status(404).json({ error: 'Account not found' });
     const limits = PLAN_LIMITS[u.plan] || PLAN_LIMITS.starter;
 
     // Check director access
@@ -1077,8 +1293,8 @@ app.post('/api/board/synthesize', authRequired, async (req, res) => {
   }
 
   try {
-    const user = await pool.query('SELECT plan FROM users WHERE id = $1', [req.userId]);
-    const plan = user.rows[0]?.plan || 'starter';
+    const account = await resolveAccount(req.userId); // team members share the owner's plan
+    const plan = account?.plan || 'starter';
     if (plan === 'starter') {
       return res.status(403).json({ error: 'Chairman Synthesis (a final board verdict across your conversations) is available on Arreyon Pro and above.', upgradeRequired: true });
     }
@@ -1555,7 +1771,7 @@ app.post('/api/board/save', authRequired, async (req, res) => {
     }
 
     // Increment consultation count
-    await pool.query('UPDATE users SET consultations_used = consultations_used + 1 WHERE id = $1', [req.userId]);
+    await pool.query('UPDATE users SET consultations_used = consultations_used + 1 WHERE id = $1', [account.id]);
 
     res.json({ success: true, consultationId: consult.rows[0].id });
   } catch(e) { res.status(500).json({ error: 'Failed to save' }); }
@@ -1843,10 +2059,25 @@ const FINANCIAL_CALCULATORS = {
 };
 
 // ── Financial Calculator endpoint — pure math, no AI call, available to all plans ──
+app.get('/api/financial/access', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const plan = account?.plan || 'starter';
+    res.json({ plan, allowed: FINANCIAL_TOOLS_ACCESS[plan] || FINANCIAL_TOOLS_ACCESS.starter });
+  } catch (e) { res.status(500).json({ error: 'Failed to load access info' }); }
+});
+
 app.post('/api/financial/calculate', authRequired, async (req, res) => {
   const { type, inputs } = req.body;
   const calculator = FINANCIAL_CALCULATORS[type];
   if (!calculator) return res.status(400).json({ error: 'Unknown calculator type.' });
+
+  const account = await resolveAccount(req.userId); // team members share the owner's plan
+  const plan = account?.plan || 'starter';
+  const allowed = FINANCIAL_TOOLS_ACCESS[plan] || FINANCIAL_TOOLS_ACCESS.starter;
+  if (!allowed.includes(type)) {
+    return res.status(403).json({ error: 'This calculator is available on Arreyon Pro and above.', upgradeRequired: true });
+  }
 
   const missing = calculator.requiredInputs.filter(key => inputs?.[key] === undefined || inputs[key] === '' || inputs[key] === null);
   if (missing.length) return res.status(400).json({ error: `Missing required input(s): ${missing.join(', ')}` });
@@ -4316,6 +4547,7 @@ app.get('/auth', (req, res) => res.sendFile(path.join(__dirname, 'public', 'auth
 app.get('/auth/reset-password', (req, res) => res.sendFile(path.join(__dirname, 'public', 'auth.html')));
 app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 app.get('/boardroom', (req, res) => res.sendFile(path.join(__dirname, 'public', 'boardroom.html')));
+app.get('/team-invite', (req, res) => res.sendFile(path.join(__dirname, 'public', 'team-invite.html')));
 app.get('/consult', (req, res) => res.sendFile(path.join(__dirname, 'public', 'consult.html')));
 app.get('/board', (req, res) => res.sendFile(path.join(__dirname, 'public', 'board.html')));
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
