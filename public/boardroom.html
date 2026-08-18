@@ -469,7 +469,7 @@ async function generateBoardVerdict() {
   try {
     const res = await fetch('/api/board/synthesize', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversations })
+      body: JSON.stringify({ conversations, language: window.currentLang || 'en' })
     });
     const data = await res.json();
     document.getElementById('verdictLoading').style.display = 'none';
@@ -639,7 +639,7 @@ async function sendMsg() {
   try {
     const res = await fetch('/api/board/chat', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ persona: fullPersona, messages: history, ai: active.ai, directorId: active.id })
+      body: JSON.stringify({ persona: fullPersona, messages: history, ai: active.ai, directorId: active.id, language: window.currentLang || 'en' })
     });
     const data = await res.json();
     removeTyping();
@@ -676,7 +676,14 @@ document.getElementById('chatInput').addEventListener('input', function() {
   this.style.height = Math.min(this.scrollHeight, 120) + 'px';
 });
 
-init();
+// init() must wait until i18n.js has finished detecting/applying the language
+// (window.currentLang) — otherwise the topic-based auto-match flow sends its
+// first message before the language is known, and it silently defaults to
+// English regardless of the user's actual saved preference. i18n.js's own
+// DOMContentLoaded listener registers first (it loads in <head>, before this
+// script block is parsed), so listeners fire in that order — this callback is
+// guaranteed to run after language detection completes.
+document.addEventListener('DOMContentLoaded', () => { init(); });
 </script>
 </body>
 </html>
