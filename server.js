@@ -16,6 +16,21 @@ const session = require('express-session');
 
 const app = express();
 
+// ── CRASH PREVENTION — one bad request must never take down the whole service ──
+// Without these, a single malformed request (e.g. a synchronous throw inside
+// an async route handler, before its own try/catch takes effect) becomes an
+// unhandled promise rejection that kills the entire Node process — dropping
+// every in-flight request from every concurrent user, not just the one that
+// triggered it. This is exactly what happened with the board-match crash.
+// Logging and continuing is far safer than a full crash-and-restart cycle for
+// a bug that's scoped to a single request.
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled promise rejection (server stayed up):', reason?.stack || reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception (server stayed up):', err?.stack || err);
+});
+
 // ── DOMAIN REDIRECT: board.gdesignsme.com → consult.gdesignsme.com ─────────
 // Runs first, before any other middleware, to redirect old domain visitors
 app.use((req, res, next) => {
@@ -972,19 +987,25 @@ app.get('/api/user/consultations/:id', authRequired, async (req, res) => {
 
 // ── Auto-match: suggest the best director for a described challenge ────────
 app.post('/api/board/match', authRequired, async (req, res) => {
-  const { challenge, directors } = req.body; // directors: [{id,name,role}]
-  if (!challenge || !directors || !directors.length) {
+  const { challenge, directors: rawDirectors } = req.body; // directors: [{id,name,role}]
+  if (!challenge || !rawDirectors || !rawDirectors.length) {
     return res.status(400).json({ error: 'Missing challenge or director list' });
   }
+  // Defensively drop any malformed entries — client-supplied data should
+  // never be able to crash the server, regardless of how it got malformed.
+  const directors = rawDirectors.filter(d => d && d.id && d.name && d.role);
+  if (!directors.length) {
+    return res.status(400).json({ error: 'No valid directors in the provided list' });
+  }
 
-  const matchPrompt = `A founder described this challenge: "${challenge}"
+  try {
+    const matchPrompt = `A founder described this challenge: "${challenge}"
 
 Here is the list of available board directors, each with their specialty:
 ${directors.map(d => `- ${d.id}: ${d.name} — ${d.role}`).join('\n')}
 
 Pick the ONE director whose specialty best matches this challenge. Return ONLY the director's id (the short lowercase code before the colon), nothing else — no explanation, no punctuation.`;
 
-  try {
     const result = await askClaude(matchPrompt, [{ role: 'user', content: 'Which director id matches best?' }], { feature: 'board_match' });
     const matchedId = result.trim().toLowerCase().replace(/[^a-z]/g, '');
     const valid = directors.find(d => d.id === matchedId);
@@ -1960,8 +1981,13 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 // ═══════════════════════════════════════════════════════════════════════════
 
 app.post('/api/consult/qualify', async (req, res) => {
-  const { businessData, conversationHistory = [], language = 'en' } = req.body;
+  const { businessData, conversationHistory: rawHistory = [], language = 'en' } = req.body;
   if (!businessData) return res.status(400).json({ error: 'Missing business data' });
+
+  // This endpoint is public and unauthenticated (anonymous /consult visitors),
+  // so client-supplied conversationHistory must never be trusted at face value —
+  // a malformed entry here must not be able to crash the server for everyone.
+  const conversationHistory = rawHistory.filter(m => m && typeof m.content === 'string' && (m.role === 'user' || m.role === 'assistant'));
 
   const userExchanges = conversationHistory.filter(m => m.role === 'user').length;
   if (userExchanges >= 10) return res.json({ ready: true });
@@ -2099,8 +2125,12 @@ app.get('/api/consult/directors', (req, res) => {
 });
 
 app.post('/api/consult/run', async (req, res) => {
-  const { businessData, clientInfo, conversationHistory = [], selectedDirectorIds = [], language = 'en' } = req.body;
+  const { businessData, clientInfo, conversationHistory: rawHistory = [], selectedDirectorIds = [], language = 'en' } = req.body;
   if (!businessData || !clientInfo) return res.status(400).json({ error: 'Missing business data or client info' });
+
+  // Public unauthenticated endpoint — client-supplied conversationHistory must
+  // never be trusted at face value, same reasoning as /api/consult/qualify.
+  const conversationHistory = rawHistory.filter(m => m && typeof m.content === 'string' && (m.role === 'user' || m.role === 'assistant'));
 
 
   function selectDirectors(data) {
@@ -2375,17 +2405,26 @@ app.post('/api/chat', async (req, res) => {
 
 // ── Internal board auto-match (no auth — /board is password-gated at UI level) ──
 app.post('/api/board-match', async (req, res) => {
-  const { challenge, directors } = req.body;
-  if (!challenge || !directors || !directors.length) {
+  const { challenge, directors: rawDirectors } = req.body;
+  if (!challenge || !rawDirectors || !rawDirectors.length) {
     return res.status(400).json({ error: 'Missing challenge or director list' });
   }
-  const matchPrompt = `A founder described this challenge: "${challenge}"
+  // Defensively drop any malformed entries (null/undefined, or missing the
+  // fields we need) rather than letting one bad entry crash the whole
+  // request — client-supplied data should never be able to take the server down.
+  const directors = rawDirectors.filter(d => d && d.id && d.name && d.role);
+  if (!directors.length) {
+    return res.status(400).json({ error: 'No valid directors in the provided list' });
+  }
+
+  try {
+    const matchPrompt = `A founder described this challenge: "${challenge}"
 
 Here is the list of available board directors, each with their specialty:
 ${directors.map(d => `- ${d.id}: ${d.name} — ${d.role}`).join('\n')}
 
 Pick the ONE director whose specialty best matches this challenge. Return ONLY the director's id, nothing else.`;
-  try {
+
     const result = await askClaude(matchPrompt, [{ role: 'user', content: 'Which director id matches best?' }], { feature: 'internal_board_match' });
     const matchedId = result.trim().toLowerCase().replace(/[^a-z]/g, '');
     const valid = directors.find(d => d.id === matchedId);
