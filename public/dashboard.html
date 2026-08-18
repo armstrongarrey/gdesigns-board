@@ -1658,7 +1658,7 @@ document.addEventListener('click', function(e) {
 function downloadReport(format) {
   if (!currentBusinessId) { alert('Please analyze a business first.'); return; }
   document.getElementById('downloadMenu').style.display = 'none';
-  window.location.href = `/api/business/${currentBusinessId}/report?format=${format}`;
+  window.location.href = `/api/business/${currentBusinessId}/report?format=${format}&lang=${window.currentLang || 'en'}`;
 }
 
 // ── ENTREPRENEUR MODE ─────────────────────────────────────────────────────────
@@ -1683,7 +1683,7 @@ function downloadEntrepreneurReport(format) {
   if (!currentEntrepreneurSessionId) { alert('Please generate a result first.'); return; }
   document.getElementById('entDownloadMenuOpp').style.display = 'none';
   document.getElementById('entDownloadMenuVal').style.display = 'none';
-  window.location.href = `/api/entrepreneur/${currentEntrepreneurSessionId}/report?format=${format}`;
+  window.location.href = `/api/entrepreneur/${currentEntrepreneurSessionId}/report?format=${format}&lang=${window.currentLang || 'en'}`;
 }
 
 
