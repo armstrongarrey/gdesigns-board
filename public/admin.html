@@ -130,6 +130,9 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     <button class="nav-item" onclick="showSection('users')" id="nav-users">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Users
     </button>
+    <button class="nav-item" onclick="showSection('team-members')" id="nav-team-members">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>Team Members
+    </button>
     <button class="nav-item" onclick="showSection('usage')" id="nav-usage">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>AI Usage
     </button>
@@ -195,6 +198,16 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
         <div class="table-header"><div class="table-title">All Users</div><button class="btn-primary" onclick="loadUsers()">Refresh</button></div>
         <table><thead><tr><th>Name</th><th>Email</th><th>Plan</th><th>Consultations</th><th>Verified</th><th>Joined</th><th>Action</th></tr></thead>
         <tbody id="allUsers"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">Loading...</td></tr></tbody></table>
+      </div>
+    </div>
+
+    <!-- TEAM MEMBERS -->
+    <div class="section-view" id="section-team-members">
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">Every team invite and membership across all accounts, for monitoring seat usage and activity.</p>
+      <div class="table-wrap">
+        <div class="table-header"><div class="table-title">All Team Members</div><button class="btn-primary" onclick="loadAdminTeamMembers()">Refresh</button></div>
+        <table><thead><tr><th>Account Owner</th><th>Owner Plan</th><th>Member Email</th><th>Status</th><th>Permissions</th><th>Invited</th><th>Joined</th></tr></thead>
+        <tbody id="allTeamMembers"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">Loading...</td></tr></tbody></table>
       </div>
     </div>
 
@@ -389,9 +402,10 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const nav = document.getElementById('nav-' + name);
   if (nav) nav.classList.add('active');
-  const titles = {overview:'Overview',payments:'Payments',users:'Users',usage:'AI Usage',cms:'CMS Editor',announcements:'Announcements',coupons:'Coupon Codes'};
+  const titles = {overview:'Overview',payments:'Payments',users:'Users','team-members':'Team Members',usage:'AI Usage',cms:'CMS Editor',announcements:'Announcements',coupons:'Coupon Codes'};
   document.getElementById('topbarTitle').textContent = titles[name] || name;
   if (name === 'usage') loadUsageStats();
+  if (name === 'team-members') loadAdminTeamMembers();
 }
 
 // ── AI USAGE DASHBOARD ────────────────────────────────────────────────────
@@ -540,6 +554,32 @@ async function loadUsers() {
         <td style="font-size:11px">${new Date(u.created_at).toLocaleDateString('en-GB')}</td>
         <td><span style="font-size:11px;color:var(--muted)">ID: ${u.id.slice(0,8)}</span></td>
       </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">No users yet</td></tr>';
+  } catch(e) {}
+}
+
+// ── TEAM MEMBERS ─────────────────────────────────────────────────────────
+async function loadAdminTeamMembers() {
+  try {
+    const res = await fetch('/api/admin/team-members');
+    const { teamMembers } = await res.json();
+    const tbody = document.getElementById('allTeamMembers');
+    const statusColors = { active: 'var(--green)', invited: 'var(--gold)' };
+    tbody.innerHTML = (teamMembers||[]).length ? teamMembers.map(m => {
+      const ownerName = [m.owner_first_name, m.owner_last_name].filter(Boolean).join(' ') || m.owner_email;
+      const perms = m.permissions || {};
+      const grantedList = Object.entries(perms).filter(([,v]) => v).map(([k]) => k);
+      const permsSummary = grantedList.length ? grantedList.join(', ') : 'none';
+      return `
+      <tr>
+        <td>${ownerName}<div style="font-size:11px;color:var(--muted)">${m.owner_email}</div></td>
+        <td style="text-transform:capitalize">${m.owner_plan}</td>
+        <td style="font-size:12px">${m.member_email}</td>
+        <td style="color:${statusColors[m.status]||'var(--muted)'};text-transform:capitalize">${m.status}</td>
+        <td style="font-size:11px;color:var(--muted2);max-width:220px">${permsSummary}</td>
+        <td style="font-size:11px">${new Date(m.invited_at).toLocaleDateString('en-GB')}</td>
+        <td style="font-size:11px">${m.joined_at ? new Date(m.joined_at).toLocaleDateString('en-GB') : '—'}</td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">No team members yet</td></tr>';
   } catch(e) {}
 }
 
