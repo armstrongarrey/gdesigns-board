@@ -97,7 +97,9 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
 .login-sub{font-size:13px;color:var(--muted);margin-bottom:24px}
 .login-err{font-size:12px;color:var(--red);background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:7px;padding:8px 12px;margin-bottom:12px;display:none}
 .login-err.show{display:block}
+.lang-switch-btn.active{background:var(--purple)!important;border-color:var(--purple)!important;color:#fff!important}
 </style>
+<script src="/i18n.js"></script>
 </head>
 <body>
 
@@ -109,8 +111,8 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     <div class="login-sub">Arreyon Consult — G-DESIGNS LTD</div>
     <div class="login-err" id="loginErr"></div>
     <div class="form-group"><label>Email</label><input class="form-input" type="email" id="adminEmail" placeholder="admin@example.com"></div>
-    <div class="form-group"><label>Password</label><input class="form-input" type="password" id="adminPassword" placeholder="Admin password"></div>
-    <button class="btn-primary" style="width:100%;padding:11px;font-size:14px" onclick="adminLogin()" id="loginBtn">Sign In to Admin</button>
+    <div class="form-group"><label data-i18n="admin.password">Password</label><input class="form-input" type="password" id="adminPassword" data-i18n-placeholder="admin.password_placeholder" placeholder="Admin password"></div>
+    <button class="btn-primary" style="width:100%;padding:11px;font-size:14px" onclick="adminLogin()" id="loginBtn" data-i18n="admin.sign_in">Sign In to Admin</button>
   </div>
 </div>
 
@@ -118,33 +120,33 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
 <aside class="sidebar" id="appSidebar" style="display:none">
   <div class="sidebar-logo">
     <div class="logo-mark">A</div>
-    <div style="margin-left:2px"><div class="logo-text">Admin Panel</div><div class="logo-sub">Arreyon Consult</div></div>
+    <div style="margin-left:2px"><div class="logo-text" data-i18n="admin.panel_title">Admin Panel</div><div class="logo-sub">Arreyon Consult</div></div>
   </div>
   <nav class="sidebar-nav">
     <button class="nav-item active" onclick="showSection('overview')" id="nav-overview">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Overview
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg><span data-i18n="admin.nav_overview">Overview</span>
     </button>
     <button class="nav-item" onclick="showSection('payments')" id="nav-payments">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>Payments
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg><span data-i18n="admin.nav_payments">Payments</span>
     </button>
     <button class="nav-item" onclick="showSection('users')" id="nav-users">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Users
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span data-i18n="admin.nav_users">Users</span>
     </button>
     <button class="nav-item" onclick="showSection('team-members')" id="nav-team-members">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>Team Members
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg><span data-i18n="admin.nav_team_members">Team Members</span>
     </button>
     <button class="nav-item" onclick="showSection('usage')" id="nav-usage">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>AI Usage
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg><span data-i18n="admin.nav_usage">AI Usage</span>
     </button>
-    <div class="nav-section">Content</div>
+    <div class="nav-section" data-i18n="admin.nav_content">Content</div>
     <button class="nav-item" onclick="showSection('cms')" id="nav-cms">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>CMS Editor
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg><span data-i18n="admin.nav_cms">CMS Editor</span>
     </button>
     <button class="nav-item" onclick="showSection('announcements')" id="nav-announcements">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3z"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Announcements
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3z"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span data-i18n="admin.nav_announcements">Announcements</span>
     </button>
     <button class="nav-item" onclick="showSection('coupons')" id="nav-coupons">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>Coupon Codes
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span data-i18n="admin.nav_coupons">Coupon Codes</span>
     </button>
   </nav>
   <div class="sidebar-foot">
@@ -158,9 +160,11 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
 <!-- MAIN -->
 <div class="main" id="appMain" style="display:none">
   <div class="topbar">
-    <div><div class="topbar-title" id="topbarTitle">Overview</div><div class="topbar-sub" id="topbarSub">Arreyon Consult Admin Panel</div></div>
-    <div style="display:flex;gap:8px">
-      <a href="/" target="_blank" class="btn-ghost">View Site</a>
+    <div><div class="topbar-title" id="topbarTitle" data-i18n="admin.nav_overview">Overview</div><div class="topbar-sub" id="topbarSub" data-i18n="admin.panel_sub">Arreyon Consult Admin Panel</div></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="lang-switch-btn" data-lang-option="en" onclick="setLanguage('en')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit">EN</button>
+      <button class="lang-switch-btn" data-lang-option="fr" onclick="setLanguage('fr')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit">FR</button>
+      <a href="/" target="_blank" class="btn-ghost" data-i18n="admin.view_site">View Site</a>
     </div>
   </div>
 
@@ -169,16 +173,16 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     <!-- OVERVIEW -->
     <div class="section-view active" id="section-overview">
       <div class="stats-row">
-        <div class="stat-card"><div class="stat-label">Total Users</div><div class="stat-val" id="statUsers">—</div><div class="stat-sub">registered accounts</div></div>
-        <div class="stat-card"><div class="stat-label">Pending Payments</div><div class="stat-val" id="statPending">—</div><div class="stat-sub">awaiting approval</div></div>
-        <div class="stat-card"><div class="stat-label">Active Pro Users</div><div class="stat-val" id="statPro">—</div><div class="stat-sub">pro + business plans</div></div>
-        <div class="stat-card"><div class="stat-label">Total Revenue</div><div class="stat-val" id="statRevenue">—</div><div class="stat-sub">approved payments</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="admin.stat_total_users">Total Users</div><div class="stat-val" id="statUsers">—</div><div class="stat-sub" data-i18n="admin.stat_registered">registered accounts</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="admin.stat_pending_payments">Pending Payments</div><div class="stat-val" id="statPending">—</div><div class="stat-sub" data-i18n="admin.stat_awaiting">awaiting approval</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="admin.stat_active_pro">Active Pro Users</div><div class="stat-val" id="statPro">—</div><div class="stat-sub" data-i18n="admin.stat_pro_business">pro + business plans</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="admin.stat_revenue">Total Revenue</div><div class="stat-val" id="statRevenue">—</div><div class="stat-sub" data-i18n="admin.stat_approved">approved payments</div></div>
       </div>
 
       <div class="table-wrap">
-        <div class="table-header"><div class="table-title">Recent Payments</div><button class="btn-ghost" onclick="showSection('payments')">View All</button></div>
-        <table><thead><tr><th>User</th><th>Plan</th><th>Amount</th><th>Method</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
-        <tbody id="recentPayments"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">Loading...</td></tr></tbody></table>
+        <div class="table-header"><div class="table-title" data-i18n="admin.recent_payments">Recent Payments</div><button class="btn-ghost" onclick="showSection('payments')" data-i18n="admin.view_all">View All</button></div>
+        <table><thead><tr><th data-i18n="admin.th_user">User</th><th data-i18n="admin.th_plan">Plan</th><th data-i18n="admin.th_amount">Amount</th><th data-i18n="admin.th_method">Method</th><th data-i18n="admin.th_status">Status</th><th data-i18n="admin.th_date">Date</th><th data-i18n="admin.th_action">Action</th></tr></thead>
+        <tbody id="recentPayments"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)" data-i18n="admin.loading">Loading...</td></tr></tbody></table>
       </div>
     </div>
 
@@ -195,79 +199,79 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     <!-- USERS -->
     <div class="section-view" id="section-users">
       <div class="table-wrap">
-        <div class="table-header"><div class="table-title">All Users</div><button class="btn-primary" onclick="loadUsers()">Refresh</button></div>
-        <table><thead><tr><th>Name</th><th>Email</th><th>Plan</th><th>Consultations</th><th>Verified</th><th>Joined</th><th>Action</th></tr></thead>
-        <tbody id="allUsers"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">Loading...</td></tr></tbody></table>
+        <div class="table-header"><div class="table-title" data-i18n="admin.all_users">All Users</div><button class="btn-primary" onclick="loadUsers()" data-i18n="admin.refresh">Refresh</button></div>
+        <table><thead><tr><th data-i18n="admin.th_name">Name</th><th data-i18n="admin.th_email">Email</th><th data-i18n="admin.th_plan">Plan</th><th data-i18n="admin.th_consultations">Consultations</th><th data-i18n="admin.th_verified">Verified</th><th data-i18n="admin.th_joined">Joined</th><th data-i18n="admin.th_action">Action</th></tr></thead>
+        <tbody id="allUsers"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)" data-i18n="admin.loading">Loading...</td></tr></tbody></table>
       </div>
     </div>
 
     <!-- TEAM MEMBERS -->
     <div class="section-view" id="section-team-members">
-      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">Every team invite and membership across all accounts, for monitoring seat usage and activity.</p>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px" data-i18n="admin.team_desc">Every team invite and membership across all accounts, for monitoring seat usage and activity.</p>
       <div class="table-wrap">
-        <div class="table-header"><div class="table-title">All Team Members</div><button class="btn-primary" onclick="loadAdminTeamMembers()">Refresh</button></div>
-        <table><thead><tr><th>Account Owner</th><th>Owner Plan</th><th>Member Email</th><th>Status</th><th>Permissions</th><th>Invited</th><th>Joined</th></tr></thead>
-        <tbody id="allTeamMembers"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">Loading...</td></tr></tbody></table>
+        <div class="table-header"><div class="table-title" data-i18n="admin.all_team_members">All Team Members</div><button class="btn-primary" onclick="loadAdminTeamMembers()" data-i18n="admin.refresh">Refresh</button></div>
+        <table><thead><tr><th data-i18n="admin.th_account_owner">Account Owner</th><th data-i18n="admin.th_owner_plan">Owner Plan</th><th data-i18n="admin.th_member_email">Member Email</th><th data-i18n="admin.th_status">Status</th><th data-i18n="admin.th_permissions">Permissions</th><th data-i18n="admin.th_invited">Invited</th><th data-i18n="admin.th_joined">Joined</th></tr></thead>
+        <tbody id="allTeamMembers"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)" data-i18n="admin.loading">Loading...</td></tr></tbody></table>
       </div>
     </div>
 
     <!-- AI USAGE DASHBOARD -->
     <div class="section-view" id="section-usage">
-      <p style="font-size:12px;color:var(--muted);margin-bottom:16px">Last 30 days · Cost figures are rough relative estimates, not exact billing (token counts aren't logged per call)</p>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px" data-i18n="admin.usage_period_note">Last 30 days · Cost figures are rough relative estimates, not exact billing (token counts aren't logged per call)</p>
       <div class="stats-row">
-        <div class="stat-card"><div class="stat-label">Total AI Calls</div><div class="stat-val" id="statTotalCalls">—</div><div class="stat-sub">last 30 days</div></div>
-        <div class="stat-card"><div class="stat-label">Error Rate</div><div class="stat-val" id="statErrorRate">—</div><div class="stat-sub" id="statErrorSub">of total calls</div></div>
-        <div class="stat-card"><div class="stat-label">Active Users</div><div class="stat-val" id="statActiveUsers">—</div><div class="stat-sub">made at least 1 AI call</div></div>
-        <div class="stat-card"><div class="stat-label">Est. Cost</div><div class="stat-val" id="statEstCost">—</div><div class="stat-sub">rough estimate only</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="admin.stat_total_calls">Total AI Calls</div><div class="stat-val" id="statTotalCalls">—</div><div class="stat-sub" data-i18n="admin.stat_last_30">last 30 days</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="admin.stat_error_rate">Error Rate</div><div class="stat-val" id="statErrorRate">—</div><div class="stat-sub" id="statErrorSub" data-i18n="admin.stat_of_total_calls">of total calls</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="admin.stat_active_users">Active Users</div><div class="stat-val" id="statActiveUsers">—</div><div class="stat-sub" data-i18n="admin.stat_made_1_call">made at least 1 AI call</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="admin.stat_est_cost">Est. Cost</div><div class="stat-val" id="statEstCost">—</div><div class="stat-sub" data-i18n="admin.stat_rough_estimate">rough estimate only</div></div>
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
         <div class="table-wrap">
-          <div class="table-header"><div class="table-title">By Provider</div></div>
-          <table><thead><tr><th>Provider</th><th>Calls</th><th>Errors</th></tr></thead>
-          <tbody id="usageByProvider"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table>
+          <div class="table-header"><div class="table-title" data-i18n="admin.by_provider">By Provider</div></div>
+          <table><thead><tr><th data-i18n="admin.th_provider">Provider</th><th data-i18n="admin.th_calls">Calls</th><th data-i18n="admin.th_errors">Errors</th></tr></thead>
+          <tbody id="usageByProvider"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)" data-i18n="admin.loading">Loading...</td></tr></tbody></table>
         </div>
         <div class="table-wrap">
-          <div class="table-header"><div class="table-title">By Feature</div></div>
-          <table><thead><tr><th>Feature</th><th>Calls</th><th>Avg Duration</th></tr></thead>
-          <tbody id="usageByFeature"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table>
+          <div class="table-header"><div class="table-title" data-i18n="admin.by_feature">By Feature</div></div>
+          <table><thead><tr><th data-i18n="admin.th_feature">Feature</th><th data-i18n="admin.th_calls">Calls</th><th data-i18n="admin.th_avg_duration">Avg Duration</th></tr></thead>
+          <tbody id="usageByFeature"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)" data-i18n="admin.loading">Loading...</td></tr></tbody></table>
         </div>
       </div>
 
       <div class="table-wrap" style="margin-bottom:20px">
-        <div class="table-header"><div class="table-title">By Model — Router Tier</div></div>
-        <p style="font-size:11.5px;color:var(--muted);padding:0 20px 10px">Haiku = simple/moderate tasks. Sonnet = complex reasoning (Verification Pass, Chairman Synthesis, Business Plans, Idea Validation).</p>
-        <table><thead><tr><th>Model</th><th>Provider</th><th>Calls</th></tr></thead>
-        <tbody id="usageByModel"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table>
+        <div class="table-header"><div class="table-title" data-i18n="admin.by_model_tier">By Model — Router Tier</div></div>
+        <p style="font-size:11.5px;color:var(--muted);padding:0 20px 10px" data-i18n="admin.model_tier_note">Haiku = simple/moderate tasks. Sonnet = complex reasoning (Verification Pass, Chairman Synthesis, Business Plans, Idea Validation).</p>
+        <table><thead><tr><th data-i18n="admin.th_model">Model</th><th data-i18n="admin.th_provider">Provider</th><th data-i18n="admin.th_calls">Calls</th></tr></thead>
+        <tbody id="usageByModel"><tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)" data-i18n="admin.loading">Loading...</td></tr></tbody></table>
       </div>
 
       <div class="table-wrap" style="margin-bottom:20px">
-        <div class="table-header"><div class="table-title">Daily Call Volume (30 days)</div></div>
+        <div class="table-header"><div class="table-title" data-i18n="admin.daily_call_volume">Daily Call Volume (30 days)</div></div>
         <div id="usageDailyChart" style="padding:20px"></div>
       </div>
 
       <div class="table-wrap">
-        <div class="table-header"><div class="table-title">Most Active Users</div></div>
-        <table><thead><tr><th>Name</th><th>Email</th><th>Plan</th><th>AI Calls</th></tr></thead>
-        <tbody id="usageTopUsers"><tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">Loading...</td></tr></tbody></table>
+        <div class="table-header"><div class="table-title" data-i18n="admin.most_active_users">Most Active Users</div></div>
+        <table><thead><tr><th data-i18n="admin.th_name">Name</th><th data-i18n="admin.th_email">Email</th><th data-i18n="admin.th_plan">Plan</th><th data-i18n="admin.th_ai_calls">AI Calls</th></tr></thead>
+        <tbody id="usageTopUsers"><tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)" data-i18n="admin.loading">Loading...</td></tr></tbody></table>
       </div>
     </div>
 
     <!-- CMS EDITOR -->
     <div class="section-view" id="section-cms">
       <div class="msg-box msg-success" id="cmsMsg"></div>
-      <p style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.6">Edit all landing page content here. Every section is listed automatically. Changes go live immediately after saving.</p>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.6" data-i18n="cms.edit_intro">Edit all landing page content here. Every section is listed automatically. Changes go live immediately after saving.</p>
 
       <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:20px">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
           <div>
-            <div style="font-size:13px;font-weight:700;color:var(--text)">🇫🇷 Auto-Translate to French</div>
-            <div style="font-size:11.5px;color:var(--muted);margin-top:2px">Reads your current English content and generates French translations with AI. Review and edit below before saving.</div>
+            <div style="font-size:13px;font-weight:700;color:var(--text)" data-i18n="cms.auto_translate_title">🇫🇷 Auto-Translate to French</div>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:2px" data-i18n="cms.auto_translate_desc">Reads your current English content and generates French translations with AI. Review and edit below before saving.</div>
           </div>
-          <button class="btn-primary" style="padding:9px 18px;font-size:12.5px;white-space:nowrap" onclick="runCmsAutoTranslate()" id="autoTranslateBtn">Translate All Fields</button>
+          <button class="btn-primary" style="padding:9px 18px;font-size:12.5px;white-space:nowrap" onclick="runCmsAutoTranslate()" id="autoTranslateBtn" data-i18n="cms.translate_all">Translate All Fields</button>
         </div>
         <label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11.5px;color:var(--muted);cursor:pointer">
-          <input type="checkbox" id="cmsOverwriteCheck" style="cursor:pointer"> Overwrite existing French text (otherwise only empty fields are filled in)
+          <input type="checkbox" id="cmsOverwriteCheck" style="cursor:pointer"> <span data-i18n="cms.overwrite_existing">Overwrite existing French text (otherwise only empty fields are filled in)</span>
         </label>
         <div id="autoTranslateStatus" style="display:none;margin-top:10px;font-size:12px"></div>
       </div>
@@ -275,17 +279,17 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
       <div id="cmsAllSections"></div>
 
       <div class="form-card">
-        <div class="form-card-title">Add New Field</div>
-        <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Add a brand new piece of editable content that doesn't exist yet.</p>
+        <div class="form-card-title" data-i18n="cms.add_new_field">Add New Field</div>
+        <p style="font-size:12px;color:var(--muted);margin-bottom:12px" data-i18n="cms.add_field_desc">Add a brand new piece of editable content that doesn't exist yet.</p>
         <div class="form-row">
-          <div class="form-group"><label>Section</label><input class="form-input" id="newFieldSection" placeholder="e.g. about"></div>
-          <div class="form-group"><label>Key</label><input class="form-input" id="newFieldKey" placeholder="e.g. subtitle"></div>
+          <div class="form-group"><label data-i18n="cms.section">Section</label><input class="form-input" id="newFieldSection" data-i18n-placeholder="cms.section_placeholder" placeholder="e.g. about"></div>
+          <div class="form-group"><label data-i18n="cms.key">Key</label><input class="form-input" id="newFieldKey" data-i18n-placeholder="cms.key_placeholder" placeholder="e.g. subtitle"></div>
         </div>
-        <div class="form-group"><label>Value</label><textarea class="form-input" id="newFieldValue" placeholder="Content text..."></textarea></div>
-        <button class="btn-ghost" onclick="addNewCmsField()">Add Field</button>
+        <div class="form-group"><label data-i18n="cms.value">Value</label><textarea class="form-input" id="newFieldValue" data-i18n-placeholder="cms.value_placeholder" placeholder="Content text..."></textarea></div>
+        <button class="btn-ghost" onclick="addNewCmsField()" data-i18n="cms.add_field">Add Field</button>
       </div>
 
-      <button class="btn-primary" style="padding:12px 28px;font-size:14px;margin-top:8px" onclick="saveCMS()">Save All Changes</button>
+      <button class="btn-primary" style="padding:12px 28px;font-size:14px;margin-top:8px" onclick="saveCMS()" data-i18n="cms.save_all">Save All Changes</button>
     </div>
 
 
@@ -294,36 +298,36 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
       <div class="msg-box" id="annMsg"></div>
 
       <div class="form-card">
-        <div class="form-card-title">Create Announcement</div>
-        <div class="form-group"><label>Title</label><input class="form-input" id="annTitle" placeholder="Announcement title"></div>
-        <div class="form-group"><label>Message</label><textarea class="form-input" id="annMessage" placeholder="Announcement message visible to users..."></textarea></div>
+        <div class="form-card-title" data-i18n="ann.create_title">Create Announcement</div>
+        <div class="form-group"><label data-i18n="ann.title">Title</label><input class="form-input" id="annTitle" data-i18n-placeholder="ann.title_placeholder" placeholder="Announcement title"></div>
+        <div class="form-group"><label data-i18n="ann.message">Message</label><textarea class="form-input" id="annMessage" data-i18n-placeholder="ann.message_placeholder" placeholder="Announcement message visible to users..."></textarea></div>
         <div class="form-row">
           <div class="form-group">
-            <label>Type</label>
+            <label data-i18n="ann.type">Type</label>
             <select class="form-input" id="annType">
-              <option value="info">Info</option>
-              <option value="success">Success</option>
-              <option value="warning">Warning</option>
-              <option value="promo">Promotion</option>
+              <option value="info" data-i18n="ann.type_info">Info</option>
+              <option value="success" data-i18n="ann.type_success">Success</option>
+              <option value="warning" data-i18n="ann.type_warning">Warning</option>
+              <option value="promo" data-i18n="ann.type_promo">Promotion</option>
             </select>
           </div>
-          <div class="form-group"><label>Ends At (optional)</label><input class="form-input" type="datetime-local" id="annEnds"></div>
+          <div class="form-group"><label data-i18n="ann.ends_at">Ends At (optional)</label><input class="form-input" type="datetime-local" id="annEnds"></div>
         </div>
         <div style="display:flex;gap:20px;align-items:center;margin-bottom:16px">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text2)">
-            <input type="checkbox" id="annBanner" checked style="accent-color:var(--purple)"> Show as banner
+            <input type="checkbox" id="annBanner" checked style="accent-color:var(--purple)"> <span data-i18n="ann.show_banner">Show as banner</span>
           </label>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--text2)">
-            <input type="checkbox" id="annPopup" style="accent-color:var(--purple)"> Show as popup
+            <input type="checkbox" id="annPopup" style="accent-color:var(--purple)"> <span data-i18n="ann.show_popup">Show as popup</span>
           </label>
         </div>
-        <button class="btn-primary" onclick="createAnnouncement()">Create Announcement</button>
+        <button class="btn-primary" onclick="createAnnouncement()" data-i18n="ann.create_btn">Create Announcement</button>
       </div>
 
       <div class="table-wrap">
-        <div class="table-header"><div class="table-title">Active Announcements</div><button class="btn-ghost" onclick="loadAnnouncements()">Refresh</button></div>
-        <table><thead><tr><th>Title</th><th>Message</th><th>Type</th><th>Banner</th><th>Popup</th><th>Active</th><th>Action</th></tr></thead>
-        <tbody id="annList"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">Loading...</td></tr></tbody></table>
+        <div class="table-header"><div class="table-title" data-i18n="ann.active_announcements">Active Announcements</div><button class="btn-ghost" onclick="loadAnnouncements()" data-i18n="admin.refresh">Refresh</button></div>
+        <table><thead><tr><th data-i18n="ann.title">Title</th><th data-i18n="ann.th_message">Message</th><th data-i18n="ann.th_type">Type</th><th data-i18n="ann.th_banner">Banner</th><th data-i18n="ann.th_popup">Popup</th><th data-i18n="ann.th_active">Active</th><th data-i18n="admin.th_action">Action</th></tr></thead>
+        <tbody id="annList"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)" data-i18n="admin.loading">Loading...</td></tr></tbody></table>
       </div>
     </div>
 
@@ -332,31 +336,31 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
       <div class="msg-box" id="couponMsg"></div>
 
       <div class="form-card">
-        <div class="form-card-title">Create Coupon Code</div>
+        <div class="form-card-title" data-i18n="coup.create_title">Create Coupon Code</div>
         <div class="form-row">
-          <div class="form-group"><label>Coupon Code</label><input class="form-input" id="couponCode" placeholder="e.g. GDESIGNS20" style="text-transform:uppercase"></div>
-          <div class="form-group"><label>Discount %</label><input class="form-input" type="number" id="couponDiscount" placeholder="e.g. 20" min="1" max="100"></div>
+          <div class="form-group"><label data-i18n="coup.code">Coupon Code</label><input class="form-input" id="couponCode" data-i18n-placeholder="coup.code_placeholder" placeholder="e.g. GDESIGNS20" style="text-transform:uppercase"></div>
+          <div class="form-group"><label data-i18n="coup.discount">Discount %</label><input class="form-input" type="number" id="couponDiscount" data-i18n-placeholder="coup.discount_placeholder" placeholder="e.g. 20" min="1" max="100"></div>
         </div>
-        <div class="form-group"><label>Description</label><input class="form-input" id="couponDesc" placeholder="e.g. 20% off for first month"></div>
+        <div class="form-group"><label data-i18n="coup.description">Description</label><input class="form-input" id="couponDesc" data-i18n-placeholder="coup.description_placeholder" placeholder="e.g. 20% off for first month"></div>
         <div class="form-row">
           <div class="form-group">
-            <label>Applies To</label>
+            <label data-i18n="coup.applies_to">Applies To</label>
             <select class="form-input" id="couponApplies">
-              <option value="all">All Plans</option>
-              <option value="pro">Arreyon Pro Only</option>
-              <option value="business">Arreyon Business Only</option>
+              <option value="all" data-i18n="coup.all_plans">All Plans</option>
+              <option value="pro" data-i18n="coup.pro_only">Arreyon Pro Only</option>
+              <option value="business" data-i18n="coup.business_only">Arreyon Business Only</option>
             </select>
           </div>
-          <div class="form-group"><label>Max Uses (optional)</label><input class="form-input" type="number" id="couponMax" placeholder="Leave empty for unlimited"></div>
+          <div class="form-group"><label data-i18n="coup.max_uses">Max Uses (optional)</label><input class="form-input" type="number" id="couponMax" data-i18n-placeholder="coup.max_uses_placeholder" placeholder="Leave empty for unlimited"></div>
         </div>
-        <div class="form-group"><label>Valid Until (optional)</label><input class="form-input" type="datetime-local" id="couponUntil"></div>
-        <button class="btn-primary" onclick="createCoupon()">Create Coupon</button>
+        <div class="form-group"><label data-i18n="coup.valid_until">Valid Until (optional)</label><input class="form-input" type="datetime-local" id="couponUntil"></div>
+        <button class="btn-primary" onclick="createCoupon()" data-i18n="coup.create_btn">Create Coupon</button>
       </div>
 
       <div class="table-wrap">
-        <div class="table-header"><div class="table-title">All Coupon Codes</div><button class="btn-ghost" onclick="loadCoupons()">Refresh</button></div>
-        <table><thead><tr><th>Code</th><th>Discount</th><th>Applies To</th><th>Used / Max</th><th>Valid Until</th><th>Active</th><th>Action</th></tr></thead>
-        <tbody id="couponList"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">Loading...</td></tr></tbody></table>
+        <div class="table-header"><div class="table-title" data-i18n="coup.all_codes">All Coupon Codes</div><button class="btn-ghost" onclick="loadCoupons()" data-i18n="admin.refresh">Refresh</button></div>
+        <table><thead><tr><th data-i18n="coup.th_code">Code</th><th data-i18n="coup.th_discount">Discount</th><th data-i18n="coup.th_applies_to">Applies To</th><th data-i18n="coup.th_used_max">Used / Max</th><th data-i18n="coup.th_valid_until">Valid Until</th><th data-i18n="coup.th_active">Active</th><th data-i18n="admin.th_action">Action</th></tr></thead>
+        <tbody id="couponList"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)" data-i18n="admin.loading">Loading...</td></tr></tbody></table>
       </div>
     </div>
 
@@ -374,7 +378,7 @@ async function adminLogin() {
   const btn = document.getElementById('loginBtn');
   const err = document.getElementById('loginErr');
   err.classList.remove('show');
-  btn.disabled = true; btn.textContent = 'Signing in...';
+  btn.disabled = true; btn.textContent = t('admin.signing_in');
   try {
     const res = await fetch('/api/admin/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, password}) });
     const data = await res.json();
@@ -383,9 +387,9 @@ async function adminLogin() {
       document.getElementById('appSidebar').style.display = 'flex';
       document.getElementById('appMain').style.display = 'flex';
       loadOverview(); loadPayments(); loadUsers(); loadCMS(); loadAnnouncements(); loadCoupons();
-    } else { err.textContent = data.error || 'Invalid credentials'; err.classList.add('show'); }
-  } catch(e) { err.textContent = 'Connection error'; err.classList.add('show'); }
-  btn.disabled = false; btn.textContent = 'Sign In to Admin';
+    } else { err.textContent = data.error || t('admin.invalid_credentials'); err.classList.add('show'); }
+  } catch(e) { err.textContent = t('admin.connection_error_short'); err.classList.add('show'); }
+  btn.disabled = false; btn.textContent = t('admin.sign_in');
 }
 
 async function adminLogout() {
@@ -402,8 +406,8 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const nav = document.getElementById('nav-' + name);
   if (nav) nav.classList.add('active');
-  const titles = {overview:'Overview',payments:'Payments',users:'Users','team-members':'Team Members',usage:'AI Usage',cms:'CMS Editor',announcements:'Announcements',coupons:'Coupon Codes'};
-  document.getElementById('topbarTitle').textContent = titles[name] || name;
+  const titleKeys = {overview:'admin.nav_overview',payments:'admin.nav_payments',users:'admin.nav_users','team-members':'admin.nav_team_members',usage:'admin.nav_usage',cms:'admin.nav_cms',announcements:'admin.nav_announcements',coupons:'admin.nav_coupons'};
+  document.getElementById('topbarTitle').textContent = titleKeys[name] ? t(titleKeys[name]) : name;
   if (name === 'usage') loadUsageStats();
   if (name === 'team-members') loadAdminTeamMembers();
 }
@@ -421,22 +425,22 @@ async function loadUsageStats() {
 
     document.getElementById('statTotalCalls').textContent = totalCalls.toLocaleString();
     document.getElementById('statErrorRate').textContent = errorRate + '%';
-    document.getElementById('statErrorSub').textContent = `${errorCalls} of ${totalCalls} calls`;
+    document.getElementById('statErrorSub').textContent = `${errorCalls} ` + tf('admin.error_sub_template', { total: totalCalls });
     document.getElementById('statActiveUsers').textContent = totals.unique_users || '0';
     document.getElementById('statEstCost').textContent = '$' + (data.estimatedCostUsd || '0.00');
 
     document.getElementById('usageByProvider').innerHTML = (data.byProvider || []).map(p => `
       <tr><td style="text-transform:capitalize">${p.provider}</td><td>${p.calls}</td><td style="color:${parseInt(p.errors)>0?'var(--red)':'var(--muted)'}">${p.errors}</td></tr>
-    `).join('') || '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">No data yet</td></tr>';
+    `).join('') || `<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">${t('admin.no_data_yet')}</td></tr>`;
 
     document.getElementById('usageByFeature').innerHTML = (data.byFeature || []).map(f => `
       <tr><td>${(f.feature||'unspecified').replace(/_/g,' ')}</td><td>${f.calls}</td><td>${f.avg_duration_ms ? Math.round(f.avg_duration_ms) + 'ms' : '—'}</td></tr>
-    `).join('') || '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">No data yet</td></tr>';
+    `).join('') || `<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">${t('admin.no_data_yet')}</td></tr>`;
 
     document.getElementById('usageByModel').innerHTML = (data.byModel || []).map(m => {
       const isComplexTier = (m.model||'').includes('sonnet');
-      return `<tr><td>${m.model} ${isComplexTier ? '<span style="font-size:9px;font-weight:700;color:var(--purple-light);background:rgba(108,59,255,.15);padding:1px 6px;border-radius:4px;margin-left:6px">COMPLEX TIER</span>' : ''}</td><td style="text-transform:capitalize">${m.provider}</td><td>${m.calls}</td></tr>`;
-    }).join('') || '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">No data yet</td></tr>';
+      return `<tr><td>${m.model} ${isComplexTier ? `<span style="font-size:9px;font-weight:700;color:var(--purple-light);background:rgba(108,59,255,.15);padding:1px 6px;border-radius:4px;margin-left:6px">${t('admin.complex_tier')}</span>` : ''}</td><td style="text-transform:capitalize">${m.provider}</td><td>${m.calls}</td></tr>`;
+    }).join('') || `<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">${t('admin.no_data_yet')}</td></tr>`;
 
     // Simple daily bar chart, no external library
     const daily = data.dailyTrend || [];
@@ -453,12 +457,12 @@ async function loadUsageStats() {
       }).join('');
       document.getElementById('usageDailyChart').innerHTML = `<div style="display:flex;align-items:flex-end;gap:2px;height:100px">${bars}</div>`;
     } else {
-      document.getElementById('usageDailyChart').innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px">No data yet</div>';
+      document.getElementById('usageDailyChart').innerHTML = `<div style="text-align:center;color:var(--muted);padding:20px">${t('admin.no_data_yet')}</div>`;
     }
 
     document.getElementById('usageTopUsers').innerHTML = (data.topUsers || []).map(u => `
       <tr><td>${[u.first_name,u.last_name].filter(Boolean).join(' ')||'—'}</td><td>${u.email}</td><td style="text-transform:capitalize">${u.plan}</td><td>${u.calls}</td></tr>
-    `).join('') || '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">No data yet</td></tr>';
+    `).join('') || `<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">${t('admin.no_data_yet')}</td></tr>`;
   } catch(e) { console.log('Usage stats error:', e.message); }
 }
 
@@ -482,7 +486,7 @@ async function loadOverview() {
 
     const tbody = document.getElementById('recentPayments');
     const recent = (payments || []).slice(0,5);
-    tbody.innerHTML = recent.length ? recent.map(p => renderPaymentRow(p)).join('') : '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--muted)">No payments yet</td></tr>';
+    tbody.innerHTML = recent.length ? recent.map(p => renderPaymentRow(p)).join('') : `<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--muted)">${t('admin.no_payments')}</td></tr>`;
   } catch(e) { console.log('Overview error:', e.message); }
 }
 
@@ -496,37 +500,37 @@ async function loadPayments() {
       <tr>
         <td>${p.payer_name||p.first_name||'—'}</td>
         <td style="font-size:12px">${p.payer_email||p.user_email||'—'}</td>
-        <td><span class="badge badge-${p.plan}">${p.plan}</span></td>
+        <td><span class="badge badge-${p.plan}">${t('admin.plan_' + p.plan) !== 'admin.plan_' + p.plan ? t('admin.plan_' + p.plan) : p.plan}</span></td>
         <td>$${parseFloat(p.amount_usd||0).toFixed(0)} / ${parseInt(p.amount_cfa||0).toLocaleString()} CFA</td>
         <td style="font-size:12px">${p.payment_method||'—'}</td>
-        <td><span class="badge badge-${p.status}">${p.status}</span></td>
+        <td><span class="badge badge-${p.status}">${t('admin.status_' + p.status) !== 'admin.status_' + p.status ? t('admin.status_' + p.status) : p.status}</span></td>
         <td style="font-size:11px">${new Date(p.created_at).toLocaleDateString('en-GB')}</td>
         <td class="td-actions">
-          ${p.status==='pending' ? `<button class="btn-success" onclick="approvePayment('${p.id}')">Approve</button>` : '<span style="font-size:12px;color:var(--green)">Approved</span>'}
+          ${p.status==='pending' ? `<button class="btn-success" onclick="approvePayment('${p.id}')">${t('admin.approve')}</button>` : `<span style="font-size:12px;color:var(--green)">${t('admin.approved')}</span>`}
         </td>
-      </tr>`).join('') : '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--muted)">No payments yet</td></tr>';
+      </tr>`).join('') : `<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--muted)">${t('admin.no_payments')}</td></tr>`;
   } catch(e) {}
 }
 
 function renderPaymentRow(p) {
   return `<tr>
     <td>${p.payer_name||p.first_name||'—'}</td>
-    <td><span class="badge badge-${p.plan}">${p.plan}</span></td>
+    <td><span class="badge badge-${p.plan}">${t('admin.plan_' + p.plan) !== 'admin.plan_' + p.plan ? t('admin.plan_' + p.plan) : p.plan}</span></td>
     <td>$${parseFloat(p.amount_usd||0).toFixed(0)}</td>
     <td style="font-size:12px">${p.payment_method||'—'}</td>
-    <td><span class="badge badge-${p.status}">${p.status}</span></td>
+    <td><span class="badge badge-${p.status}">${t('admin.status_' + p.status) !== 'admin.status_' + p.status ? t('admin.status_' + p.status) : p.status}</span></td>
     <td style="font-size:11px">${new Date(p.created_at).toLocaleDateString('en-GB')}</td>
-    <td>${p.status==='pending'?`<button class="btn-success" onclick="approvePayment('${p.id}')">Approve</button>`:'<span style="color:var(--green);font-size:12px">Done</span>'}</td>
+    <td>${p.status==='pending'?`<button class="btn-success" onclick="approvePayment('${p.id}')">${t('admin.approve')}</button>`:`<span style="color:var(--green);font-size:12px">${t('admin.done')}</span>`}</td>
   </tr>`;
 }
 
 async function approvePayment(id) {
-  if (!confirm('Approve this payment and activate the user plan?')) return;
+  if (!confirm(t('admin.confirm_approve_payment'))) return;
   try {
     const res = await fetch(`/api/admin/payments/${id}/approve`, { method:'POST' });
     const data = await res.json();
     if (data.success) {
-      showMsg('paymentMsg', 'Payment approved. User plan activated and email sent.', 'success');
+      showMsg('paymentMsg', t('admin.payment_approved_msg'), 'success');
       loadPayments(); loadOverview();
     }
   } catch(e) { showMsg('paymentMsg', 'Approval failed', 'error'); }
@@ -544,16 +548,16 @@ async function loadUsers() {
         <td style="font-size:12px">${u.email}</td>
         <td>
           <select style="background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text2);font-size:11px;padding:3px 6px;cursor:pointer" onchange="updateUserPlan('${u.id}',this.value)">
-            <option value="starter" ${u.plan==='starter'?'selected':''}>Starter</option>
-            <option value="pro" ${u.plan==='pro'?'selected':''}>Pro</option>
-            <option value="business" ${u.plan==='business'?'selected':''}>Business</option>
+            <option value="starter" ${u.plan==='starter'?'selected':''}>${t('plan.starter_name')}</option>
+            <option value="pro" ${u.plan==='pro'?'selected':''}>${t('plan.pro_name')}</option>
+            <option value="business" ${u.plan==='business'?'selected':''}>${t('plan.business_name')}</option>
           </select>
         </td>
         <td>${u.consultations_used||0}</td>
-        <td style="color:${u.email_verified?'var(--green)':'var(--gold)'}">${u.email_verified?'Verified':'Pending'}</td>
+        <td style="color:${u.email_verified?'var(--green)':'var(--gold)'}">${u.email_verified?t('admin.verified'):t('admin.pending')}</td>
         <td style="font-size:11px">${new Date(u.created_at).toLocaleDateString('en-GB')}</td>
         <td><span style="font-size:11px;color:var(--muted)">ID: ${u.id.slice(0,8)}</span></td>
-      </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">No users yet</td></tr>';
+      </tr>`).join('') : `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">${t('admin.no_users')}</td></tr>`;
   } catch(e) {}
 }
 
@@ -579,7 +583,7 @@ async function loadAdminTeamMembers() {
         <td style="font-size:11px">${new Date(m.invited_at).toLocaleDateString('en-GB')}</td>
         <td style="font-size:11px">${m.joined_at ? new Date(m.joined_at).toLocaleDateString('en-GB') : '—'}</td>
       </tr>`;
-    }).join('') : '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">No team members yet</td></tr>';
+    }).join('') : `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">${t('admin.no_team_members')}</td></tr>`;
   } catch(e) {}
 }
 
@@ -595,13 +599,13 @@ async function runCmsAutoTranslate() {
   const btn = document.getElementById('autoTranslateBtn');
   const status = document.getElementById('autoTranslateStatus');
 
-  if (overwrite && !confirm('This will overwrite any French text you\'ve already entered or edited. Continue?')) return;
+  if (overwrite && !confirm(t('cms.confirm_overwrite'))) return;
 
   btn.disabled = true;
-  btn.textContent = 'Translating...';
+  btn.textContent = t('cms.translating');
   status.style.display = 'block';
   status.style.color = 'var(--muted)';
-  status.textContent = 'Reading your content and translating with AI — this can take a minute for a full site...';
+  status.textContent = t('cms.reading_content');
 
   try {
     const res = await fetch('/api/admin/cms-translate', {
@@ -609,21 +613,21 @@ async function runCmsAutoTranslate() {
     });
     const data = await res.json();
     btn.disabled = false;
-    btn.textContent = 'Translate All Fields';
+    btn.textContent = t('cms.translate_all');
 
     if (!res.ok) {
       status.style.color = 'var(--red)';
-      status.textContent = data.error || 'Translation failed.';
+      status.textContent = data.error || t('cms.translation_failed');
       return;
     }
 
     if (data.translatedCount === 0) {
       status.style.color = 'var(--muted)';
-      status.textContent = data.message || 'Nothing to translate.';
+      status.textContent = data.message || t('cms.nothing_to_translate');
     } else {
       status.style.color = 'var(--green)';
-      status.textContent = `Translated ${data.translatedCount} field(s) across ${data.sectionsProcessed} section(s) below. Review and edit as needed, then click "Save All Changes" to publish them — nothing is live yet.` +
-        (data.failedSections ? ` (Some sections failed and were skipped: ${data.failedSections.join(', ')} — try again.)` : '');
+      status.textContent = tf('cms.translated_summary', { count: data.translatedCount, sections: data.sectionsProcessed }) +
+        (data.failedSections ? ' ' + tf('cms.failed_sections_note', { list: data.failedSections.join(', ') }) : '');
 
       // Merge the returned translations into the in-memory CMS data and re-render —
       // do NOT re-fetch from the server, since these translations aren't saved yet
@@ -639,9 +643,9 @@ async function runCmsAutoTranslate() {
     }
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = 'Translate All Fields';
+    btn.textContent = t('cms.translate_all');
     status.style.color = 'var(--red)';
-    status.textContent = 'Connection error. Please try again.';
+    status.textContent = t('board.connection_error');
   }
 }
 
@@ -686,11 +690,11 @@ function renderAllCmsSections(content) {
         <div class="cms-field-key">${key.replace(/_/g,' ')}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           <div>
-            <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:4px">🇬🇧 English</div>
+            <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:4px">🇬🇧 ${t('cms.lang_name_english')}</div>
             <${tag} class="cms-field-input" data-lang="en" data-section="${section}" data-key="${key}" ${valueAttr} placeholder="${key}">${enInner}</${tag}>
           </div>
           <div>
-            <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:4px">🇫🇷 Français ${!valueFr ? '<span style="color:var(--gold)">(not translated — shows English until filled in)</span>' : ''}</div>
+            <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:4px">🇫🇷 ${t('cms.lang_name_french')} ${!valueFr ? `<span style="color:var(--gold)">${t('cms.not_translated_note')}</span>` : ''}</div>
             <${tag} class="cms-field-input" data-lang="fr" data-section="${section}" data-key="${key}" ${valueFrAttr} placeholder="Traduction française...">${frInner}</${tag}>
           </div>
         </div>
@@ -704,14 +708,14 @@ function addNewCmsField() {
   const section = document.getElementById('newFieldSection').value.trim().toLowerCase().replace(/\s+/g,'_');
   const key = document.getElementById('newFieldKey').value.trim().toLowerCase().replace(/\s+/g,'_');
   const value = document.getElementById('newFieldValue').value.trim();
-  if (!section || !key) { showMsg('cmsMsg', 'Section and key are required', 'error'); return; }
+  if (!section || !key) { showMsg('cmsMsg', t('cms.section_key_required'), 'error'); return; }
   if (!cmsData[section]) cmsData[section] = {};
   cmsData[section][key] = value;
   renderAllCmsSections(cmsData);
   document.getElementById('newFieldSection').value = '';
   document.getElementById('newFieldKey').value = '';
   document.getElementById('newFieldValue').value = '';
-  showMsg('cmsMsg', 'Field added below — click "Save All Changes" to publish it.', 'success');
+  showMsg('cmsMsg', t('cms.field_added_msg'), 'success');
 }
 
 async function saveCMS() {
@@ -728,9 +732,9 @@ async function saveCMS() {
   try {
     const res = await fetch('/api/cms/bulk', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({updates}) });
     const data = await res.json();
-    showMsg('cmsMsg', data.success ? 'All changes saved successfully. Changes are live on the site.' : (data.error||'Save failed'), data.success?'success':'error');
+    showMsg('cmsMsg', data.success ? t('cms.save_success') : (data.error||t('cms.save_failed')), data.success?'success':'error');
     if (data.success) loadCMS();
-  } catch(e) { showMsg('cmsMsg', 'Save failed', 'error'); }
+  } catch(e) { showMsg('cmsMsg', t('cms.save_failed'), 'error'); }
 }
 
 
@@ -744,22 +748,22 @@ async function loadAnnouncements() {
       <tr>
         <td style="font-weight:600">${a.title}</td>
         <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.message}</td>
-        <td><span class="badge badge-${a.type||'info'}">${a.type||'info'}</span></td>
-        <td>${a.show_as_banner?'Yes':'No'}</td>
-        <td>${a.show_as_popup?'Yes':'No'}</td>
-        <td style="color:${a.is_active?'var(--green)':'var(--muted)'}">${a.is_active?'Active':'Off'}</td>
+        <td><span class="badge badge-${a.type||'info'}">${t('ann.type_' + (a.type||'info'))}</span></td>
+        <td>${a.show_as_banner?t('ann.yes'):t('ann.no')}</td>
+        <td>${a.show_as_popup?t('ann.yes'):t('ann.no')}</td>
+        <td style="color:${a.is_active?'var(--green)':'var(--muted)'}">${a.is_active?t('ann.active'):t('ann.off')}</td>
         <td class="td-actions">
-          <button class="btn-ghost" style="font-size:11px;padding:4px 10px" onclick="toggleAnn('${a.id}',${!a.is_active})">${a.is_active?'Disable':'Enable'}</button>
-          <button class="btn-danger" onclick="deleteAnn('${a.id}')">Delete</button>
+          <button class="btn-ghost" style="font-size:11px;padding:4px 10px" onclick="toggleAnn('${a.id}',${!a.is_active})">${a.is_active?t('ann.disable'):t('ann.enable')}</button>
+          <button class="btn-danger" onclick="deleteAnn('${a.id}')">${t('ann.delete')}</button>
         </td>
-      </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">No announcements</td></tr>';
+      </tr>`).join('') : `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">${t('ann.no_announcements')}</td></tr>`;
   } catch(e) {}
 }
 
 async function createAnnouncement() {
   const title = document.getElementById('annTitle').value.trim();
   const message = document.getElementById('annMessage').value.trim();
-  if (!title || !message) return showMsg('annMsg', 'Title and message are required', 'error');
+  if (!title || !message) return showMsg('annMsg', t('ann.title_msg_required'), 'error');
   try {
     const res = await fetch('/api/admin/announcements', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -772,8 +776,8 @@ async function createAnnouncement() {
       })
     });
     const data = await res.json();
-    if (data.success) { showMsg('annMsg', 'Announcement created and now live.', 'success'); document.getElementById('annTitle').value=''; document.getElementById('annMessage').value=''; loadAnnouncements(); }
-  } catch(e) { showMsg('annMsg', 'Failed to create', 'error'); }
+    if (data.success) { showMsg('annMsg', t('ann.created_success'), 'success'); document.getElementById('annTitle').value=''; document.getElementById('annMessage').value=''; loadAnnouncements(); }
+  } catch(e) { showMsg('annMsg', t('ann.failed_create'), 'error'); }
 }
 
 async function toggleAnn(id, active) {
@@ -784,7 +788,7 @@ async function toggleAnn(id, active) {
 }
 
 async function deleteAnn(id) {
-  if (!confirm('Delete this announcement?')) return;
+  if (!confirm(t('ann.confirm_delete'))) return;
   try { await fetch(`/api/admin/announcements/${id}`, { method:'DELETE' }); loadAnnouncements(); } catch(e) {}
 }
 
@@ -798,14 +802,14 @@ async function loadCoupons() {
       <tr>
         <td style="font-weight:700;font-family:monospace;color:var(--purple-light)">${c.code}</td>
         <td style="color:var(--green);font-weight:600">${c.discount_percent}%</td>
-        <td>${c.applies_to||'all'}</td>
+        <td>${c.applies_to==='all' ? t('coup.all_plans') : (c.applies_to==='pro' ? t('coup.pro_only') : (c.applies_to==='business' ? t('coup.business_only') : (c.applies_to||'all')))}</td>
         <td>${c.used_count||0} / ${c.max_uses||'∞'}</td>
-        <td style="font-size:11px">${c.valid_until ? new Date(c.valid_until).toLocaleDateString('en-GB') : 'No expiry'}</td>
-        <td style="color:${c.is_active?'var(--green)':'var(--muted)'}">${c.is_active?'Active':'Off'}</td>
+        <td style="font-size:11px">${c.valid_until ? new Date(c.valid_until).toLocaleDateString('en-GB') : t('coup.no_expiry')}</td>
+        <td style="color:${c.is_active?'var(--green)':'var(--muted)'}">${c.is_active?t('ann.active'):t('ann.off')}</td>
         <td>
-          <button class="btn-ghost" style="font-size:11px;padding:4px 10px" onclick="toggleCoupon('${c.id}',${!c.is_active})">${c.is_active?'Disable':'Enable'}</button>
+          <button class="btn-ghost" style="font-size:11px;padding:4px 10px" onclick="toggleCoupon('${c.id}',${!c.is_active})">${c.is_active?t('ann.disable'):t('ann.enable')}</button>
         </td>
-      </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">No coupons yet</td></tr>';
+      </tr>`).join('') : `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">${t('coup.no_coupons')}</td></tr>`;
   } catch(e) {}
 }
 
@@ -813,7 +817,7 @@ async function createCoupon() {
   const code = document.getElementById('couponCode').value.trim().toUpperCase();
   const discount = parseInt(document.getElementById('couponDiscount').value);
   const desc = document.getElementById('couponDesc').value.trim();
-  if (!code || !discount) return showMsg('couponMsg', 'Code and discount % are required', 'error');
+  if (!code || !discount) return showMsg('couponMsg', t('coup.code_discount_required'), 'error');
   try {
     const res = await fetch('/api/admin/coupons', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -825,9 +829,9 @@ async function createCoupon() {
       })
     });
     const data = await res.json();
-    if (data.success) { showMsg('couponMsg', `Coupon "${code}" created successfully.`, 'success'); document.getElementById('couponCode').value=''; document.getElementById('couponDiscount').value=''; document.getElementById('couponDesc').value=''; loadCoupons(); }
-    else showMsg('couponMsg', data.error||'Failed', 'error');
-  } catch(e) { showMsg('couponMsg', 'Failed to create', 'error'); }
+    if (data.success) { showMsg('couponMsg', tf('coup.created_success', { code }), 'success'); document.getElementById('couponCode').value=''; document.getElementById('couponDiscount').value=''; document.getElementById('couponDesc').value=''; loadCoupons(); }
+    else showMsg('couponMsg', data.error||t('coup.failed'), 'error');
+  } catch(e) { showMsg('couponMsg', t('coup.failed_create'), 'error'); }
 }
 
 async function toggleCoupon(id, active) {
