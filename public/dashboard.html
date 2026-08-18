@@ -286,48 +286,48 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
     <!-- HISTORY SECTION -->
     <div class="section-view" id="section-history">
-      <div class="section-title">Consultation History</div>
-      <div class="section-sub">Full replay of every consultation including conversation and report.</div>
+      <div class="section-title" data-i18n="hist.title">Consultation History</div>
+      <div class="section-sub" data-i18n="hist.subtitle">Full replay of every consultation including conversation and report.</div>
       <div class="history-list" id="fullHistory">
-        <div style="text-align:center;padding:40px;color:var(--muted)">Loading history...</div>
+        <div style="text-align:center;padding:40px;color:var(--muted)" data-i18n="hist.loading">Loading history...</div>
       </div>
       <div id="historyUpgradePrompt" style="display:none">
         <div class="upgrade-prompt">
-          <h3>Consultation history is a Pro feature</h3>
-          <p>Upgrade to Arreyon Pro to access your full consultation history, including all conversations and reports.</p>
-          <button class="btn-primary" onclick="showSection('billing')">Upgrade to Pro</button>
+          <h3 data-i18n="hist.pro_feature">Consultation history is a Pro feature</h3>
+          <p data-i18n="hist.pro_feature_desc">Upgrade to Arreyon Pro to access your full consultation history, including all conversations and reports.</p>
+          <button class="btn-primary" onclick="showSection('billing')" data-i18n="hist.upgrade_to_pro">Upgrade to Pro</button>
         </div>
       </div>
     </div>
 
     <!-- PROFILE SECTION -->
     <div class="section-view" id="section-profile">
-      <div class="section-title">Profile Settings</div>
+      <div class="section-title" data-i18n="profile.title">Profile Settings</div>
       <div class="profile-form">
         <div class="form-row">
-          <div class="form-group"><label>First Name</label><input class="form-input" id="profileFirst" type="text"></div>
-          <div class="form-group"><label>Last Name</label><input class="form-input" id="profileLast" type="text"></div>
+          <div class="form-group"><label data-i18n="profile.first_name">First Name</label><input class="form-input" id="profileFirst" type="text"></div>
+          <div class="form-group"><label data-i18n="profile.last_name">Last Name</label><input class="form-input" id="profileLast" type="text"></div>
         </div>
-        <div class="form-group"><label>Email Address</label><input class="form-input" id="profileEmail" type="email" readonly style="opacity:.6;cursor:not-allowed"></div>
+        <div class="form-group"><label data-i18n="profile.email_address">Email Address</label><input class="form-input" id="profileEmail" type="email" readonly style="opacity:.6;cursor:not-allowed"></div>
         <div class="form-row">
-          <div class="form-group"><label>Phone</label><input class="form-input" id="profilePhone" type="tel" placeholder="+237..."></div>
-          <div class="form-group"><label>Country</label><input class="form-input" id="profileCountry" type="text" placeholder="Your country"></div>
+          <div class="form-group"><label data-i18n="profile.phone">Phone</label><input class="form-input" id="profilePhone" type="tel" placeholder="+237..."></div>
+          <div class="form-group"><label data-i18n="profile.country">Country</label><input class="form-input" id="profileCountry" type="text" data-i18n-placeholder="profile.country_placeholder" placeholder="Your country"></div>
         </div>
-        <button class="btn-primary" onclick="saveProfile()">Save Changes</button>
+        <button class="btn-primary" onclick="saveProfile()" data-i18n="profile.save_changes">Save Changes</button>
         <div id="profileMsg" style="margin-top:10px;font-size:13px;display:none"></div>
       </div>
     </div>
 
     <!-- BILLING SECTION -->
     <div class="section-view" id="section-billing">
-      <div class="section-title">Billing &amp; Plan</div>
-      <div class="section-sub">Manage your subscription and upgrade for more access.</div>
+      <div class="section-title" data-i18n="billing.title">Billing &amp; Plan</div>
+      <div class="section-sub" data-i18n="billing.subtitle">Manage your subscription and upgrade for more access.</div>
       <div class="plan-cards" id="planCards"></div>
 
       <div style="margin-top:32px">
-        <div class="section-title">Usage this month</div>
+        <div class="section-title" data-i18n="billing.usage_this_month">Usage this month</div>
         <div style="max-width:400px">
-          <div style="font-size:13px;color:var(--text2);margin-bottom:8px">Consultations</div>
+          <div style="font-size:13px;color:var(--text2);margin-bottom:8px" data-i18n="billing.consultations">Consultations</div>
           <div class="usage-bar"><div class="usage-fill" id="usageFill" style="width:0%"></div></div>
           <div class="usage-text" id="usageText">0 of 3 used</div>
         </div>
@@ -345,37 +345,37 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
     <!-- WEBSITE ANALYZER SECTION -->
     <div class="section-view" id="section-analyzer">
-      <div class="section-title">Analyze My Business</div>
-      <div class="section-sub">Have a website? Arreyon will read it. No website yet? Just describe your business instead.</div>
+      <div class="section-title" data-i18n="analyzer.title">Analyze My Business</div>
+      <div class="section-sub" data-i18n="analyzer.subtitle">Have a website? Arreyon will read it. No website yet? Just describe your business instead.</div>
 
       <div style="max-width:560px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:24px">
         <div style="display:flex;gap:0;background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:3px;margin-bottom:18px">
-          <button type="button" class="analyzer-tab active" id="tabWebsite" onclick="switchAnalyzerTab('website')" style="flex:1;padding:9px;border:none;background:var(--purple);color:#fff;font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit;transition:all .15s">I have a website</button>
-          <button type="button" class="analyzer-tab" id="tabDescription" onclick="switchAnalyzerTab('description')" style="flex:1;padding:9px;border:none;background:transparent;color:var(--muted);font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit;transition:all .15s">No website yet</button>
+          <button type="button" class="analyzer-tab active" id="tabWebsite" onclick="switchAnalyzerTab('website')" style="flex:1;padding:9px;border:none;background:var(--purple);color:#fff;font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit;transition:all .15s" data-i18n="analyzer.tab_website">I have a website</button>
+          <button type="button" class="analyzer-tab" id="tabDescription" onclick="switchAnalyzerTab('description')" style="flex:1;padding:9px;border:none;background:transparent;color:var(--muted);font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit;transition:all .15s" data-i18n="analyzer.tab_description">No website yet</button>
         </div>
 
         <div id="websiteInputWrap">
           <div class="form-group">
-            <label>Website URL</label>
+            <label data-i18n="analyzer.website_url">Website URL</label>
             <input class="form-input" id="analyzerUrl" placeholder="e.g. yourbusiness.com" onkeydown="if(event.key==='Enter')runAnalysis()">
           </div>
         </div>
 
         <div id="descriptionInputWrap" style="display:none">
           <div class="form-group">
-            <label>Describe Your Business</label>
-            <textarea class="form-input" id="analyzerDescription" rows="5" placeholder="Tell us what your business does, who it serves, the problem or challenge you're facing, your industry, location, and anything else relevant. The more detail, the better the analysis."></textarea>
+            <label data-i18n="analyzer.describe_business">Describe Your Business</label>
+            <textarea class="form-input" id="analyzerDescription" rows="5" data-i18n-placeholder="analyzer.describe_placeholder" placeholder="Tell us what your business does, who it serves, the problem or challenge you're facing, your industry, location, and anything else relevant. The more detail, the better the analysis."></textarea>
           </div>
         </div>
 
-        <button class="btn-primary" style="width:100%;padding:12px" onclick="runAnalysis()" id="analyzeBtn">Analyze My Business</button>
+        <button class="btn-primary" style="width:100%;padding:12px" onclick="runAnalysis()" id="analyzeBtn" data-i18n="analyzer.analyze_button">Analyze My Business</button>
         <div id="analyzerLimitMsg" style="margin-top:10px;font-size:12px;color:var(--muted);display:none"></div>
       </div>
 
       <!-- Loading state with progress messages -->
       <div id="analyzerLoading" style="display:none;max-width:560px;text-align:center;padding:32px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;margin-bottom:24px">
         <div style="font-size:28px;margin-bottom:12px;animation:spin 2s linear infinite;display:inline-block">⚙️</div>
-        <div id="analyzerProgressText" style="font-size:14px;color:var(--text2);font-weight:600">Fetching your website...</div>
+        <div id="analyzerProgressText" style="font-size:14px;color:var(--text2);font-weight:600" data-i18n="analyzer.fetching">Fetching your website...</div>
       </div>
       <style>@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}</style>
 
@@ -385,7 +385,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div id="analyzerResults" style="display:none">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
           <div class="section-title" style="margin:0;font-size:16px" id="resultBizName">Business Profile</div>
-          <a id="resultUrl" href="#" target="_blank" style="font-size:12px;color:var(--purple-light);text-decoration:none">visit site ↗</a>
+          <a id="resultUrl" href="#" target="_blank" style="font-size:12px;color:var(--purple-light);text-decoration:none" data-i18n="analyzer.visit_site">visit site ↗</a>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:18px" id="resultPages"></div>
         <div id="socialLimitNotice" style="display:none;font-size:12.5px;color:var(--gold);background:#2a1f0022;border:1px solid var(--gold);border-radius:8px;padding:12px 14px;margin-bottom:18px"></div>
@@ -393,19 +393,19 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
         <div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
           <div style="min-width:220px">
-            <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px">Research Scope</label>
+            <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px" data-i18n="analyzer.research_scope">Research Scope</label>
             <select class="form-input" id="researchScope" style="padding:10px 12px">
-              <option value="national">National only</option>
-              <option value="both" selected>National + International</option>
+              <option value="national" data-i18n="analyzer.national_only">National only</option>
+              <option value="both" selected data-i18n="analyzer.national_international">National + International</option>
             </select>
           </div>
-          <button class="btn-primary" style="padding:11px 20px" onclick="runResearch()" id="researchBtn">🔍 Research Market &amp; Competitors</button>
+          <button class="btn-primary" style="padding:11px 20px" onclick="runResearch()" id="researchBtn">🔍 <span data-i18n="analyzer.research_button">Research Market &amp; Competitors</span></button>
           <div style="position:relative;display:inline-block">
-            <button class="btn-ghost" style="padding:11px 20px" onclick="toggleDownloadMenu()" id="downloadReportBtn">⬇ Download Report</button>
+            <button class="btn-ghost" style="padding:11px 20px" onclick="toggleDownloadMenu()" id="downloadReportBtn">⬇ <span data-i18n="analyzer.download_report">Download Report</span></button>
             <div id="downloadMenu" style="display:none;position:absolute;top:calc(100% + 6px);left:0;background:var(--bg2);border:1px solid var(--border-light);border-radius:10px;padding:6px;min-width:180px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.4)">
-              <button onclick="downloadReport('pdf')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📄 PDF (view/print)</button>
-              <button onclick="downloadReport('docx')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📝 Word (editable)</button>
-              <button onclick="downloadReport('html')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">🌐 HTML (web page)</button>
+              <button onclick="downloadReport('pdf')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📄 <span data-i18n="analyzer.pdf_option">PDF (view/print)</span></button>
+              <button onclick="downloadReport('docx')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📝 <span data-i18n="analyzer.docx_option">Word (editable)</span></button>
+              <button onclick="downloadReport('html')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">🌐 <span data-i18n="analyzer.html_option">HTML (web page)</span></button>
             </div>
           </div>
         </div>
@@ -413,26 +413,26 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
         <div id="researchLoading" style="display:none;margin-top:16px;padding:20px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;text-align:center">
           <div style="font-size:22px;margin-bottom:8px;animation:spin 2s linear infinite;display:inline-block">🔍</div>
-          <div style="font-size:13px;color:var(--text2)">Searching the web for competitors and market context...</div>
+          <div style="font-size:13px;color:var(--text2)" data-i18n="analyzer.searching_web">Searching the web for competitors and market context...</div>
         </div>
 
         <div id="researchResults" style="display:none;margin-top:16px;background:var(--bg2);border:1px solid var(--purple);border-radius:12px;padding:20px">
-          <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Market Context</div>
+          <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px" data-i18n="analyzer.market_context">Market Context</div>
           <div id="researchSummary" style="font-size:13.5px;color:var(--text2);line-height:1.75;margin-bottom:8px"></div>
           <div id="researchLocalNote" style="display:none;font-size:12px;color:var(--gold);background:#2a1f0022;border:1px solid var(--gold);border-radius:8px;padding:10px 12px;margin-bottom:16px"></div>
 
-          <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px">Full Detailed Analysis</div>
+          <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px" data-i18n="analyzer.full_analysis">Full Detailed Analysis</div>
           <div id="fullAnalysisText" style="font-size:13.5px;color:var(--text2);line-height:1.75"></div>
 
-          <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px">Competitor Analysis</div>
+          <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px" data-i18n="analyzer.competitor_analysis">Competitor Analysis</div>
           <div style="overflow-x:auto">
             <table style="width:100%;border-collapse:collapse;font-size:12.5px" id="competitorTable">
               <thead>
                 <tr style="border-bottom:1px solid var(--border)">
-                  <th style="text-align:left;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em">Competitor</th>
-                  <th style="text-align:left;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em">Offers</th>
-                  <th style="text-align:left;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em">Edge / Weakness</th>
-                  <th style="text-align:left;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em">Scope</th>
+                  <th style="text-align:left;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em" data-i18n="analyzer.th_competitor">Competitor</th>
+                  <th style="text-align:left;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em" data-i18n="analyzer.th_offers">Offers</th>
+                  <th style="text-align:left;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em" data-i18n="analyzer.th_edge_weakness">Edge / Weakness</th>
+                  <th style="text-align:left;padding:8px 10px;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em" data-i18n="analyzer.th_scope">Scope</th>
                 </tr>
               </thead>
               <tbody id="competitorTableBody"></tbody>
@@ -441,139 +441,139 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px">
             <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px">
-              <div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Competitors by Scope</div>
+              <div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px" data-i18n="analyzer.competitors_by_scope">Competitors by Scope</div>
               <div id="scopeChartWrap"></div>
             </div>
             <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px">
-              <div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Recommendations by Priority</div>
+              <div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px" data-i18n="analyzer.recs_by_priority">Recommendations by Priority</div>
               <div id="priorityChartWrap"></div>
             </div>
             <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px">
-              <div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Profile Data: Observed vs Inferred</div>
+              <div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px" data-i18n="analyzer.profile_data_chart">Profile Data: Observed vs Inferred</div>
               <div id="factSourceChartWrap"></div>
             </div>
             <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px">
-              <div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">Research Coverage</div>
+              <div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px" data-i18n="analyzer.research_coverage">Research Coverage</div>
               <div id="auditCoverageChartWrap"></div>
             </div>
           </div>
 
           <div id="competitiveGapsWrap" style="display:none;margin-top:16px">
-            <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px">What Competitors Do That You Don't</div>
+            <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px" data-i18n="analyzer.competitor_gaps">What Competitors Do That You Don't</div>
             <div id="competitiveGapsList"></div>
           </div>
 
           <div id="opportunityGapWrap" style="display:none;margin-top:16px;background:#0a2a2022;border:1px solid var(--green);border-radius:8px;padding:12px 14px">
-            <div style="font-size:10.5px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Opportunity Gap</div>
+            <div style="font-size:10.5px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px" data-i18n="analyzer.opportunity_gap">Opportunity Gap</div>
             <div id="opportunityGapText" style="font-size:13px;color:var(--text2);line-height:1.6"></div>
           </div>
 
-          <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px">Summary &amp; Audit</div>
+          <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px" data-i18n="analyzer.summary_audit">Summary &amp; Audit</div>
           <div id="auditSummaryText" style="font-size:13px;color:var(--text2);line-height:1.7;margin-bottom:12px"></div>
           <div id="auditCoverageTable" style="display:flex;flex-direction:column;gap:6px"></div>
 
-          <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px">Recommendations, Solutions &amp; Strategy</div>
+          <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 10px" data-i18n="analyzer.recommendations">Recommendations, Solutions &amp; Strategy</div>
           <div id="strategyList" style="display:flex;flex-direction:column;gap:10px"></div>
 
           <div id="verificationSection" style="margin-top:20px">
             <div id="verificationPromptWrap">
-              <button class="btn-ghost" style="padding:10px 18px" onclick="runVerification()" id="verifyBtn">🔎 Verify This Recommendation</button>
-              <span style="font-size:11.5px;color:var(--muted);margin-left:10px">Stress-tests each recommendation against the evidence before you act on it</span>
+              <button class="btn-ghost" style="padding:10px 18px" onclick="runVerification()" id="verifyBtn">🔎 <span data-i18n="analyzer.verify_button">Verify This Recommendation</span></button>
+              <span style="font-size:11.5px;color:var(--muted);margin-left:10px" data-i18n="analyzer.verify_hint">Stress-tests each recommendation against the evidence before you act on it</span>
             </div>
             <div id="verificationLoading" style="display:none;padding:16px;background:var(--bg3);border-radius:10px;text-align:center">
-              <div style="font-size:12.5px;color:var(--text2)">Challenging each recommendation against the evidence...</div>
+              <div style="font-size:12.5px;color:var(--text2)" data-i18n="analyzer.challenging">Challenging each recommendation against the evidence...</div>
             </div>
             <div id="verificationResults" style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:10px">
               <div style="display:flex;align-items:center;gap:16px;margin-bottom:14px;flex-wrap:wrap">
                 <div id="verifiedBadge" style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;display:flex;align-items:center;gap:5px"></div>
-                <div style="font-size:12px;color:var(--muted)">Evidence quality: <span id="evidenceQualityText" style="font-weight:600"></span></div>
+                <div style="font-size:12px;color:var(--muted)"><span data-i18n="analyzer.evidence_quality">Evidence quality:</span> <span id="evidenceQualityText" style="font-weight:600"></span></div>
               </div>
-              <div style="font-size:12.5px;color:var(--text2);margin-bottom:6px"><strong style="color:var(--text)">Main uncertainty:</strong> <span id="mainUncertaintyText"></span></div>
-              <div style="font-size:12.5px;color:var(--text2);margin-bottom:14px"><strong style="color:var(--text)">Missing data:</strong> <span id="dataCompletenessText"></span></div>
+              <div style="font-size:12.5px;color:var(--text2);margin-bottom:6px"><strong style="color:var(--text)" data-i18n="analyzer.main_uncertainty">Main uncertainty:</strong> <span id="mainUncertaintyText"></span></div>
+              <div style="font-size:12.5px;color:var(--text2);margin-bottom:14px"><strong style="color:var(--text)" data-i18n="analyzer.missing_data">Missing data:</strong> <span id="dataCompletenessText"></span></div>
               <div id="verificationChecksList" style="display:flex;flex-direction:column;gap:10px"></div>
-              <button class="btn-ghost" style="padding:8px 16px;font-size:12px;margin-top:12px" onclick="runVerification()">Re-verify</button>
+              <button class="btn-ghost" style="padding:8px 16px;font-size:12px;margin-top:12px" onclick="runVerification()" data-i18n="analyzer.reverify">Re-verify</button>
             </div>
           </div>
 
-          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 8px">Sources</div>
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 8px" data-i18n="analyzer.sources">Sources</div>
           <div id="researchSources" style="display:flex;flex-direction:column;gap:6px"></div>
         </div>
       </div>
 
       <!-- Previously analyzed businesses -->
       <div style="margin-top:32px">
-        <div class="section-title" style="font-size:15px">Your Analyzed Businesses</div>
+        <div class="section-title" style="font-size:15px" data-i18n="analyzer.your_analyzed_businesses">Your Analyzed Businesses</div>
         <div class="history-list" id="analyzedBusinessList">
-          <div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">No businesses analyzed yet</div>
+          <div style="text-align:center;padding:24px;color:var(--muted);font-size:13px" data-i18n="analyzer.no_businesses_history">No businesses analyzed yet</div>
         </div>
       </div>
     </div>
 
     <!-- ENTREPRENEUR MODE SECTION -->
     <div class="section-view" id="section-entrepreneur">
-      <div class="section-title">Start a Business</div>
-      <div class="section-sub">No business yet? Find an opportunity that fits you, or get an honest read on an idea you already have.</div>
+      <div class="section-title" data-i18n="ent.title">Start a Business</div>
+      <div class="section-sub" data-i18n="ent.subtitle">No business yet? Find an opportunity that fits you, or get an honest read on an idea you already have.</div>
 
       <div style="display:flex;gap:0;background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:3px;margin-bottom:20px;max-width:480px">
-        <button type="button" id="tabOpportunity" onclick="switchEntrepreneurTab('opportunity')" style="flex:1;padding:9px;border:none;background:var(--purple);color:#fff;font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit">I Don't Have an Idea Yet</button>
-        <button type="button" id="tabValidation" onclick="switchEntrepreneurTab('validation')" style="flex:1;padding:9px;border:none;background:transparent;color:var(--muted);font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit">Validate My Idea</button>
+        <button type="button" id="tabOpportunity" onclick="switchEntrepreneurTab('opportunity')" style="flex:1;padding:9px;border:none;background:var(--purple);color:#fff;font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit" data-i18n="ent.tab_opportunity">I Don't Have an Idea Yet</button>
+        <button type="button" id="tabValidation" onclick="switchEntrepreneurTab('validation')" style="flex:1;padding:9px;border:none;background:transparent;color:var(--muted);font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;font-family:inherit" data-i18n="ent.tab_validation">Validate My Idea</button>
       </div>
 
       <!-- OPPORTUNITY FINDER FORM -->
       <div id="opportunityFormWrap" style="max-width:600px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:24px">
         <div class="form-row">
-          <div class="form-group"><label>Country</label><input class="form-input" id="entCountry" placeholder="e.g. Cameroon"></div>
-          <div class="form-group"><label>City / Region</label><input class="form-input" id="entCity" placeholder="e.g. Buea"></div>
+          <div class="form-group"><label data-i18n="ent.country">Country</label><input class="form-input" id="entCountry" placeholder="e.g. Cameroon"></div>
+          <div class="form-group"><label data-i18n="ent.city">City / Region</label><input class="form-input" id="entCity" placeholder="e.g. Buea"></div>
         </div>
-        <div class="form-group"><label>Your Skills</label><input class="form-input" id="entSkills" placeholder="e.g. graphic design, cooking, sales"></div>
-        <div class="form-group"><label>Experience / Background</label><input class="form-input" id="entExperience" placeholder="e.g. 3 years in retail, no business experience"></div>
-        <div class="form-group"><label>Interests</label><input class="form-input" id="entInterests" placeholder="e.g. fashion, tech, food"></div>
+        <div class="form-group"><label data-i18n="ent.skills">Your Skills</label><input class="form-input" id="entSkills" placeholder="e.g. graphic design, cooking, sales"></div>
+        <div class="form-group"><label data-i18n="ent.experience">Experience / Background</label><input class="form-input" id="entExperience" placeholder="e.g. 3 years in retail, no business experience"></div>
+        <div class="form-group"><label data-i18n="ent.interests">Interests</label><input class="form-input" id="entInterests" placeholder="e.g. fashion, tech, food"></div>
         <div class="form-row">
-          <div class="form-group"><label>Available Capital</label><input class="form-input" id="entCapital" placeholder="e.g. 100,000 FCFA"></div>
-          <div class="form-group"><label>Available Time</label><input class="form-input" id="entTime" placeholder="e.g. 10 hrs/week, part-time"></div>
+          <div class="form-group"><label data-i18n="ent.capital">Available Capital</label><input class="form-input" id="entCapital" placeholder="e.g. 100,000 FCFA"></div>
+          <div class="form-group"><label data-i18n="ent.time">Available Time</label><input class="form-input" id="entTime" placeholder="e.g. 10 hrs/week, part-time"></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>Income Target</label><input class="form-input" id="entIncomeTarget" placeholder="e.g. 200,000 FCFA/month"></div>
-          <div class="form-group"><label>Online or Offline?</label>
+          <div class="form-group"><label data-i18n="ent.income_target">Income Target</label><input class="form-input" id="entIncomeTarget" placeholder="e.g. 200,000 FCFA/month"></div>
+          <div class="form-group"><label data-i18n="ent.online_offline">Online or Offline?</label>
             <select class="form-input" id="entPreference">
-              <option value="">No preference</option>
-              <option value="online">Online</option>
-              <option value="offline">Offline / in-person</option>
-              <option value="both">Either</option>
+              <option value="" data-i18n="ent.no_preference">No preference</option>
+              <option value="online" data-i18n="ent.online">Online</option>
+              <option value="offline" data-i18n="ent.offline">Offline / in-person</option>
+              <option value="both" data-i18n="ent.either">Either</option>
             </select>
           </div>
         </div>
-        <div class="form-group"><label>Risk Tolerance</label>
+        <div class="form-group"><label data-i18n="ent.risk_tolerance">Risk Tolerance</label>
           <select class="form-input" id="entRiskTolerance">
-            <option value="">Not sure</option>
-            <option value="low">Low — I want something safe and steady</option>
-            <option value="medium">Medium — some risk is fine for better upside</option>
-            <option value="high">High — I'm willing to bet big for a big outcome</option>
+            <option value="" data-i18n="ent.not_sure">Not sure</option>
+            <option value="low" data-i18n="ent.risk_low">Low — I want something safe and steady</option>
+            <option value="medium" data-i18n="ent.risk_medium">Medium — some risk is fine for better upside</option>
+            <option value="high" data-i18n="ent.risk_high">High — I'm willing to bet big for a big outcome</option>
           </select>
         </div>
-        <button class="btn-primary" style="width:100%;padding:12px" onclick="findOpportunities()" id="findOppsBtn">Find My Opportunities</button>
+        <button class="btn-primary" style="width:100%;padding:12px" onclick="findOpportunities()" id="findOppsBtn" data-i18n="ent.find_opportunities_btn">Find My Opportunities</button>
         <div id="entOppLimitMsg" style="margin-top:10px;font-size:12px;color:var(--muted);display:none"></div>
       </div>
 
       <!-- IDEA VALIDATION FORM -->
       <div id="validationFormWrap" style="display:none;max-width:600px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:24px">
-        <div class="form-group"><label>Your Business Idea</label><textarea class="form-input" id="entIdea" rows="3" placeholder="Describe the business idea you want validated..."></textarea></div>
+        <div class="form-group"><label data-i18n="ent.your_idea">Your Business Idea</label><textarea class="form-input" id="entIdea" rows="3" data-i18n-placeholder="ent.idea_placeholder" placeholder="Describe the business idea you want validated..."></textarea></div>
         <div class="form-row">
-          <div class="form-group"><label>Country</label><input class="form-input" id="entIdeaCountry" placeholder="e.g. Cameroon"></div>
-          <div class="form-group"><label>City / Region</label><input class="form-input" id="entIdeaCity" placeholder="e.g. Buea"></div>
+          <div class="form-group"><label data-i18n="ent.country">Country</label><input class="form-input" id="entIdeaCountry" placeholder="e.g. Cameroon"></div>
+          <div class="form-group"><label data-i18n="ent.city">City / Region</label><input class="form-input" id="entIdeaCity" placeholder="e.g. Buea"></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>Available Capital</label><input class="form-input" id="entIdeaCapital" placeholder="e.g. 100,000 FCFA"></div>
-          <div class="form-group"><label>Available Time</label><input class="form-input" id="entIdeaTime" placeholder="e.g. 10 hrs/week"></div>
+          <div class="form-group"><label data-i18n="ent.capital">Available Capital</label><input class="form-input" id="entIdeaCapital" placeholder="e.g. 100,000 FCFA"></div>
+          <div class="form-group"><label data-i18n="ent.time">Available Time</label><input class="form-input" id="entIdeaTime" placeholder="e.g. 10 hrs/week"></div>
         </div>
-        <button class="btn-primary" style="width:100%;padding:12px" onclick="validateIdea()" id="validateIdeaBtn">Validate My Idea</button>
+        <button class="btn-primary" style="width:100%;padding:12px" onclick="validateIdea()" id="validateIdeaBtn" data-i18n="ent.validate_btn">Validate My Idea</button>
         <div id="entValLimitMsg" style="margin-top:10px;font-size:12px;color:var(--muted);display:none"></div>
       </div>
 
       <!-- LOADING -->
       <div id="entLoading" style="display:none;max-width:600px;text-align:center;padding:32px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;margin-bottom:24px">
         <div style="font-size:28px;margin-bottom:12px;animation:spin 2s linear infinite;display:inline-block">🔍</div>
-        <div id="entProgressText" style="font-size:14px;color:var(--text2);font-weight:600">Researching opportunities...</div>
+        <div id="entProgressText" style="font-size:14px;color:var(--text2);font-weight:600" data-i18n="ent.researching">Researching opportunities...</div>
       </div>
 
       <div id="entError" style="display:none;max-width:600px;background:#1a0808;border:1px solid #3a1010;border-radius:10px;padding:14px 16px;font-size:13px;color:#ff8080;margin-bottom:24px"></div>
@@ -583,25 +583,25 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div id="entResearchBadge" style="margin-bottom:16px"></div>
         <div id="opportunityCards" style="display:flex;flex-direction:column;gap:14px"></div>
         <div id="overallRecWrap" style="margin-top:18px;background:linear-gradient(135deg,var(--bg3),var(--bg2));border:1px solid var(--purple);border-radius:12px;padding:18px">
-          <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Where to Start</div>
+          <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px" data-i18n="ent.where_to_start">Where to Start</div>
           <div id="overallRecText" style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:10px"></div>
           <div id="learnFirstText" style="font-size:12.5px;color:var(--muted)"></div>
         </div>
 
         <div id="opportunityPlanSection" style="margin-top:20px;max-width:400px">
-          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px">Build a full plan for one of these</label>
+          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px" data-i18n="ent.build_plan_for">Build a full plan for one of these</label>
           <select class="form-input" id="opportunityPlanSelect" style="margin-bottom:8px"></select>
-          <button class="btn-primary" style="width:100%;padding:11px" onclick="generateBusinessPlan()" id="genPlanBtnOpp">📋 Generate Business Plan</button>
+          <button class="btn-primary" style="width:100%;padding:11px" onclick="generateBusinessPlan()" id="genPlanBtnOpp">📋 <span data-i18n="ent.generate_plan">Generate Business Plan</span></button>
         </div>
 
         <div id="businessPlanSectionOpp"></div>
 
         <div style="margin-top:16px;position:relative;display:inline-block">
-          <button class="btn-ghost" style="padding:10px 18px" onclick="toggleEntDownloadMenu('Opp')" id="entDownloadBtnOpp">⬇ Download Report</button>
+          <button class="btn-ghost" style="padding:10px 18px" onclick="toggleEntDownloadMenu('Opp')" id="entDownloadBtnOpp">⬇ <span data-i18n="analyzer.download_report">Download Report</span></button>
           <div id="entDownloadMenuOpp" style="display:none;position:absolute;top:calc(100% + 6px);left:0;background:var(--bg2);border:1px solid var(--border-light);border-radius:10px;padding:6px;min-width:180px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.4)">
-            <button onclick="downloadEntrepreneurReport('pdf')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📄 PDF (view/print)</button>
-            <button onclick="downloadEntrepreneurReport('docx')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📝 Word (editable)</button>
-            <button onclick="downloadEntrepreneurReport('html')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">🌐 HTML (web page)</button>
+            <button onclick="downloadEntrepreneurReport('pdf')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📄 <span data-i18n="analyzer.pdf_option">PDF (view/print)</span></button>
+            <button onclick="downloadEntrepreneurReport('docx')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📝 <span data-i18n="analyzer.docx_option">Word (editable)</span></button>
+            <button onclick="downloadEntrepreneurReport('html')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">🌐 <span data-i18n="analyzer.html_option">HTML (web page)</span></button>
           </div>
         </div>
 
@@ -617,16 +617,16 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
         <div id="validationDetails" style="display:flex;flex-direction:column;gap:12px"></div>
 
-        <button class="btn-primary" style="width:100%;padding:11px;margin-top:20px" onclick="generateBusinessPlan()" id="genPlanBtnVal">📋 Generate Business Plan</button>
+        <button class="btn-primary" style="width:100%;padding:11px;margin-top:20px" onclick="generateBusinessPlan()" id="genPlanBtnVal">📋 <span data-i18n="ent.generate_plan">Generate Business Plan</span></button>
 
         <div id="businessPlanSectionVal"></div>
 
         <div style="margin-top:16px;position:relative;display:inline-block">
-          <button class="btn-ghost" style="padding:10px 18px" onclick="toggleEntDownloadMenu('Val')" id="entDownloadBtnVal">⬇ Download Report</button>
+          <button class="btn-ghost" style="padding:10px 18px" onclick="toggleEntDownloadMenu('Val')" id="entDownloadBtnVal">⬇ <span data-i18n="analyzer.download_report">Download Report</span></button>
           <div id="entDownloadMenuVal" style="display:none;position:absolute;top:calc(100% + 6px);left:0;background:var(--bg2);border:1px solid var(--border-light);border-radius:10px;padding:6px;min-width:180px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.4)">
-            <button onclick="downloadEntrepreneurReport('pdf')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📄 PDF (view/print)</button>
-            <button onclick="downloadEntrepreneurReport('docx')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📝 Word (editable)</button>
-            <button onclick="downloadEntrepreneurReport('html')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">🌐 HTML (web page)</button>
+            <button onclick="downloadEntrepreneurReport('pdf')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📄 <span data-i18n="analyzer.pdf_option">PDF (view/print)</span></button>
+            <button onclick="downloadEntrepreneurReport('docx')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">📝 <span data-i18n="analyzer.docx_option">Word (editable)</span></button>
+            <button onclick="downloadEntrepreneurReport('html')" style="display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;background:none;border:none;color:var(--text2);font-size:13px;text-align:left;cursor:pointer;border-radius:7px;font-family:inherit" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">🌐 <span data-i18n="analyzer.html_option">HTML (web page)</span></button>
           </div>
         </div>
 
@@ -635,37 +635,37 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
       <!-- HISTORY -->
       <div style="margin-top:32px">
-        <div class="section-title" style="font-size:15px">Your Entrepreneur Mode History</div>
+        <div class="section-title" style="font-size:15px" data-i18n="ent.history_title">Your Entrepreneur Mode History</div>
         <div class="history-list" id="entrepreneurHistoryList">
-          <div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">No sessions yet</div>
+          <div style="text-align:center;padding:24px;color:var(--muted);font-size:13px" data-i18n="ent.no_sessions">No sessions yet</div>
         </div>
       </div>
     </div>
 
     <!-- FINANCIAL TOOLS SECTION -->
     <div class="section-view" id="section-financial">
-      <div class="section-title">Financial Tools</div>
-      <div class="section-sub">Real calculations, not AI guesses — every number here is computed by exact math, verifiable independently.</div>
+      <div class="section-title" data-i18n="fin.title">Financial Tools</div>
+      <div class="section-sub" data-i18n="fin.subtitle">Real calculations, not AI guesses — every number here is computed by exact math, verifiable independently.</div>
 
       <div style="max-width:640px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:24px">
         <div class="form-row" style="margin-bottom:18px">
           <div class="form-group" style="margin-bottom:0">
-            <label>Choose a Calculator</label>
+            <label data-i18n="fin.choose_calculator">Choose a Calculator</label>
             <select class="form-input" id="calcTypeSelect" onchange="renderCalculatorForm()">
-              <option value="revenue">Revenue</option>
-              <option value="profit_margin">Gross &amp; Net Profit Margin</option>
-              <option value="breakeven">Break-Even Point</option>
-              <option value="roi">Return on Investment (ROI)</option>
-              <option value="cac">Customer Acquisition Cost (CAC)</option>
-              <option value="ltv">Customer Lifetime Value (LTV)</option>
-              <option value="ltv_cac_ratio">LTV : CAC Ratio</option>
-              <option value="roas">Return on Ad Spend (ROAS)</option>
-              <option value="growth_projection">Growth Projection</option>
-              <option value="cashflow_projection">Cash Flow Projection</option>
+              <option value="revenue" data-i18n="fin.calc_revenue">Revenue</option>
+              <option value="profit_margin" data-i18n="fin.calc_profit_margin">Gross &amp; Net Profit Margin</option>
+              <option value="breakeven" data-i18n="fin.calc_breakeven">Break-Even Point</option>
+              <option value="roi" data-i18n="fin.calc_roi">Return on Investment (ROI)</option>
+              <option value="cac" data-i18n="fin.calc_cac">Customer Acquisition Cost (CAC)</option>
+              <option value="ltv" data-i18n="fin.calc_ltv">Customer Lifetime Value (LTV)</option>
+              <option value="ltv_cac_ratio" data-i18n="fin.calc_ltv_cac_ratio">LTV : CAC Ratio</option>
+              <option value="roas" data-i18n="fin.calc_roas">Return on Ad Spend (ROAS)</option>
+              <option value="growth_projection" data-i18n="fin.calc_growth_projection">Growth Projection</option>
+              <option value="cashflow_projection" data-i18n="fin.calc_cashflow_projection">Cash Flow Projection</option>
             </select>
           </div>
           <div class="form-group" style="margin-bottom:0;max-width:170px">
-            <label>Currency</label>
+            <label data-i18n="fin.currency">Currency</label>
             <select class="form-input" id="calcCurrencySelect" onchange="saveCurrencyPreference()">
               <option value="XAF">FCFA (XAF)</option>
               <option value="USD">US Dollar ($)</option>
@@ -682,13 +682,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
         <div id="calcOtherCurrencyWrap" style="display:none;margin-bottom:14px">
           <div class="form-group" style="margin-bottom:0">
-            <label>Currency Symbol / Code</label>
+            <label data-i18n="fin.currency_symbol_code">Currency Symbol / Code</label>
             <input class="form-input" id="calcOtherCurrencyInput" placeholder="e.g. CHF, R$, ₹" maxlength="6" oninput="saveCurrencyPreference()">
           </div>
         </div>
 
         <div id="calcFormFields" style="display:flex;flex-direction:column;gap:12px;margin-bottom:16px"></div>
-        <button class="btn-primary" style="width:100%;padding:12px" onclick="runCalculator()" id="runCalcBtn">Calculate</button>
+        <button class="btn-primary" style="width:100%;padding:12px" onclick="runCalculator()" id="runCalcBtn" data-i18n="fin.calculate">Calculate</button>
         <div id="calcError" style="display:none;margin-top:10px;font-size:12.5px;color:#ff8080"></div>
       </div>
 
@@ -697,28 +697,28 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
     <!-- SCENARIO ANALYSIS SECTION -->
     <div class="section-view" id="section-scenario">
-      <div class="section-title">Compare Scenarios</div>
-      <div class="section-sub">Weigh 2-4 real options against each other — add numbers where you have them for a computed comparison, or compare on judgment alone.</div>
+      <div class="section-title" data-i18n="scen.title">Compare Scenarios</div>
+      <div class="section-sub" data-i18n="scen.subtitle">Weigh 2-4 real options against each other — add numbers where you have them for a computed comparison, or compare on judgment alone.</div>
 
       <div style="max-width:720px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:24px">
         <div class="form-group">
-          <label>Your Situation <span style="color:var(--muted);font-weight:400">(optional context)</span></label>
-          <textarea class="form-input" id="scenarioContext" rows="2" placeholder="e.g. I run a small bakery and need to decide how to grow revenue this quarter"></textarea>
+          <label><span data-i18n="scen.your_situation">Your Situation</span> <span style="color:var(--muted);font-weight:400" data-i18n="scen.optional_context">(optional context)</span></label>
+          <textarea class="form-input" id="scenarioContext" rows="2" data-i18n-placeholder="scen.situation_placeholder" placeholder="e.g. I run a small bakery and need to decide how to grow revenue this quarter"></textarea>
         </div>
 
         <div id="scenarioOptionsWrap"></div>
 
         <div style="display:flex;gap:10px;margin-top:6px">
-          <button class="btn-ghost" style="padding:9px 16px;font-size:12.5px" onclick="addScenarioOption()" id="addOptionBtn">+ Add Option</button>
+          <button class="btn-ghost" style="padding:9px 16px;font-size:12.5px" onclick="addScenarioOption()" id="addOptionBtn" data-i18n="scen.add_option">+ Add Option</button>
         </div>
 
-        <button class="btn-primary" style="width:100%;padding:12px;margin-top:18px" onclick="runScenarioComparison()" id="runScenarioBtn">Compare Options</button>
+        <button class="btn-primary" style="width:100%;padding:12px;margin-top:18px" onclick="runScenarioComparison()" id="runScenarioBtn" data-i18n="scen.compare_options">Compare Options</button>
         <div id="scenarioError" style="display:none;margin-top:10px;font-size:12.5px;color:#ff8080"></div>
       </div>
 
       <div id="scenarioLoading" style="display:none;max-width:720px;text-align:center;padding:32px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;margin-bottom:24px">
         <div style="font-size:28px;margin-bottom:12px;animation:spin 2s linear infinite;display:inline-block">⚖️</div>
-        <div style="font-size:14px;color:var(--text2);font-weight:600">Weighing the options against each other...</div>
+        <div style="font-size:14px;color:var(--text2);font-weight:600" data-i18n="scen.weighing">Weighing the options against each other...</div>
       </div>
 
       <div id="scenarioResults" style="display:none;max-width:720px"></div>
@@ -885,16 +885,16 @@ async function loadHistory() {
     const fullEl = document.getElementById('fullHistory');
 
     if (!list.length) {
-      homeEl.innerHTML = `<div class="history-empty"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><p>No consultations yet</p><a href="/boardroom" class="btn-primary">Start your first session</a></div>`;
-      fullEl.innerHTML = `<div class="history-empty"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><p>No consultations yet. Start your first session.</p><a href="/boardroom" class="btn-primary">Open Boardroom</a></div>`;
+      homeEl.innerHTML = `<div class="history-empty"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><p>${t('hist.no_consultations')}</p><a href="/boardroom" class="btn-primary">${t('hist.start_first_session')}</a></div>`;
+      fullEl.innerHTML = `<div class="history-empty"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><p>${t('hist.no_consultations_full')}</p><a href="/boardroom" class="btn-primary">${t('hist.open_boardroom')}</a></div>`;
       return;
     }
 
     const renderItems = (items) => items.map(c => `
       <a href="/boardroom?consultation=${c.id}" class="history-item">
         <div class="history-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
-        <div style="flex:1"><div class="history-title">${c.title || c.business_type || 'Consultation'}</div>
-        <div class="history-meta"><span>${c.business_type || 'General'}</span>${c.directors_used ? `<span>${JSON.parse(c.directors_used||'[]').length} directors</span>` : ''}</div></div>
+        <div style="flex:1"><div class="history-title">${c.title || c.business_type || t('hist.consultation_fallback')}</div>
+        <div class="history-meta"><span>${c.business_type || t('hist.general_fallback')}</span>${c.directors_used ? `<span>${JSON.parse(c.directors_used||'[]').length} ${t('hist.directors_suffix')}</span>` : ''}</div></div>
         <div class="history-time">${timeAgo(c.created_at)}</div>
       </a>`).join('');
 
@@ -906,11 +906,11 @@ async function loadHistory() {
 function timeAgo(date) {
   const diff = Date.now() - new Date(date).getTime();
   const mins = Math.floor(diff/60000);
-  if (mins < 60) return mins + 'm ago';
+  if (mins < 60) return mins + t('time.ago_minutes');
   const hrs = Math.floor(mins/60);
-  if (hrs < 24) return hrs + 'h ago';
+  if (hrs < 24) return hrs + t('time.ago_hours');
   const days = Math.floor(hrs/24);
-  if (days < 7) return days + 'd ago';
+  if (days < 7) return days + t('time.ago_days');
   return new Date(date).toLocaleDateString('en-GB',{day:'numeric',month:'short'});
 }
 
@@ -957,24 +957,24 @@ function renderBilling() {
   const fill = document.getElementById('usageFill');
   if (fill) { fill.style.width = pct + '%'; if (pct > 80) fill.classList.add('danger'); }
   const utxt = document.getElementById('usageText');
-  if (utxt) utxt.textContent = used + ' of ' + (limit === -1 ? 'Unlimited' : limit) + ' used';
+  if (utxt) utxt.textContent = used + ' ' + t('billing.used_of') + ' ' + (limit === -1 ? t('billing.unlimited') : limit) + ' ' + t('billing.used_suffix');
 
   const cards = document.getElementById('planCards');
   if (!cards) return;
   cards.innerHTML = [
-    { id:'starter', name:'Starter', price:'Free', cfa:'Free', desc:'For founders exploring AI-powered advice' },
-    { id:'pro', name:'Arreyon Pro', price:'$35/mo', cfa:'20,125 FCFA/mo', desc:'For serious founders needing regular guidance' },
-    { id:'business', name:'Arreyon Business', price:'$150/mo', cfa:'86,250 FCFA/mo', desc:'For teams needing unlimited access' }
+    { id:'starter', name:t('plan.starter_name'), price:t('plan.free'), cfa:t('plan.free'), desc:t('plan.starter_desc') },
+    { id:'pro', name:t('plan.pro_name'), price:'$35/mo', cfa:'20,125 FCFA/mo', desc:t('plan.pro_desc') },
+    { id:'business', name:t('plan.business_name'), price:'$150/mo', cfa:'86,250 FCFA/mo', desc:t('plan.business_desc') }
   ].map(p => `
     <div class="plan-card ${p.id === plan ? 'current' : ''}">
-      ${p.id === plan ? '<div class="plan-current-badge">Current</div>' : ''}
+      ${p.id === plan ? `<div class="plan-current-badge">${t('billing.current')}</div>` : ''}
       <div class="plan-card-name">${p.name}</div>
       <div class="plan-card-price">${p.price} <span></span></div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px">${p.cfa}</div>
       <div style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.5">${p.desc}</div>
-      ${p.id === plan ? '<div style="font-size:13px;color:var(--green);font-weight:600">Active plan</div>' :
-        p.id === 'starter' ? '<div style="font-size:13px;color:var(--muted)">Free forever</div>' :
-        `<button class="btn-primary" style="width:100%" onclick="openPayment('${p.id}')">Upgrade to ${p.name}</button>`}
+      ${p.id === plan ? `<div style="font-size:13px;color:var(--green);font-weight:600">${t('billing.active_plan')}</div>` :
+        p.id === 'starter' ? `<div style="font-size:13px;color:var(--muted)">${t('billing.free_forever')}</div>` :
+        `<button class="btn-primary" style="width:100%" onclick="openPayment('${p.id}')">${t('billing.upgrade_to')} ${p.name}</button>`}
     </div>`).join('');
 }
 
@@ -984,8 +984,8 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const navEl = document.getElementById('nav-' + name);
   if (navEl) navEl.classList.add('active');
-  const titles = {home:'Dashboard',history:'History',profile:'Profile',billing:'Billing & Plan',boardroom:'Boardroom',analyzer:'Analyze My Business',entrepreneur:'Start a Business',financial:'Financial Tools',scenario:'Compare Scenarios'};
-  document.querySelector('.topbar-title').textContent = titles[name] || 'Dashboard';
+  const titleKeys = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title'};
+  document.querySelector('.topbar-title').textContent = titleKeys[name] ? t(titleKeys[name]) : t('dash.nav_dashboard');
   if (window.innerWidth < 900) document.getElementById('sidebar').classList.remove('open');
   if (name === 'analyzer') loadAnalyzedBusinesses();
   if (name === 'entrepreneur') loadEntrepreneurHistory();
@@ -1082,12 +1082,9 @@ async function doLogout() {
 }
 
 // ── WEBSITE ANALYZER ─────────────────────────────────────────────────────────
-const ANALYZER_PROGRESS_MESSAGES = [
-  'Fetching your website...',
-  'Reading key pages...',
-  'Understanding your business...',
-  'Extracting what we found...'
-];
+function getAnalyzerProgressMessages() {
+  return [t('analyzer.progress_fetching'), t('analyzer.progress_reading'), t('analyzer.progress_understanding'), t('analyzer.progress_extracting')];
+}
 
 const FACT_LABELS = {
   business_name: 'Business Name', industry: 'Industry', value_proposition: 'Value Proposition',
@@ -1141,7 +1138,7 @@ async function runAnalysis() {
   // Cycle through progress messages while the request is in flight
   let step = 0;
   const progressEl = document.getElementById('analyzerProgressText');
-  const progressMessages = isWebsite ? ANALYZER_PROGRESS_MESSAGES : ['Reading your description...', 'Understanding your business...', 'Extracting what we found...'];
+  const progressMessages = isWebsite ? getAnalyzerProgressMessages() : [t('analyzer.progress_desc_reading'), t('analyzer.progress_desc_understanding'), t('analyzer.progress_desc_extracting')];
   const progressTimer = setInterval(() => {
     step = (step + 1) % progressMessages.length;
     progressEl.textContent = progressMessages[step];
@@ -1179,6 +1176,18 @@ async function runAnalysis() {
 }
 
 let currentBusinessId = null;
+
+// If the user switches language while viewing an analyzed business, re-fetch
+// so the newly-selected language's cached (or freshly auto-translated)
+// content is shown, instead of leaving stale English text on screen.
+document.addEventListener('arreyon:langchange', () => {
+  if (currentBusinessId && document.getElementById('section-analyzer')?.classList.contains('active')) {
+    loadBusinessIntoView(currentBusinessId);
+  }
+  if (document.getElementById('section-entrepreneur')?.classList.contains('active')) {
+    loadEntrepreneurHistory();
+  }
+});
 let currentAnalysisData = null;
 
 function renderAnalysisResults(data) {
@@ -1195,8 +1204,8 @@ function renderAnalysisResults(data) {
     urlLink.style.display = 'none';
   }
   document.getElementById('resultPages').textContent = data.isDescriptionOnly
-    ? 'Based on your business description'
-    : `Analyzed ${data.pagesAnalyzed.length} page${data.pagesAnalyzed.length > 1 ? 's' : ''}`;
+    ? t('analyzer.based_on_description')
+    : `${t('analyzer.analyzed_pages')} ${data.pagesAnalyzed.length} ${data.pagesAnalyzed.length > 1 ? t('analyzer.page_plural') : t('analyzer.page_singular')}`;
 
   const socialNotice = document.getElementById('socialLimitNotice');
   if (data.socialInfo) {
@@ -1213,8 +1222,8 @@ function renderAnalysisResults(data) {
   const grid = document.getElementById('factsGrid');
   grid.innerHTML = Object.entries(data.facts).map(([key, fact]) => {
     if (!fact || !fact.value) return '';
-    const label = FACT_LABELS[key] || key;
-    const badgeInfo = { observed: ['var(--green)', 'Observed'], inferred: ['var(--gold)', 'AI Inferred'], user_provided: ['var(--purple-light)', 'You Edited'] };
+    const label = t('fact.' + key) !== 'fact.' + key ? t('fact.' + key) : (FACT_LABELS[key] || key);
+    const badgeInfo = { observed: ['var(--green)', t('analyzer.observed')], inferred: ['var(--gold)', t('analyzer.ai_inferred')], user_provided: ['var(--purple-light)', t('analyzer.you_edited')] };
     const [badgeColor, badgeText] = badgeInfo[fact.source_type] || badgeInfo.inferred;
     const safeValue = fact.value.replace(/"/g, '&quot;');
     return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px" id="factCard_${key}">
@@ -1278,7 +1287,7 @@ async function saveFact(key, businessId) {
     if (badge) {
       badge.style.background = 'var(--purple-light)22';
       badge.style.color = 'var(--purple-light)';
-      badge.textContent = 'You Edited';
+      badge.textContent = t('analyzer.you_edited');
     }
   } catch (e) {
     alert('Connection error. Please try again.');
@@ -1291,7 +1300,7 @@ async function loadAnalyzedBusinesses() {
     const data = await res.json();
     const list = document.getElementById('analyzedBusinessList');
     if (!data.businesses || !data.businesses.length) {
-      list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">No businesses analyzed yet</div>';
+      list.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">${t('analyzer.no_businesses_history')}</div>`;
       return;
     }
     list.innerHTML = data.businesses.map(b => `
@@ -1313,7 +1322,7 @@ async function loadAnalyzedBusinesses() {
 // ── Restore a previously analyzed business (profile + latest research, if any) ──
 async function loadBusinessIntoView(businessId) {
   try {
-    const bizRes = await fetch(`/api/business/${businessId}`);
+    const bizRes = await fetch(`/api/business/${businessId}?lang=${window.currentLang || 'en'}`);
     if (!bizRes.ok) return;
     const bizData = await bizRes.json();
 
@@ -1332,7 +1341,7 @@ async function loadBusinessIntoView(businessId) {
     document.getElementById('analyzerResults').style.display = 'block';
 
     // Restore the latest research session too, if one exists
-    const researchRes = await fetch(`/api/business/${businessId}/research`);
+    const researchRes = await fetch(`/api/business/${businessId}/research?lang=${window.currentLang || 'en'}`);
     if (researchRes.ok) {
       const researchData = await researchRes.json();
       if (researchData.sessions && researchData.sessions.length) {
@@ -1489,7 +1498,7 @@ function renderVerificationResults(v) {
         <div style="font-size:12.5px;font-weight:700;color:var(--text)">${c.recommendation_title || ''}</div>
         <div style="font-size:9px;font-weight:700;padding:1px 7px;border-radius:5px;background:${style.color}22;color:${style.color};text-transform:uppercase">${style.label}</div>
       </div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:3px"><em>Strongest objection: ${c.strongest_objection || ''}</em></div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:3px"><em>${t('analyzer.strongest_objection')} ${c.strongest_objection || ''}</em></div>
       <div style="font-size:12px;color:var(--text2)">${c.note || ''}</div>
     </div>`;
   }).join('') : '<div style="font-size:12.5px;color:var(--muted)">No recommendations to verify.</div>';
@@ -1536,8 +1545,8 @@ function renderResearchResults(structured, sources) {
   const scopeCounts = { local: 0, international: 0, unknown: 0 };
   competitors.forEach(c => { scopeCounts[c.scope || 'unknown'] = (scopeCounts[c.scope || 'unknown'] || 0) + 1; });
   const scopeData = [
-    { label: 'Local', value: scopeCounts.local, color: '#10b981' },
-    { label: 'International', value: scopeCounts.international, color: '#f59e0b' }
+    { label: t('chart.local'), value: scopeCounts.local, color: '#10b981' },
+    { label: t('chart.international'), value: scopeCounts.international, color: '#f59e0b' }
   ].filter(d => d.value > 0);
   document.getElementById('scopeChartWrap').innerHTML = scopeData.length
     ? buildBarChartSVG(scopeData, { width: 300 })
@@ -1547,9 +1556,9 @@ function renderResearchResults(structured, sources) {
   const priorityCounts = { high: 0, medium: 0, low: 0 };
   recsForChart.forEach(r => { if (r.priority) priorityCounts[r.priority] = (priorityCounts[r.priority] || 0) + 1; });
   const priorityData = [
-    { label: 'High', value: priorityCounts.high, color: '#ef4444' },
-    { label: 'Medium', value: priorityCounts.medium, color: '#f59e0b' },
-    { label: 'Low', value: priorityCounts.low, color: '#7c78a8' }
+    { label: t('chart.high'), value: priorityCounts.high, color: '#ef4444' },
+    { label: t('chart.medium'), value: priorityCounts.medium, color: '#f59e0b' },
+    { label: t('chart.low'), value: priorityCounts.low, color: '#7c78a8' }
   ].filter(d => d.value > 0);
   document.getElementById('priorityChartWrap').innerHTML = priorityData.length
     ? buildBarChartSVG(priorityData, { width: 300 })
@@ -1561,8 +1570,8 @@ function renderResearchResults(structured, sources) {
     Object.values(currentAnalysisData.facts).forEach(f => { if (f?.source_type && factSourceCounts[f.source_type] !== undefined) factSourceCounts[f.source_type]++; });
   }
   const factData = [
-    { label: 'Observed', value: factSourceCounts.observed, color: '#10b981' },
-    { label: 'AI Inferred', value: factSourceCounts.inferred, color: '#8b5cf6' }
+    { label: t('analyzer.observed'), value: factSourceCounts.observed, color: '#10b981' },
+    { label: t('analyzer.ai_inferred'), value: factSourceCounts.inferred, color: '#8b5cf6' }
   ].filter(d => d.value > 0);
   const factChartEl = document.getElementById('factSourceChartWrap');
   if (factChartEl) factChartEl.innerHTML = factData.length ? buildBarChartSVG(factData, { width: 300 }) : '<div style="font-size:12px;color:var(--muted)">No profile data</div>';
@@ -1572,9 +1581,9 @@ function renderResearchResults(structured, sources) {
   const auditCounts = { covered: 0, partial: 0, 'not covered': 0 };
   coverageForChart.forEach(c => { if (auditCounts[c.status] !== undefined) auditCounts[c.status]++; });
   const auditData = [
-    { label: 'Covered', value: auditCounts.covered, color: '#10b981' },
-    { label: 'Partial', value: auditCounts.partial, color: '#f59e0b' },
-    { label: 'Not Covered', value: auditCounts['not covered'], color: '#7c78a8' }
+    { label: t('chart.covered'), value: auditCounts.covered, color: '#10b981' },
+    { label: t('chart.partial'), value: auditCounts.partial, color: '#f59e0b' },
+    { label: t('chart.not_covered'), value: auditCounts['not covered'], color: '#7c78a8' }
   ].filter(d => d.value > 0);
   const auditChartEl = document.getElementById('auditCoverageChartWrap');
   if (auditChartEl) auditChartEl.innerHTML = auditData.length ? buildBarChartSVG(auditData, { width: 300 }) : '<div style="font-size:12px;color:var(--muted)">No audit data</div>';
@@ -1595,7 +1604,7 @@ function renderResearchResults(structured, sources) {
     document.getElementById('competitiveGapsList').innerHTML = gaps.map(g => `
       <div style="background:#2a1f0022;border-left:3px solid var(--gold);border-radius:6px;padding:10px 12px;margin-bottom:8px">
         <div style="font-size:13px;color:var(--text);font-weight:600">${g.gap}</div>
-        ${g.competitor_names?.length ? `<div style="font-size:11.5px;color:var(--muted);margin-top:3px">Seen at: ${g.competitor_names.join(', ')}</div>` : ''}
+        ${g.competitor_names?.length ? `<div style="font-size:11.5px;color:var(--muted);margin-top:3px">${t('analyzer.seen_at')} ${g.competitor_names.join(', ')}</div>` : ''}
       </div>`).join('');
     gapsWrap.style.display = 'block';
   } else {
@@ -1620,12 +1629,12 @@ function renderResearchResults(structured, sources) {
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
         <div style="width:24px;height:24px;border-radius:50%;background:var(--purple);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">${i+1}</div>
         <div style="font-size:14.5px;font-weight:700;color:var(--text);flex:1">${r.title || r.action || ''}</div>
-        ${r.priority ? `<div style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:5px;background:${(priorityColor[r.priority]||'var(--muted)')}22;color:${priorityColor[r.priority]||'var(--muted)'};text-transform:uppercase;white-space:nowrap">${r.priority} priority</div>` : ''}
+        ${r.priority ? `<div style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:5px;background:${(priorityColor[r.priority]||'var(--muted)')}22;color:${priorityColor[r.priority]||'var(--muted)'};text-transform:uppercase;white-space:nowrap">${r.priority} ${t('analyzer.priority_word')}</div>` : ''}
       </div>
-      ${r.problem_addressed ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-bottom:8px;padding-left:34px">Addresses: ${r.problem_addressed}</div>` : ''}
+      ${r.problem_addressed ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-bottom:8px;padding-left:34px">${t('analyzer.addresses')} ${r.problem_addressed}</div>` : ''}
       <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:10px;padding-left:34px">${r.solution || r.reason || ''}</div>
       ${r.action_steps?.length ? `<ul style="margin:0;padding-left:50px;font-size:12.5px;color:var(--text2);line-height:1.8">${r.action_steps.map(step => `<li>${step}</li>`).join('')}</ul>` : ''}
-    </div>`).join('') : '<div style="font-size:13px;color:var(--muted)">No specific recommendations could be derived from the available research.</div>';
+    </div>`).join('') : `<div style="font-size:13px;color:var(--muted)">${t('analyzer.no_recommendations')}</div>`;
 
   // Sources
   document.getElementById('researchSources').innerHTML = sources.map((s, i) => `
@@ -1682,11 +1691,11 @@ function downloadEntrepreneurReport(format) {
 function buildDiscussionChatHTML(suffix) {
   return `
     <div style="margin-top:24px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px">
-      <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Discuss These Results</div>
+      <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">${t('discuss.title')}</div>
       <div id="discussionMessages${suffix}" style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px;max-height:320px;overflow-y:auto"></div>
       <div style="display:flex;gap:8px">
-        <input class="form-input" id="discussionInput${suffix}" placeholder="Ask a question or push back on this..." style="flex:1" onkeydown="if(event.key==='Enter')sendEntrepreneurDiscussion('${suffix}')">
-        <button class="btn-primary" style="padding:10px 18px;white-space:nowrap" onclick="sendEntrepreneurDiscussion('${suffix}')" id="discussionSendBtn${suffix}">Send</button>
+        <input class="form-input" id="discussionInput${suffix}" placeholder="${t('discuss.placeholder')}" style="flex:1" onkeydown="if(event.key==='Enter')sendEntrepreneurDiscussion('${suffix}')">
+        <button class="btn-primary" style="padding:10px 18px;white-space:nowrap" onclick="sendEntrepreneurDiscussion('${suffix}')" id="discussionSendBtn${suffix}">${t('discuss.send')}</button>
       </div>
     </div>`;
 }
@@ -1723,7 +1732,7 @@ async function sendEntrepreneurDiscussion(suffix) {
     const data = await res.json();
     btn.disabled = false;
     if (!res.ok) {
-      el.innerHTML += `<div style="align-self:flex-start;max-width:85%;color:#ff8080;font-size:12.5px">${data.error || 'Failed to respond.'}</div>`;
+      el.innerHTML += `<div style="align-self:flex-start;max-width:85%;color:#ff8080;font-size:12.5px">${data.error || t('discuss.failed')}</div>`;
       return;
     }
     renderDiscussionMessages(suffix, data.discussionMessages);
@@ -1782,51 +1791,51 @@ function renderBusinessPlan(container, plan) {
 
   container.innerHTML = `
     <div style="margin-top:20px;background:var(--bg2);border:1px solid var(--purple);border-radius:12px;padding:20px">
-      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:16px">📋 Business Plan</div>
+      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:16px">📋 ${t('plan.title')}</div>
 
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Business Model</div>
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">${t('plan.business_model')}</div>
       <div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:16px">
-        ${listRow('Value Proposition', bm.value_proposition)}
-        ${listRow('Customer Segments', bm.customer_segments)}
-        ${listRow('Revenue Streams', bm.revenue_streams)}
-        ${listRow('Cost Structure', bm.cost_structure)}
-        ${listRow('Key Resources', bm.key_resources)}
-        ${listRow('Key Activities', bm.key_activities)}
-        ${listRow('Key Partners', bm.key_partners)}
-        ${listRow('Channels', bm.channels)}
+        ${listRow(t('plan.value_proposition'), bm.value_proposition)}
+        ${listRow(t('plan.customer_segments'), bm.customer_segments)}
+        ${listRow(t('plan.revenue_streams'), bm.revenue_streams)}
+        ${listRow(t('plan.cost_structure'), bm.cost_structure)}
+        ${listRow(t('plan.key_resources'), bm.key_resources)}
+        ${listRow(t('plan.key_activities'), bm.key_activities)}
+        ${listRow(t('plan.key_partners'), bm.key_partners)}
+        ${listRow(t('plan.channels'), bm.channels)}
       </div>
 
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Strategy</div>
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">${t('plan.strategy')}</div>
       <div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:16px">
-        ${listRow('Positioning', st.positioning)}
-        ${listRow('Competitive Advantage', st.competitive_advantage)}
-        ${listRow('Differentiation', st.differentiation)}
+        ${listRow(t('plan.positioning'), st.positioning)}
+        ${listRow(t('plan.competitive_advantage'), st.competitive_advantage)}
+        ${listRow(t('plan.differentiation'), st.differentiation)}
       </div>
 
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Marketing Plan</div>
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">${t('plan.marketing_plan')}</div>
       <div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:16px">
-        ${listRow('Target Audience', mk.target_audience)}
-        ${listRow('Key Messaging', mk.key_messaging)}
-        ${listRow('Marketing Channels', mk.marketing_channels)}
-        ${listRow('Content Strategy', mk.content_strategy)}
-        ${listRow('Promotional Tactics', mk.promotional_tactics)}
-        ${listRow('Customer Acquisition Funnel', mk.customer_acquisition_funnel)}
-        ${listRow('Marketing Budget Estimate', mk.marketing_budget_estimate)}
+        ${listRow(t('plan.target_audience'), mk.target_audience)}
+        ${listRow(t('plan.key_messaging'), mk.key_messaging)}
+        ${listRow(t('plan.marketing_channels'), mk.marketing_channels)}
+        ${listRow(t('plan.content_strategy'), mk.content_strategy)}
+        ${listRow(t('plan.promotional_tactics'), mk.promotional_tactics)}
+        ${listRow(t('plan.acquisition_funnel'), mk.customer_acquisition_funnel)}
+        ${listRow(t('plan.marketing_budget'), mk.marketing_budget_estimate)}
       </div>
 
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Execution Plan</div>
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">${t('plan.execution_plan')}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
-        <div style="background:var(--bg3);border-radius:8px;padding:12px"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">First 30 Days</div>${(ex.phase_30_days||[]).map(t=>`<div style="font-size:11.5px;color:var(--text2);margin-bottom:4px">• ${t}</div>`).join('')}</div>
-        <div style="background:var(--bg3);border-radius:8px;padding:12px"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">Days 31-60</div>${(ex.phase_60_days||[]).map(t=>`<div style="font-size:11.5px;color:var(--text2);margin-bottom:4px">• ${t}</div>`).join('')}</div>
-        <div style="background:var(--bg3);border-radius:8px;padding:12px"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">Days 61-90</div>${(ex.phase_90_days||[]).map(t=>`<div style="font-size:11.5px;color:var(--text2);margin-bottom:4px">• ${t}</div>`).join('')}</div>
+        <div style="background:var(--bg3);border-radius:8px;padding:12px"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">${t('plan.first_30_days')}</div>${(ex.phase_30_days||[]).map(step=>`<div style="font-size:11.5px;color:var(--text2);margin-bottom:4px">• ${step}</div>`).join('')}</div>
+        <div style="background:var(--bg3);border-radius:8px;padding:12px"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">${t('plan.days_31_60')}</div>${(ex.phase_60_days||[]).map(step=>`<div style="font-size:11.5px;color:var(--text2);margin-bottom:4px">• ${step}</div>`).join('')}</div>
+        <div style="background:var(--bg3);border-radius:8px;padding:12px"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">${t('plan.days_61_90')}</div>${(ex.phase_90_days||[]).map(step=>`<div style="font-size:11.5px;color:var(--text2);margin-bottom:4px">• ${step}</div>`).join('')}</div>
       </div>
 
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">Financial Snapshot</div>
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">${t('plan.financial_snapshot')}</div>
       <div style="background:var(--bg3);border-radius:8px;padding:14px">
-        ${listRow('Estimated Startup Cost', fin.estimated_startup_cost)}
-        ${listRow('Monthly Operating Cost', fin.monthly_operating_cost)}
-        ${listRow('Breakeven Estimate', fin.breakeven_estimate)}
-        ${listRow('Key Assumption', fin.key_assumption)}
+        ${listRow(t('plan.startup_cost'), fin.estimated_startup_cost)}
+        ${listRow(t('plan.monthly_operating_cost'), fin.monthly_operating_cost)}
+        ${listRow(t('plan.breakeven_estimate'), fin.breakeven_estimate)}
+        ${listRow(t('plan.key_assumption'), fin.key_assumption)}
       </div>
     </div>`;
 }
@@ -1913,15 +1922,16 @@ function renderOpportunities(structured, researchBacked) {
   document.getElementById('entResearchBadge').innerHTML = researchBadgeHTML(researchBacked);
 
   const levelColor = { high: 'var(--green)', medium: 'var(--gold)', low: '#ef4444' };
+  const metricLabels = { demand: 'ent.metric_demand', competition: 'ent.metric_competition', potential_margin: 'ent.metric_margin', customer_acquisition_difficulty: 'ent.metric_acquisition', scalability: 'ent.metric_scalability', risk: 'ent.metric_risk' };
   const opps = structured.opportunities || [];
   document.getElementById('opportunityCards').innerHTML = opps.map(o => `
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px">
       <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">${o.name || ''}</div>
       <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:8px">${o.description || ''}</div>
-      <div style="font-size:12.5px;color:var(--purple-light);font-style:italic;margin-bottom:12px">Why it fits you: ${o.why_it_fits || ''}</div>
+      <div style="font-size:12.5px;color:var(--purple-light);font-style:italic;margin-bottom:12px">${t('ent.why_it_fits')} ${o.why_it_fits || ''}</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px">
         ${['demand','competition','potential_margin','customer_acquisition_difficulty','scalability','risk'].map(key => {
-          const label = key.replace(/_/g,' ').replace(/\b\w/g, c=>c.toUpperCase());
+          const label = t(metricLabels[key]);
           const val = o[key] || 'unknown';
           return `<div style="background:var(--bg3);border-radius:6px;padding:6px 8px">
             <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</div>
@@ -1930,16 +1940,16 @@ function renderOpportunities(structured, researchBacked) {
         }).join('')}
       </div>
       <div style="font-size:12px;color:var(--text2);display:flex;gap:16px;flex-wrap:wrap">
-        <span><strong style="color:var(--text)">Startup cost:</strong> ${o.startup_cost_estimate || '—'}</span>
-        <span><strong style="color:var(--text)">Time to revenue:</strong> ${o.time_to_first_revenue || '—'}</span>
+        <span><strong style="color:var(--text)">${t('ent.startup_cost')}</strong> ${o.startup_cost_estimate || '—'}</span>
+        <span><strong style="color:var(--text)">${t('ent.time_to_revenue')}</strong> ${o.time_to_first_revenue || '—'}</span>
       </div>
     </div>`).join('');
 
   document.getElementById('overallRecText').textContent = structured.overall_recommendation || '';
-  document.getElementById('learnFirstText').textContent = structured.what_to_learn_first ? `First, learn: ${structured.what_to_learn_first}` : '';
+  document.getElementById('learnFirstText').textContent = structured.what_to_learn_first ? `${t('ent.first_learn')} ${structured.what_to_learn_first}` : '';
 
   const select = document.getElementById('opportunityPlanSelect');
-  select.innerHTML = '<option value="">Choose an opportunity...</option>' + opps.map(o => `<option value="${o.name}">${o.name}</option>`).join('');
+  select.innerHTML = `<option value="">${t('ent.choose_opportunity')}</option>` + opps.map(o => `<option value="${o.name}">${o.name}</option>`).join('');
 
   document.getElementById('businessPlanSectionOpp').innerHTML = '';
   document.getElementById('discussionSectionOpp').innerHTML = buildDiscussionChatHTML('Opp');
@@ -1958,7 +1968,7 @@ async function validateIdea() {
   };
 
   if (input.idea.length < 10) {
-    document.getElementById('entError').textContent = 'Please describe your idea in a bit more detail.';
+    document.getElementById('entError').textContent = t('ent.please_describe_idea');
     document.getElementById('entError').style.display = 'block';
     return;
   }
@@ -1966,7 +1976,7 @@ async function validateIdea() {
   document.getElementById('entError').style.display = 'none';
   document.getElementById('validationResults').style.display = 'none';
   document.getElementById('entLoading').style.display = 'block';
-  document.getElementById('entProgressText').textContent = 'Stress-testing your idea against the evidence...';
+  document.getElementById('entProgressText').textContent = t('ent.stress_testing');
   document.getElementById('validateIdeaBtn').disabled = true;
 
   try {
@@ -1978,7 +1988,7 @@ async function validateIdea() {
     document.getElementById('validateIdeaBtn').disabled = false;
 
     if (!res.ok) {
-      document.getElementById('entError').textContent = data.error || 'Failed to validate idea.';
+      document.getElementById('entError').textContent = data.error || t('ent.failed_validate');
       document.getElementById('entError').style.display = 'block';
       return;
     }
@@ -1989,7 +1999,7 @@ async function validateIdea() {
   } catch (e) {
     document.getElementById('entLoading').style.display = 'none';
     document.getElementById('validateIdeaBtn').disabled = false;
-    document.getElementById('entError').textContent = 'Connection error. Please try again.';
+    document.getElementById('entError').textContent = t('ent.connection_error');
     document.getElementById('entError').style.display = 'block';
   }
 }
@@ -1998,9 +2008,9 @@ function renderValidation(s, researchBacked) {
   document.getElementById('entResearchBadge2').innerHTML = researchBadgeHTML(researchBacked);
 
   const verdictStyle = {
-    validate: { bg: '#0a2a20', border: 'var(--green)', color: 'var(--green)', label: '✓ VALIDATE' },
-    modify: { bg: '#2a1f00', border: 'var(--gold)', color: 'var(--gold)', label: '⚠ MODIFY' },
-    reconsider: { bg: '#2a0a0a', border: '#ef4444', color: '#ef4444', label: '✕ RECONSIDER' }
+    validate: { bg: '#0a2a20', border: 'var(--green)', color: 'var(--green)', label: t('ent.verdict_validate') },
+    modify: { bg: '#2a1f00', border: 'var(--gold)', color: 'var(--gold)', label: t('ent.verdict_modify') },
+    reconsider: { bg: '#2a0a0a', border: '#ef4444', color: '#ef4444', label: t('ent.verdict_reconsider') }
   };
   const style = verdictStyle[s.verdict] || verdictStyle.modify;
   const banner = document.getElementById('verdictBanner');
@@ -2012,22 +2022,22 @@ function renderValidation(s, researchBacked) {
   document.getElementById('verdictReasoningText').textContent = s.verdict_reasoning || '';
 
   const rows = [
-    ['Problem Addressed', s.problem_addressed],
-    ['Target Customer', s.target_customer],
-    ['Demand Assessment', s.demand_assessment],
-    ['Existing Alternatives', (s.existing_alternatives||[]).join(', ')],
-    ['Competition Level', s.competition_level],
-    ['Suggested Pricing', s.suggested_pricing],
-    ['Startup Requirements', s.startup_requirements],
-    ['Unit Economics', s.unit_economics_note],
-    ['Distribution Channels', s.distribution_channels],
-    ['Customer Acquisition', s.customer_acquisition_strategy],
-    ['Differentiation Opportunity', s.differentiation_opportunity],
-    ['Scalability', s.scalability_note]
+    [t('ent.row_problem_addressed'), s.problem_addressed],
+    [t('ent.row_target_customer'), s.target_customer],
+    [t('ent.row_demand_assessment'), s.demand_assessment],
+    [t('ent.row_existing_alternatives'), (s.existing_alternatives||[]).join(', ')],
+    [t('ent.row_competition_level'), s.competition_level],
+    [t('ent.row_suggested_pricing'), s.suggested_pricing],
+    [t('ent.row_startup_requirements'), s.startup_requirements],
+    [t('ent.row_unit_economics'), s.unit_economics_note],
+    [t('ent.row_distribution_channels'), s.distribution_channels],
+    [t('ent.row_customer_acquisition'), s.customer_acquisition_strategy],
+    [t('ent.row_differentiation'), s.differentiation_opportunity],
+    [t('ent.row_scalability'), s.scalability_note]
   ].filter(([,v]) => v);
 
   const risksHtml = (s.risks||[]).length ? `<div style="background:#2a0a0a22;border-left:3px solid #ef4444;border-radius:6px;padding:10px 12px;margin-top:4px">
-    <div style="font-size:10.5px;font-weight:700;color:#ef4444;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Risks</div>
+    <div style="font-size:10.5px;font-weight:700;color:#ef4444;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">${t('ent.risks_label')}</div>
     ${s.risks.map(r=>`<div style="font-size:12.5px;color:var(--text2);margin-bottom:3px">• ${r}</div>`).join('')}
   </div>` : '';
 
@@ -2047,21 +2057,21 @@ let entrepreneurSessionsCache = [];
 
 async function loadEntrepreneurHistory() {
   try {
-    const res = await fetch('/api/entrepreneur/sessions');
+    const res = await fetch('/api/entrepreneur/sessions?lang=' + (window.currentLang || 'en'));
     const data = await res.json();
     entrepreneurSessionsCache = data.sessions || [];
     const list = document.getElementById('entrepreneurHistoryList');
     if (!entrepreneurSessionsCache.length) {
-      list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">No sessions yet</div>';
+      list.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">${t('ent.no_sessions')}</div>`;
       return;
     }
     list.innerHTML = entrepreneurSessionsCache.map((s, i) => {
       const isOpp = s.mode === 'opportunity_finder';
-      const title = isOpp ? 'Opportunity Search' : (s.input_data?.idea?.slice(0, 60) || 'Idea Validation');
+      const title = isOpp ? t('ent.opportunity_search') : (s.input_data?.idea?.slice(0, 60) || t('ent.idea_validation_title'));
       return `<div class="history-item" style="cursor:pointer" onclick="loadEntrepreneurSession(${i})">
         <div class="history-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg></div>
         <div style="flex:1"><div class="history-title">${title}</div>
-        <div class="history-meta"><span>${isOpp ? 'Opportunity Finder' : 'Idea Validation'}${s.research_backed ? ' · Research-backed' : ''}</span></div></div>
+        <div class="history-meta"><span>${isOpp ? t('ent.opportunity_finder_label') : t('ent.idea_validation_title')}${s.research_backed ? ' · ' + t('ent.research_backed_suffix') : ''}</span></div></div>
         <div class="history-time">${timeAgo(s.created_at)}</div>
       </div>`;
     }).join('');
@@ -2092,50 +2102,50 @@ function loadEntrepreneurSession(index) {
 // ── FINANCIAL TOOLS ─────────────────────────────────────────────────────────
 const CALC_FIELD_DEFS = {
   revenue: [
-    { key: 'unitsSold', label: 'Units Sold', placeholder: 'e.g. 500' },
-    { key: 'pricePerUnit', label: 'Price Per Unit', placeholder: 'e.g. 25' }
+    { key: 'unitsSold', labelKey: 'fin.field_units_sold', placeholder: 'e.g. 500' },
+    { key: 'pricePerUnit', labelKey: 'fin.field_price_per_unit', placeholder: 'e.g. 25' }
   ],
   profit_margin: [
-    { key: 'revenue', label: 'Total Revenue', placeholder: 'e.g. 100000' },
-    { key: 'cogs', label: 'Cost of Goods Sold (COGS)', placeholder: 'e.g. 40000' },
-    { key: 'operatingExpenses', label: 'Operating Expenses (optional)', placeholder: 'e.g. 30000', optional: true }
+    { key: 'revenue', labelKey: 'fin.field_revenue', placeholder: 'e.g. 100000' },
+    { key: 'cogs', labelKey: 'fin.field_cogs', placeholder: 'e.g. 40000' },
+    { key: 'operatingExpenses', labelKey: 'fin.field_operating_expenses', placeholder: 'e.g. 30000', optional: true }
   ],
   breakeven: [
-    { key: 'fixedCosts', label: 'Fixed Costs (monthly)', placeholder: 'e.g. 50000' },
-    { key: 'pricePerUnit', label: 'Price Per Unit', placeholder: 'e.g. 100' },
-    { key: 'variableCostPerUnit', label: 'Variable Cost Per Unit', placeholder: 'e.g. 60' }
+    { key: 'fixedCosts', labelKey: 'fin.field_fixed_costs', placeholder: 'e.g. 50000' },
+    { key: 'pricePerUnit', labelKey: 'fin.field_price_per_unit', placeholder: 'e.g. 100' },
+    { key: 'variableCostPerUnit', labelKey: 'fin.field_variable_cost', placeholder: 'e.g. 60' }
   ],
   roi: [
-    { key: 'gain', label: 'Total Gain / Return', placeholder: 'e.g. 15000' },
-    { key: 'costOfInvestment', label: 'Cost of Investment', placeholder: 'e.g. 10000' }
+    { key: 'gain', labelKey: 'fin.field_gain', placeholder: 'e.g. 15000' },
+    { key: 'costOfInvestment', labelKey: 'fin.field_cost_of_investment', placeholder: 'e.g. 10000' }
   ],
   cac: [
-    { key: 'totalAcquisitionCost', label: 'Total Acquisition Cost (marketing + sales spend)', placeholder: 'e.g. 20000' },
-    { key: 'newCustomers', label: 'Number of New Customers Acquired', placeholder: 'e.g. 100' }
+    { key: 'totalAcquisitionCost', labelKey: 'fin.field_total_acquisition_cost', placeholder: 'e.g. 20000' },
+    { key: 'newCustomers', labelKey: 'fin.field_new_customers', placeholder: 'e.g. 100' }
   ],
   ltv: [
-    { key: 'avgOrderValue', label: 'Average Order Value', placeholder: 'e.g. 50' },
-    { key: 'purchaseFrequencyPerYear', label: 'Purchases Per Customer Per Year', placeholder: 'e.g. 6' },
-    { key: 'avgCustomerLifespanYears', label: 'Average Customer Lifespan (years)', placeholder: 'e.g. 3' }
+    { key: 'avgOrderValue', labelKey: 'fin.field_avg_order_value', placeholder: 'e.g. 50' },
+    { key: 'purchaseFrequencyPerYear', labelKey: 'fin.field_purchase_freq', placeholder: 'e.g. 6' },
+    { key: 'avgCustomerLifespanYears', labelKey: 'fin.field_customer_lifespan', placeholder: 'e.g. 3' }
   ],
   ltv_cac_ratio: [
-    { key: 'ltv', label: 'Customer Lifetime Value (LTV)', placeholder: 'e.g. 900' },
-    { key: 'cac', label: 'Customer Acquisition Cost (CAC)', placeholder: 'e.g. 200' }
+    { key: 'ltv', labelKey: 'fin.field_ltv', placeholder: 'e.g. 900' },
+    { key: 'cac', labelKey: 'fin.field_cac', placeholder: 'e.g. 200' }
   ],
   roas: [
-    { key: 'revenueFromAds', label: 'Revenue Generated From Ads', placeholder: 'e.g. 8000' },
-    { key: 'adSpend', label: 'Total Ad Spend', placeholder: 'e.g. 2000' }
+    { key: 'revenueFromAds', labelKey: 'fin.field_revenue_from_ads', placeholder: 'e.g. 8000' },
+    { key: 'adSpend', labelKey: 'fin.field_ad_spend', placeholder: 'e.g. 2000' }
   ],
   growth_projection: [
-    { key: 'startValue', label: 'Starting Value (revenue, users, etc.)', placeholder: 'e.g. 1000' },
-    { key: 'monthlyGrowthRatePct', label: 'Monthly Growth Rate (%)', placeholder: 'e.g. 10' },
-    { key: 'months', label: 'Number of Months (max 36)', placeholder: 'e.g. 12', optional: true }
+    { key: 'startValue', labelKey: 'fin.field_start_value', placeholder: 'e.g. 1000' },
+    { key: 'monthlyGrowthRatePct', labelKey: 'fin.field_growth_rate', placeholder: 'e.g. 10' },
+    { key: 'months', labelKey: 'fin.field_months', placeholder: 'e.g. 12', optional: true }
   ],
   cashflow_projection: [
-    { key: 'startingCash', label: 'Starting Cash', placeholder: 'e.g. 5000' },
-    { key: 'monthlyRevenue', label: 'Expected Monthly Revenue', placeholder: 'e.g. 2000' },
-    { key: 'monthlyExpenses', label: 'Expected Monthly Expenses', placeholder: 'e.g. 3000' },
-    { key: 'months', label: 'Number of Months (max 36)', placeholder: 'e.g. 12', optional: true }
+    { key: 'startingCash', labelKey: 'fin.field_starting_cash', placeholder: 'e.g. 5000' },
+    { key: 'monthlyRevenue', labelKey: 'fin.field_monthly_revenue', placeholder: 'e.g. 2000' },
+    { key: 'monthlyExpenses', labelKey: 'fin.field_monthly_expenses', placeholder: 'e.g. 3000' },
+    { key: 'months', labelKey: 'fin.field_months', placeholder: 'e.g. 12', optional: true }
   ]
 };
 
@@ -2194,7 +2204,7 @@ function renderCalculatorForm() {
   const fields = CALC_FIELD_DEFS[type] || [];
   document.getElementById('calcFormFields').innerHTML = fields.map(f => `
     <div class="form-group">
-      <label>${f.label}${f.optional ? ' <span style="color:var(--muted);font-weight:400">(optional)</span>' : ''}</label>
+      <label>${t(f.labelKey)}${f.optional ? ' <span style="color:var(--muted);font-weight:400">' + t('fin.optional') + '</span>' : ''}</label>
       <input class="form-input" type="number" step="any" id="calcInput_${f.key}" placeholder="${f.placeholder}">
     </div>`).join('');
   document.getElementById('calcResults').style.display = 'none';
@@ -2209,7 +2219,7 @@ async function runCalculator() {
   for (const f of fields) {
     const val = document.getElementById('calcInput_' + f.key).value;
     if (!f.optional && val === '') {
-      document.getElementById('calcError').textContent = `Please fill in "${f.label}".`;
+      document.getElementById('calcError').textContent = `${t('fin.please_fill_in')} "${t(f.labelKey)}".`;
       document.getElementById('calcError').style.display = 'block';
       return;
     }
@@ -2218,14 +2228,14 @@ async function runCalculator() {
 
   document.getElementById('calcError').style.display = 'none';
   const btn = document.getElementById('runCalcBtn');
-  btn.disabled = true; btn.textContent = 'Calculating...';
+  btn.disabled = true; btn.textContent = t('fin.calculating');
 
   try {
     const res = await fetch('/api/financial/calculate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type, inputs })
     });
     const data = await res.json();
-    btn.disabled = false; btn.textContent = 'Calculate';
+    btn.disabled = false; btn.textContent = t('fin.calculate');
 
     if (!res.ok) {
       document.getElementById('calcError').textContent = data.error || 'Calculation failed.';
@@ -2234,7 +2244,7 @@ async function runCalculator() {
     }
     renderCalculatorResult(type, data.result);
   } catch (e) {
-    btn.disabled = false; btn.textContent = 'Calculate';
+    btn.disabled = false; btn.textContent = t('fin.calculate');
     document.getElementById('calcError').textContent = 'Connection error. Please try again.';
     document.getElementById('calcError').style.display = 'block';
   }
@@ -2251,39 +2261,39 @@ function renderCalculatorResult(type, r) {
   lastCalcType = type;
   lastCalcResult = r;
   const box = document.getElementById('calcResults');
-  let html = '<div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px">Result</div>';
+  let html = `<div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px">${t('fin.result')}</div>`;
 
   if (type === 'revenue') {
-    html += calcResultRow('Revenue', formatMoney(r.revenue));
+    html += calcResultRow(t('fin.result_revenue'), formatMoney(r.revenue));
   } else if (type === 'profit_margin') {
-    html += calcResultRow('Gross Profit', formatMoney(r.grossProfit)) + calcResultRow('Gross Margin', r.grossMarginPct + '%') + calcResultRow('Net Profit', formatMoney(r.netProfit)) + calcResultRow('Net Margin', r.netMarginPct + '%');
+    html += calcResultRow(t('fin.result_gross_profit'), formatMoney(r.grossProfit)) + calcResultRow(t('fin.result_gross_margin'), r.grossMarginPct + '%') + calcResultRow(t('fin.result_net_profit'), formatMoney(r.netProfit)) + calcResultRow(t('fin.result_net_margin'), r.netMarginPct + '%');
   } else if (type === 'breakeven') {
-    html += calcResultRow('Contribution Margin / Unit', formatMoney(r.contributionMarginPerUnit)) + calcResultRow('Break-Even Units', r.breakevenUnits.toLocaleString()) + calcResultRow('Break-Even Revenue', formatMoney(r.breakevenRevenue));
+    html += calcResultRow(t('fin.result_contribution_margin'), formatMoney(r.contributionMarginPerUnit)) + calcResultRow(t('fin.result_breakeven_units'), r.breakevenUnits.toLocaleString()) + calcResultRow(t('fin.result_breakeven_revenue'), formatMoney(r.breakevenRevenue));
   } else if (type === 'roi') {
-    html += calcResultRow('Net Gain', formatMoney(r.netGain)) + calcResultRow('ROI', r.roiPct + '%');
+    html += calcResultRow(t('fin.result_net_gain'), formatMoney(r.netGain)) + calcResultRow(t('fin.result_roi'), r.roiPct + '%');
   } else if (type === 'cac') {
-    html += calcResultRow('Customer Acquisition Cost', formatMoney(r.cac));
+    html += calcResultRow(t('fin.result_cac'), formatMoney(r.cac));
   } else if (type === 'ltv') {
-    html += calcResultRow('Customer Lifetime Value', formatMoney(r.ltv));
+    html += calcResultRow(t('fin.result_ltv'), formatMoney(r.ltv));
   } else if (type === 'ltv_cac_ratio') {
-    html += calcResultRow('LTV : CAC Ratio', r.ratio + ' : 1');
+    html += calcResultRow(t('fin.result_ratio'), r.ratio + ' : 1');
     html += `<div style="margin-top:12px;font-size:12.5px;color:var(--text2);background:var(--bg3);border-radius:8px;padding:10px 12px">${r.verdict}</div>`;
   } else if (type === 'roas') {
-    html += calcResultRow('Return on Ad Spend', r.roas + 'x');
+    html += calcResultRow(t('fin.result_roas'), r.roas + 'x');
   } else if (type === 'growth_projection') {
     const last = r.projection[r.projection.length - 1];
     const first = r.projection[0];
     const totalGrowthPct = first.value !== 0 ? (((last.value / first.value) - 1) * 100).toFixed(1) : '—';
-    html += calcResultRow('Final Month Value', formatMoney(last.value)) + calcResultRow(`Growth (Month 1 → ${last.month})`, totalGrowthPct + '%');
+    html += calcResultRow(t('fin.result_final_value'), formatMoney(last.value)) + calcResultRow(`${t('fin.result_growth')} → ${last.month})`, totalGrowthPct + '%');
     const chartData = r.projection.filter((p,i) => i % Math.ceil(r.projection.length/8) === 0 || i === r.projection.length-1).map(p => ({ label: 'M'+p.month, value: p.value, color: '#8b5cf6' }));
     html += `<div style="margin-top:16px">${buildBarChartSVG(chartData, { width: 500 })}</div>`;
   } else if (type === 'cashflow_projection') {
     const last = r.projection[r.projection.length - 1];
-    html += calcResultRow('Final Balance', formatMoney(last.runningBalance));
+    html += calcResultRow(t('fin.result_final_balance'), formatMoney(last.runningBalance));
     if (r.warning) {
       html += `<div style="margin-top:12px;font-size:12.5px;color:var(--gold);background:#2a1f0022;border:1px solid var(--gold);border-radius:8px;padding:10px 12px">⚠ ${r.warning}</div>`;
     } else {
-      html += `<div style="margin-top:12px;font-size:12.5px;color:var(--green);background:#0a2a2022;border-radius:8px;padding:10px 12px">✓ Cash stays positive throughout this projection.</div>`;
+      html += `<div style="margin-top:12px;font-size:12.5px;color:var(--green);background:#0a2a2022;border-radius:8px;padding:10px 12px">✓ ${t('fin.cash_positive')}</div>`;
     }
     const chartData = r.projection.filter((p,i) => i % Math.ceil(r.projection.length/8) === 0 || i === r.projection.length-1).map(p => ({ label: 'M'+p.month, value: Math.max(p.runningBalance, 0), color: p.runningBalance < 0 ? '#ef4444' : '#10b981' }));
     html += `<div style="margin-top:16px">${buildBarChartSVG(chartData, { width: 500 })}</div>`;
@@ -2306,19 +2316,19 @@ function addScenarioOption() {
   card.style.cssText = 'background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px';
   card.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.05em">Option ${letter}</div>
-      ${scenarioOptionCount > 2 ? `<button type="button" onclick="removeScenarioOption(${scenarioOptionCount})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px">Remove</button>` : ''}
+      <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.05em">${t('scen.option')} ${letter}</div>
+      ${scenarioOptionCount > 2 ? `<button type="button" onclick="removeScenarioOption(${scenarioOptionCount})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px">${t('scen.remove')}</button>` : ''}
     </div>
-    <div class="form-group"><label>Name</label><input class="form-input" id="scenOptName_${scenarioOptionCount}" placeholder="e.g. Hire a full-time employee"></div>
-    <div class="form-group"><label>Description</label><textarea class="form-input" id="scenOptDesc_${scenarioOptionCount}" rows="2" placeholder="Describe this option..."></textarea></div>
-    <div style="font-size:11px;color:var(--muted);margin:8px 0 6px">Financial impact (optional — leave blank to compare on judgment only)</div>
+    <div class="form-group"><label>${t('scen.name')}</label><input class="form-input" id="scenOptName_${scenarioOptionCount}" placeholder="e.g. Hire a full-time employee"></div>
+    <div class="form-group"><label>${t('scen.description')}</label><textarea class="form-input" id="scenOptDesc_${scenarioOptionCount}" rows="2" placeholder="${t('scen.desc_placeholder')}"></textarea></div>
+    <div style="font-size:11px;color:var(--muted);margin:8px 0 6px">${t('scen.financial_impact')}</div>
     <div class="form-row">
-      <div class="form-group"><label>Monthly Revenue Impact</label><input class="form-input" type="number" step="any" id="scenOptRevenue_${scenarioOptionCount}" placeholder="e.g. 50000"></div>
-      <div class="form-group"><label>Monthly Cost Impact</label><input class="form-input" type="number" step="any" id="scenOptCost_${scenarioOptionCount}" placeholder="e.g. 30000"></div>
+      <div class="form-group"><label>${t('scen.monthly_revenue_impact')}</label><input class="form-input" type="number" step="any" id="scenOptRevenue_${scenarioOptionCount}" placeholder="e.g. 50000"></div>
+      <div class="form-group"><label>${t('scen.monthly_cost_impact')}</label><input class="form-input" type="number" step="any" id="scenOptCost_${scenarioOptionCount}" placeholder="e.g. 30000"></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label>One-Time Investment</label><input class="form-input" type="number" step="any" id="scenOptInvestment_${scenarioOptionCount}" placeholder="e.g. 20000"></div>
-      <div class="form-group"><label>Timeframe (months)</label><input class="form-input" type="number" id="scenOptTimeframe_${scenarioOptionCount}" placeholder="e.g. 12"></div>
+      <div class="form-group"><label>${t('scen.one_time_investment')}</label><input class="form-input" type="number" step="any" id="scenOptInvestment_${scenarioOptionCount}" placeholder="e.g. 20000"></div>
+      <div class="form-group"><label>${t('scen.timeframe_months')}</label><input class="form-input" type="number" id="scenOptTimeframe_${scenarioOptionCount}" placeholder="e.g. 12"></div>
     </div>`;
   wrap.appendChild(card);
 }
@@ -2394,20 +2404,20 @@ function renderScenarioResults(optionsWithFinancials, analysis) {
     const fin = optionsWithFinancials.find(o => o.name === a.option_name)?.financials;
     const isRecommended = a.option_name === analysis.recommended_option;
     return `<div style="background:var(--bg2);border:1px solid ${isRecommended ? 'var(--purple)' : 'var(--border)'};border-radius:12px;padding:18px;margin-bottom:14px;position:relative">
-      ${isRecommended ? `<div style="position:absolute;top:-10px;right:14px;background:var(--purple);color:#fff;font-size:10px;font-weight:700;padding:3px 10px;border-radius:6px;text-transform:uppercase">Recommended</div>` : ''}
+      ${isRecommended ? `<div style="position:absolute;top:-10px;right:14px;background:var(--purple);color:#fff;font-size:10px;font-weight:700;padding:3px 10px;border-radius:6px;text-transform:uppercase">${t('scen.recommended')}</div>` : ''}
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
         <div style="font-size:15px;font-weight:700;color:var(--text)">${a.option_name}</div>
-        <div style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:5px;background:${riskColor[a.risk_level]||'var(--muted)'}22;color:${riskColor[a.risk_level]||'var(--muted)'};text-transform:uppercase">${a.risk_level} risk</div>
+        <div style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:5px;background:${riskColor[a.risk_level]||'var(--muted)'}22;color:${riskColor[a.risk_level]||'var(--muted)'};text-transform:uppercase">${a.risk_level} ${t('scen.risk')}</div>
       </div>
       ${fin ? `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px;font-size:12px">
-        <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">Net Monthly Gain</div><div style="font-weight:700;color:${fin.netMonthlyGain>=0?'var(--green)':'#ef4444'}">${fin.netMonthlyGain.toLocaleString()}</div></div>
-        <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">Payback</div><div style="font-weight:700;color:var(--text)">${fin.paybackMonths !== null ? fin.paybackMonths + ' months' : (fin.investment ? 'Never' : '—')}</div></div>
-        <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">ROI</div><div style="font-weight:700;color:var(--text)">${fin.roiPct !== null ? fin.roiPct + '%' : '—'}</div></div>
-        <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">Total Gain</div><div style="font-weight:700;color:var(--text)">${fin.totalGainOverTimeframe.toLocaleString()}</div></div>
-      </div>` : `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:12px">No financial figures provided — compared on judgment only.</div>`}
+        <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.net_monthly_gain')}</div><div style="font-weight:700;color:${fin.netMonthlyGain>=0?'var(--green)':'#ef4444'}">${fin.netMonthlyGain.toLocaleString()}</div></div>
+        <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.payback')}</div><div style="font-weight:700;color:var(--text)">${fin.paybackMonths !== null ? fin.paybackMonths + ' ' + t('scen.months_word') : (fin.investment ? t('scen.never') : '—')}</div></div>
+        <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.roi')}</div><div style="font-weight:700;color:var(--text)">${fin.roiPct !== null ? fin.roiPct + '%' : '—'}</div></div>
+        <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.total_gain')}</div><div style="font-weight:700;color:var(--text)">${fin.totalGainOverTimeframe.toLocaleString()}</div></div>
+      </div>` : `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:12px">${t('scen.no_financials')}</div>`}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div><div style="font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase;margin-bottom:4px">Pros</div>${a.pros.map(p=>`<div style="font-size:12px;color:var(--text2);margin-bottom:3px">• ${p}</div>`).join('')}</div>
-        <div><div style="font-size:10px;font-weight:700;color:#ef4444;text-transform:uppercase;margin-bottom:4px">Cons</div>${a.cons.map(c=>`<div style="font-size:12px;color:var(--text2);margin-bottom:3px">• ${c}</div>`).join('')}</div>
+        <div><div style="font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase;margin-bottom:4px">${t('scen.pros')}</div>${a.pros.map(p=>`<div style="font-size:12px;color:var(--text2);margin-bottom:3px">• ${p}</div>`).join('')}</div>
+        <div><div style="font-size:10px;font-weight:700;color:#ef4444;text-transform:uppercase;margin-bottom:4px">${t('scen.cons')}</div>${a.cons.map(c=>`<div style="font-size:12px;color:var(--text2);margin-bottom:3px">• ${c}</div>`).join('')}</div>
       </div>
     </div>`;
   }).join('');
@@ -2415,13 +2425,13 @@ function renderScenarioResults(optionsWithFinancials, analysis) {
   document.getElementById('scenarioResults').innerHTML = `
     ${cardsHtml}
     <div style="background:var(--bg3);border-radius:10px;padding:14px 16px;margin-bottom:14px">
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:6px">Comparison Summary</div>
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:6px">${t('scen.comparison_summary')}</div>
       <div style="font-size:13px;color:var(--text2);line-height:1.6">${analysis.comparison_summary}</div>
     </div>
     <div style="background:linear-gradient(135deg,var(--bg3),var(--bg2));border:1px solid var(--purple);border-radius:12px;padding:18px">
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:8px">Recommendation: ${analysis.recommended_option}</div>
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:8px">${t('scen.recommendation')}: ${analysis.recommended_option}</div>
       <div style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:10px">${analysis.recommendation_reasoning}</div>
-      <div style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;display:inline-block;background:${confColor[analysis.confidence]||'var(--muted)'}22;color:${confColor[analysis.confidence]||'var(--muted)'}">${analysis.confidence.toUpperCase()} CONFIDENCE</div>
+      <div style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;display:inline-block;background:${confColor[analysis.confidence]||'var(--muted)'}22;color:${confColor[analysis.confidence]||'var(--muted)'}">${analysis.confidence.toUpperCase()} ${t('scen.confidence')}</div>
     </div>`;
   document.getElementById('scenarioResults').style.display = 'block';
 }
@@ -2438,7 +2448,13 @@ document.addEventListener('arreyon:langchange', () => {
   }
 });
 
-init();
+// Wait for i18n.js's language detection to complete before running init() —
+// same timing fix as boardroom.html. Dashboard's AI actions are all triggered
+// by a later button click (so this wasn't causing a visible bug here the way
+// it did on Boardroom's auto-send flow), but this closes the same class of
+// race condition for good rather than relying on click-timing being "probably
+// late enough."
+document.addEventListener('DOMContentLoaded', () => { init(); });
 </script>
 </body>
 </html>
