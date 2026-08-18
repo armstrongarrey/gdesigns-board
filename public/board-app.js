@@ -344,7 +344,7 @@ async function generateBoardVerdict() {
     });
 
   if (!conversations.length) {
-    document.getElementById('verdictError').textContent = 'Chat with at least one director before requesting a board verdict.';
+    document.getElementById('verdictError').textContent = t('board.chat_first_required');
     document.getElementById('verdictError').style.display = 'block';
     return;
   }
@@ -356,13 +356,13 @@ async function generateBoardVerdict() {
 
   try {
     const res = await fetch('/api/board-synthesize', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversations })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversations, language: window.currentLang || 'en' })
     });
     const data = await res.json();
     document.getElementById('verdictLoading').style.display = 'none';
 
     if (!res.ok) {
-      document.getElementById('verdictError').textContent = data.error || 'Synthesis failed. Please try again.';
+      document.getElementById('verdictError').textContent = data.error || t('board.synthesis_failed');
       document.getElementById('verdictError').style.display = 'block';
       document.getElementById('verdictPrompt').style.display = 'block';
       return;
@@ -370,7 +370,7 @@ async function generateBoardVerdict() {
     renderBoardVerdict(data.synthesis);
   } catch (e) {
     document.getElementById('verdictLoading').style.display = 'none';
-    document.getElementById('verdictError').textContent = 'Connection error. Please try again.';
+    document.getElementById('verdictError').textContent = t('board.connection_error');
     document.getElementById('verdictError').style.display = 'block';
     document.getElementById('verdictPrompt').style.display = 'block';
   }
@@ -399,7 +399,8 @@ function renderBoardVerdict(s) {
   const badge = document.getElementById('verdictConfidenceBadge');
   badge.style.background = `${confColors[conf] || '#888'}22`;
   badge.style.color = confColors[conf] || '#888';
-  badge.textContent = `${conf.charAt(0).toUpperCase() + conf.slice(1)} Confidence`;
+  const levelWord = t('chart.' + conf) !== 'chart.' + conf ? t('chart.' + conf) : (conf.charAt(0).toUpperCase() + conf.slice(1));
+  badge.textContent = (window.currentLang === 'fr') ? `${t('internal.confidence_suffix')} ${levelWord.toLowerCase()}` : `${levelWord} ${t('internal.confidence_suffix')}`;
   document.getElementById('verdictConfidenceReason').textContent = s.confidence_reason || '';
   document.getElementById('verdictResults').style.display = 'block';
 }
@@ -432,23 +433,23 @@ async function quickAnalyzeWebsite() {
   if (!url) return;
   document.getElementById('toolsError').style.display = 'none';
   document.getElementById('toolsResults').style.display = 'none';
-  document.getElementById('toolsLoadingText').textContent = 'Reading the website...';
+  document.getElementById('toolsLoadingText').textContent = t('internal.reading_website');
   document.getElementById('toolsLoading').style.display = 'block';
   document.getElementById('toolsAnalyzeBtn').disabled = true;
 
   try {
-    const res = await fetch('/api/board-analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+    const res = await fetch('/api/board-analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, language: window.currentLang || 'en' }) });
     const data = await res.json();
     document.getElementById('toolsLoading').style.display = 'none';
     document.getElementById('toolsAnalyzeBtn').disabled = false;
-    if (!res.ok) { document.getElementById('toolsError').textContent = data.error || 'Analysis failed.'; document.getElementById('toolsError').style.display = 'block'; return; }
+    if (!res.ok) { document.getElementById('toolsError').textContent = data.error || t('internal.analysis_failed'); document.getElementById('toolsError').style.display = 'block'; return; }
 
-    const factLabels = { business_name:'Business Name', industry:'Industry', value_proposition:'Value Proposition', products_services:'Products & Services', target_customers:'Target Customers', pricing_info:'Pricing', location:'Location', contact_info:'Contact Info', positioning:'Positioning', notable_gaps:"What's Missing" };
     const rows = Object.entries(data.facts).filter(([,f]) => f && f.value).map(([key, fact]) => {
       const badgeColor = fact.source_type === 'observed' ? '#10b981' : '#f59e0b';
-      const badgeText = fact.source_type === 'observed' ? 'Observed' : 'AI Inferred';
+      const badgeText = fact.source_type === 'observed' ? t('analyzer.observed') : t('analyzer.ai_inferred');
+      const label = t('fact.' + key) !== 'fact.' + key ? t('fact.' + key) : key;
       return `<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase">${factLabels[key]||key}</span><span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;background:${badgeColor}22;color:${badgeColor}">${badgeText}</span></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase">${label}</span><span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;background:${badgeColor}22;color:${badgeColor}">${badgeText}</span></div>
         <div style="font-size:12.5px;color:var(--text2)">${fact.value}</div>
       </div>`;
     }).join('');
@@ -457,7 +458,7 @@ async function quickAnalyzeWebsite() {
   } catch (e) {
     document.getElementById('toolsLoading').style.display = 'none';
     document.getElementById('toolsAnalyzeBtn').disabled = false;
-    document.getElementById('toolsError').textContent = 'Connection error. Please try again.';
+    document.getElementById('toolsError').textContent = t('board.connection_error');
     document.getElementById('toolsError').style.display = 'block';
   }
 }
@@ -468,20 +469,20 @@ async function quickResearch() {
   const city = document.getElementById('toolsCityInput').value.trim();
   const country = document.getElementById('toolsCountryInput').value.trim();
   const scope = document.getElementById('toolsScopeSelect').value;
-  if (!businessName && !industry) { alert('Please enter at least a business name or industry.'); return; }
+  if (!businessName && !industry) { alert(t('internal.enter_business_name_industry')); return; }
 
   document.getElementById('toolsError').style.display = 'none';
   document.getElementById('toolsResults').style.display = 'none';
-  document.getElementById('toolsLoadingText').textContent = 'Researching the market...';
+  document.getElementById('toolsLoadingText').textContent = t('internal.researching_market');
   document.getElementById('toolsLoading').style.display = 'block';
   document.getElementById('toolsResearchBtn').disabled = true;
 
   try {
-    const res = await fetch('/api/board-research', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ businessName, industry, city, country, scope }) });
+    const res = await fetch('/api/board-research', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ businessName, industry, city, country, scope, language: window.currentLang || 'en' }) });
     const data = await res.json();
     document.getElementById('toolsLoading').style.display = 'none';
     document.getElementById('toolsResearchBtn').disabled = false;
-    if (!res.ok) { document.getElementById('toolsError').textContent = data.error || 'Research failed.'; document.getElementById('toolsError').style.display = 'block'; return; }
+    if (!res.ok) { document.getElementById('toolsError').textContent = data.error || t('internal.research_failed'); document.getElementById('toolsError').style.display = 'block'; return; }
 
     lastResearchResult = data;
     const s = data.structured;
@@ -489,7 +490,7 @@ async function quickResearch() {
     const compRows = (s.competitors||[]).map(c => `<div style="background:var(--bg3);border-radius:8px;padding:10px 12px;margin-bottom:8px">
       <div style="font-size:12.5px;font-weight:700;color:var(--text)">${c.name} <span style="font-size:9px;font-weight:700;color:${scopeColor[c.scope]||'#888'};text-transform:uppercase">[${c.scope||'unknown'}]</span></div>
       <div style="font-size:12px;color:var(--text2);margin:2px 0">${c.description||''}</div>
-      <div style="font-size:11.5px;color:var(--muted)">Edge/weakness: ${c.differentiator||''}</div>
+      <div style="font-size:11.5px;color:var(--muted)">${t('internal.edge_weakness')} ${c.differentiator||''}</div>
     </div>`).join('');
     const recRows = (s.strategic_recommendations||[]).map((r,i) => `<div style="background:var(--bg3);border-radius:8px;padding:10px 12px;margin-bottom:8px">
       <div style="font-size:12.5px;font-weight:700;color:var(--text)">${i+1}. ${r.title||r.action||''} ${r.priority?`<span style="font-size:9px;color:#888">[${r.priority.toUpperCase()}]</span>`:''}</div>
@@ -497,20 +498,20 @@ async function quickResearch() {
     </div>`).join('');
 
     document.getElementById('toolsResults').innerHTML = `
-      <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;margin-bottom:6px">Market Context</div>
+      <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;margin-bottom:6px">${t('internal.market_context_label')}</div>
       <div style="font-size:12.5px;color:var(--text2);margin-bottom:14px">${s.market_context||''}</div>
-      <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;margin-bottom:6px">Competitors</div>
-      ${compRows || '<div style="font-size:12px;color:var(--muted)">None found</div>'}
-      <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;margin:14px 0 6px">Recommendations</div>
-      ${recRows || '<div style="font-size:12px;color:var(--muted)">None generated</div>'}
-      <button class="sbtn" style="width:100%;height:auto;padding:10px;border-radius:8px;margin-top:8px;font-size:12.5px" onclick="quickVerify()" id="toolsVerifyBtn">🔎 Verify These Recommendations</button>
+      <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;margin-bottom:6px">${t('internal.competitors_label')}</div>
+      ${compRows || `<div style="font-size:12px;color:var(--muted)">${t('internal.none_found')}</div>`}
+      <div style="font-size:11px;font-weight:700;color:#8b5cf6;text-transform:uppercase;margin:14px 0 6px">${t('internal.recommendations_label')}</div>
+      ${recRows || `<div style="font-size:12px;color:var(--muted)">${t('internal.none_generated')}</div>`}
+      <button class="sbtn" style="width:100%;height:auto;padding:10px;border-radius:8px;margin-top:8px;font-size:12.5px" onclick="quickVerify()" id="toolsVerifyBtn">${t('internal.verify_recommendations_btn')}</button>
       <div id="toolsVerifyResults" style="margin-top:12px"></div>
     `;
     document.getElementById('toolsResults').style.display = 'block';
   } catch (e) {
     document.getElementById('toolsLoading').style.display = 'none';
     document.getElementById('toolsResearchBtn').disabled = false;
-    document.getElementById('toolsError').textContent = 'Connection error. Please try again.';
+    document.getElementById('toolsError').textContent = t('board.connection_error');
     document.getElementById('toolsError').style.display = 'block';
   }
 }
@@ -518,25 +519,28 @@ async function quickResearch() {
 async function quickVerify() {
   if (!lastResearchResult) return;
   const btn = document.getElementById('toolsVerifyBtn');
-  btn.disabled = true; btn.textContent = 'Verifying...';
+  btn.disabled = true; btn.textContent = t('internal.verifying');
 
   try {
-    const res = await fetch('/api/board-verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ structured: lastResearchResult.structured, sources: lastResearchResult.sources }) });
+    const res = await fetch('/api/board-verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ structured: lastResearchResult.structured, sources: lastResearchResult.sources, language: window.currentLang || 'en' }) });
     const data = await res.json();
-    btn.disabled = false; btn.textContent = '🔎 Verify These Recommendations';
-    if (!res.ok) { alert(data.error || 'Verification failed.'); return; }
+    btn.disabled = false; btn.textContent = t('internal.verify_recommendations_btn');
+    if (!res.ok) { alert(data.error || t('internal.verification_failed')); return; }
 
     const v = data.verification;
     const confColors = { high: '#10b981', medium: '#f59e0b', low: '#ef4444' };
     const checks = (v.recommendation_checks||[]).map(c => `<div style="font-size:12px;color:var(--text2);margin-bottom:6px"><strong style="color:var(--text)">${c.recommendation_title}</strong> — ${(c.verdict||'').toUpperCase()}<br><span style="color:var(--muted)">${c.note||''}</span></div>`).join('');
+    const conf = v.overall_confidence || '';
+    const levelWord = t('chart.' + conf) !== 'chart.' + conf ? t('chart.' + conf) : conf;
+    const confLabel = (window.currentLang === 'fr') ? `${t('internal.confidence_suffix')} ${levelWord.toLowerCase()}` : `${levelWord} ${t('internal.confidence_suffix')}`;
     document.getElementById('toolsVerifyResults').innerHTML = `
       <div style="background:var(--bg4);border-radius:8px;padding:12px">
-        <div style="font-size:11px;font-weight:700;color:${confColors[v.overall_confidence]||'#888'};text-transform:uppercase;margin-bottom:8px">${v.overall_confidence||''} Confidence</div>
+        <div style="font-size:11px;font-weight:700;color:${confColors[v.overall_confidence]||'#888'};text-transform:uppercase;margin-bottom:8px">${confLabel}</div>
         ${checks}
       </div>`;
   } catch (e) {
-    btn.disabled = false; btn.textContent = '🔎 Verify These Recommendations';
-    alert('Connection error. Please try again.');
+    btn.disabled = false; btn.textContent = t('internal.verify_recommendations_btn');
+    alert(t('board.connection_error'));
   }
 }
 
@@ -547,7 +551,7 @@ async function autoMatchDirector() {
 
   const btn = document.getElementById('autoMatchBtn');
   btn.disabled = true;
-  btn.textContent = 'Matching you with a director...';
+  btn.textContent = t('board.matching_you');
 
   const available = DIRS.map(d => ({ id: d.id, name: d.name, role: d.role }));
 
@@ -565,11 +569,11 @@ async function autoMatchDirector() {
       send(challenge);
     }, 300);
   } catch(e) {
-    alert('Could not auto-match right now — please pick a director manually from the row above.');
+    alert(t('board.could_not_automatch'));
   }
 
   btn.disabled = false;
-  btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 7.2H22l-6 4.4 2.3 7.2-6.3-4.6-6.3 4.6 2.3-7.2-6-4.4h7.6z"/></svg> Match Me With a Director';
+  btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 7.2H22l-6 4.4 2.3 7.2-6.3-4.6-6.3 4.6 2.3-7.2-6-4.4h7.6z"/></svg> ' + t('internal.match_me');
 }
 
 // ── Select director ────────────────────────────────────────────────────────
@@ -702,17 +706,17 @@ async function send(text) {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ persona: livePersona, messages: history, ai: selectedAI })
+      body: JSON.stringify({ persona: livePersona, messages: history, ai: selectedAI, language: window.currentLang || 'en' })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Server error ' + res.status);
+      throw new Error(err.error || t('internal.server_error') + ' ' + res.status);
     }
     const data = await res.json();
     reply = data.reply;
     aiUsed = data.ai || selectedAI;
   } catch (e) {
-    document.getElementById('errBar').textContent = '⚠ ' + e.message + ' — please try again.';
+    document.getElementById('errBar').textContent = '⚠ ' + e.message + ' ' + t('internal.please_try_again');
     document.getElementById('errBar').classList.add('show');
   }
 
