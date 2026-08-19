@@ -1082,7 +1082,7 @@ async function sendTeamInvite() {
   try {
     const res = await fetch('/api/team/invite', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, permissions })
+      body: JSON.stringify({ email, permissions, language: window.currentLang || 'en' })
     });
     const data = await res.json();
     btn.disabled = false;
