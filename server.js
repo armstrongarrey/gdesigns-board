@@ -1781,7 +1781,11 @@ Stay grounded in what was actually generated above — don't contradict it witho
     const reply = await askClaude(persona, chatMessages, { feature: 'entrepreneur_mode', userId: req.userId }, 800);
 
     const updatedMessages = [...priorMessages, { from: 'you', text: message }, { from: 'them', text: reply }];
-    await pool.query('UPDATE entrepreneur_sessions SET discussion_messages = $1 WHERE id = $2', [JSON.stringify(updatedMessages), req.params.sessionId]);
+    // Clear the cached French translation too — otherwise, since this array
+    // only ever grows, a stale discussion_messages_fr would completely hide
+    // this brand-new exchange from the French view (the whole array gets
+    // swapped in wholesale wherever it's read, not merged).
+    await pool.query('UPDATE entrepreneur_sessions SET discussion_messages = $1, discussion_messages_fr = NULL WHERE id = $2', [JSON.stringify(updatedMessages), req.params.sessionId]);
 
     res.json({ reply, discussionMessages: updatedMessages });
   } catch (err) {
@@ -1828,12 +1832,19 @@ app.post('/api/entrepreneur/:sessionId/business-plan', authRequired, async (req,
     });
 
     const financialInstruction = computedFinancials
-      ? `\nVERIFIED FINANCIAL BASELINE (computed by deterministic calculator, not estimated — use these EXACT figures in financial_snapshot, do not recalculate or invent different numbers):
+      ? (language === 'fr'
+        ? `\nDONNÉES FINANCIÈRES VÉRIFIÉES (calculées par un moteur déterministe, non estimées — utilisez ces chiffres EXACTS dans financial_snapshot, ne recalculez pas et n'inventez pas d'autres chiffres) :
+- Coût de démarrage estimé : ${computedFinancials.investment !== null ? computedFinancials.investment : 'non fourni'}
+- Gain mensuel net (revenu moins coûts) : ${computedFinancials.netMonthlyGain}
+- Période de rentabilité : ${computedFinancials.paybackMonths !== null ? computedFinancials.paybackMonths + ' mois' : "n'atteint pas la rentabilité à ce rythme — signalez-le honnêtement dans key_assumption"}
+- ROI sur 12 mois : ${computedFinancials.roiPct !== null ? computedFinancials.roiPct + '%' : 'non calculable (aucun coût de démarrage fourni)'}
+Pour les champs de financial_snapshot, reformulez ces chiffres exacts calculés en langage clair, en français — ne les remplacez pas par votre propre estimation.`
+        : `\nVERIFIED FINANCIAL BASELINE (computed by deterministic calculator, not estimated — use these EXACT figures in financial_snapshot, do not recalculate or invent different numbers):
 - Estimated startup cost: ${computedFinancials.investment !== null ? computedFinancials.investment : 'not provided'}
 - Net monthly gain (revenue minus costs): ${computedFinancials.netMonthlyGain}
 - Payback/breakeven period: ${computedFinancials.paybackMonths !== null ? computedFinancials.paybackMonths + ' months' : 'does not break even at this rate — flag this honestly as key_assumption'}
 - 12-month ROI: ${computedFinancials.roiPct !== null ? computedFinancials.roiPct + '%' : 'not calculable (no startup cost provided)'}
-For the financial_snapshot fields, restate these exact computed figures in plain language — do not substitute your own estimate.`
+For the financial_snapshot fields, restate these exact computed figures in plain language — do not substitute your own estimate.`)
       : '';
 
     const prompt = `You are a business planning consultant at Arreyon Consult. Build a complete, practical business plan for this founder.
@@ -1903,7 +1914,11 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     // so the frontend can optionally show exact numbers alongside them.
     if (computedFinancials) plan.computed_financials = computedFinancials;
 
-    await pool.query('UPDATE entrepreneur_sessions SET business_plan = $1 WHERE id = $2', [JSON.stringify(plan), req.params.sessionId]);
+    // Clear any previously cached French translation too — otherwise a
+    // regenerated plan (e.g. different opportunity chosen, or financial
+    // inputs added/changed) would silently keep showing the STALE translation
+    // of the OLD content the next time it's viewed in French.
+    await pool.query('UPDATE entrepreneur_sessions SET business_plan = $1, business_plan_fr = NULL WHERE id = $2', [JSON.stringify(plan), req.params.sessionId]);
 
     res.json({ success: true, businessPlan: plan });
   } catch (err) {
@@ -2103,8 +2118,8 @@ async function callAI({ persona, messages, complexity = 'moderate', context = {}
 function frenchInstruction(language, { jsonMode = false } = {}) {
   if (language !== 'fr') return '';
   return jsonMode
-    ? ' Respond entirely in French (Français) — every free-text/narrative VALUE in your JSON response must be written in French. Keep the JSON KEYS exactly as specified in English, since the application parses them by name. CRITICAL EXCEPTION: any field whose schema restricts it to a fixed set of English enum options (for example "high|medium|low", "local|international", "covered|partial|not covered", "upheld|weakened|revise", "validate|modify|reconsider") must keep using those EXACT English enum words unchanged — the application matches these values by exact string for color-coding and filtering, and translating them (e.g. "high" → "élevée") would silently break that logic. Only the surrounding descriptive text should be in French.'
-    : ' Respond entirely in French (Français) — every word of your reply must be in French.';
+    ? ' Respond entirely in French (Français) — every free-text/narrative VALUE in your JSON response must be written in French. Keep the JSON KEYS exactly as specified in English, since the application parses them by name. CRITICAL EXCEPTION: any field whose schema restricts it to a fixed set of English enum options (for example "high|medium|low", "local|international", "covered|partial|not covered", "upheld|weakened|revise", "validate|modify|reconsider") must keep using those EXACT English enum words unchanged — the application matches these values by exact string for color-coding and filtering, and translating them (e.g. "high" → "élevée") would silently break that logic. Only the surrounding descriptive text should be in French. IMPORTANT: if source material, search results, or research excerpts appear anywhere above in English, do NOT copy their English phrasing, terminology, or sentences into your free-text output — extract the underlying facts and write your OWN original French sentences expressing them (the enum-field exception above still applies exactly as stated; this instruction only concerns the surrounding descriptive French text).'
+    : ' Respond entirely in French (Français) — every word of your reply must be in French. If any source material or context provided above is in English, extract the facts and express them in your own original French sentences — never copy English phrasing into your reply.';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3171,7 +3186,7 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
     if (plan === 'pro' || plan === 'business') {
       try {
         verification = await runVerificationPass(structured, sources, req.userId, requestedLanguage);
-        await pool.query('UPDATE research_sessions SET verification_data = $1 WHERE id = $2', [JSON.stringify(verification), sessionId]);
+        await pool.query('UPDATE research_sessions SET verification_data = $1, verification_data_fr = NULL WHERE id = $2', [JSON.stringify(verification), sessionId]);
       } catch (e) {
         console.error('Auto-verification failed (non-fatal):', e.message);
         // Verification failing shouldn't block the research result itself — the
@@ -3309,7 +3324,7 @@ app.post('/api/business/:id/research/:sessionId/verify', authRequired, async (re
     const requestedLanguage = req.body?.language === 'fr' ? 'fr' : 'en';
     const verification = await runVerificationPass(sessionRow.structured_data, sourcesResult.rows, req.userId, requestedLanguage);
 
-    await pool.query('UPDATE research_sessions SET verification_data = $1 WHERE id = $2', [JSON.stringify(verification), req.params.sessionId]);
+    await pool.query('UPDATE research_sessions SET verification_data = $1, verification_data_fr = NULL WHERE id = $2', [JSON.stringify(verification), req.params.sessionId]);
 
     res.json({ success: true, verification });
   } catch (err) {
