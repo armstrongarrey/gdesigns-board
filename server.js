@@ -540,6 +540,49 @@ RULES:
   return extractJSON(raw);
 }
 
+// ── Bidirectional live-chat translator ──────────────────────────────────────
+// Unlike every other translation helper in this file (all one-way, English →
+// French), this one needs to go BOTH directions: a conversation may have
+// started in French and the user wants to see it in English, or vice versa.
+// Used when someone switches language mid-conversation — the messages already
+// on screen were generated once, in whichever language was active at the
+// time, and nothing retroactively touches them without this.
+async function translateChatMessages(messages, targetLang) {
+  const targetLangName = targetLang === 'fr' ? 'French (Français)' : 'English';
+  const messagesJson = JSON.stringify(messages); // { messageId: text, ... }
+
+  const prompt = `Translate the following business advisory chat messages into ${targetLangName}. These are real messages from a conversation between a founder and a business advisor — preserve each speaker's tone, directness, and meaning.
+
+MESSAGES TO TRANSLATE (JSON, key = message id, value = message text):
+${messagesJson.slice(0, 12000)}
+
+RULES:
+- Translate naturally and conversationally — not stiffly literal
+- Keep proper nouns, business/brand/person names, numbers, prices, URLs unchanged
+- Return ONLY a JSON object with the EXACT SAME keys as the input, mapped to the translated text. No markdown, no commentary, no extra keys.`;
+
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Translate now, as JSON only.' }], complexity: 'complex', context: { feature: 'chat_translation' }, maxTokens: 6500 });
+  return extractJSON(raw);
+}
+
+app.post('/api/translate-messages', async (req, res) => {
+  const { messages, targetLanguage } = req.body; // messages: [{ id, text }]
+  if (!messages || !Array.isArray(messages) || !messages.length) return res.status(400).json({ error: 'No messages provided' });
+  if (targetLanguage !== 'fr' && targetLanguage !== 'en') return res.status(400).json({ error: 'Invalid target language' });
+
+  try {
+    const toTranslate = {};
+    messages.forEach(m => { if (m && m.id !== undefined && typeof m.text === 'string') toTranslate[m.id] = m.text; });
+    if (!Object.keys(toTranslate).length) return res.status(400).json({ error: 'No valid messages to translate' });
+
+    const translated = await translateChatMessages(toTranslate, targetLanguage);
+    res.json({ translated });
+  } catch (err) {
+    console.error('Chat translation error:', err.message);
+    res.status(500).json({ error: err.message || 'Translation failed. Please try again.' });
+  }
+});
+
 // ── Public CMS content endpoint — fully automatic French, no admin action needed ──
 // If a French request hits a field with no cached translation yet, it's
 // translated right then (parallelized across sections) and saved to the
