@@ -1394,16 +1394,90 @@ async function runAnalysis() {
 }
 
 let currentBusinessId = null;
+let businessViewRequestToken = 0;
+
+async function loadBusinessIntoView(businessId) {
+  // If the user switches language or businesses again before this finishes,
+  // an older/slower request must not be allowed to overwrite what a newer
+  // one already rendered — a real risk since the French-translation call
+  // this can trigger server-side takes noticeably longer than an English
+  // fetch, so requests don't necessarily resolve in the order they started.
+  const myToken = ++businessViewRequestToken;
+
+  // Both fetches run in parallel rather than one-after-another — the research
+  // fetch alone can take several seconds on a first French view (it may
+  // trigger an AI translation call), and running it strictly after the facts
+  // fetch just doubles the total time the view has no error handling for.
+  const [bizResult, researchResult] = await Promise.allSettled([
+    fetch(`/api/business/${businessId}?lang=${window.currentLang || 'en'}`).then(r => r.ok ? r.json() : Promise.reject(new Error('facts fetch failed: ' + r.status))),
+    fetch(`/api/business/${businessId}/research?lang=${window.currentLang || 'en'}`).then(r => r.ok ? r.json() : Promise.reject(new Error('research fetch failed: ' + r.status)))
+  ]);
+
+  // A newer call has since started (language switched again, or a different
+  // business was opened) — this one's results are stale, discard them.
+  if (myToken !== businessViewRequestToken) return;
+
+  if (bizResult.status === 'fulfilled') {
+    const bizData = bizResult.value;
+    // Convert the array-of-rows facts shape into the {key: {value, source_type}} map
+    // that renderAnalysisResults() expects — same shape /api/business/analyze returns.
+    const factsMap = {};
+    (bizData.facts || []).forEach(f => { factsMap[f.fact_key] = { value: f.fact_value, source_type: f.source_type }; });
+
+    renderAnalysisResults({
+      businessId: bizData.business.id,
+      analyzedUrl: bizData.business.website,
+      isDescriptionOnly: !bizData.business.website,
+      pagesAnalyzed: bizData.business.website ? [bizData.business.website] : ['Business description'],
+      facts: factsMap
+    });
+    document.getElementById('analyzerResults').style.display = 'block';
+  } else {
+    console.error('Failed to load business facts:', bizResult.reason?.message);
+  }
+
+  if (researchResult.status === 'fulfilled') {
+    const researchData = researchResult.value;
+    if (researchData.sessions && researchData.sessions.length) {
+      const latest = researchData.sessions[0];
+      if (latest.structured_data) {
+        currentResearchData = { sessionId: latest.id, structured: latest.structured_data, sources: latest.sources, scope: latest.scope || 'both' };
+        document.getElementById('researchScope').value = latest.scope || 'both';
+        renderResearchResults(latest.structured_data, latest.sources || []);
+        document.getElementById('researchResults').style.display = 'block';
+        if (latest.verification_data) renderVerificationResults(latest.verification_data);
+      }
+    }
+  } else {
+    // Not necessarily an error the user needs to see — most businesses simply
+    // have no research session yet — but log it so a REAL failure (as opposed
+    // to "no research exists") is at least visible for debugging, instead of
+    // silently vanishing the way it did before.
+    console.error('Failed to load research history:', researchResult.reason?.message);
+  }
+
+  // Scroll the restored view into frame
+  document.getElementById('analyzerResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
 // If the user switches language while viewing an analyzed business, re-fetch
 // so the newly-selected language's cached (or freshly auto-translated)
 // content is shown, instead of leaving stale English text on screen.
-document.addEventListener('arreyon:langchange', () => {
+document.addEventListener('arreyon:langchange', async () => {
   if (currentBusinessId && document.getElementById('section-analyzer')?.classList.contains('active')) {
     loadBusinessIntoView(currentBusinessId);
   }
   if (document.getElementById('section-entrepreneur')?.classList.contains('active')) {
-    loadEntrepreneurHistory();
+    await loadEntrepreneurHistory();
+    // The history list itself was just correctly refreshed with translated
+    // content, but whatever session is CURRENTLY OPEN on screen was rendered
+    // once at generation/click time and nothing re-painted it — re-render it
+    // now from the freshly-translated cache so it doesn't stay stuck in
+    // whichever language it happened to be generated in.
+    if (currentEntrepreneurSessionId) {
+      const current = entrepreneurSessionsCache.find(s => s.id === currentEntrepreneurSessionId);
+      if (current) renderEntrepreneurSession(current, false);
+    }
   }
   // applyTranslations() re-tags every data-i18n element, which would wipe out
   // the 🔒 lock prefix we add on top of the base label — re-apply it after.
@@ -1537,48 +1611,6 @@ async function loadAnalyzedBusinesses() {
     if (!currentBusinessId && data.businesses.length) {
       loadBusinessIntoView(data.businesses[0].id);
     }
-  } catch (e) {}
-}
-
-// ── Restore a previously analyzed business (profile + latest research, if any) ──
-async function loadBusinessIntoView(businessId) {
-  try {
-    const bizRes = await fetch(`/api/business/${businessId}?lang=${window.currentLang || 'en'}`);
-    if (!bizRes.ok) return;
-    const bizData = await bizRes.json();
-
-    // Convert the array-of-rows facts shape into the {key: {value, source_type}} map
-    // that renderAnalysisResults() expects — same shape /api/business/analyze returns.
-    const factsMap = {};
-    (bizData.facts || []).forEach(f => { factsMap[f.fact_key] = { value: f.fact_value, source_type: f.source_type }; });
-
-    renderAnalysisResults({
-      businessId: bizData.business.id,
-      analyzedUrl: bizData.business.website,
-      isDescriptionOnly: !bizData.business.website,
-      pagesAnalyzed: bizData.business.website ? [bizData.business.website] : ['Business description'],
-      facts: factsMap
-    });
-    document.getElementById('analyzerResults').style.display = 'block';
-
-    // Restore the latest research session too, if one exists
-    const researchRes = await fetch(`/api/business/${businessId}/research?lang=${window.currentLang || 'en'}`);
-    if (researchRes.ok) {
-      const researchData = await researchRes.json();
-      if (researchData.sessions && researchData.sessions.length) {
-        const latest = researchData.sessions[0];
-        if (latest.structured_data) {
-          currentResearchData = { sessionId: latest.id, structured: latest.structured_data, sources: latest.sources, scope: latest.scope || 'both' };
-          document.getElementById('researchScope').value = latest.scope || 'both';
-          renderResearchResults(latest.structured_data, latest.sources || []);
-          document.getElementById('researchResults').style.display = 'block';
-          if (latest.verification_data) renderVerificationResults(latest.verification_data);
-        }
-      }
-    }
-
-    // Scroll the restored view into frame
-    document.getElementById('analyzerResults').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {}
 }
 
@@ -2314,6 +2346,14 @@ async function loadEntrepreneurHistory() {
 function loadEntrepreneurSession(index) {
   const s = entrepreneurSessionsCache[index];
   if (!s) return;
+  renderEntrepreneurSession(s, true);
+}
+
+// Renders a full session (opportunities/validation + discussion + business
+// plan). Shared by clicking a history item (scrolls into view) and by
+// re-rendering the CURRENTLY OPEN session after a language switch (does not
+// scroll, since the user is already looking at it).
+function renderEntrepreneurSession(s, scrollIntoView) {
   currentEntrepreneurSessionId = s.id;
   let targetId;
   if (s.mode === 'opportunity_finder') {
@@ -2329,7 +2369,7 @@ function loadEntrepreneurSession(index) {
     if (s.business_plan) renderBusinessPlan(document.getElementById('businessPlanSectionVal'), s.business_plan);
     targetId = 'validationResults';
   }
-  document.getElementById(targetId).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (scrollIntoView) document.getElementById(targetId).scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ── FINANCIAL TOOLS ─────────────────────────────────────────────────────────
