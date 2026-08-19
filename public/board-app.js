@@ -643,16 +643,24 @@ function renderMsgsOnly() {
   box.scrollTop = box.scrollHeight;
 }
 
-let translationInFlight = false;
+// Tracks which specific (conversation, language) pairs are currently being
+// translated — NOT a single global flag, since a global flag would silently
+// skip translating a second conversation if the user switches to it while a
+// first one is still in flight, with nothing ever retrying it afterward.
+const translationsInFlight = new Set();
 async function translateActiveConversation(targetLang) {
-  if (!active || translationInFlight) return;
-  const msgs = convos[active.id] || [];
+  if (!active) return;
+  const convoId = active.id;
+  const flightKey = convoId + '::' + targetLang;
+  if (translationsInFlight.has(flightKey)) return;
+
+  const msgs = convos[convoId] || [];
   const needsTranslation = msgs
     .map((m, i) => ({ m, i }))
     .filter(({ m }) => m.origLang !== targetLang && !(m.translations && m.translations[targetLang]));
   if (!needsTranslation.length) return;
 
-  translationInFlight = true;
+  translationsInFlight.add(flightKey);
   try {
     const res = await fetch('/api/translate-messages', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -667,10 +675,13 @@ async function translateActiveConversation(targetLang) {
           m.translations[targetLang] = translated;
         }
       });
-      if (active && window.currentLang === targetLang) renderMsgsOnly();
+      // Only re-render if the user is still on the same conversation AND
+      // language this translation was for — otherwise the cached result is
+      // still saved onto the message objects for next time, just not painted now.
+      if (active && active.id === convoId && window.currentLang === targetLang) renderMsgsOnly();
     }
   } catch (e) { /* leave originals displayed — non-fatal */ }
-  translationInFlight = false;
+  translationsInFlight.delete(flightKey);
 }
 
 // ── Typing indicator ───────────────────────────────────────────────────────
