@@ -1705,7 +1705,12 @@ app.get('/api/entrepreneur/sessions', authRequired, async (req, res) => {
           jobs.push({ session, field: 'structured_output', promise: translateStructuredContent(session.structured_output, session.mode === 'opportunity_finder' ? 'business opportunity report' : 'business idea validation report') });
         }
         if (session.business_plan && !session.business_plan_fr) {
-          jobs.push({ session, field: 'business_plan', promise: translateStructuredContent(session.business_plan, 'business plan') });
+          // computed_financials is language-neutral numeric data, not
+          // narrative text — strip it before the translation call (re-attached
+          // in the result-handling loop below) so it can't be silently
+          // dropped or altered by the AI translation pass.
+          const { computed_financials, ...planForTranslation } = session.business_plan;
+          jobs.push({ session, field: 'business_plan', computedFinancials: computed_financials, promise: translateStructuredContent(planForTranslation, 'business plan') });
         }
         if (session.discussion_messages?.length && !session.discussion_messages_fr) {
           jobs.push({ session, field: 'discussion_messages', promise: translateStructuredContent(session.discussion_messages, 'discussion chat thread') });
@@ -1715,13 +1720,14 @@ app.get('/api/entrepreneur/sessions', authRequired, async (req, res) => {
       if (jobs.length) {
         const outcomes = await Promise.allSettled(jobs.map(j => j.promise));
         for (let i = 0; i < jobs.length; i++) {
-          const { session, field } = jobs[i];
+          const { session, field, computedFinancials } = jobs[i];
           const outcome = outcomes[i];
           if (outcome.status !== 'fulfilled') {
             console.error(`Entrepreneur session translation failed for ${field}:`, outcome.reason?.message);
             continue;
           }
           const translated = outcome.value;
+          if (field === 'business_plan' && computedFinancials) translated.computed_financials = computedFinancials;
           const column = field + '_fr';
           try {
             await pool.query(`UPDATE entrepreneur_sessions SET ${column} = $1 WHERE id = $2`, [JSON.stringify(translated), session.id]);
@@ -1786,7 +1792,7 @@ Stay grounded in what was actually generated above — don't contradict it witho
 
 // ── Generate a full business plan from a validated idea or chosen opportunity ──
 app.post('/api/entrepreneur/:sessionId/business-plan', authRequired, async (req, res) => {
-  const { chosenOpportunityName, language = 'en' } = req.body; // required if session.mode === 'opportunity_finder'
+  const { chosenOpportunityName, language = 'en', estimatedMonthlyRevenue, estimatedMonthlyCosts, estimatedStartupCost } = req.body;
 
   try {
     const sessionResult = await pool.query(
@@ -1808,12 +1814,35 @@ app.post('/api/entrepreneur/:sessionId/business-plan', authRequired, async (req,
 
     const context = formatEntrepreneurContext(session.input_data);
 
+    // If the founder gave us real revenue/cost/startup-cost estimates, run
+    // them through the SAME deterministic math engine that powers Scenario
+    // Analysis — real arithmetic, not an AI guess — and hand the AI verified
+    // numbers to build a narrative around instead of asking it to invent
+    // plausible-sounding figures. Entirely optional: if these weren't
+    // provided, the plan falls back to the AI's own estimate exactly as before.
+    const computedFinancials = computeScenarioFinancials({
+      monthlyRevenueImpact: estimatedMonthlyRevenue,
+      monthlyCostImpact: estimatedMonthlyCosts,
+      oneTimeInvestment: estimatedStartupCost,
+      timeframeMonths: 12
+    });
+
+    const financialInstruction = computedFinancials
+      ? `\nVERIFIED FINANCIAL BASELINE (computed by deterministic calculator, not estimated — use these EXACT figures in financial_snapshot, do not recalculate or invent different numbers):
+- Estimated startup cost: ${computedFinancials.investment !== null ? computedFinancials.investment : 'not provided'}
+- Net monthly gain (revenue minus costs): ${computedFinancials.netMonthlyGain}
+- Payback/breakeven period: ${computedFinancials.paybackMonths !== null ? computedFinancials.paybackMonths + ' months' : 'does not break even at this rate — flag this honestly as key_assumption'}
+- 12-month ROI: ${computedFinancials.roiPct !== null ? computedFinancials.roiPct + '%' : 'not calculable (no startup cost provided)'}
+For the financial_snapshot fields, restate these exact computed figures in plain language — do not substitute your own estimate.`
+      : '';
+
     const prompt = `You are a business planning consultant at Arreyon Consult. Build a complete, practical business plan for this founder.
 
 BUSINESS: ${businessDescription}
 
 FOUNDER'S CIRCUMSTANCES:
 ${context || 'Limited context available.'}
+${financialInstruction}
 
 ${isOpp ? `PRIOR OPPORTUNITY ANALYSIS:\n${JSON.stringify((session.structured_output.opportunities || []).find(o => o.name === chosenOpportunityName))}` : `PRIOR IDEA VALIDATION:\n${JSON.stringify(session.structured_output)}`}
 
@@ -1869,6 +1898,10 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
       console.error('Business plan JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
       throw new Error('Could not generate the business plan — please try again');
     }
+
+    // Attach the raw computed figures too (not just the AI's restated prose)
+    // so the frontend can optionally show exact numbers alongside them.
+    if (computedFinancials) plan.computed_financials = computedFinancials;
 
     await pool.query('UPDATE entrepreneur_sessions SET business_plan = $1 WHERE id = $2', [JSON.stringify(plan), req.params.sessionId]);
 
@@ -4562,7 +4595,13 @@ app.get('/api/entrepreneur/:sessionId/report', authRequired, async (req, res) =>
           session.structured_output_fr = translated;
         }
         if (session.business_plan && !session.business_plan_fr) {
-          const translatedPlan = await translateStructuredContent(session.business_plan, 'business plan');
+          // computed_financials is language-neutral numeric data, not narrative
+          // text — strip it before sending to AI translation (an atypical
+          // numeric-only object risks being silently dropped or altered by
+          // the translation pass) and re-attach it unchanged afterward.
+          const { computed_financials, ...planForTranslation } = session.business_plan;
+          const translatedPlan = await translateStructuredContent(planForTranslation, 'business plan');
+          if (computed_financials) translatedPlan.computed_financials = computed_financials;
           await pool.query('UPDATE entrepreneur_sessions SET business_plan_fr = $1 WHERE id = $2', [JSON.stringify(translatedPlan), session.id]);
           session.business_plan_fr = translatedPlan;
         }
