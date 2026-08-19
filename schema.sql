@@ -20,9 +20,11 @@ CREATE TABLE IF NOT EXISTS users (
   role VARCHAR(20) DEFAULT 'user',
   consultations_used INTEGER DEFAULT 0,
   consultations_reset_date TIMESTAMPTZ DEFAULT NOW(),
+  preferred_language VARCHAR(5) DEFAULT 'en',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_language VARCHAR(5) DEFAULT 'en';
 
 -- Admin users table
 CREATE TABLE IF NOT EXISTS admin_users (
