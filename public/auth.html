@@ -70,7 +70,9 @@ select.form-input{appearance:none;cursor:pointer}
   .auth-right{padding:32px 20px;align-items:flex-start;padding-top:60px}
   .auth-box{max-width:100%}
 }
+.lang-switch-btn.active{background:var(--purple)!important;border-color:var(--purple)!important;color:#fff!important}
 </style>
+<script src="/i18n.js"></script>
 </head>
 <body>
 <div class="auth-page">
@@ -80,17 +82,21 @@ select.form-input{appearance:none;cursor:pointer}
       <div class="auth-logo-mark"><img src="/assets/logo.png" alt="A" onerror="this.parentElement.innerHTML='<span style=\'color:#fff;font-weight:700\'>A</span>'"></div>
       <div><div class="auth-logo-name">Arreyon Consult</div><div class="auth-logo-sub">by G-DESIGNS LTD</div></div>
     </a>
+    <div style="display:flex;gap:6px;margin-top:16px">
+      <button class="lang-switch-btn" data-lang-option="en" onclick="setLanguage('en')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit">EN</button>
+      <button class="lang-switch-btn" data-lang-option="fr" onclick="setLanguage('fr')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit">FR</button>
+    </div>
     <div class="auth-left-content">
-      <h2>Your board is ready to convene.</h2>
-      <p>Sign in and bring your hardest business decision to 29 legendary advisors — available right now.</p>
+      <h2 data-i18n="auth.hero_title">Your board is ready to convene.</h2>
+      <p data-i18n="auth.hero_sub">Sign in and bring your hardest business decision to 29 legendary advisors — available right now.</p>
       <div class="auth-directors">
-        <div class="auth-director"><div class="auth-dir-av" style="background:#2a4a1a;color:#7fcc50">JR</div><div><div class="auth-dir-name">John D. Rockefeller</div><div class="auth-dir-role">Empire &amp; Cost Strategy</div></div><div class="auth-dir-online"></div></div>
-        <div class="auth-director"><div class="auth-dir-av" style="background:#1a0500;color:#ff7040">DO</div><div><div class="auth-dir-name">David Ogilvy</div><div class="auth-dir-role">Brand &amp; Advertising</div></div><div class="auth-dir-online"></div></div>
-        <div class="auth-director"><div class="auth-dir-av" style="background:#001a1a;color:#40cccc">WB</div><div><div class="auth-dir-name">Warren Buffett</div><div class="auth-dir-role">Investment &amp; Long-Term Value</div></div><div class="auth-dir-online"></div></div>
-        <div class="auth-director"><div class="auth-dir-av" style="background:#2a1f00;color:#e6aa00">AD</div><div><div class="auth-dir-name">Aliko Dangote</div><div class="auth-dir-role">African Enterprise &amp; Scale</div></div><div class="auth-dir-online"></div></div>
+        <div class="auth-director"><div class="auth-dir-av" style="background:#2a4a1a;color:#7fcc50">JR</div><div><div class="auth-dir-name">John D. Rockefeller</div><div class="auth-dir-role" data-i18n="auth.role_rockefeller">Empire &amp; Cost Strategy</div></div><div class="auth-dir-online"></div></div>
+        <div class="auth-director"><div class="auth-dir-av" style="background:#1a0500;color:#ff7040">DO</div><div><div class="auth-dir-name">David Ogilvy</div><div class="auth-dir-role" data-i18n="auth.role_ogilvy">Brand &amp; Advertising</div></div><div class="auth-dir-online"></div></div>
+        <div class="auth-director"><div class="auth-dir-av" style="background:#001a1a;color:#40cccc">WB</div><div><div class="auth-dir-name">Warren Buffett</div><div class="auth-dir-role" data-i18n="auth.role_buffett">Investment &amp; Long-Term Value</div></div><div class="auth-dir-online"></div></div>
+        <div class="auth-director"><div class="auth-dir-av" style="background:#2a1f00;color:#e6aa00">AD</div><div><div class="auth-dir-name">Aliko Dangote</div><div class="auth-dir-role" data-i18n="auth.role_dangote">African Enterprise &amp; Scale</div></div><div class="auth-dir-online"></div></div>
       </div>
     </div>
-    <div class="auth-left-foot">© 2026 Arreyon Consult by G-DESIGNS LTD</div>
+    <div class="auth-left-foot" data-i18n="auth.copyright">© 2026 Arreyon Consult by G-DESIGNS LTD</div>
   </div>
 
   <!-- RIGHT PANEL -->
@@ -100,48 +106,48 @@ select.form-input{appearance:none;cursor:pointer}
       <!-- LOGIN FORM -->
       <div id="loginForm">
         <div class="auth-tabs">
-          <button class="auth-tab active" onclick="switchTab('login')">Sign In</button>
-          <button class="auth-tab" onclick="switchTab('signup')">Create Account</button>
+          <button class="auth-tab active" onclick="switchTab('login')" data-i18n="auth.tab_signin">Sign In</button>
+          <button class="auth-tab" onclick="switchTab('signup')" data-i18n="auth.tab_create">Create Account</button>
         </div>
-        <div class="auth-title">Welcome back</div>
-        <div class="auth-sub">Sign in to access your board</div>
+        <div class="auth-title" data-i18n="auth.welcome_back">Welcome back</div>
+        <div class="auth-sub" data-i18n="auth.signin_sub">Sign in to access your board</div>
         <div class="auth-error-box" id="loginError"></div>
         <div class="auth-success" id="loginSuccess"></div>
-        <div class="form-group"><label>Email Address</label><input class="form-input" type="email" id="loginEmail" placeholder="you@example.com"></div>
+        <div class="form-group"><label data-i18n="auth.email_address">Email Address</label><input class="form-input" type="email" id="loginEmail" placeholder="you@example.com"></div>
         <div class="form-group">
-          <label>Password</label>
-          <input class="form-input" type="password" id="loginPassword" placeholder="Your password">
-          <div style="text-align:right;margin-top:6px"><button class="auth-link" onclick="switchTab('forgot')">Forgot password?</button></div>
+          <label data-i18n="auth.password">Password</label>
+          <input class="form-input" type="password" id="loginPassword" data-i18n-placeholder="auth.your_password" placeholder="Your password">
+          <div style="text-align:right;margin-top:6px"><button class="auth-link" onclick="switchTab('forgot')" data-i18n="auth.forgot_password">Forgot password?</button></div>
         </div>
-        <button class="auth-btn" onclick="doLogin()" id="loginBtn">Sign In</button>
-        <div class="auth-divider">or</div>
+        <button class="auth-btn" onclick="doLogin()" id="loginBtn" data-i18n="auth.sign_in">Sign In</button>
+        <div class="auth-divider" data-i18n="auth.or">or</div>
         <a href="/auth/google" class="google-btn">
           <svg class="google-icon" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-          Continue with Google
+          <span data-i18n="auth.continue_google">Continue with Google</span>
         </a>
-        <div class="auth-footer">Don't have an account? <button class="auth-link" onclick="switchTab('signup')">Create one free</button></div>
+        <div class="auth-footer"><span data-i18n="auth.no_account">Don't have an account?</span> <button class="auth-link" onclick="switchTab('signup')" data-i18n="auth.create_free">Create one free</button></div>
       </div>
 
       <!-- SIGNUP FORM -->
       <div id="signupForm" style="display:none">
         <div class="auth-tabs">
-          <button class="auth-tab" onclick="switchTab('login')">Sign In</button>
-          <button class="auth-tab active" onclick="switchTab('signup')">Create Account</button>
+          <button class="auth-tab" onclick="switchTab('login')" data-i18n="auth.tab_signin">Sign In</button>
+          <button class="auth-tab active" onclick="switchTab('signup')" data-i18n="auth.tab_create">Create Account</button>
         </div>
-        <div class="auth-title">Create your account</div>
-        <div class="auth-sub">Start free — no credit card required</div>
+        <div class="auth-title" data-i18n="auth.create_title">Create your account</div>
+        <div class="auth-sub" data-i18n="auth.create_sub">Start free — no credit card required</div>
         <div class="auth-error-box" id="signupError"></div>
         <div class="form-row">
-          <div class="form-group"><label>First Name</label><input class="form-input" type="text" id="signupFirst" placeholder="John"></div>
-          <div class="form-group"><label>Last Name</label><input class="form-input" type="text" id="signupLast" placeholder="Doe"></div>
+          <div class="form-group"><label data-i18n="auth.first_name">First Name</label><input class="form-input" type="text" id="signupFirst" placeholder="John"></div>
+          <div class="form-group"><label data-i18n="auth.last_name">Last Name</label><input class="form-input" type="text" id="signupLast" placeholder="Doe"></div>
         </div>
-        <div class="form-group"><label>Email Address</label><input class="form-input" type="email" id="signupEmail" placeholder="you@example.com"></div>
-        <div class="form-group"><label>Password</label><input class="form-input" type="password" id="signupPassword" placeholder="Minimum 8 characters"></div>
+        <div class="form-group"><label data-i18n="auth.email_address">Email Address</label><input class="form-input" type="email" id="signupEmail" placeholder="you@example.com"></div>
+        <div class="form-group"><label data-i18n="auth.password">Password</label><input class="form-input" type="password" id="signupPassword" data-i18n-placeholder="auth.min_8_chars" placeholder="Minimum 8 characters"></div>
         <div class="form-row">
-          <div class="form-group"><label>Phone (optional)</label><input class="form-input" type="tel" id="signupPhone" placeholder="+237..."></div>
-          <div class="form-group"><label>Country</label>
+          <div class="form-group"><label data-i18n="auth.phone_optional">Phone (optional)</label><input class="form-input" type="tel" id="signupPhone" placeholder="+237..."></div>
+          <div class="form-group"><label data-i18n="auth.country">Country</label>
             <select class="form-input" id="signupCountry">
-              <option value="">Select...</option>
+              <option value="" data-i18n="auth.select_ellipsis">Select...</option>
               <option>Cameroon</option><option>Nigeria</option><option>Ghana</option><option>Kenya</option>
               <option>South Africa</option><option>Senegal</option><option>Ivory Coast</option>
               <option>United Arab Emirates</option><option>United Kingdom</option><option>United States</option>
@@ -149,44 +155,44 @@ select.form-input{appearance:none;cursor:pointer}
             </select>
           </div>
         </div>
-        <button class="auth-btn" onclick="doSignup()" id="signupBtn">Create Account</button>
-        <div class="auth-divider">or</div>
+        <button class="auth-btn" onclick="doSignup()" id="signupBtn" data-i18n="auth.tab_create">Create Account</button>
+        <div class="auth-divider" data-i18n="auth.or">or</div>
         <a href="/auth/google" class="google-btn">
           <svg class="google-icon" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-          Sign up with Google
+          <span data-i18n="auth.signup_google">Sign up with Google</span>
         </a>
-        <div class="auth-footer">Already have an account? <button class="auth-link" onclick="switchTab('login')">Sign in</button></div>
+        <div class="auth-footer"><span data-i18n="auth.have_account">Already have an account?</span> <button class="auth-link" onclick="switchTab('login')" data-i18n="auth.sign_in">Sign in</button></div>
       </div>
 
       <!-- FORGOT PASSWORD -->
       <div id="forgotForm" style="display:none">
-        <div class="auth-title">Reset password</div>
-        <div class="auth-sub">Enter your email and we'll send a reset link</div>
+        <div class="auth-title" data-i18n="auth.reset_title">Reset password</div>
+        <div class="auth-sub" data-i18n="auth.reset_sub">Enter your email and we'll send a reset link</div>
         <div class="auth-error-box" id="forgotError"></div>
         <div class="auth-success" id="forgotSuccess"></div>
-        <div class="form-group"><label>Email Address</label><input class="form-input" type="email" id="forgotEmail" placeholder="you@example.com"></div>
-        <button class="auth-btn" onclick="doForgot()">Send Reset Link</button>
-        <div class="auth-footer" style="margin-top:16px"><button class="auth-link" onclick="switchTab('login')">Back to sign in</button></div>
+        <div class="form-group"><label data-i18n="auth.email_address">Email Address</label><input class="form-input" type="email" id="forgotEmail" placeholder="you@example.com"></div>
+        <button class="auth-btn" onclick="doForgot()" data-i18n="auth.send_reset_link">Send Reset Link</button>
+        <div class="auth-footer" style="margin-top:16px"><button class="auth-link" onclick="switchTab('login')" data-i18n="auth.back_to_signin">Back to sign in</button></div>
       </div>
 
       <!-- RESET PASSWORD -->
       <div id="resetForm" style="display:none">
-        <div class="auth-title">Set new password</div>
-        <div class="auth-sub">Choose a strong new password for your account</div>
+        <div class="auth-title" data-i18n="auth.set_new_password">Set new password</div>
+        <div class="auth-sub" data-i18n="auth.set_new_password_sub">Choose a strong new password for your account</div>
         <div class="auth-error-box" id="resetError"></div>
         <div class="auth-success" id="resetSuccess"></div>
-        <div class="form-group"><label>New Password</label><input class="form-input" type="password" id="resetPassword" placeholder="Minimum 8 characters"></div>
-        <div class="form-group"><label>Confirm Password</label><input class="form-input" type="password" id="resetConfirm" placeholder="Repeat password"></div>
-        <button class="auth-btn" onclick="doReset()">Set New Password</button>
+        <div class="form-group"><label data-i18n="auth.new_password">New Password</label><input class="form-input" type="password" id="resetPassword" data-i18n-placeholder="auth.min_8_chars" placeholder="Minimum 8 characters"></div>
+        <div class="form-group"><label data-i18n="auth.confirm_password">Confirm Password</label><input class="form-input" type="password" id="resetConfirm" data-i18n-placeholder="auth.repeat_password" placeholder="Repeat password"></div>
+        <button class="auth-btn" onclick="doReset()" data-i18n="auth.set_new_password_btn">Set New Password</button>
       </div>
 
       <!-- VERIFY NOTICE -->
       <div id="verifyNotice" style="display:none">
-        <div class="auth-title">Check your email</div>
-        <div class="auth-sub">We've sent a verification link to <strong id="verifyEmail"></strong>. Click the link to activate your account.</div>
-        <div class="auth-success show" style="margin-top:16px">Verification email sent. Check your inbox and spam folder.</div>
-        <button class="auth-btn" style="margin-top:16px" onclick="resendVerification()">Resend Email</button>
-        <div class="auth-footer" style="margin-top:12px"><button class="auth-link" onclick="switchTab('login')">Back to sign in</button></div>
+        <div class="auth-title" data-i18n="auth.check_email">Check your email</div>
+        <div class="auth-sub" id="verifySubText">We've sent a verification link to your email. Click the link to activate your account.</div>
+        <div class="auth-success show" style="margin-top:16px" data-i18n="auth.verification_sent">Verification email sent. Check your inbox and spam folder.</div>
+        <button class="auth-btn" style="margin-top:16px" onclick="resendVerification()" data-i18n="auth.resend_email">Resend Email</button>
+        <div class="auth-footer" style="margin-top:12px"><button class="auth-link" onclick="switchTab('login')" data-i18n="auth.back_to_signin">Back to sign in</button></div>
       </div>
 
     </div>
@@ -196,6 +202,7 @@ select.form-input{appearance:none;cursor:pointer}
 <script>
 const params = new URLSearchParams(location.search);
 const resetToken = params.get('token');
+let pendingVerifyEmail = '';
 
 function switchTab(tab) {
   ['loginForm','signupForm','forgotForm','resetForm','verifyNotice'].forEach(id => {
@@ -213,13 +220,19 @@ if (resetToken) switchTab('reset');
 else if (params.get('mode') === 'signup') switchTab('signup');
 else switchTab('login');
 
-// Show URL error
-const urlErr = params.get('error');
-if (urlErr) {
-  const msgs = { invalid_token:'Verification link is invalid or expired.', google_failed:'Google sign-in failed. Please try again.', verify_failed:'Verification failed. Please try again.' };
-  const el = document.getElementById('loginError');
-  if (el) { el.textContent = msgs[urlErr] || 'An error occurred.'; el.classList.add('show'); }
-}
+// Show URL error — wrapped in DOMContentLoaded because it calls t(), which
+// must wait for i18n.js's language detection to finish first, or this would
+// always render in the fallback language regardless of the visitor's actual
+// language — the same timing bug fixed earlier on boardroom.html and
+// team-invite.html.
+document.addEventListener('DOMContentLoaded', () => {
+  const urlErr = params.get('error');
+  if (urlErr) {
+    const msgKeys = { invalid_token:'auth.err_invalid_token', google_failed:'auth.err_google_failed', verify_failed:'auth.err_verify_failed' };
+    const el = document.getElementById('loginError');
+    if (el) { el.textContent = msgKeys[urlErr] ? t(msgKeys[urlErr]) : t('auth.err_generic'); el.classList.add('show'); }
+  }
+});
 
 function showErr(id, msg) {
   const el = document.getElementById(id);
@@ -230,24 +243,37 @@ function showSucc(id, msg) {
   const el = document.getElementById(id);
   el.textContent = msg; el.classList.add('show');
 }
+function showVerifyNotice(email) {
+  pendingVerifyEmail = email;
+  document.getElementById('verifySubText').innerHTML = tf('auth.check_email_sub', { email: '<strong>' + email + '</strong>' });
+  switchTab('verify');
+}
+
+document.addEventListener('arreyon:langchange', () => {
+  // If the verify notice is currently on screen, its text was set dynamically
+  // (not via the generic data-i18n walk, since it needs the actual email
+  // interpolated) — re-render it now so it doesn't stay in the old language.
+  if (pendingVerifyEmail && document.getElementById('verifyNotice').style.display !== 'none') {
+    document.getElementById('verifySubText').innerHTML = tf('auth.check_email_sub', { email: '<strong>' + pendingVerifyEmail + '</strong>' });
+  }
+});
 
 async function doLogin() {
   hideErr('loginError');
   const email = document.getElementById('loginEmail').value.trim();
   const password = document.getElementById('loginPassword').value;
-  if (!email || !password) return showErr('loginError', 'Please enter your email and password.');
+  if (!email || !password) return showErr('loginError', t('auth.err_email_password_required'));
   const btn = document.getElementById('loginBtn');
-  btn.disabled = true; btn.textContent = 'Signing in...';
+  btn.disabled = true; btn.textContent = t('auth.signing_in');
   try {
     const res = await fetch('/api/auth/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, password}) });
     const data = await res.json();
     if (data.success) { window.location.href = '/dashboard'; }
     else if (data.needsVerification) {
-      document.getElementById('verifyEmail').textContent = email;
-      switchTab('verify');
-    } else { showErr('loginError', data.error || 'Login failed.'); }
-  } catch(e) { showErr('loginError', 'Connection error. Please try again.'); }
-  btn.disabled = false; btn.textContent = 'Sign In';
+      showVerifyNotice(email);
+    } else { showErr('loginError', data.error || t('auth.err_login_failed')); }
+  } catch(e) { showErr('loginError', t('auth.err_connection')); }
+  btn.disabled = false; btn.textContent = t('auth.sign_in');
 }
 
 async function doSignup() {
@@ -258,49 +284,47 @@ async function doSignup() {
   const password = document.getElementById('signupPassword').value;
   const phone = document.getElementById('signupPhone').value.trim();
   const country = document.getElementById('signupCountry').value;
-  if (!firstName || !lastName || !email || !password) return showErr('signupError', 'Please fill in all required fields.');
-  if (password.length < 8) return showErr('signupError', 'Password must be at least 8 characters.');
+  if (!firstName || !lastName || !email || !password) return showErr('signupError', t('auth.err_fill_required'));
+  if (password.length < 8) return showErr('signupError', t('auth.err_password_length'));
   const btn = document.getElementById('signupBtn');
-  btn.disabled = true; btn.textContent = 'Creating account...';
+  btn.disabled = true; btn.textContent = t('auth.creating_account');
   try {
-    const res = await fetch('/api/auth/register', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({firstName, lastName, email, password, phone, country}) });
+    const res = await fetch('/api/auth/register', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({firstName, lastName, email, password, phone, country, language: window.currentLang || 'en'}) });
     const data = await res.json();
     if (data.success) {
-      document.getElementById('verifyEmail').textContent = email;
-      switchTab('verify');
-    } else { showErr('signupError', data.error || 'Registration failed.'); }
-  } catch(e) { showErr('signupError', 'Connection error. Please try again.'); }
-  btn.disabled = false; btn.textContent = 'Create Account';
+      showVerifyNotice(email);
+    } else { showErr('signupError', data.error || t('auth.err_registration_failed')); }
+  } catch(e) { showErr('signupError', t('auth.err_connection')); }
+  btn.disabled = false; btn.textContent = t('auth.tab_create');
 }
 
 async function doForgot() {
   hideErr('forgotError');
   const email = document.getElementById('forgotEmail').value.trim();
-  if (!email) return showErr('forgotError', 'Please enter your email address.');
+  if (!email) return showErr('forgotError', t('auth.err_email_required'));
   try {
     await fetch('/api/auth/forgot-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email}) });
-    showSucc('forgotSuccess', 'If that email exists, a reset link has been sent.');
-  } catch(e) { showErr('forgotError', 'Failed. Please try again.'); }
+    showSucc('forgotSuccess', t('auth.reset_link_sent'));
+  } catch(e) { showErr('forgotError', t('auth.err_failed_retry')); }
 }
 
 async function doReset() {
   hideErr('resetError');
   const password = document.getElementById('resetPassword').value;
   const confirm = document.getElementById('resetConfirm').value;
-  if (password.length < 8) return showErr('resetError', 'Password must be at least 8 characters.');
-  if (password !== confirm) return showErr('resetError', 'Passwords do not match.');
+  if (password.length < 8) return showErr('resetError', t('auth.err_password_length'));
+  if (password !== confirm) return showErr('resetError', t('auth.err_passwords_mismatch'));
   try {
     const res = await fetch('/api/auth/reset-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: resetToken, password}) });
     const data = await res.json();
-    if (data.success) { showSucc('resetSuccess', 'Password reset successfully. You can now sign in.'); setTimeout(() => switchTab('login'), 2000); }
-    else showErr('resetError', data.error || 'Reset failed.');
-  } catch(e) { showErr('resetError', 'Failed. Please try again.'); }
+    if (data.success) { showSucc('resetSuccess', t('auth.password_reset_success')); setTimeout(() => switchTab('login'), 2000); }
+    else showErr('resetError', data.error || t('auth.err_reset_failed'));
+  } catch(e) { showErr('resetError', t('auth.err_failed_retry')); }
 }
 
 async function resendVerification() {
-  const email = document.getElementById('verifyEmail').textContent;
-  await fetch('/api/auth/resend-verification', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email}) });
-  alert('Verification email resent. Please check your inbox.');
+  await fetch('/api/auth/resend-verification', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email: pendingVerifyEmail}) });
+  alert(t('auth.resend_alert'));
 }
 
 // Enter key support
