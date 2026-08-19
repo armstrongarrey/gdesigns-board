@@ -403,12 +403,16 @@ INSERT INTO cms_content (section, key, value, type) VALUES
 Board Secretary Q&A
 Basic board report
 3 core financial calculators
+Website Analyzer (1 scan/month)
+Entrepreneur Mode & Scenario Comparison
 1 team member', 'textarea'),
 ('pricing', 'pro_features', '10 consultations per month
 All 29 directors
 Report download (PDF)
 Full consultation history
 Full financial calculator suite (10 tools)
+Market Research & Website Analyzer (5-10/month)
+Research-backed Entrepreneur Mode
 2 team members
 Priority email support
 Board Secretary deep-dive', 'textarea'),
@@ -417,6 +421,8 @@ All 29 directors
 PDF + Word download
 Video report (HeyGen)
 Full financial calculator suite (10 tools)
+Unlimited Market Research & Website Analyzer
+Research-backed Entrepreneur Mode
 5 team members
 Custom AI director personas
 Priority WhatsApp support
@@ -456,10 +462,13 @@ UPDATE cms_content SET value = '3 consultations per month
 Board Secretary Q&A
 Basic board report
 3 core financial calculators
+Website Analyzer (1 scan/month)
+Entrepreneur Mode & Scenario Comparison
 1 team member', value_fr = NULL WHERE section='pricing' AND key='starter_features' AND value='3 consultations per month
 5 starter directors
 Board Secretary Q&A
 Basic board report
+3 core financial calculators
 1 team member';
 
 UPDATE cms_content SET value = '10 consultations per month
@@ -467,13 +476,16 @@ All 29 directors
 Report download (PDF)
 Full consultation history
 Full financial calculator suite (10 tools)
+Market Research & Website Analyzer (5-10/month)
+Research-backed Entrepreneur Mode
 2 team members
 Priority email support
 Board Secretary deep-dive', value_fr = NULL WHERE section='pricing' AND key='pro_features' AND value='10 consultations per month
 All 29 directors
 Report download (PDF)
 Full consultation history
-3 team members
+Full financial calculator suite (10 tools)
+2 team members
 Priority email support
 Board Secretary deep-dive';
 
@@ -482,6 +494,8 @@ All 29 directors
 PDF + Word download
 Video report (HeyGen)
 Full financial calculator suite (10 tools)
+Unlimited Market Research & Website Analyzer
+Research-backed Entrepreneur Mode
 5 team members
 Custom AI director personas
 Priority WhatsApp support
@@ -489,7 +503,8 @@ Full consultation history', value_fr = NULL WHERE section='pricing' AND key='bus
 All 29 directors
 PDF + Word download
 Video report (HeyGen)
-6 team members
+Full financial calculator suite (10 tools)
+5 team members
 Custom AI director personas
 Priority WhatsApp support
 Full consultation history';
