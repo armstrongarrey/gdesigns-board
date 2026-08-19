@@ -627,6 +627,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div id="opportunityPlanSection" style="margin-top:20px;max-width:400px">
           <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px" data-i18n="ent.build_plan_for">Build a full plan for one of these</label>
           <select class="form-input" id="opportunityPlanSelect" style="margin-bottom:8px"></select>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px" data-i18n="ent.financial_estimates_optional">Optional — add real numbers for a computed financial snapshot instead of an AI estimate</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
+            <input class="form-input" type="number" id="estRevenueOpp" data-i18n-placeholder="ent.est_monthly_revenue" placeholder="Monthly revenue" style="font-size:12px;padding:8px">
+            <input class="form-input" type="number" id="estCostsOpp" data-i18n-placeholder="ent.est_monthly_costs" placeholder="Monthly costs" style="font-size:12px;padding:8px">
+            <input class="form-input" type="number" id="estStartupOpp" data-i18n-placeholder="ent.est_startup_cost" placeholder="Startup cost" style="font-size:12px;padding:8px">
+          </div>
           <button class="btn-primary" style="width:100%;padding:11px" onclick="generateBusinessPlan()" id="genPlanBtnOpp">📋 <span data-i18n="ent.generate_plan">Generate Business Plan</span></button>
         </div>
 
@@ -653,7 +659,15 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
         <div id="validationDetails" style="display:flex;flex-direction:column;gap:12px"></div>
 
-        <button class="btn-primary" style="width:100%;padding:11px;margin-top:20px" onclick="generateBusinessPlan()" id="genPlanBtnVal">📋 <span data-i18n="ent.generate_plan">Generate Business Plan</span></button>
+        <div style="max-width:400px;margin-top:20px">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px" data-i18n="ent.financial_estimates_optional">Optional — add real numbers for a computed financial snapshot instead of an AI estimate</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
+            <input class="form-input" type="number" id="estRevenueVal" data-i18n-placeholder="ent.est_monthly_revenue" placeholder="Monthly revenue" style="font-size:12px;padding:8px">
+            <input class="form-input" type="number" id="estCostsVal" data-i18n-placeholder="ent.est_monthly_costs" placeholder="Monthly costs" style="font-size:12px;padding:8px">
+            <input class="form-input" type="number" id="estStartupVal" data-i18n-placeholder="ent.est_startup_cost" placeholder="Startup cost" style="font-size:12px;padding:8px">
+          </div>
+        </div>
+        <button class="btn-primary" style="width:100%;padding:11px" onclick="generateBusinessPlan()" id="genPlanBtnVal">📋 <span data-i18n="ent.generate_plan">Generate Business Plan</span></button>
 
         <div id="businessPlanSectionVal"></div>
 
@@ -1959,12 +1973,21 @@ async function generateBusinessPlan() {
   let body = { language: window.currentLang || 'en' };
   if (isOpp) {
     const select = document.getElementById('opportunityPlanSelect');
-    if (!select.value) { alert('Please choose which opportunity to build a plan for.'); return; }
+    if (!select.value) { alert(t('ent.choose_opportunity_alert')); return; }
     body.chosenOpportunityName = select.value;
   }
 
+  // Optional real numbers — if the founder filled these in, the backend runs
+  // real math instead of asking the AI to estimate a plausible-sounding figure.
+  const revEl = document.getElementById(isOpp ? 'estRevenueOpp' : 'estRevenueVal');
+  const costEl = document.getElementById(isOpp ? 'estCostsOpp' : 'estCostsVal');
+  const startupEl = document.getElementById(isOpp ? 'estStartupOpp' : 'estStartupVal');
+  if (revEl && revEl.value !== '') body.estimatedMonthlyRevenue = revEl.value;
+  if (costEl && costEl.value !== '') body.estimatedMonthlyCosts = costEl.value;
+  if (startupEl && startupEl.value !== '') body.estimatedStartupCost = startupEl.value;
+
   btn.disabled = true;
-  btn.textContent = 'Building your plan...';
+  btn.textContent = t('ent.building_plan');
   targetDiv.innerHTML = '';
 
   try {
@@ -1973,17 +1996,17 @@ async function generateBusinessPlan() {
     });
     const data = await res.json();
     btn.disabled = false;
-    btn.textContent = '📋 Generate Business Plan';
+    btn.textContent = '📋 ' + t('ent.generate_plan');
 
     if (!res.ok) {
-      targetDiv.innerHTML = `<div style="color:#ff8080;font-size:13px;margin-top:12px">${data.error || 'Failed to generate plan.'}</div>`;
+      targetDiv.innerHTML = `<div style="color:#ff8080;font-size:13px;margin-top:12px">${data.error || t('ent.plan_generation_failed')}</div>`;
       return;
     }
     renderBusinessPlan(targetDiv, data.businessPlan);
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = '📋 Generate Business Plan';
-    targetDiv.innerHTML = `<div style="color:#ff8080;font-size:13px;margin-top:12px">Connection error. Please try again.</div>`;
+    btn.textContent = '📋 ' + t('ent.generate_plan');
+    targetDiv.innerHTML = `<div style="color:#ff8080;font-size:13px;margin-top:12px">${t('board.connection_error')}</div>`;
   }
 }
 
@@ -2037,7 +2060,10 @@ function renderBusinessPlan(container, plan) {
         <div style="background:var(--bg3);border-radius:8px;padding:12px"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">${t('plan.days_61_90')}</div>${(ex.phase_90_days||[]).map(step=>`<div style="font-size:11.5px;color:var(--text2);margin-bottom:4px">• ${step}</div>`).join('')}</div>
       </div>
 
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">${t('plan.financial_snapshot')}</div>
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;display:flex;align-items:center;gap:8px">
+        ${t('plan.financial_snapshot')}
+        ${plan.computed_financials ? `<span style="font-size:9px;font-weight:700;color:var(--green);background:rgba(16,185,129,.15);padding:2px 7px;border-radius:4px;text-transform:none;letter-spacing:0">${t('plan.computed_badge')}</span>` : `<span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px;text-transform:none;letter-spacing:0">${t('plan.estimated_badge')}</span>`}
+      </div>
       <div style="background:var(--bg3);border-radius:8px;padding:14px">
         ${listRow(t('plan.startup_cost'), fin.estimated_startup_cost)}
         ${listRow(t('plan.monthly_operating_cost'), fin.monthly_operating_cost)}
