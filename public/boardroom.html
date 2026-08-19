@@ -377,6 +377,9 @@ document.addEventListener('arreyon:langchange', () => {
   if (window.currentRemainingConsultations !== undefined) {
     document.getElementById('usagePill').textContent = window.currentRemainingConsultations + ' ' + t('board.consultations_left');
   }
+  // If a conversation is currently open, immediately show whatever's already
+  // cached for the new language, then fetch anything still missing.
+  if (active) renderMsgs();
 });
 
 async function init() {
@@ -589,7 +592,7 @@ function selectDir(id) {
     <div><div class="who-name">${d.name}</div><div class="who-role">${d.role} · ${aiLabel}</div></div>
     <div class="who-status"><div class="odot"></div>Online</div>`;
 
-  if (!convos[id]) convos[id] = [{ from:'them', text: d.welcome, time: ts() }];
+  if (!convos[id]) convos[id] = [{ from:'them', origText: d.welcome, origLang: 'en', translations: {}, time: ts() }];
   renderMsgs();
   document.getElementById('chatInput').focus();
 }
@@ -597,14 +600,69 @@ function selectDir(id) {
 function ts() { return new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
 
-function renderMsgs() {
+// Returns what to actually display for a message right now: the original
+// text if we're viewing in its original language, a cached translation if
+// one exists, or the original as a fallback while a translation is fetched
+// in the background (see translateActiveConversation).
+function getDisplayText(m) {
+  const lang = window.currentLang || 'en';
+  if (m.origLang === lang) return m.origText;
+  return (m.translations && m.translations[lang]) || m.origText;
+}
+
+// Renders the active conversation as-is (using whatever's cached right now),
+// without triggering a new translation fetch — used when translations arrive
+// asynchronously, to avoid re-triggering translateActiveConversation in a loop.
+function renderMsgsOnly() {
   const box = document.getElementById('msgs');
   const msgs = convos[active.id] || [];
   box.innerHTML = msgs.map(m => {
-    if (m.from === 'them') return `<div class="mrow them"><div class="mav" style="background:${active.bg};color:${active.fg}">${active.init}</div><div class="bub">${esc(m.text)}</div></div><div class="mtime">${m.time}</div>`;
-    return `<div class="mrow me"><div class="bub">${esc(m.text)}</div><div class="mav" style="background:#2a1f4e;color:#9070d0">YOU</div></div><div class="mtime">${m.time}</div>`;
+    const displayText = getDisplayText(m);
+    if (m.from === 'them') return `<div class="mrow them"><div class="mav" style="background:${active.bg};color:${active.fg}">${active.init}</div><div class="bub">${esc(displayText)}</div></div><div class="mtime">${m.time}</div>`;
+    return `<div class="mrow me"><div class="bub">${esc(displayText)}</div><div class="mav" style="background:#2a1f4e;color:#9070d0">YOU</div></div><div class="mtime">${m.time}</div>`;
   }).join('');
   box.scrollTop = box.scrollHeight;
+}
+
+// Entry point used everywhere else in the app — renders, then checks whether
+// anything on screen needs translating for the current language and fetches
+// it in the background if so.
+function renderMsgs() {
+  renderMsgsOnly();
+  translateActiveConversation(window.currentLang || 'en');
+}
+
+let translationInFlight = false;
+async function translateActiveConversation(targetLang) {
+  if (!active || translationInFlight) return;
+  const msgs = convos[active.id] || [];
+  const needsTranslation = msgs
+    .map((m, i) => ({ m, i }))
+    .filter(({ m }) => m.origLang !== targetLang && !(m.translations && m.translations[targetLang]));
+
+  if (!needsTranslation.length) return;
+
+  translationInFlight = true;
+  try {
+    const res = await fetch('/api/translate-messages', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: needsTranslation.map(({ m, i }) => ({ id: i, text: m.origText })), targetLanguage: targetLang })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      needsTranslation.forEach(({ m, i }) => {
+        const translated = data.translated[i];
+        if (translated) {
+          if (!m.translations) m.translations = {};
+          m.translations[targetLang] = translated;
+        }
+      });
+      // Only re-render if the user hasn't switched away from this conversation
+      // or language again while the request was in flight
+      if (active && window.currentLang === targetLang) renderMsgsOnly();
+    }
+  } catch (e) { /* leave originals displayed — non-fatal */ }
+  translationInFlight = false;
 }
 
 function showTyping() {
@@ -624,7 +682,8 @@ async function sendMsg() {
   document.getElementById('sendBtn').disabled = true;
   inp.value = ''; inp.style.height = 'auto';
 
-  convos[active.id].push({ from:'you', text, time:ts() });
+  const currentLang = window.currentLang || 'en';
+  convos[active.id].push({ from:'you', origText: text, origLang: currentLang, translations: {}, time:ts() });
   renderMsgs();
   showTyping();
 
@@ -634,12 +693,16 @@ async function sendMsg() {
     : 'CONVERSATION STYLE: Advisor mode. Challenge their thinking, offer contrarian views. End with ONE pointed question.';
   const fullPersona = `${active.persona}\n\n${style}\n\nRULES: Never lecture unprompted. Always end with exactly ONE question. Keep responses to 2-3 paragraphs. Respond naturally to short messages like greetings.`;
 
-  const history = convos[active.id].slice(-16).map(m => ({ role: m.from==='them'?'assistant':'user', content: m.text }));
+  // Use each message's CURRENTLY DISPLAYED text (not necessarily its original)
+  // so the AI sees a consistent single-language history matching what the
+  // user is actually looking at, rather than a mix of languages if some
+  // messages have been translated and others haven't.
+  const history = convos[active.id].slice(-16).map(m => ({ role: m.from==='them'?'assistant':'user', content: getDisplayText(m) }));
 
   try {
     const res = await fetch('/api/board/chat', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ persona: fullPersona, messages: history, ai: active.ai, directorId: active.id, language: window.currentLang || 'en' })
+      body: JSON.stringify({ persona: fullPersona, messages: history, ai: active.ai, directorId: active.id, language: currentLang })
     });
     const data = await res.json();
     removeTyping();
@@ -649,16 +712,16 @@ async function sendMsg() {
         document.getElementById('limitBanner').innerHTML = data.error + ' <a href="/dashboard">Upgrade now</a>';
         document.getElementById('limitBanner').classList.add('show');
       } else {
-        convos[active.id].push({ from:'them', text:t('board.chat_error'), time:ts() });
+        convos[active.id].push({ from:'them', origText:t('board.chat_error'), origLang: currentLang, translations: {}, time:ts() });
         renderMsgs();
       }
     } else {
-      convos[active.id].push({ from:'them', text: data.reply, time:ts() });
+      convos[active.id].push({ from:'them', origText: data.reply, origLang: currentLang, translations: {}, time:ts() });
       renderMsgs();
     }
   } catch(e) {
     removeTyping();
-    convos[active.id].push({ from:'them', text:t('board.connection_error'), time:ts() });
+    convos[active.id].push({ from:'them', origText:t('board.connection_error'), origLang: currentLang, translations: {}, time:ts() });
     renderMsgs();
   }
 
