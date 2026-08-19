@@ -1134,6 +1134,19 @@ app.put('/api/user/profile', authRequired, async (req, res) => {
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
 
+// Called silently whenever a logged-in user switches the app's display
+// language, so future emails (verification, password reset, plan activation,
+// team invites) follow whichever language they're actually using the app in,
+// rather than staying locked to whatever they picked at signup.
+app.put('/api/user/language', authRequired, async (req, res) => {
+  const { language } = req.body;
+  const lang = language === 'fr' ? 'fr' : 'en';
+  try {
+    await pool.query('UPDATE users SET preferred_language = $1 WHERE id = $2', [lang, req.userId]);
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: 'Failed' }); }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // TEAM MEMBERS — invite, list, permissions, removal
 // Only account owners (users with no team_owner_id of their own) can manage
