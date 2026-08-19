@@ -271,6 +271,238 @@ async function resolveAccount(userId) {
   return user;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// GOOGLE ANALYTICS INTEGRATION
+// A separate OAuth flow from login — requesting read-only Analytics access
+// for an already-logged-in user, not authenticating them. Reuses the same
+// Google Cloud OAuth client (GOOGLE_CLIENT_ID/SECRET) as login, but with a
+// different scope and callback URL. Requires the Google Analytics Data API
+// (and Admin API, for listing properties) to be enabled on that same Google
+// Cloud project, and this callback URL added to its authorized redirect URIs
+// — both are one-time setup steps in Google Cloud Console, not something
+// this server can do on its own.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const GA_SCOPE = 'https://www.googleapis.com/auth/analytics.readonly';
+const GA_CALLBACK_URL = `${BASE_URL}/api/integrations/google-analytics/callback`;
+
+app.get('/api/integrations/google-analytics/connect', authRequired, async (req, res) => {
+  const account = await resolveAccount(req.userId);
+  if (!account) return res.status(404).json({ error: 'Account not found' });
+  if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can connect integrations' });
+
+  // Encode the owner's ID into state so the callback knows who this is for —
+  // this request is opened as a full page redirect, not a fetch, so there's
+  // no other way to carry that context through Google's OAuth round-trip.
+  const state = jwt.sign({ ownerId: req.userId }, JWT_SECRET, { expiresIn: '10m' });
+  const params = new URLSearchParams({
+    client_id: process.env.GOOGLE_CLIENT_ID,
+    redirect_uri: GA_CALLBACK_URL,
+    response_type: 'code',
+    scope: GA_SCOPE,
+    access_type: 'offline',
+    prompt: 'consent',
+    state
+  });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+
+app.get('/api/integrations/google-analytics/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  if (error || !code) return res.redirect('/dashboard?section=integrations&error=ga_connect_failed');
+
+  let ownerId;
+  try {
+    ownerId = jwt.verify(state, JWT_SECRET).ownerId;
+  } catch (e) {
+    return res.redirect('/dashboard?section=integrations&error=ga_connect_failed');
+  }
+
+  try {
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: GA_CALLBACK_URL,
+        grant_type: 'authorization_code'
+      })
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok || !tokenData.refresh_token) {
+      console.error('GA token exchange failed:', tokenData);
+      return res.redirect('/dashboard?section=integrations&error=ga_connect_failed');
+    }
+
+    const expiresAt = new Date(Date.now() + (tokenData.expires_in || 3600) * 1000);
+    await pool.query(
+      `INSERT INTO google_analytics_connections (owner_id, access_token, refresh_token, token_expires_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (owner_id) DO UPDATE SET access_token = $2, refresh_token = $3, token_expires_at = $4, connected_at = NOW()`,
+      [ownerId, tokenData.access_token, tokenData.refresh_token, expiresAt]
+    );
+
+    res.redirect('/dashboard?section=integrations&connected=google-analytics');
+  } catch (e) {
+    console.error('GA callback error:', e.message);
+    res.redirect('/dashboard?section=integrations&error=ga_connect_failed');
+  }
+});
+
+// Refreshes the access token if it's expired (or close to it), returns a
+// valid access token ready to use. Google access tokens last ~1 hour;
+// refresh tokens are long-lived and reused indefinitely.
+async function getValidGAAccessToken(connection) {
+  const expiresAt = new Date(connection.token_expires_at);
+  const now = new Date();
+  if (expiresAt.getTime() - now.getTime() > 5 * 60 * 1000) return connection.access_token; // still valid for 5+ more minutes
+
+  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      refresh_token: connection.refresh_token,
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      grant_type: 'refresh_token'
+    })
+  });
+  const tokenData = await tokenRes.json();
+  if (!tokenRes.ok) throw new Error('Failed to refresh Google Analytics access token: ' + (tokenData.error || tokenRes.status));
+
+  const newExpiresAt = new Date(Date.now() + (tokenData.expires_in || 3600) * 1000);
+  await pool.query('UPDATE google_analytics_connections SET access_token = $1, token_expires_at = $2 WHERE id = $3',
+    [tokenData.access_token, newExpiresAt, connection.id]);
+
+  return tokenData.access_token;
+}
+
+app.get('/api/integrations/google-analytics/status', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query('SELECT id, ga_account_name, property_id, property_name, connected_at, last_synced_at FROM google_analytics_connections WHERE owner_id = $1', [account.id]);
+    if (!result.rows.length) return res.json({ connected: false });
+    res.json({ connected: true, ...result.rows[0] });
+  } catch (e) { res.status(500).json({ error: 'Failed to load integration status' }); }
+});
+
+app.get('/api/integrations/google-analytics/properties', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const connResult = await pool.query('SELECT * FROM google_analytics_connections WHERE owner_id = $1', [account.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'Google Analytics is not connected' });
+    const connection = connResult.rows[0];
+
+    const accessToken = await getValidGAAccessToken(connection);
+    const accountSummariesRes = await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries', {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    const summaries = await accountSummariesRes.json();
+    if (!accountSummariesRes.ok) throw new Error(summaries.error?.message || 'Failed to list Analytics properties');
+
+    const properties = [];
+    (summaries.accountSummaries || []).forEach(acc => {
+      (acc.propertySummaries || []).forEach(p => {
+        properties.push({ propertyId: p.property.replace('properties/', ''), propertyName: p.displayName, accountName: acc.displayName });
+      });
+    });
+
+    res.json({ properties });
+  } catch (e) {
+    console.error('GA properties error:', e.message);
+    res.status(500).json({ error: 'Failed to load Analytics properties. Try reconnecting Google Analytics.' });
+  }
+});
+
+app.put('/api/integrations/google-analytics/property', authRequired, async (req, res) => {
+  const { propertyId, propertyName, accountName } = req.body;
+  if (!propertyId) return res.status(400).json({ error: 'Property ID is required' });
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(
+      'UPDATE google_analytics_connections SET property_id = $1, property_name = $2, ga_account_name = $3 WHERE owner_id = $4 RETURNING id',
+      [propertyId, propertyName || null, accountName || null, account.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Google Analytics is not connected' });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to save selected property' }); }
+});
+
+app.delete('/api/integrations/google-analytics', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can manage integrations' });
+    await pool.query('DELETE FROM google_analytics_connections WHERE owner_id = $1', [account.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to disconnect' }); }
+});
+
+// Fetches real metrics from the GA4 Data API for the given date range —
+// sessions, users, conversions, bounce rate, top traffic source.
+async function fetchGAMetrics(connection, days = 30) {
+  const accessToken = await getValidGAAccessToken(connection);
+  const body = {
+    dateRanges: [{ startDate: `${days}daysAgo`, endDate: 'today' }],
+    metrics: [
+      { name: 'sessions' }, { name: 'totalUsers' }, { name: 'conversions' },
+      { name: 'bounceRate' }, { name: 'averageSessionDuration' }
+    ],
+    dimensions: [{ name: 'sessionDefaultChannelGroup' }],
+    orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+    limit: 1
+  };
+
+  const res = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${connection.property_id}:runReport`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || 'Failed to fetch Analytics data');
+
+  const row = data.rows?.[0];
+  if (!row) return { sessions: 0, users: 0, conversions: 0, conversionRate: 0, bounceRate: 0, avgSessionDurationSec: 0, topSource: null };
+
+  const sessions = parseInt(row.metricValues[0].value, 10) || 0;
+  const users = parseInt(row.metricValues[1].value, 10) || 0;
+  const conversions = parseInt(row.metricValues[2].value, 10) || 0;
+  const bounceRate = parseFloat(row.metricValues[3].value) || 0;
+  const avgSessionDurationSec = Math.round(parseFloat(row.metricValues[4].value) || 0);
+  const topSource = row.dimensionValues[0].value;
+  const conversionRate = sessions > 0 ? round2((conversions / sessions) * 100) : 0;
+
+  return { sessions, users, conversions, conversionRate, bounceRate: round2(bounceRate * 100), avgSessionDurationSec, topSource };
+}
+
+app.get('/api/integrations/google-analytics/metrics', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const connResult = await pool.query('SELECT * FROM google_analytics_connections WHERE owner_id = $1', [account.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'Google Analytics is not connected' });
+    const connection = connResult.rows[0];
+    if (!connection.property_id) return res.status(400).json({ error: 'No Analytics property selected yet' });
+
+    const metrics = await fetchGAMetrics(connection, 30);
+
+    // Save today's snapshot for trend charts and for the monitoring system to
+    // compare against later — harmless if called more than once today.
+    await pool.query(
+      `INSERT INTO analytics_snapshots (connection_id, snapshot_date, sessions, users, conversions, conversion_rate, bounce_rate, avg_session_duration_sec, top_source, raw_data)
+       VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (connection_id, snapshot_date) DO UPDATE SET sessions = $2, users = $3, conversions = $4, conversion_rate = $5, bounce_rate = $6, avg_session_duration_sec = $7, top_source = $8, raw_data = $9`,
+      [connection.id, metrics.sessions, metrics.users, metrics.conversions, metrics.conversionRate, metrics.bounceRate, metrics.avgSessionDurationSec, metrics.topSource, JSON.stringify(metrics)]
+    );
+    await pool.query('UPDATE google_analytics_connections SET last_synced_at = NOW() WHERE id = $1', [connection.id]);
+
+    res.json({ metrics, propertyName: connection.property_name });
+  } catch (e) {
+    console.error('GA metrics error:', e.message);
+    res.status(500).json({ error: 'Failed to load Analytics metrics. Try reconnecting Google Analytics.' });
+  }
+});
+
 function adminRequired(req, res, next) {
   const token = req.cookies.arreyon_admin_token || req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Admin authentication required' });
