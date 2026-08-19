@@ -600,7 +600,63 @@ function addMsg(text,from){
   timeEl.className='cmsg-time';timeEl.style.textAlign=from==='board'?'left':'right';
   timeEl.textContent=ts();box.appendChild(timeEl);
   box.scrollTop=box.scrollHeight;
+
+  // Track this message separately from chatHistory (which stays untouched,
+  // exactly as before, for AI request payloads) so we can retranslate what's
+  // ON SCREEN if the visitor switches language mid-conversation — chat replies
+  // are generated once, in whichever language was active at the time, and
+  // nothing else would ever revisit them after the fact.
+  const bubbleEl = row.querySelector('.cmsg-bub');
+  displayMessages.push({ bubbleEl, origText: text, origLang: window.currentLang || 'en', translations: {} });
 }
+
+let displayMessages = [];
+let chatTranslationInFlight = false;
+
+async function translateVisibleChat(targetLang) {
+  if (chatTranslationInFlight) return;
+  const needsTranslation = displayMessages
+    .map((m, i) => ({ m, i }))
+    .filter(({ m }) => m.origLang !== targetLang && !(m.translations && m.translations[targetLang]));
+  if (!needsTranslation.length) return;
+
+  chatTranslationInFlight = true;
+  try {
+    const res = await fetch('/api/translate-messages', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: needsTranslation.map(({ m, i }) => ({ id: i, text: m.origText })), targetLanguage: targetLang })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      needsTranslation.forEach(({ m, i }) => {
+        const translated = data.translated[i];
+        if (translated) {
+          m.translations[targetLang] = translated;
+          // Only apply if we're still viewing that language when it arrives
+          if (window.currentLang === targetLang && m.bubbleEl) {
+            m.bubbleEl.innerHTML = translated.replace(/\n/g,'<br>');
+          }
+        }
+      });
+    }
+  } catch (e) { /* leave originals displayed — non-fatal */ }
+  chatTranslationInFlight = false;
+}
+
+// Re-display whatever's already cached for the new language immediately
+// (no flash of missing content), then fetch anything still needed.
+function applyChatLanguage(targetLang) {
+  displayMessages.forEach(m => {
+    if (!m.bubbleEl) return;
+    const displayText = m.origLang === targetLang ? m.origText : (m.translations[targetLang] || m.origText);
+    m.bubbleEl.innerHTML = displayText.replace(/\n/g,'<br>');
+  });
+  translateVisibleChat(targetLang);
+}
+
+document.addEventListener('arreyon:langchange', (e) => {
+  if (displayMessages.length) applyChatLanguage(e.detail.lang);
+});
 
 function showTyping(){
   const box=document.getElementById('chatMsgs');
