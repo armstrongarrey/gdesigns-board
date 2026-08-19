@@ -116,6 +116,92 @@ async function sendEmail(to, subject, html) {
   }
 }
 
+// ── Bilingual transactional email templates ─────────────────────────────────
+// Static, hand-written EN/FR pairs rather than AI translation — these are
+// short, fixed-structure emails where a translated template reviewed once is
+// more reliable and much cheaper than an AI call on every send.
+const EMAIL_TEMPLATES = {
+  verify: {
+    en: (p) => ({
+      subject: 'Verify your Arreyon Consult account',
+      html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+        <h2>Welcome to Arreyon Consult, ${p.firstName}!</h2>
+        <p>Please verify your email address to activate your account.</p>
+        <a href="${p.verifyUrl}" style="display:inline-block;background:#6C3Bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Verify Email</a>
+        <p style="color:#666;font-size:12px;margin-top:20px">This link expires in 24 hours. If you did not create this account, ignore this email.</p>
+        <hr>
+        <p style="color:#999;font-size:11px">Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com</p>
+      </div>`
+    }),
+    fr: (p) => ({
+      subject: 'Vérifiez votre compte Arreyon Consult',
+      html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+        <h2>Bienvenue sur Arreyon Consult, ${p.firstName} !</h2>
+        <p>Veuillez vérifier votre adresse e-mail pour activer votre compte.</p>
+        <a href="${p.verifyUrl}" style="display:inline-block;background:#6C3Bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Vérifier l'e-mail</a>
+        <p style="color:#666;font-size:12px;margin-top:20px">Ce lien expire dans 24 heures. Si vous n'êtes pas à l'origine de ce compte, ignorez cet e-mail.</p>
+        <hr>
+        <p style="color:#999;font-size:11px">Arreyon Consult par G-DESIGNS LTD · consult.gdesignsme.com</p>
+      </div>`
+    })
+  },
+  resendVerify: {
+    en: (p) => ({
+      subject: 'Verify your Arreyon Consult account',
+      html: `<p>Click <a href="${p.verifyUrl}">here</a> to verify your email. Link expires in 24 hours.</p>`
+    }),
+    fr: (p) => ({
+      subject: 'Vérifiez votre compte Arreyon Consult',
+      html: `<p>Cliquez <a href="${p.verifyUrl}">ici</a> pour vérifier votre e-mail. Le lien expire dans 24 heures.</p>`
+    })
+  },
+  resetPassword: {
+    en: (p) => ({
+      subject: 'Reset your Arreyon Consult password',
+      html: `<p>Click <a href="${p.resetUrl}">here</a> to reset your password. Link expires in 1 hour.</p>`
+    }),
+    fr: (p) => ({
+      subject: 'Réinitialisez votre mot de passe Arreyon Consult',
+      html: `<p>Cliquez <a href="${p.resetUrl}">ici</a> pour réinitialiser votre mot de passe. Le lien expire dans 1 heure.</p>`
+    })
+  },
+  planActive: {
+    en: (p) => ({
+      subject: 'Your Arreyon Consult plan is now active!',
+      html: `<p>Hi ${p.firstName},</p>
+        <p>Your <strong>${p.plan}</strong> plan has been activated. Welcome to the board.</p>
+        <p><a href="${p.dashboardUrl}">Go to your dashboard</a></p>`
+    }),
+    fr: (p) => ({
+      subject: 'Votre forfait Arreyon Consult est maintenant actif !',
+      html: `<p>Bonjour ${p.firstName},</p>
+        <p>Votre forfait <strong>${p.plan}</strong> a été activé. Bienvenue au conseil.</p>
+        <p><a href="${p.dashboardUrl}">Accéder à votre tableau de bord</a></p>`
+    })
+  },
+  teamInvite: {
+    en: (p) => ({
+      subject: `${p.ownerName} invited you to join their Arreyon Consult team`,
+      html: `<p>${p.ownerName} has invited you to join their team on Arreyon Consult.</p>
+       <p><a href="${p.inviteUrl}" style="background:#6C3BFF;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block">Accept Invitation</a></p>
+       <p>Or copy this link: ${p.inviteUrl}</p>
+       <p style="color:#888;font-size:13px">This invitation expires in 7 days.</p>`
+    }),
+    fr: (p) => ({
+      subject: `${p.ownerName} vous a invité à rejoindre son équipe Arreyon Consult`,
+      html: `<p>${p.ownerName} vous a invité à rejoindre son équipe sur Arreyon Consult.</p>
+       <p><a href="${p.inviteUrl}" style="background:#6C3BFF;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block">Accepter l'invitation</a></p>
+       <p>Ou copiez ce lien : ${p.inviteUrl}</p>
+       <p style="color:#888;font-size:13px">Cette invitation expire dans 7 jours.</p>`
+    })
+  }
+};
+
+function buildEmail(type, lang, params) {
+  const langKey = lang === 'fr' ? 'fr' : 'en';
+  return EMAIL_TEMPLATES[type][langKey](params);
+}
+
 // ── GOOGLE OAUTH ───────────────────────────────────────────────────────────
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID,
@@ -233,7 +319,7 @@ function setCookie(res, token, name = 'arreyon_token') {
 
 // Register
 app.post('/api/auth/register', async (req, res) => {
-  const { firstName, lastName, email, password, phone, country } = req.body;
+  const { firstName, lastName, email, password, phone, country, language } = req.body;
   if (!firstName || !lastName || !email || !password) {
     return res.status(400).json({ error: 'All required fields must be filled' });
   }
@@ -244,26 +330,19 @@ app.post('/api/auth/register', async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     const token = uuidv4();
     const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const preferredLang = language === 'fr' ? 'fr' : 'en';
 
     const result = await pool.query(
       `INSERT INTO users (email, password_hash, first_name, last_name, phone, country,
-       verification_token, verification_expires, plan)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'starter') RETURNING *`,
-      [email, hash, firstName, lastName, phone, country, token, expires]
+       verification_token, verification_expires, plan, preferred_language)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'starter', $9) RETURNING *`,
+      [email, hash, firstName, lastName, phone, country, token, expires, preferredLang]
     );
     const user = result.rows[0];
 
     const verifyUrl = `${BASE_URL}/auth/verify?token=${token}`;
-    await sendEmail(email, 'Verify your Arreyon Consult account', `
-      <div style="font-family:sans-serif;max-width:500px;margin:0 auto">
-        <h2>Welcome to Arreyon Consult, ${firstName}!</h2>
-        <p>Please verify your email address to activate your account.</p>
-        <a href="${verifyUrl}" style="display:inline-block;background:#6C3Bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Verify Email</a>
-        <p style="color:#666;font-size:12px;margin-top:20px">This link expires in 24 hours. If you did not create this account, ignore this email.</p>
-        <hr>
-        <p style="color:#999;font-size:11px">Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com</p>
-      </div>
-    `);
+    const { subject, html } = buildEmail('verify', preferredLang, { firstName, verifyUrl });
+    await sendEmail(email, subject, html);
 
     res.json({ success: true, message: 'Account created. Please check your email to verify.' });
   } catch(e) {
@@ -322,8 +401,8 @@ app.post('/api/auth/resend-verification', async (req, res) => {
       [token, expires, user.id]);
 
     const verifyUrl = `${BASE_URL}/auth/verify?token=${token}`;
-    await sendEmail(email, 'Verify your Arreyon Consult account',
-      `<p>Click <a href="${verifyUrl}">here</a> to verify your email. Link expires in 24 hours.</p>`);
+    const { subject, html } = buildEmail('resendVerify', user.preferred_language, { verifyUrl });
+    await sendEmail(email, subject, html);
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: 'Failed to resend' }); }
 });
@@ -342,8 +421,8 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       [token, expires, user.id]);
 
     const resetUrl = `${BASE_URL}/auth/reset-password?token=${token}`;
-    await sendEmail(email, 'Reset your Arreyon Consult password',
-      `<p>Click <a href="${resetUrl}">here</a> to reset your password. Link expires in 1 hour.</p>`);
+    const { subject, html } = buildEmail('resetPassword', user.preferred_language, { resetUrl });
+    await sendEmail(email, subject, html);
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
@@ -891,11 +970,10 @@ app.post('/api/admin/payments/:id/approve', adminRequired, async (req, res) => {
     // Notify user
     const user = await pool.query('SELECT * FROM users WHERE id = $1', [p.user_id]);
     if (user.rows.length) {
-      await sendEmail(user.rows[0].email, 'Your Arreyon Consult plan is now active!',
-        `<p>Hi ${user.rows[0].first_name},</p>
-         <p>Your <strong>${p.plan}</strong> plan has been activated. Welcome to the board.</p>
-         <p><a href="${BASE_URL}/dashboard">Go to your dashboard</a></p>`
-      );
+      const { subject, html } = buildEmail('planActive', user.rows[0].preferred_language, {
+        firstName: user.rows[0].first_name, plan: p.plan, dashboardUrl: `${BASE_URL}/dashboard`
+      });
+      await sendEmail(user.rows[0].email, subject, html);
     }
 
     res.json({ success: true });
@@ -1089,7 +1167,7 @@ app.get('/api/team', authRequired, async (req, res) => {
 });
 
 app.post('/api/team/invite', authRequired, async (req, res) => {
-  const { email, permissions } = req.body;
+  const { email, permissions, language } = req.body;
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'Please provide a valid email address' });
 
   try {
@@ -1121,12 +1199,9 @@ app.post('/api/team/invite', authRequired, async (req, res) => {
 
     const ownerName = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.email;
     const inviteUrl = `${BASE_URL}/team-invite?token=${token}`;
-    await sendEmail(email, `${ownerName} invited you to join their Arreyon Consult team`,
-      `<p>${ownerName} has invited you to join their team on Arreyon Consult.</p>
-       <p><a href="${inviteUrl}" style="background:#6C3BFF;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block">Accept Invitation</a></p>
-       <p>Or copy this link: ${inviteUrl}</p>
-       <p style="color:#888;font-size:13px">This invitation expires in 7 days.</p>`
-    );
+    const inviteLang = language === 'fr' ? 'fr' : 'en';
+    const { subject, html } = buildEmail('teamInvite', inviteLang, { ownerName, inviteUrl });
+    await sendEmail(email, subject, html);
 
     res.json({ success: true, id: inserted.rows[0].id });
   } catch (e) {
