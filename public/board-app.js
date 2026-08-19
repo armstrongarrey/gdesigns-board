@@ -291,11 +291,15 @@ window.setAI = setAI;
 
 // ── Storage ────────────────────────────────────────────────────────────────
 function saveConvos() {
-  try { localStorage.setItem('gd_board_convos_v4', JSON.stringify(convos)); } catch(e) {}
+  // v5: message shape changed to {origText, origLang, translations} for the
+  // chat-language-switching feature — bumping the key so any old-shape
+  // conversations cached under v4 are safely ignored rather than breaking
+  // getDisplayText() (which expects origText/origLang to exist).
+  try { localStorage.setItem('gd_board_convos_v5', JSON.stringify(convos)); } catch(e) {}
 }
 function loadConvos() {
   try {
-    const raw = localStorage.getItem('gd_board_convos_v4');
+    const raw = localStorage.getItem('gd_board_convos_v5');
     if (raw) convos = JSON.parse(raw);
   } catch(e) { convos = {}; }
 }
@@ -588,7 +592,7 @@ function selectDir(d) {
   updateWhoBar(d);
 
   if (!convos[d.id]) {
-    convos[d.id] = [{ from: 'them', text: d.welcome, time: ts() }];
+    convos[d.id] = [{ from: 'them', origText: d.welcome, origLang: 'en', translations: {}, time: ts() }];
   }
   renderMsgs();
   buildChips(d);
@@ -596,31 +600,77 @@ function selectDir(d) {
   document.getElementById('ti').focus();
 }
 
+// Returns what to actually display for a message right now: the original
+// text if we're viewing in its original language, a cached translation if
+// one exists, or the original as a fallback while a translation is fetched
+// in the background (see translateActiveConversation).
+function getDisplayText(m) {
+  const lang = window.currentLang || 'en';
+  if (m.origLang === lang) return m.origText;
+  return (m.translations && m.translations[lang]) || m.origText;
+}
+
 // ── Render messages ────────────────────────────────────────────────────────
 function renderMsgs() {
+  renderMsgsOnly();
+  translateActiveConversation(window.currentLang || 'en');
+}
+
+function renderMsgsOnly() {
   const box = document.getElementById('msgs');
   const msgs = convos[active.id] || [];
   box.innerHTML = '';
   msgs.forEach(m => {
+    const displayText = getDisplayText(m);
     const row = document.createElement('div');
     row.className = 'mrow ' + (m.from === 'them' ? 'them' : 'me');
     if (m.from === 'them') {
       const aiLabel = m.ai === 'chatgpt' ? 'ChatGPT' : m.ai === 'gemini' ? 'Gemini' : 'Claude';
       const badge = m.ai ? `<span class="ai-badge badge-${m.ai}">${aiLabel}</span>` : '';
       row.innerHTML = `<div class="mav2" style="background:${active.bg};color:${active.fg}">${active.init}</div>
-                       <div><div class="bub">${esc(m.text)}</div>${badge}</div>`;
+                       <div><div class="bub">${esc(displayText)}</div>${badge}</div>`;
     } else {
-      row.innerHTML = `<div class="bub">${esc(m.text)}</div>
+      row.innerHTML = `<div class="bub">${esc(displayText)}</div>
                        <div class="mav2" style="background:#2a1f4e;color:#9070d0">YOU</div>`;
     }
     box.appendChild(row);
-    const t = document.createElement('div');
-    t.className = 'mtime';
-    t.style.textAlign = m.from === 'them' ? 'left' : 'right';
-    t.textContent = m.time;
-    box.appendChild(t);
+    const timeEl = document.createElement('div');
+    timeEl.className = 'mtime';
+    timeEl.style.textAlign = m.from === 'them' ? 'left' : 'right';
+    timeEl.textContent = m.time;
+    box.appendChild(timeEl);
   });
   box.scrollTop = box.scrollHeight;
+}
+
+let translationInFlight = false;
+async function translateActiveConversation(targetLang) {
+  if (!active || translationInFlight) return;
+  const msgs = convos[active.id] || [];
+  const needsTranslation = msgs
+    .map((m, i) => ({ m, i }))
+    .filter(({ m }) => m.origLang !== targetLang && !(m.translations && m.translations[targetLang]));
+  if (!needsTranslation.length) return;
+
+  translationInFlight = true;
+  try {
+    const res = await fetch('/api/translate-messages', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: needsTranslation.map(({ m, i }) => ({ id: i, text: m.origText })), targetLanguage: targetLang })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      needsTranslation.forEach(({ m, i }) => {
+        const translated = data.translated[i];
+        if (translated) {
+          if (!m.translations) m.translations = {};
+          m.translations[targetLang] = translated;
+        }
+      });
+      if (active && window.currentLang === targetLang) renderMsgsOnly();
+    }
+  } catch (e) { /* leave originals displayed — non-fatal */ }
+  translationInFlight = false;
 }
 
 // ── Typing indicator ───────────────────────────────────────────────────────
@@ -675,7 +725,8 @@ async function send(text) {
   busy = true;
 
   document.getElementById('errBar').classList.remove('show');
-  convos[active.id].push({ from: 'you', text, time: ts() });
+  const currentLang = window.currentLang || 'en';
+  convos[active.id].push({ from: 'you', origText: text, origLang: currentLang, translations: {}, time: ts() });
   renderMsgs();
   showTyping();
   const tiEl = document.getElementById('ti');
@@ -690,9 +741,12 @@ async function send(text) {
   const exchangeCount = convos[d.id].filter(m => m.from === 'you').length;
   const livePersona = buildLivePersona(d, exchangeCount);
 
+  // Use each message's CURRENTLY DISPLAYED text, matching what's on screen,
+  // so the AI receives a consistent single-language history rather than a
+  // mix of languages if some messages have been translated and others haven't.
   const history = (convos[d.id] || []).slice(-16).map(m => ({
     role: m.from === 'them' ? 'assistant' : 'user',
-    content: m.text
+    content: getDisplayText(m)
   }));
   if (history.length && history[0].role === 'assistant') history.shift();
   if (!history.length || history[0].role !== 'user') {
@@ -706,7 +760,7 @@ async function send(text) {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ persona: livePersona, messages: history, ai: selectedAI, language: window.currentLang || 'en' })
+      body: JSON.stringify({ persona: livePersona, messages: history, ai: selectedAI, language: currentLang })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -724,7 +778,7 @@ async function send(text) {
   if (tr) tr.remove();
 
   if (reply) {
-    convos[d.id].push({ from: 'them', text: reply, time: ts(), ai: aiUsed });
+    convos[d.id].push({ from: 'them', origText: reply, origLang: currentLang, translations: {}, time: ts(), ai: aiUsed });
     renderMsgs();
     saveConvos();
   }
@@ -752,6 +806,12 @@ if (_ti) {
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
+// If a conversation is currently open, immediately show whatever's already
+// cached for the new language, then fetch anything still missing.
+document.addEventListener('arreyon:langchange', () => {
+  if (active) renderMsgs();
+});
+
 loadConvos();
 buildScroll();
 
