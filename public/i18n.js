@@ -1811,6 +1811,17 @@ function setLanguage(lang) {
   if (lang !== 'en' && lang !== 'fr') return;
   try { localStorage.setItem('arreyon_lang', lang); } catch (e) {}
   applyTranslations(lang);
+
+  // If the visitor happens to be logged in, keep their stored email-language
+  // preference in sync so future emails (verification, password reset, plan
+  // activation, team invites) follow whichever language they're actually
+  // using — fire-and-forget: this must never block or visibly fail the
+  // language switch itself, and on anonymous pages (index.html, consult.html)
+  // there's no session to update, so a 401 here is expected and harmless.
+  fetch('/api/user/language', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ language: lang })
+  }).catch(() => {});
 }
 
 // Apply immediately on script load (before other page scripts run) so there's
