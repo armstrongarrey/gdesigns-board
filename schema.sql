@@ -509,5 +509,80 @@ Custom AI director personas
 Priority WhatsApp support
 Full consultation history';
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- GOOGLE ANALYTICS INTEGRATION
+-- One connection per account (team-shared, like businesses/research) — the
+-- account owner connects it, the whole team can see the data. Tokens are
+-- refreshed automatically; the property_id is which GA4 property to pull from.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS google_analytics_connections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  token_expires_at TIMESTAMPTZ NOT NULL,
+  ga_account_name VARCHAR(255),
+  property_id VARCHAR(50),
+  property_name VARCHAR(255),
+  business_id UUID REFERENCES businesses(id) ON DELETE SET NULL,
+  connected_at TIMESTAMPTZ DEFAULT NOW(),
+  last_synced_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_ga_connections_owner ON google_analytics_connections(owner_id);
+
+-- Recent metric snapshots — used both to display trend charts and as the
+-- baseline the monitoring system compares against to detect meaningful
+-- changes (traffic/conversion drops, etc.)
+CREATE TABLE IF NOT EXISTS analytics_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  connection_id UUID REFERENCES google_analytics_connections(id) ON DELETE CASCADE,
+  snapshot_date DATE NOT NULL,
+  sessions INTEGER,
+  users INTEGER,
+  conversions INTEGER,
+  conversion_rate NUMERIC(6,3),
+  bounce_rate NUMERIC(6,3),
+  avg_session_duration_sec INTEGER,
+  top_source VARCHAR(255),
+  raw_data JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(connection_id, snapshot_date)
+);
+CREATE INDEX IF NOT EXISTS idx_analytics_snapshots_connection ON analytics_snapshots(connection_id, snapshot_date DESC);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- AUTONOMOUS MONITORING & ALERTS
+-- A background job periodically checks each account's business metrics
+-- (from Analytics), competitor landscape (from the latest Market Research),
+-- and team activity, and creates an alert row when something crosses a
+-- meaningful threshold. Alerts are also emailed once, then marked as sent.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS monitoring_alerts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  alert_type VARCHAR(50) NOT NULL, -- 'metrics_change' | 'competitor_change' | 'team_activity'
+  severity VARCHAR(20) DEFAULT 'info', -- 'info' | 'warning' | 'critical'
+  title VARCHAR(255) NOT NULL,
+  message TEXT NOT NULL,
+  details JSONB,
+  is_read BOOLEAN DEFAULT FALSE,
+  email_sent BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_owner ON monitoring_alerts(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_unread ON monitoring_alerts(owner_id, is_read) WHERE is_read = FALSE;
+
+-- Per-account alert preferences — lets owners turn off a category they don't
+-- want emailed about, without losing the in-app alert entirely.
+CREATE TABLE IF NOT EXISTS monitoring_preferences (
+  owner_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  metrics_alerts_enabled BOOLEAN DEFAULT TRUE,
+  competitor_alerts_enabled BOOLEAN DEFAULT TRUE,
+  team_activity_alerts_enabled BOOLEAN DEFAULT TRUE,
+  email_alerts_enabled BOOLEAN DEFAULT TRUE,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
