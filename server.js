@@ -3087,7 +3087,7 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
       const usedThisMonth = await pool.query(
         `SELECT COUNT(*) FROM research_sessions WHERE user_id = $1
          AND date_trunc('month', created_at) = date_trunc('month', NOW())`,
-        [req.userId]
+        [account.id]
       );
       const used = parseInt(usedThisMonth.rows[0].count, 10);
       if (used >= limit) {
@@ -3095,7 +3095,7 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
       }
     }
 
-    const biz = await pool.query('SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    const biz = await pool.query('SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
     // Latest known fact per key — this is what lets research compare "what we offer" vs competitors
@@ -3114,7 +3114,7 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
 
     const session = await pool.query(
       `INSERT INTO research_sessions (business_id, user_id, query, summary, scope, structured_data) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [req.params.id, req.userId, queries.join(' | '), summary, requestedScope, JSON.stringify(structured)]
+      [req.params.id, account.id, queries.join(' | '), summary, requestedScope, JSON.stringify(structured)]
     );
     const sessionId = session.rows[0].id;
 
@@ -3157,7 +3157,8 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
 app.get('/api/business/:id/research', authRequired, async (req, res) => {
   const lang = req.query.lang === 'fr' ? 'fr' : 'en';
   try {
-    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
     const sessions = await pool.query(
@@ -3563,10 +3564,14 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
     const limit = ANALYZER_LIMITS[plan] ?? 1;
 
     if (limit !== -1) {
+      // ai_usage.user_id stays attributed to whichever person actually made
+      // each call (kept that way deliberately, for meaningful admin
+      // analytics) — so counting a SHARED team quota here needs to look
+      // across every member of the account, not just the owner's own calls.
       const usedThisMonth = await pool.query(
-        `SELECT COUNT(*) FROM ai_usage WHERE user_id = $1 AND feature = 'website_analyzer'
+        `SELECT COUNT(*) FROM ai_usage WHERE user_id IN (SELECT id FROM users WHERE id = $1 OR team_owner_id = $1) AND feature = 'website_analyzer'
          AND date_trunc('month', created_at) = date_trunc('month', NOW())`,
-        [req.userId]
+        [account.id]
       );
       const used = parseInt(usedThisMonth.rows[0].count, 10);
       if (used >= limit) {
@@ -3615,10 +3620,10 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
 
     let businessId;
     if (normalizedUrl) {
-      // URL path: reuse an existing business profile for this user + URL if one exists
+      // URL path: reuse an existing business profile for this account + URL if one exists
       const existing = await pool.query(
         'SELECT id FROM businesses WHERE user_id = $1 AND website = $2 AND is_active = true LIMIT 1',
-        [req.userId, normalizedUrl]
+        [account.id, normalizedUrl]
       );
       if (existing.rows.length) {
         businessId = existing.rows[0].id;
@@ -3631,7 +3636,7 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
       } else {
         const inserted = await pool.query(
           `INSERT INTO businesses (user_id, name, website, industry, city, country) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-          [req.userId, businessName || facts.business_name?.value || normalizedUrl, normalizedUrl, parsedIndustry, parsedCity, parsedCountry]
+          [account.id, businessName || facts.business_name?.value || normalizedUrl, normalizedUrl, parsedIndustry, parsedCity, parsedCountry]
         );
         businessId = inserted.rows[0].id;
       }
@@ -3639,7 +3644,7 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
       // Description-only path: no natural unique key, always create a fresh profile
       const inserted = await pool.query(
         `INSERT INTO businesses (user_id, name, website, industry, city, country) VALUES ($1, $2, NULL, $3, $4, $5) RETURNING id`,
-        [req.userId, businessName || facts.business_name?.value || 'My Business', parsedIndustry, parsedCity, parsedCountry]
+        [account.id, businessName || facts.business_name?.value || 'My Business', parsedIndustry, parsedCity, parsedCountry]
       );
       businessId = inserted.rows[0].id;
     }
@@ -3672,9 +3677,10 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
 // ── List user's analyzed businesses ─────────────────────────────────────────
 app.get('/api/business', authRequired, async (req, res) => {
   try {
+    const account = await resolveAccount(req.userId);
     const result = await pool.query(
       'SELECT id, name, website, industry, created_at, updated_at FROM businesses WHERE user_id = $1 AND is_active = true ORDER BY updated_at DESC',
-      [req.userId]
+      [account.id]
     );
     res.json({ businesses: result.rows });
   } catch (e) { res.status(500).json({ error: 'Failed to load businesses' }); }
@@ -4156,7 +4162,8 @@ app.get('/api/business/:id/report', authRequired, async (req, res) => {
   const lang = req.query.lang === 'fr' ? 'fr' : 'en';
 
   try {
-    const biz = await pool.query('SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
     const business = biz.rows[0];
 
@@ -4595,8 +4602,9 @@ app.get('/api/entrepreneur/:sessionId/report', authRequired, async (req, res) =>
 app.get('/api/business/:id', authRequired, async (req, res) => {
   const lang = req.query.lang === 'fr' ? 'fr' : 'en';
   try {
+    const account = await resolveAccount(req.userId);
     const biz = await pool.query(
-      'SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]
+      'SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]
     );
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
@@ -4641,7 +4649,8 @@ app.put('/api/business/:id/facts/:factKey', authRequired, async (req, res) => {
   if (!value || !value.trim()) return res.status(400).json({ error: 'Value is required' });
 
   try {
-    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
     await pool.query(
@@ -4658,7 +4667,8 @@ app.put('/api/business/:id/facts/:factKey', authRequired, async (req, res) => {
 // ── Business Memory — see how a specific fact has changed over time ────────
 app.get('/api/business/:id/facts/:factKey/history', authRequired, async (req, res) => {
   try {
-    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
     const history = await pool.query(
