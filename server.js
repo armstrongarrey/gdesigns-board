@@ -2556,7 +2556,7 @@ function computeScenarioFinancials({ monthlyRevenueImpact, monthlyCostImpact, on
 }
 
 app.post('/api/scenario/compare', authRequired, async (req, res) => {
-  const { options, context: decisionContext, language = 'en' } = req.body;
+  const { options, context: decisionContext, language = 'en', currency } = req.body;
   if (!options || !Array.isArray(options) || options.length < 2 || options.length > 4) {
     return res.status(400).json({ error: 'Please provide between 2 and 4 options to compare.' });
   }
@@ -2572,13 +2572,14 @@ app.post('/api/scenario/compare', authRequired, async (req, res) => {
       financials: computeScenarioFinancials(o)
     }));
 
+    const currencyLabel = (currency && currency.trim()) ? currency.trim() : 'USD';
     const optionsText = optionsWithFinancials.map((o, i) => {
       let block = `OPTION ${String.fromCharCode(65 + i)}: ${o.name}\nDescription: ${o.description}`;
       if (o.financials) {
-        block += `\nCOMPUTED FINANCIALS (exact, already calculated — do not recompute or alter these numbers):
-  - Net monthly gain: ${o.financials.netMonthlyGain}
-  - One-time investment: ${o.financials.investment ?? 'none stated'}
-  - Total gain over ${o.financials.timeframeMonths} months: ${o.financials.totalGainOverTimeframe}
+        block += `\nCOMPUTED FINANCIALS (exact, already calculated, in ${currencyLabel} — do not recompute or alter these numbers, and always reference them using this currency, never assume USD/dollars unless that is what's stated here):
+  - Net monthly gain: ${o.financials.netMonthlyGain} ${currencyLabel}
+  - One-time investment: ${o.financials.investment !== null ? o.financials.investment + ' ' + currencyLabel : 'none stated'}
+  - Total gain over ${o.financials.timeframeMonths} months: ${o.financials.totalGainOverTimeframe} ${currencyLabel}
   - Payback period: ${o.financials.paybackMonths !== null ? o.financials.paybackMonths + ' months' : (o.financials.investment ? 'does not pay back at this rate' : 'no investment stated')}
   - ROI over timeframe: ${o.financials.roiPct !== null ? o.financials.roiPct + '%' : 'not applicable — no investment stated'}`;
       } else {
@@ -2592,7 +2593,7 @@ app.post('/api/scenario/compare', authRequired, async (req, res) => {
 ${optionsText}
 
 YOUR TASK:
-For each option, give a genuine qualitative assessment — pros, cons, and risk level. Where computed financials are provided above, treat them as fact and reference them directly; do not invent different numbers or recalculate. Where no financials were given, compare on strategic/qualitative grounds only, and say so.
+For each option, give a genuine qualitative assessment — pros, cons, and risk level. Where computed financials are provided above, treat them as fact and reference them directly, using the ${currencyLabel} currency exactly as given — do not invent different numbers, recalculate, or default to dollars/USD if a different currency was specified above. Where no financials were given, compare on strategic/qualitative grounds only, and say so.
 
 Then give ONE final recommendation: which option to choose and why, weighing both the numbers (where available) and the qualitative factors (risk, effort, fit with their stated situation).
 
@@ -4981,6 +4982,8 @@ app.get('/consult', (req, res) => res.sendFile(path.join(__dirname, 'public', 'c
 app.get('/board', (req, res) => res.sendFile(path.join(__dirname, 'public', 'board.html')));
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/admin/*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
+app.get('/terms', (req, res) => res.sendFile(path.join(__dirname, 'public', 'terms.html')));
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'Arreyon Consult' }));
 
 // ── START ──────────────────────────────────────────────────────────────────
