@@ -816,6 +816,25 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <textarea class="form-input" id="scenarioContext" rows="2" data-i18n-placeholder="scen.situation_placeholder" placeholder="e.g. I run a small bakery and need to decide how to grow revenue this quarter"></textarea>
         </div>
 
+        <div class="form-group">
+          <label data-i18n="scen.currency_label">Currency</label>
+          <select class="form-input" id="scenCurrencySelect" onchange="saveScenarioCurrencyPreference()">
+            <option value="XAF">FCFA (XAF)</option>
+            <option value="USD">US Dollar ($)</option>
+            <option value="EUR">Euro (€)</option>
+            <option value="GBP">British Pound (£)</option>
+            <option value="NGN">Nigerian Naira (₦)</option>
+            <option value="GHS">Ghanaian Cedi (₵)</option>
+            <option value="KES">Kenyan Shilling (KSh)</option>
+            <option value="ZAR">South African Rand (R)</option>
+            <option value="AED">UAE Dirham (AED)</option>
+            <option value="OTHER" data-i18n="scen.other_currency">Other</option>
+          </select>
+          <div id="scenOtherCurrencyWrap" style="display:none;margin-top:8px">
+            <input class="form-input" id="scenOtherCurrencyInput" data-i18n-placeholder="scen.other_currency_placeholder" placeholder="e.g. CHF, R$, ₹" maxlength="6" oninput="saveScenarioCurrencyPreference()">
+          </div>
+        </div>
+
         <div id="scenarioOptionsWrap"></div>
 
         <div style="display:flex;gap:10px;margin-top:6px">
@@ -1397,7 +1416,10 @@ function showSection(name) {
   if (name === 'analyzer') loadAnalyzedBusinesses();
   if (name === 'entrepreneur') loadEntrepreneurHistory();
   if (name === 'financial') { renderCalculatorForm(); restoreCurrencyPreference(); }
-  if (name === 'scenario' && scenarioOptionCount === 0) { addScenarioOption(); addScenarioOption(); }
+  if (name === 'scenario') {
+    if (scenarioOptionCount === 0) { addScenarioOption(); addScenarioOption(); }
+    restoreScenarioCurrencyPreference();
+  }
   if (name === 'integrations') loadIntegrationsSection();
 }
 
@@ -2842,7 +2864,7 @@ async function runScenarioComparison() {
     const name = document.getElementById('scenOptName_' + id).value.trim();
     const description = document.getElementById('scenOptDesc_' + id).value.trim();
     if (!name || !description) {
-      document.getElementById('scenarioError').textContent = 'Please fill in a name and description for every option.';
+      document.getElementById('scenarioError').textContent = t('scen.err_name_desc_required');
       document.getElementById('scenarioError').style.display = 'block';
       return;
     }
@@ -2859,7 +2881,7 @@ async function runScenarioComparison() {
   }
 
   if (options.length < 2) {
-    document.getElementById('scenarioError').textContent = 'Please add at least 2 options to compare.';
+    document.getElementById('scenarioError').textContent = t('scen.err_min_2_options');
     document.getElementById('scenarioError').style.display = 'block';
     return;
   }
@@ -2872,22 +2894,23 @@ async function runScenarioComparison() {
   try {
     const res = await fetch('/api/scenario/compare', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ options, context: document.getElementById('scenarioContext').value.trim(), language: window.currentLang || 'en' })
+      body: JSON.stringify({ options, context: document.getElementById('scenarioContext').value.trim(), language: window.currentLang || 'en', currency: getScenarioCurrencyCode() })
     });
     const data = await res.json();
     document.getElementById('scenarioLoading').style.display = 'none';
     document.getElementById('runScenarioBtn').disabled = false;
 
     if (!res.ok) {
-      document.getElementById('scenarioError').textContent = data.error || 'Comparison failed.';
+      document.getElementById('scenarioError').textContent = data.error || t('scen.err_comparison_failed');
       document.getElementById('scenarioError').style.display = 'block';
       return;
     }
+    lastScenarioResults = data;
     renderScenarioResults(data.optionsWithFinancials, data.analysis);
   } catch (e) {
     document.getElementById('scenarioLoading').style.display = 'none';
     document.getElementById('runScenarioBtn').disabled = false;
-    document.getElementById('scenarioError').textContent = 'Connection error. Please try again.';
+    document.getElementById('scenarioError').textContent = t('board.connection_error');
     document.getElementById('scenarioError').style.display = 'block';
   }
 }
