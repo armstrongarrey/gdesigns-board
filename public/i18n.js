@@ -36,6 +36,14 @@ const I18N_DICT = {
     "footer.boardroom": "Boardroom",
     "footer.public_consult": "Public Consult",
     "footer.contact_us": "Contact Us",
+    "footer.privacy_policy": "Privacy Policy",
+    "footer.terms_of_service": "Terms of Service",
+    "scen.currency_label": "Currency",
+    "scen.other_currency": "Other",
+    "scen.other_currency_placeholder": "e.g. CHF, R$, ₹",
+    "scen.err_name_desc_required": "Please fill in a name and description for every option.",
+    "scen.err_min_2_options": "Please add at least 2 options to compare.",
+    "scen.err_comparison_failed": "Comparison failed.",
     "footer.rights": "All rights reserved.",
 
     // Consult page — Stage 1 form
@@ -941,6 +949,14 @@ const I18N_DICT = {
     "footer.boardroom": "Salle du conseil",
     "footer.public_consult": "Consultation publique",
     "footer.contact_us": "Nous contacter",
+    "footer.privacy_policy": "Politique de confidentialité",
+    "footer.terms_of_service": "Conditions d'utilisation",
+    "scen.currency_label": "Devise",
+    "scen.other_currency": "Autre",
+    "scen.other_currency_placeholder": "ex. CHF, R$, ₹",
+    "scen.err_name_desc_required": "Veuillez remplir un nom et une description pour chaque option.",
+    "scen.err_min_2_options": "Veuillez ajouter au moins 2 options à comparer.",
+    "scen.err_comparison_failed": "Échec de la comparaison.",
     "footer.rights": "Tous droits réservés.",
 
     // Consult page — Stage 1 form
