@@ -166,6 +166,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <button class="nav-item" onclick="showSection('team')" id="nav-team" style="display:none">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span data-i18n="team.nav_title">Team</span>
     </button>
+    <button class="nav-item" onclick="showSection('integrations')" id="nav-integrations">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg><span data-i18n="int.nav_title">Integrations</span>
+    </button>
     <a href="/consult" class="nav-item">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg><span data-i18n="dash.nav_public_consult">Public Consult</span>
     </a>
@@ -366,6 +369,63 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div class="section-title" style="font-size:15px" data-i18n="team.your_team">Your Team</div>
         <div id="teamMembersList" style="display:flex;flex-direction:column;gap:10px">
           <div style="text-align:center;padding:24px;color:var(--muted);font-size:13px" data-i18n="team.no_members">You haven't invited anyone yet.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- INTEGRATIONS SECTION -->
+    <div class="section-view" id="section-integrations">
+      <div class="section-title" data-i18n="int.title">Integrations</div>
+      <div class="section-sub" data-i18n="int.subtitle">Connect real data sources so your reports use actual numbers instead of estimates.</div>
+
+      <div id="intMsg" style="max-width:500px;margin-bottom:16px;display:none"></div>
+
+      <!-- Not connected state -->
+      <div id="gaNotConnected" style="max-width:460px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;display:none">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+          <div style="width:40px;height:40px;border-radius:10px;background:#e8710a22;display:flex;align-items:center;justify-content:center;font-size:20px">📊</div>
+          <div>
+            <div style="font-size:14px;font-weight:700;color:var(--text)">Google Analytics</div>
+            <div style="font-size:12px;color:var(--muted)" data-i18n="int.ga_desc">Real traffic, conversions, and visitor data</div>
+          </div>
+        </div>
+        <button class="btn-primary" style="width:100%;padding:11px" onclick="connectGoogleAnalytics()" data-i18n="int.connect_btn">Connect Google Analytics</button>
+      </div>
+
+      <!-- Connected, no property selected yet -->
+      <div id="gaSelectProperty" style="max-width:460px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;display:none">
+        <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px" data-i18n="int.select_property">Select which property to use</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:14px" data-i18n="int.select_property_desc">Your Google account has access to more than one Analytics property — choose the one for this business.</div>
+        <select class="form-input" id="gaPropertySelect" style="margin-bottom:12px"></select>
+        <button class="btn-primary" style="width:100%;padding:11px" onclick="saveGAProperty()" data-i18n="int.save_property">Use This Property</button>
+      </div>
+
+      <!-- Connected with property selected — metrics view -->
+      <div id="gaMetricsView" style="max-width:600px;display:none">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:32px;height:32px;border-radius:8px;background:#e8710a22;display:flex;align-items:center;justify-content:center;font-size:16px">📊</div>
+            <div>
+              <div style="font-size:13.5px;font-weight:700;color:var(--text)" id="gaPropertyNameDisplay">Google Analytics</div>
+              <div style="font-size:11px;color:var(--green)" data-i18n="int.connected_label">Connected</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn-ghost" style="font-size:12px;padding:7px 14px" onclick="loadGAMetrics()" data-i18n="admin.refresh">Refresh</button>
+            <button class="btn-ghost" style="font-size:12px;padding:7px 14px;color:#ef4444" onclick="disconnectGoogleAnalytics()" data-i18n="int.disconnect">Disconnect</button>
+          </div>
+        </div>
+
+        <div id="gaMetricsLoading" style="text-align:center;padding:30px;color:var(--muted);font-size:13px" data-i18n="int.loading_metrics">Loading metrics...</div>
+        <div id="gaMetricsGrid" style="display:none;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+          <div class="stat-card"><div class="stat-label" data-i18n="int.metric_sessions">Sessions</div><div class="stat-val" id="gaSessions">—</div><div class="stat-sub" data-i18n="int.last_30_days">last 30 days</div></div>
+          <div class="stat-card"><div class="stat-label" data-i18n="int.metric_users">Users</div><div class="stat-val" id="gaUsers">—</div><div class="stat-sub" data-i18n="int.last_30_days">last 30 days</div></div>
+          <div class="stat-card"><div class="stat-label" data-i18n="int.metric_conversions">Conversions</div><div class="stat-val" id="gaConversions">—</div><div class="stat-sub" id="gaConvRateSub">—</div></div>
+        </div>
+        <div id="gaMetricsExtra" style="display:none;background:var(--bg3);border-radius:10px;padding:16px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:10px"><span style="font-size:12px;color:var(--muted)" data-i18n="int.metric_bounce_rate">Bounce Rate</span><span style="font-size:12px;color:var(--text2)" id="gaBounceRate">—</span></div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:10px"><span style="font-size:12px;color:var(--muted)" data-i18n="int.metric_avg_session">Avg. Session Duration</span><span style="font-size:12px;color:var(--text2)" id="gaAvgSession">—</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="font-size:12px;color:var(--muted)" data-i18n="int.metric_top_source">Top Traffic Source</span><span style="font-size:12px;color:var(--text2)" id="gaTopSource">—</span></div>
         </div>
       </div>
     </div>
@@ -894,6 +954,21 @@ async function init() {
       renderTeamPermissionCheckboxes();
       loadTeamSection();
     }
+
+    // The Google Analytics OAuth flow redirects back here with query params
+    // indicating success/failure — jump to the Integrations section and show
+    // the right message, then clean the URL so a page refresh doesn't
+    // re-trigger the same message.
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('section') === 'integrations') {
+      showSection('integrations');
+      if (urlParams.get('connected') === 'google-analytics') {
+        showIntMsg(t('int.connected_success'), 'success');
+      } else if (urlParams.get('error') === 'ga_connect_failed') {
+        showIntMsg(t('int.connect_failed'), 'error');
+      }
+      window.history.replaceState({}, '', '/dashboard');
+    }
   } catch(e) { window.location.href = '/auth'; }
 }
 
@@ -1165,6 +1240,120 @@ function applyTeamPermissionsToNav(permissions) {
   });
 }
 
+// ── INTEGRATIONS (Google Analytics) ─────────────────────────────────────────
+function connectGoogleAnalytics() {
+  window.location.href = '/api/integrations/google-analytics/connect';
+}
+
+async function loadIntegrationsSection() {
+  try {
+    const res = await fetch('/api/integrations/google-analytics/status');
+    const data = await res.json();
+
+    document.getElementById('gaNotConnected').style.display = 'none';
+    document.getElementById('gaSelectProperty').style.display = 'none';
+    document.getElementById('gaMetricsView').style.display = 'none';
+
+    if (!data.connected) {
+      document.getElementById('gaNotConnected').style.display = 'block';
+    } else if (!data.property_id) {
+      document.getElementById('gaSelectProperty').style.display = 'block';
+      loadGAProperties();
+    } else {
+      document.getElementById('gaMetricsView').style.display = 'block';
+      document.getElementById('gaPropertyNameDisplay').textContent = data.property_name || 'Google Analytics';
+      loadGAMetrics();
+    }
+  } catch (e) {
+    document.getElementById('gaNotConnected').style.display = 'block';
+  }
+}
+
+async function loadGAProperties() {
+  const select = document.getElementById('gaPropertySelect');
+  select.innerHTML = `<option>${t('int.loading_properties')}</option>`;
+  try {
+    const res = await fetch('/api/integrations/google-analytics/properties');
+    const data = await res.json();
+    if (!res.ok) {
+      select.innerHTML = `<option value="">${t('int.failed_load_properties')}</option>`;
+      showIntMsg(data.error || t('int.failed_load_properties'), 'error');
+      return;
+    }
+    if (!data.properties || !data.properties.length) {
+      select.innerHTML = `<option value="">${t('int.no_properties_found')}</option>`;
+      return;
+    }
+    select.innerHTML = data.properties.map(p =>
+      `<option value="${p.propertyId}" data-name="${p.propertyName}" data-account="${p.accountName}">${p.accountName} — ${p.propertyName}</option>`
+    ).join('');
+  } catch (e) {
+    select.innerHTML = `<option value="">${t('int.failed_load_properties')}</option>`;
+  }
+}
+
+async function saveGAProperty() {
+  const select = document.getElementById('gaPropertySelect');
+  const opt = select.options[select.selectedIndex];
+  if (!opt || !opt.value) return;
+
+  try {
+    const res = await fetch('/api/integrations/google-analytics/property', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ propertyId: opt.value, propertyName: opt.dataset.name, accountName: opt.dataset.account })
+    });
+    const data = await res.json();
+    if (!res.ok) { showIntMsg(data.error || t('int.save_property_failed'), 'error'); return; }
+    loadIntegrationsSection();
+  } catch (e) { showIntMsg(t('board.connection_error'), 'error'); }
+}
+
+async function loadGAMetrics() {
+  document.getElementById('gaMetricsLoading').style.display = 'block';
+  document.getElementById('gaMetricsGrid').style.display = 'none';
+  document.getElementById('gaMetricsExtra').style.display = 'none';
+
+  try {
+    const res = await fetch('/api/integrations/google-analytics/metrics');
+    const data = await res.json();
+    document.getElementById('gaMetricsLoading').style.display = 'none';
+
+    if (!res.ok) { showIntMsg(data.error || t('int.load_metrics_failed'), 'error'); return; }
+
+    const m = data.metrics;
+    document.getElementById('gaSessions').textContent = m.sessions.toLocaleString();
+    document.getElementById('gaUsers').textContent = m.users.toLocaleString();
+    document.getElementById('gaConversions').textContent = m.conversions.toLocaleString();
+    document.getElementById('gaConvRateSub').textContent = m.conversionRate + '% ' + t('int.conversion_rate_suffix');
+    document.getElementById('gaBounceRate').textContent = m.bounceRate + '%';
+    const mins = Math.floor(m.avgSessionDurationSec / 60), secs = m.avgSessionDurationSec % 60;
+    document.getElementById('gaAvgSession').textContent = `${mins}m ${secs}s`;
+    document.getElementById('gaTopSource').textContent = m.topSource || '—';
+
+    document.getElementById('gaMetricsGrid').style.display = 'grid';
+    document.getElementById('gaMetricsExtra').style.display = 'block';
+  } catch (e) {
+    document.getElementById('gaMetricsLoading').style.display = 'none';
+    showIntMsg(t('board.connection_error'), 'error');
+  }
+}
+
+async function disconnectGoogleAnalytics() {
+  if (!confirm(t('int.confirm_disconnect'))) return;
+  try {
+    await fetch('/api/integrations/google-analytics', { method: 'DELETE' });
+    loadIntegrationsSection();
+  } catch (e) {}
+}
+
+function showIntMsg(text, type) {
+  const el = document.getElementById('intMsg');
+  el.textContent = text;
+  el.style.color = type === 'error' ? '#ff8080' : 'var(--green)';
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 6000);
+}
+
 function renderBilling() {
   if (!user) return;
   const plan = user.plan || 'starter';
@@ -1202,13 +1391,14 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const navEl = document.getElementById('nav-' + name);
   if (navEl) navEl.classList.add('active');
-  const titleKeys = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title'};
+  const titleKeys = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title'};
   document.querySelector('.topbar-title').textContent = titleKeys[name] ? t(titleKeys[name]) : t('dash.nav_dashboard');
   if (window.innerWidth < 900) document.getElementById('sidebar').classList.remove('open');
   if (name === 'analyzer') loadAnalyzedBusinesses();
   if (name === 'entrepreneur') loadEntrepreneurHistory();
   if (name === 'financial') { renderCalculatorForm(); restoreCurrencyPreference(); }
   if (name === 'scenario' && scenarioOptionCount === 0) { addScenarioOption(); addScenarioOption(); }
+  if (name === 'integrations') loadIntegrationsSection();
 }
 
 function openPayment(plan) {
