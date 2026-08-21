@@ -421,6 +421,7 @@ app.put('/api/integrations/google-analytics/property', authRequired, async (req,
   if (!propertyId) return res.status(400).json({ error: 'Property ID is required' });
   try {
     const account = await resolveAccount(req.userId);
+    if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can manage integrations' });
     const result = await pool.query(
       'UPDATE google_analytics_connections SET property_id = $1, property_name = $2, ga_account_name = $3 WHERE owner_id = $4 RETURNING id',
       [propertyId, propertyName || null, accountName || null, account.id]
