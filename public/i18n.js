@@ -57,6 +57,9 @@ const I18N_DICT = {
     "alerts.loading": "Loading alerts...",
     "alerts.none_yet": "No alerts yet — check back after your first daily check.",
     "alerts.mark_read": "Mark read",
+    "ent.show_more": "Show More Opportunities",
+    "ent.finding_more": "Finding more...",
+    "ent.show_more_failed": "Failed to find more opportunities.",
     "footer.rights": "All rights reserved.",
 
     // Consult page — Stage 1 form
@@ -983,6 +986,9 @@ const I18N_DICT = {
     "alerts.loading": "Chargement des alertes...",
     "alerts.none_yet": "Aucune alerte pour l'instant — revenez après votre première vérification quotidienne.",
     "alerts.mark_read": "Marquer comme lu",
+    "ent.show_more": "Voir plus d'opportunités",
+    "ent.finding_more": "Recherche en cours...",
+    "ent.show_more_failed": "Échec de la recherche d'opportunités supplémentaires.",
     "footer.rights": "Tous droits réservés.",
 
     // Consult page — Stage 1 form
