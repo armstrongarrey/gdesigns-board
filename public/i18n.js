@@ -60,6 +60,12 @@ const I18N_DICT = {
     "ent.show_more": "Show More Opportunities",
     "ent.finding_more": "Finding more...",
     "ent.show_more_failed": "Failed to find more opportunities.",
+    "ent.primary_skill": "Your Best Skill",
+    "ent.primary_skill_placeholder": "e.g. graphic design",
+    "ent.other_skills": "Other Skills",
+    "ent.other_skills_placeholder": "e.g. cooking, sales, photography",
+    "ent.optional": "(optional)",
+    "ent.err_fill_required": "Please fill in at least your country, skills, or interests.",
     "footer.rights": "All rights reserved.",
 
     // Consult page — Stage 1 form
@@ -989,6 +995,12 @@ const I18N_DICT = {
     "ent.show_more": "Voir plus d'opportunités",
     "ent.finding_more": "Recherche en cours...",
     "ent.show_more_failed": "Échec de la recherche d'opportunités supplémentaires.",
+    "ent.primary_skill": "Votre meilleure compétence",
+    "ent.primary_skill_placeholder": "ex. design graphique",
+    "ent.other_skills": "Autres compétences",
+    "ent.other_skills_placeholder": "ex. cuisine, vente, photographie",
+    "ent.optional": "(facultatif)",
+    "ent.err_fill_required": "Veuillez remplir au moins votre pays, vos compétences ou vos centres d'intérêt.",
     "footer.rights": "Tous droits réservés.",
 
     // Consult page — Stage 1 form
