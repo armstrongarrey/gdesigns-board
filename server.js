@@ -194,6 +194,30 @@ const EMAIL_TEMPLATES = {
        <p>Ou copiez ce lien : ${p.inviteUrl}</p>
        <p style="color:#888;font-size:13px">Cette invitation expire dans 7 jours.</p>`
     })
+  },
+  monitoringDigest: {
+    en: (p) => ({
+      subject: `${p.alertCount} new alert${p.alertCount > 1 ? 's' : ''} on Arreyon Consult`,
+      html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+        <h2>Here's what changed</h2>
+        <p>We spotted ${p.alertCount} thing${p.alertCount > 1 ? 's' : ''} worth your attention:</p>
+        ${p.alertsHtml}
+        <a href="${p.dashboardUrl}" style="display:inline-block;background:#6C3Bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:12px">View in Dashboard</a>
+        <hr style="margin-top:24px">
+        <p style="color:#999;font-size:11px">Arreyon Consult by G-DESIGNS LTD · You can turn off any of these alert types from your dashboard settings.</p>
+      </div>`
+    }),
+    fr: (p) => ({
+      subject: `${p.alertCount} nouvelle${p.alertCount > 1 ? 's' : ''} alerte${p.alertCount > 1 ? 's' : ''} sur Arreyon Consult`,
+      html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+        <h2>Voici ce qui a changé</h2>
+        <p>Nous avons repéré ${p.alertCount} élément${p.alertCount > 1 ? 's' : ''} qui méritent votre attention :</p>
+        ${p.alertsHtml}
+        <a href="${p.dashboardUrl}" style="display:inline-block;background:#6C3Bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:12px">Voir dans le tableau de bord</a>
+        <hr style="margin-top:24px">
+        <p style="color:#999;font-size:11px">Arreyon Consult par G-DESIGNS LTD · Vous pouvez désactiver n'importe quel type d'alerte depuis les paramètres de votre tableau de bord.</p>
+      </div>`
+    })
   }
 };
 
@@ -4986,9 +5010,281 @@ app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'p
 app.get('/terms', (req, res) => res.sendFile(path.join(__dirname, 'public', 'terms.html')));
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'Arreyon Consult' }));
 
+// ═══════════════════════════════════════════════════════════════════════════
+// AUTONOMOUS MONITORING & ALERTS
+// Runs as an in-process scheduler (no external cron service needed) — checks
+// every hour whether it's been at least a day since the last full sweep, and
+// if so, runs it. This is a pragmatic choice for a single-instance Node
+// service: no new dependencies, survives normal operation, and the worst
+// case on a restart is waiting up to another hour for the next check —
+// acceptable for a daily digest, not something that needs second-precision.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function createAlert(ownerId, businessId, alertType, severity, title, message, details) {
+  const inserted = await pool.query(
+    `INSERT INTO monitoring_alerts (owner_id, business_id, alert_type, severity, title, message, details)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [ownerId, businessId, alertType, severity, title, message, JSON.stringify(details || {})]
+  );
+  return inserted.rows[0];
+}
+
+// ── 1. Business metrics changes — needs Google Analytics connected ─────────
+async function checkMetricsChanges(ownerId, prefs) {
+  if (prefs && prefs.metrics_alerts_enabled === false) return;
+
+  const connResult = await pool.query('SELECT * FROM google_analytics_connections WHERE owner_id = $1', [ownerId]);
+  if (!connResult.rows.length) return;
+  const connection = connResult.rows[0];
+  if (!connection.property_id) return;
+
+  const snapshots = await pool.query(
+    `SELECT * FROM analytics_snapshots WHERE connection_id = $1 ORDER BY snapshot_date DESC LIMIT 8`,
+    [connection.id]
+  );
+  if (snapshots.rows.length < 3) return; // need a real baseline, not just one or two days
+
+  const [latest, ...prior] = snapshots.rows;
+  const priorAvgSessions = prior.reduce((sum, s) => sum + (s.sessions || 0), 0) / prior.length;
+  const priorAvgConversions = prior.reduce((sum, s) => sum + (s.conversions || 0), 0) / prior.length;
+
+  if (priorAvgSessions >= 5 && latest.sessions < priorAvgSessions * 0.6) {
+    const pctDrop = Math.round((1 - latest.sessions / priorAvgSessions) * 100);
+    await createAlert(ownerId, connection.business_id, 'metrics_change', 'warning',
+      'Website traffic has dropped',
+      `Sessions are down ${pctDrop}% compared to your recent average (${latest.sessions} vs ~${Math.round(priorAvgSessions)}).`,
+      { latestSessions: latest.sessions, priorAvgSessions: Math.round(priorAvgSessions), pctDrop }
+    );
+  }
+
+  if (priorAvgConversions >= 1 && latest.conversions < priorAvgConversions * 0.5) {
+    const pctDrop = Math.round((1 - latest.conversions / priorAvgConversions) * 100);
+    await createAlert(ownerId, connection.business_id, 'metrics_change', 'warning',
+      'Conversions have dropped',
+      `Conversions are down ${pctDrop}% compared to your recent average.`,
+      { latestConversions: latest.conversions, priorAvgConversions: Math.round(priorAvgConversions), pctDrop }
+    );
+  }
+}
+
+// ── 2. Competitor changes — compares the two most recent Market Research ───
+// sessions for each of the account's businesses, flagging newly-appeared
+// competitor names. Deliberately compares just the NAME SET rather than
+// trying to semantically diff AI-written descriptions, since that's a much
+// more reliable signal than fuzzy text comparison.
+async function checkCompetitorChanges(ownerId, prefs) {
+  if (prefs && prefs.competitor_alerts_enabled === false) return;
+
+  const businesses = await pool.query('SELECT id, name FROM businesses WHERE user_id = $1 AND is_active = true', [ownerId]);
+  for (const business of businesses.rows) {
+    const sessions = await pool.query(
+      `SELECT structured_data, created_at FROM research_sessions
+       WHERE business_id = $1 AND structured_data IS NOT NULL
+       ORDER BY created_at DESC LIMIT 2`,
+      [business.id]
+    );
+    if (sessions.rows.length < 2) continue; // need at least two research runs to compare
+
+    const [latest, previous] = sessions.rows;
+    const latestNames = new Set((latest.structured_data?.competitors || []).map(c => (c.name || '').toLowerCase().trim()).filter(Boolean));
+    const previousNames = new Set((previous.structured_data?.competitors || []).map(c => (c.name || '').toLowerCase().trim()).filter(Boolean));
+
+    const newCompetitors = [...latestNames].filter(n => !previousNames.has(n));
+    if (newCompetitors.length > 0) {
+      const displayNames = (latest.structured_data?.competitors || [])
+        .filter(c => newCompetitors.includes((c.name || '').toLowerCase().trim()))
+        .map(c => c.name);
+      await createAlert(ownerId, business.id, 'competitor_change', 'info',
+        `New competitor${displayNames.length > 1 ? 's' : ''} spotted for ${business.name}`,
+        `Your latest market research surfaced ${displayNames.length > 1 ? 'competitors' : 'a competitor'} not seen in your previous research: ${displayNames.join(', ')}.`,
+        { newCompetitors: displayNames, businessName: business.name }
+      );
+    }
+  }
+}
+
+// ── 3. Team activity — new members joining, and seats running out ──────────
+async function checkTeamActivity(ownerId, ownerPlan, prefs) {
+  if (prefs && prefs.team_activity_alerts_enabled === false) return;
+
+  // New team members who joined in roughly the last day (this check runs
+  // about once a day, so a 25-hour window comfortably covers one run without
+  // missing anyone right at the boundary).
+  const recentJoins = await pool.query(
+    `SELECT member_email, joined_at FROM team_members
+     WHERE owner_id = $1 AND status = 'active' AND joined_at > NOW() - INTERVAL '25 hours'`,
+    [ownerId]
+  );
+  for (const member of recentJoins.rows) {
+    await createAlert(ownerId, null, 'team_activity', 'info',
+      'New team member joined',
+      `${member.member_email} accepted your invitation and is now active on your account.`,
+      { memberEmail: member.member_email }
+    );
+  }
+
+  // Seat limit reached — only worth surfacing once per day at most, so this
+  // simply fires every day the account happens to be at capacity, same as
+  // the other checks; not tracked separately to avoid duplicate suppression complexity.
+  const limits = PLAN_LIMITS[ownerPlan] || PLAN_LIMITS.starter;
+  const activeCount = await pool.query(`SELECT COUNT(*) FROM team_members WHERE owner_id = $1 AND status != 'removed'`, [ownerId]);
+  const seatsUsed = parseInt(activeCount.rows[0].count, 10) + 1; // +1 for the owner's own seat
+  if (seatsUsed >= limits.team) {
+    await createAlert(ownerId, null, 'team_activity', 'info',
+      'Team seats are full',
+      `You're using all ${limits.team} seats on your ${ownerPlan} plan. Upgrade if you'd like to invite more people.`,
+      { seatsUsed, seatLimit: limits.team, plan: ownerPlan }
+    );
+  }
+}
+
+// ── Orchestration — runs all 3 checks for every account owner, then sends ──
+// one digest email per owner covering everything new since the last run.
+// Each owner is processed independently: if one owner's data causes an
+// unexpected error, that must not stop the sweep for everyone else.
+async function runMonitoringSweep() {
+  console.log('Monitoring sweep starting...');
+  let ownersChecked = 0, alertsCreated = 0, emailsSent = 0;
+
+  try {
+    // Only real account owners — team members share the owner's data and
+    // don't get their own independent sweep.
+    const owners = await pool.query(`SELECT id, plan, preferred_language FROM users WHERE team_owner_id IS NULL`);
+
+    for (const owner of owners.rows) {
+      try {
+        const prefResult = await pool.query('SELECT * FROM monitoring_preferences WHERE owner_id = $1', [owner.id]);
+        const prefs = prefResult.rows[0] || null; // no row yet = all defaults (enabled)
+
+        await checkMetricsChanges(owner.id, prefs);
+        await checkCompetitorChanges(owner.id, prefs);
+        await checkTeamActivity(owner.id, owner.plan, prefs);
+        ownersChecked++;
+
+        // Digest email for anything created just now and not yet emailed
+        const emailAlertsEnabled = !prefs || prefs.email_alerts_enabled !== false;
+        if (emailAlertsEnabled) {
+          const unsent = await pool.query(`SELECT * FROM monitoring_alerts WHERE owner_id = $1 AND email_sent = false ORDER BY created_at ASC`, [owner.id]);
+          if (unsent.rows.length) {
+            const userResult = await pool.query('SELECT email, first_name FROM users WHERE id = $1', [owner.id]);
+            const user = userResult.rows[0];
+            if (user) {
+              const alertsHtml = unsent.rows.map(a =>
+                `<div style="background:#f5f5f5;border-radius:8px;padding:12px 14px;margin-bottom:10px">
+                  <strong>${a.title}</strong><p style="margin:4px 0 0;font-size:13px;color:#555">${a.message}</p>
+                </div>`
+              ).join('');
+              const { subject, html } = buildEmail('monitoringDigest', owner.preferred_language, {
+                alertCount: unsent.rows.length, alertsHtml, dashboardUrl: `${BASE_URL}/dashboard`
+              });
+              await sendEmail(user.email, subject, html);
+              await pool.query(`UPDATE monitoring_alerts SET email_sent = true WHERE owner_id = $1 AND email_sent = false`, [owner.id]);
+              emailsSent++;
+              alertsCreated += unsent.rows.length;
+            }
+          }
+        } else {
+          // Email disabled, but still mark as "sent" so a later re-enable
+          // doesn't suddenly flood them with a backlog of old alerts.
+          await pool.query(`UPDATE monitoring_alerts SET email_sent = true WHERE owner_id = $1 AND email_sent = false`, [owner.id]);
+        }
+      } catch (ownerErr) {
+        console.error(`Monitoring sweep failed for owner ${owner.id}:`, ownerErr.message);
+      }
+    }
+  } catch (err) {
+    console.error('Monitoring sweep top-level error:', err.message);
+  }
+
+  console.log(`Monitoring sweep complete. Owners checked: ${ownersChecked}, digest emails sent: ${emailsSent}.`);
+}
+
+// Checks every hour whether at least ~24 hours have passed since the last
+// full sweep, and runs one if so. No new dependency (like node-cron) needed
+// for this — the tradeoff is that a service restart resets the timer, so in
+// the worst case the next check is delayed by up to an hour, which is fine
+// for a daily digest.
+let lastMonitoringSweepAt = null;
+function startMonitoringScheduler() {
+  setInterval(async () => {
+    const hoursSinceLastRun = lastMonitoringSweepAt ? (Date.now() - lastMonitoringSweepAt) / (1000 * 60 * 60) : Infinity;
+    if (hoursSinceLastRun >= 24) {
+      lastMonitoringSweepAt = Date.now();
+      await runMonitoringSweep();
+    }
+  }, 60 * 60 * 1000); // check every hour
+}
+
+// ── Alerts API — shared across the team, like other account data ──────────
+app.get('/api/alerts', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(
+      `SELECT a.*, b.name as business_name FROM monitoring_alerts a
+       LEFT JOIN businesses b ON b.id = a.business_id
+       WHERE a.owner_id = $1 ORDER BY a.created_at DESC LIMIT 50`,
+      [account.id]
+    );
+    res.json({ alerts: result.rows });
+  } catch (e) { res.status(500).json({ error: 'Failed to load alerts' }); }
+});
+
+app.get('/api/alerts/unread-count', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(`SELECT COUNT(*) FROM monitoring_alerts WHERE owner_id = $1 AND is_read = false`, [account.id]);
+    res.json({ count: parseInt(result.rows[0].count, 10) });
+  } catch (e) { res.status(500).json({ error: 'Failed to load unread count' }); }
+});
+
+app.put('/api/alerts/:id/read', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(`UPDATE monitoring_alerts SET is_read = true WHERE id = $1 AND owner_id = $2 RETURNING id`, [req.params.id, account.id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Alert not found' });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to update alert' }); }
+});
+
+app.put('/api/alerts/read-all', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    await pool.query(`UPDATE monitoring_alerts SET is_read = true WHERE owner_id = $1 AND is_read = false`, [account.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to update alerts' }); }
+});
+
+app.get('/api/alerts/preferences', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query('SELECT * FROM monitoring_preferences WHERE owner_id = $1', [account.id]);
+    // No row yet means every alert type is on by default — matches the
+    // column defaults, so this is safe to hand back as-is.
+    const prefs = result.rows[0] || { metrics_alerts_enabled: true, competitor_alerts_enabled: true, team_activity_alerts_enabled: true, email_alerts_enabled: true };
+    res.json({ preferences: prefs });
+  } catch (e) { res.status(500).json({ error: 'Failed to load preferences' }); }
+});
+
+app.put('/api/alerts/preferences', authRequired, async (req, res) => {
+  const { metricsAlertsEnabled, competitorAlertsEnabled, teamActivityAlertsEnabled, emailAlertsEnabled } = req.body;
+  try {
+    const account = await resolveAccount(req.userId);
+    if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can manage alert preferences' });
+    await pool.query(
+      `INSERT INTO monitoring_preferences (owner_id, metrics_alerts_enabled, competitor_alerts_enabled, team_activity_alerts_enabled, email_alerts_enabled, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (owner_id) DO UPDATE SET metrics_alerts_enabled = $2, competitor_alerts_enabled = $3, team_activity_alerts_enabled = $4, email_alerts_enabled = $5, updated_at = NOW()`,
+      [account.id, metricsAlertsEnabled !== false, competitorAlertsEnabled !== false, teamActivityAlertsEnabled !== false, emailAlertsEnabled !== false]
+    );
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to save preferences' }); }
+});
+
+
 // ── START ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   await initDB();
   console.log(`Arreyon Consult running on port ${PORT}`);
+  startMonitoringScheduler();
 });
