@@ -177,6 +177,10 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <button class="nav-item" onclick="showSection('integrations')" id="nav-integrations">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg><span data-i18n="int.nav_title">Integrations</span>
     </button>
+    <button class="nav-item" onclick="showSection('alerts')" id="nav-alerts" style="position:relative">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span data-i18n="alerts.nav_title">Alerts</span>
+      <span id="alertsUnreadBadge" style="display:none;position:absolute;top:6px;left:24px;background:#ef4444;color:#fff;font-size:10px;font-weight:700;min-width:16px;height:16px;border-radius:8px;align-items:center;justify-content:center;padding:0 4px"></span>
+    </button>
     <a href="/consult" class="nav-item">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg><span data-i18n="dash.nav_public_consult">Public Consult</span>
     </a>
@@ -435,6 +439,41 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div style="display:flex;justify-content:space-between;margin-bottom:10px"><span style="font-size:12px;color:var(--muted)" data-i18n="int.metric_avg_session">Avg. Session Duration</span><span style="font-size:12px;color:var(--text2)" id="gaAvgSession">—</span></div>
           <div style="display:flex;justify-content:space-between"><span style="font-size:12px;color:var(--muted)" data-i18n="int.metric_top_source">Top Traffic Source</span><span style="font-size:12px;color:var(--text2)" id="gaTopSource">—</span></div>
         </div>
+      </div>
+    </div>
+
+    <!-- ALERTS SECTION -->
+    <div class="section-view" id="section-alerts">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+        <div>
+          <div class="section-title" data-i18n="alerts.title">Alerts</div>
+          <div class="section-sub" data-i18n="alerts.subtitle">Automatic checks on your traffic, competitors, and team — once a day.</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn-ghost" style="font-size:12px;padding:8px 14px" onclick="markAllAlertsRead()" data-i18n="alerts.mark_all_read">Mark all read</button>
+          <button class="btn-ghost" style="font-size:12px;padding:8px 14px" onclick="toggleAlertPreferences()" data-i18n="alerts.settings">Settings</button>
+        </div>
+      </div>
+
+      <div id="alertPreferencesPanel" style="display:none;max-width:520px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-top:16px">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px" data-i18n="alerts.what_to_check">What to check</div>
+        <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="prefMetrics" onchange="saveAlertPreferences()"> <span data-i18n="alerts.pref_metrics">Website traffic &amp; conversion changes</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="prefCompetitor" onchange="saveAlertPreferences()"> <span data-i18n="alerts.pref_competitor">New competitors spotted in research</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;margin-bottom:16px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="prefTeam" onchange="saveAlertPreferences()"> <span data-i18n="alerts.pref_team">Team activity (new members, seat limits)</span>
+        </label>
+        <hr style="border-color:var(--border);margin-bottom:16px">
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="prefEmail" onchange="saveAlertPreferences()"> <span data-i18n="alerts.pref_email">Also email me a daily digest</span>
+        </label>
+      </div>
+
+      <div id="alertsList" style="max-width:640px;margin-top:20px">
+        <div style="text-align:center;padding:40px;color:var(--muted);font-size:13px" data-i18n="alerts.loading">Loading alerts...</div>
       </div>
     </div>
 
@@ -982,6 +1021,8 @@ async function init() {
       loadTeamSection();
     }
 
+    loadUnreadAlertsBadge();
+
     // The Google Analytics OAuth flow redirects back here with query params
     // indicating success/failure — jump to the Integrations section and show
     // the right message, then clean the URL so a page refresh doesn't
@@ -1381,6 +1422,115 @@ function showIntMsg(text, type) {
   setTimeout(() => { el.style.display = 'none'; }, 6000);
 }
 
+// ── ALERTS (Autonomous Monitoring) ──────────────────────────────────────────
+const ALERT_SEVERITY_COLORS = { info: 'var(--purple-light)', warning: '#e6aa00', critical: '#ef4444' };
+
+// Alert titles/messages are AI-generated free text and business names are
+// user-provided — neither should ever be inserted as raw HTML.
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  const div = document.createElement('div');
+  div.textContent = String(str);
+  return div.innerHTML;
+}
+
+async function loadAlertsSection() {
+  const listEl = document.getElementById('alertsList');
+  try {
+    const res = await fetch('/api/alerts');
+    const data = await res.json();
+    const alerts = data.alerts || [];
+
+    if (!alerts.length) {
+      listEl.innerHTML = `<div style="text-align:center;padding:40px;color:var(--muted);font-size:13px">${t('alerts.none_yet')}</div>`;
+      return;
+    }
+
+    listEl.innerHTML = alerts.map(a => {
+      const color = ALERT_SEVERITY_COLORS[a.severity] || ALERT_SEVERITY_COLORS.info;
+      const dateStr = new Date(a.created_at).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric' });
+      return `
+      <div style="display:flex;gap:12px;padding:14px;border-radius:10px;margin-bottom:10px;background:${a.is_read ? 'var(--bg2)' : 'var(--bg3)'};border:1px solid var(--border);${a.is_read ? '' : 'border-left:3px solid ' + color}">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <span style="font-size:13.5px;font-weight:700;color:var(--text)">${escapeHtml(a.title)}</span>
+            ${a.business_name ? `<span style="font-size:10px;color:var(--muted);background:var(--bg3);padding:2px 6px;border-radius:4px">${escapeHtml(a.business_name)}</span>` : ''}
+          </div>
+          <div style="font-size:12.5px;color:var(--text2);line-height:1.5">${escapeHtml(a.message)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px">${dateStr}</div>
+        </div>
+        ${a.is_read ? '' : `<button onclick="markAlertRead('${a.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;white-space:nowrap;align-self:flex-start" title="${t('alerts.mark_read')}">✓ ${t('alerts.mark_read')}</button>`}
+      </div>`;
+    }).join('');
+  } catch (e) {
+    listEl.innerHTML = `<div style="text-align:center;padding:40px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  }
+  loadUnreadAlertsBadge();
+}
+
+async function markAlertRead(id) {
+  try {
+    await fetch(`/api/alerts/${id}/read`, { method: 'PUT' });
+    loadAlertsSection();
+  } catch (e) {}
+}
+
+async function markAllAlertsRead() {
+  try {
+    await fetch('/api/alerts/read-all', { method: 'PUT' });
+    loadAlertsSection();
+  } catch (e) {}
+}
+
+async function loadUnreadAlertsBadge() {
+  try {
+    const res = await fetch('/api/alerts/unread-count');
+    const data = await res.json();
+    const badge = document.getElementById('alertsUnreadBadge');
+    if (data.count > 0) {
+      badge.textContent = data.count > 9 ? '9+' : data.count;
+      badge.style.display = 'flex';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch (e) {}
+}
+
+let alertPrefsLoaded = false;
+function toggleAlertPreferences() {
+  const panel = document.getElementById('alertPreferencesPanel');
+  const opening = panel.style.display === 'none';
+  panel.style.display = opening ? 'block' : 'none';
+  if (opening && !alertPrefsLoaded) loadAlertPreferences();
+}
+
+async function loadAlertPreferences() {
+  try {
+    const res = await fetch('/api/alerts/preferences');
+    const data = await res.json();
+    const p = data.preferences;
+    document.getElementById('prefMetrics').checked = p.metrics_alerts_enabled !== false;
+    document.getElementById('prefCompetitor').checked = p.competitor_alerts_enabled !== false;
+    document.getElementById('prefTeam').checked = p.team_activity_alerts_enabled !== false;
+    document.getElementById('prefEmail').checked = p.email_alerts_enabled !== false;
+    alertPrefsLoaded = true;
+  } catch (e) {}
+}
+
+async function saveAlertPreferences() {
+  try {
+    await fetch('/api/alerts/preferences', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        metricsAlertsEnabled: document.getElementById('prefMetrics').checked,
+        competitorAlertsEnabled: document.getElementById('prefCompetitor').checked,
+        teamActivityAlertsEnabled: document.getElementById('prefTeam').checked,
+        emailAlertsEnabled: document.getElementById('prefEmail').checked
+      })
+    });
+  } catch (e) {}
+}
+
 function renderBilling() {
   if (!user) return;
   const plan = user.plan || 'starter';
@@ -1418,7 +1568,7 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const navEl = document.getElementById('nav-' + name);
   if (navEl) navEl.classList.add('active');
-  const titleKeys = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title'};
+  const titleKeys = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title',alerts:'alerts.title'};
   document.querySelector('.topbar-title').textContent = titleKeys[name] ? t(titleKeys[name]) : t('dash.nav_dashboard');
   if (window.innerWidth < 900) document.getElementById('sidebar').classList.remove('open');
   if (name === 'analyzer') loadAnalyzedBusinesses();
@@ -1429,6 +1579,7 @@ function showSection(name) {
     restoreScenarioCurrencyPreference();
   }
   if (name === 'integrations') loadIntegrationsSection();
+  if (name === 'alerts') loadAlertsSection();
 }
 
 function openPayment(plan) {
@@ -2689,6 +2840,65 @@ function formatMoney(n) {
   return `${symbol}${formatted}`;
 }
 
+// ── Currency handling for Compare Scenarios — a separate preference from ──
+// Financial Tools' currency (a user may want USD in one and FCFA in the
+// other at the same time), but mirrors that exact same logic.
+function getScenarioCurrencySymbol() {
+  const select = document.getElementById('scenCurrencySelect');
+  if (!select) return '$';
+  if (select.value === 'OTHER') {
+    const custom = document.getElementById('scenOtherCurrencyInput').value.trim();
+    return custom || '$';
+  }
+  return CURRENCY_SYMBOLS[select.value] || select.value;
+}
+
+// The raw currency CODE (or custom text) sent to the backend — distinct from
+// the display symbol, since the AI writes more naturally with a code/name
+// ("XAF", "CHF") than a bare symbol character.
+function getScenarioCurrencyCode() {
+  const select = document.getElementById('scenCurrencySelect');
+  if (!select) return 'USD';
+  if (select.value === 'OTHER') {
+    const custom = document.getElementById('scenOtherCurrencyInput').value.trim();
+    return custom || 'USD';
+  }
+  return select.value;
+}
+
+function saveScenarioCurrencyPreference() {
+  const select = document.getElementById('scenCurrencySelect');
+  const isOther = select.value === 'OTHER';
+  document.getElementById('scenOtherCurrencyWrap').style.display = isOther ? 'block' : 'none';
+  const toSave = isOther ? document.getElementById('scenOtherCurrencyInput').value.trim() : select.value;
+  try { localStorage.setItem('arreyon_scenario_currency', toSave); } catch (e) {}
+  // Re-render existing results (if any) with the new currency symbol, without re-running the AI comparison
+  if (lastScenarioResults) renderScenarioResults(lastScenarioResults.optionsWithFinancials, lastScenarioResults.analysis);
+}
+
+function restoreScenarioCurrencyPreference() {
+  let saved;
+  try { saved = localStorage.getItem('arreyon_scenario_currency'); } catch (e) {}
+  if (!saved) return;
+  const select = document.getElementById('scenCurrencySelect');
+  const isKnown = Object.keys(CURRENCY_SYMBOLS).includes(saved);
+  if (isKnown) {
+    select.value = saved;
+  } else {
+    select.value = 'OTHER';
+    document.getElementById('scenOtherCurrencyWrap').style.display = 'block';
+    document.getElementById('scenOtherCurrencyInput').value = saved;
+  }
+}
+
+function formatScenarioMoney(n) {
+  const symbol = getScenarioCurrencySymbol();
+  const formatted = Number(n).toLocaleString();
+  const select = document.getElementById('scenCurrencySelect');
+  if (select && (select.value === 'XAF' || symbol === 'FCFA')) return `${formatted} ${symbol}`;
+  return `${symbol}${formatted}`;
+}
+
 let lastCalcType = null;
 let lastCalcResult = null;
 
@@ -2831,6 +3041,7 @@ function renderCalculatorResult(type, r) {
 
 // ── COMPARE SCENARIOS ────────────────────────────────────────────────────────
 let scenarioOptionCount = 0;
+let lastScenarioResults = null;
 
 function addScenarioOption() {
   if (scenarioOptionCount >= 4) { alert('You can compare up to 4 options at once.'); return; }
@@ -2937,10 +3148,10 @@ function renderScenarioResults(optionsWithFinancials, analysis) {
         <div style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:5px;background:${riskColor[a.risk_level]||'var(--muted)'}22;color:${riskColor[a.risk_level]||'var(--muted)'};text-transform:uppercase">${a.risk_level} ${t('scen.risk')}</div>
       </div>
       ${fin ? `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px;font-size:12px">
-        <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.net_monthly_gain')}</div><div style="font-weight:700;color:${fin.netMonthlyGain>=0?'var(--green)':'#ef4444'}">${fin.netMonthlyGain.toLocaleString()}</div></div>
+        <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.net_monthly_gain')}</div><div style="font-weight:700;color:${fin.netMonthlyGain>=0?'var(--green)':'#ef4444'}">${formatScenarioMoney(fin.netMonthlyGain)}</div></div>
         <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.payback')}</div><div style="font-weight:700;color:var(--text)">${fin.paybackMonths !== null ? fin.paybackMonths + ' ' + t('scen.months_word') : (fin.investment ? t('scen.never') : '—')}</div></div>
         <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.roi')}</div><div style="font-weight:700;color:var(--text)">${fin.roiPct !== null ? fin.roiPct + '%' : '—'}</div></div>
-        <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.total_gain')}</div><div style="font-weight:700;color:var(--text)">${fin.totalGainOverTimeframe.toLocaleString()}</div></div>
+        <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.total_gain')}</div><div style="font-weight:700;color:var(--text)">${formatScenarioMoney(fin.totalGainOverTimeframe)}</div></div>
       </div>` : `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:12px">${t('scen.no_financials')}</div>`}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div><div style="font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase;margin-bottom:4px">${t('scen.pros')}</div>${a.pros.map(p=>`<div style="font-size:12px;color:var(--text2);margin-bottom:3px">• ${p}</div>`).join('')}</div>
