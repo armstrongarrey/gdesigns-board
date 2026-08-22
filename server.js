@@ -1756,7 +1756,8 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 function formatEntrepreneurContext(input) {
   const parts = [];
   if (input.country) parts.push(`Location: ${input.city ? input.city + ', ' : ''}${input.country}`);
-  if (input.skills) parts.push(`Skills: ${input.skills}`);
+  if (input.primarySkill) parts.push(`Primary skill (their strongest — weight opportunity suggestions toward this first): ${input.primarySkill}`);
+  if (input.otherSkills) parts.push(`Other skills: ${input.otherSkills}`);
   if (input.experience) parts.push(`Experience: ${input.experience}`);
   if (input.interests) parts.push(`Interests: ${input.interests}`);
   if (input.capital) parts.push(`Available capital: ${input.capital}`);
@@ -1775,7 +1776,7 @@ app.post('/api/entrepreneur/find-opportunities', authRequired, async (req, res) 
     const researchBacked = plan === 'pro' || plan === 'business';
 
     const input = req.body || {};
-    if (!input.country && !input.skills && !input.interests) {
+    if (!input.country && !input.primarySkill && !input.otherSkills && !input.interests) {
       return res.status(400).json({ error: 'Please provide at least your location, skills, or interests to find relevant opportunities.' });
     }
 
@@ -1786,7 +1787,7 @@ app.post('/api/entrepreneur/find-opportunities', authRequired, async (req, res) 
       const queries = [];
       const locationPart = input.country ? `in ${input.city ? input.city + ', ' : ''}${input.country}` : '';
       if (input.interests) queries.push(`small business opportunities ${input.interests} ${locationPart} 2026`.trim());
-      if (input.skills) queries.push(`how to start a business with ${input.skills} skills ${locationPart}`.trim());
+      if (input.primarySkill) queries.push(`how to start a business with ${input.primarySkill} skills ${locationPart}`.trim());
       if (!queries.length) queries.push(`profitable small business ideas low capital ${locationPart}`.trim());
 
       const allSources = [];
