@@ -1840,6 +1840,10 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
       console.error('Opportunity finder JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
       throw new Error('Could not generate opportunities — please try again');
     }
+    if (!Array.isArray(structured.opportunities)) {
+      console.error('Find-opportunities returned a malformed shape:', typeof structured.opportunities);
+      throw new Error('Could not generate opportunities — please try again');
+    }
 
     const session = await pool.query(
       `INSERT INTO entrepreneur_sessions (user_id, mode, input_data, structured_output, research_backed) VALUES ($1, 'opportunity_finder', $2, $3, $4) RETURNING id, created_at`,
@@ -1850,6 +1854,118 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   } catch (err) {
     console.error('Opportunity finder error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to find opportunities. Please try again.' });
+  }
+});
+
+// Generates additional opportunities beyond the original set — reuses the
+// founder's original circumstances (stored on the session) rather than
+// asking the frontend to resend the whole form, and explicitly tells the AI
+// which opportunities have already been shown so it doesn't just repeat them.
+app.post('/api/entrepreneur/:sessionId/more-opportunities', authRequired, async (req, res) => {
+  try {
+    const sessionResult = await pool.query(
+      'SELECT * FROM entrepreneur_sessions WHERE id = $1 AND user_id = $2 AND mode = $3',
+      [req.params.sessionId, req.userId, 'opportunity_finder']
+    );
+    if (!sessionResult.rows.length) return res.status(404).json({ error: 'Session not found' });
+    const session = sessionResult.rows[0];
+    const input = session.input_data;
+    // Prefer the language sent with THIS request over whatever was stored
+    // when the original search ran — the user may have switched language
+    // since then, and "Show More" should follow their current preference,
+    // not resurrect a stale one.
+    const language = req.body?.language === 'fr' ? 'fr' : (req.body?.language === 'en' ? 'en' : input.language);
+    const existingOpportunities = session.structured_output?.opportunities || [];
+    const existingNames = existingOpportunities.map(o => o.name);
+
+    const account = await resolveAccount(req.userId);
+    const plan = account?.plan || 'starter';
+    const researchBacked = plan === 'pro' || plan === 'business';
+
+    const context = formatEntrepreneurContext(input);
+    let sourcesText = '', sources = [];
+
+    if (researchBacked) {
+      // Deliberately different query angles from the original round — same
+      // "avoid repeats" goal as the exclusion list below, but for the search
+      // results feeding the AI, not just the AI's own output.
+      const locationPart = input.country ? `in ${input.city ? input.city + ', ' : ''}${input.country}` : '';
+      const queries = [
+        `alternative small business ideas ${locationPart} 2026`.trim(),
+        `underserved niche business opportunities ${input.interests || ''} ${locationPart}`.trim()
+      ];
+      const allSources = [];
+      for (const q of queries) {
+        try {
+          const results = await researchSearch(q, { maxResults: 4 });
+          allSources.push(...results);
+        } catch (e) { continue; }
+      }
+      const seen = new Set();
+      sources = allSources.filter(s => { if (seen.has(s.url)) return false; seen.add(s.url); return true; });
+      sourcesText = sources.map((s, i) => `[${i + 1}] ${s.title}\n${s.snippet || ''}`).join('\n\n');
+    }
+
+    const prompt = `You are a practical business opportunity advisor. This founder already saw an initial set of opportunity suggestions and wants MORE, DIFFERENT options — not the same ones repeated.
+
+THEIR CIRCUMSTANCES:
+${context || 'Limited information provided.'}
+
+OPPORTUNITIES ALREADY SHOWN — DO NOT SUGGEST THESE AGAIN, even reworded:
+${existingNames.map(n => `- ${n}`).join('\n')}
+
+${researchBacked ? `REAL MARKET RESEARCH RESULTS:\n${sourcesText.slice(0, 6000)}\n\nGround your opportunities in this research where relevant — cite using source_ref.` : `NOTE: No live market research was conducted for this request (available on Arreyon Pro and above). Base your suggestions on general business knowledge.`}
+
+YOUR TASK:
+Suggest 3 NEW business opportunities, genuinely different in kind from what's already been shown (not just minor variations) — still realistically fitted to their skills, capital, time, and risk tolerance.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "opportunities": [
+    {
+      "name": "short opportunity name",
+      "description": "what this business would actually involve, 1-2 sentences",
+      "why_it_fits": "specifically tied to their skills/capital/time/interests — not generic",
+      "demand": "high|medium|low",
+      "competition": "high|medium|low",
+      "startup_cost_estimate": "realistic estimate given their stated capital",
+      "time_to_first_revenue": "realistic estimate given their stated available time",
+      "potential_margin": "high|medium|low",
+      "customer_acquisition_difficulty": "high|medium|low",
+      "scalability": "high|medium|low",
+      "risk": "high|medium|low"${researchBacked ? ',\n      "source_ref": "1 (optional, only if grounded in a specific source above)"' : ''}
+    }
+  ]
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Suggest more opportunities now, as JSON only.' }], complexity: 'complex', context: { feature: 'entrepreneur_mode', userId: req.userId }, maxTokens: 2200 });
+    let additional;
+    try {
+      additional = extractJSON(raw);
+    } catch (e) {
+      console.error('More-opportunities JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
+      throw new Error('Could not generate more opportunities — please try again');
+    }
+    if (!Array.isArray(additional.opportunities)) {
+      // Guards against two failure modes: an object shape here would throw
+      // on the spread below (caught, but with a confusing error message),
+      // while a STRING shape wouldn't throw at all — it would silently
+      // spread into individual characters, corrupting the saved data with
+      // no error surfaced anywhere. Catch both explicitly instead.
+      console.error('More-opportunities returned a malformed shape:', typeof additional.opportunities);
+      throw new Error('Could not generate more opportunities — please try again');
+    }
+
+    // Append to the existing session rather than creating a new one, so the
+    // full growing list stays together and can still be used to build a
+    // Business Plan from any opportunity, old or new.
+    const updatedOutput = { ...session.structured_output, opportunities: [...existingOpportunities, ...additional.opportunities] };
+    await pool.query('UPDATE entrepreneur_sessions SET structured_output = $1, structured_output_fr = NULL WHERE id = $2', [JSON.stringify(updatedOutput), session.id]);
+
+    res.json({ success: true, newOpportunities: additional.opportunities || [], allOpportunities: updatedOutput.opportunities, sources, researchBacked });
+  } catch (err) {
+    console.error('More opportunities error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to find more opportunities. Please try again.' });
   }
 });
 
