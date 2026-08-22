@@ -668,7 +668,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div class="form-group"><label data-i18n="ent.country">Country</label><input class="form-input" id="entCountry" placeholder="e.g. Cameroon"></div>
           <div class="form-group"><label data-i18n="ent.city">City / Region</label><input class="form-input" id="entCity" placeholder="e.g. Buea"></div>
         </div>
-        <div class="form-group"><label data-i18n="ent.skills">Your Skills</label><input class="form-input" id="entSkills" placeholder="e.g. graphic design, cooking, sales"></div>
+        <div class="form-group"><label data-i18n="ent.primary_skill">Your Best Skill</label><input class="form-input" id="entPrimarySkill" data-i18n-placeholder="ent.primary_skill_placeholder" placeholder="e.g. graphic design"></div>
+        <div class="form-group"><label><span data-i18n="ent.other_skills">Other Skills</span> <span style="color:var(--muted);font-weight:400" data-i18n="ent.optional">(optional)</span></label><input class="form-input" id="entOtherSkills" data-i18n-placeholder="ent.other_skills_placeholder" placeholder="e.g. cooking, sales, photography"></div>
         <div class="form-group"><label data-i18n="ent.experience">Experience / Background</label><input class="form-input" id="entExperience" placeholder="e.g. 3 years in retail, no business experience"></div>
         <div class="form-group"><label data-i18n="ent.interests">Interests</label><input class="form-input" id="entInterests" placeholder="e.g. fashion, tech, food"></div>
         <div class="form-row">
@@ -2509,7 +2510,8 @@ async function findOpportunities() {
   const input = {
     country: document.getElementById('entCountry').value.trim(),
     city: document.getElementById('entCity').value.trim(),
-    skills: document.getElementById('entSkills').value.trim(),
+    primarySkill: document.getElementById('entPrimarySkill').value.trim(),
+    otherSkills: document.getElementById('entOtherSkills').value.trim(),
     experience: document.getElementById('entExperience').value.trim(),
     interests: document.getElementById('entInterests').value.trim(),
     capital: document.getElementById('entCapital').value.trim(),
@@ -2520,8 +2522,8 @@ async function findOpportunities() {
     language: window.currentLang || 'en'
   };
 
-  if (!input.country && !input.skills && !input.interests) {
-    document.getElementById('entError').textContent = 'Please fill in at least your country, skills, or interests.';
+  if (!input.country && !input.primarySkill && !input.otherSkills && !input.interests) {
+    document.getElementById('entError').textContent = t('ent.err_fill_required');
     document.getElementById('entError').style.display = 'block';
     return;
   }
