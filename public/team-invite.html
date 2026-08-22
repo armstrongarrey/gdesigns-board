@@ -1,6 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XLECQ8G62E"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XLECQ8G62E');
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Team Invitation — Arreyon Consult</title>
@@ -13,6 +21,9 @@
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.lang-switch{position:fixed;top:16px;right:16px;display:flex;gap:6px}
+.lang-switch-btn{background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit}
+.lang-switch-btn.active{background:var(--purple)!important;border-color:var(--purple)!important;color:#fff!important}
 .card{max-width:440px;width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:32px 28px;text-align:center}
 .mark{width:48px;height:48px;background:var(--purple);border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;color:#fff;margin:0 auto 18px}
 h1{font-size:19px;font-weight:700;margin-bottom:8px}
@@ -25,14 +36,20 @@ p{font-size:13.5px;color:var(--text2);line-height:1.6;margin-bottom:20px}
 .error-box{background:#2a0a0a;border:1px solid #4a1010;border-radius:10px;padding:14px;font-size:13px;color:#ff8080;margin-bottom:16px}
 .success-box{background:#0a2a20;border:1px solid var(--green);border-radius:10px;padding:14px;font-size:13px;color:var(--green);margin-bottom:16px}
 </style>
+<script src="/i18n.js"></script>
 </head>
 <body>
+
+<div class="lang-switch">
+  <button class="lang-switch-btn" data-lang-option="en" onclick="setLanguage('en')">EN</button>
+  <button class="lang-switch-btn" data-lang-option="fr" onclick="setLanguage('fr')">FR</button>
+</div>
 
 <div class="card" id="card">
   <div class="mark">A</div>
   <div id="content">
     <div class="spinner"></div>
-    <p id="statusText">Checking your invitation...</p>
+    <p id="statusText" data-i18n="invite.checking">Checking your invitation...</p>
   </div>
 </div>
 
@@ -52,8 +69,8 @@ async function checkLoginStatus() {
 
 async function init() {
   if (!token) {
-    content.innerHTML = `<div class="error-box">This invitation link is missing or malformed.</div>
-      <a href="/" class="btn btn-ghost">Go to Homepage</a>`;
+    content.innerHTML = `<div class="error-box">${t('invite.missing_link')}</div>
+      <a href="/" class="btn btn-ghost">${t('invite.go_home')}</a>`;
     return;
   }
 
@@ -62,13 +79,13 @@ async function init() {
     const res = await fetch('/api/team/invite/' + token);
     const data = await res.json();
     if (!res.ok) {
-      content.innerHTML = `<div class="error-box">${data.error || 'This invitation is no longer valid.'}</div>
-        <a href="/" class="btn btn-ghost">Go to Homepage</a>`;
+      content.innerHTML = `<div class="error-box">${data.error || t('invite.invalid')}</div>
+        <a href="/" class="btn btn-ghost">${t('invite.go_home')}</a>`;
       return;
     }
     invite = data;
   } catch (e) {
-    content.innerHTML = `<div class="error-box">Connection error. Please try again.</div>`;
+    content.innerHTML = `<div class="error-box">${t('invite.connection_error')}</div>`;
     return;
   }
 
@@ -78,29 +95,29 @@ async function init() {
     // Not logged in — send them to sign up or log in with this exact email,
     // then have them return to this same link to finish joining.
     content.innerHTML = `
-      <h1>You're invited!</h1>
-      <p><strong>${invite.ownerName}</strong> has invited you to join their team on Arreyon Consult, using <strong>${invite.memberEmail}</strong>.</p>
-      <p>Create an account or log in with that email address, then come back to this page (or click the link in your invite email again) to finish joining.</p>
-      <a href="/auth?mode=signup&email=${encodeURIComponent(invite.memberEmail)}" class="btn">Create Account</a>
-      <a href="/auth?mode=login&email=${encodeURIComponent(invite.memberEmail)}" class="btn btn-ghost">I already have an account</a>
+      <h1>${t('invite.youre_invited')}</h1>
+      <p><strong>${invite.ownerName}</strong> ${t('invite.invited_you_p1')} <strong>${invite.memberEmail}</strong>.</p>
+      <p>${t('invite.create_or_login')}</p>
+      <a href="/auth?mode=signup&email=${encodeURIComponent(invite.memberEmail)}" class="btn">${t('invite.create_account')}</a>
+      <a href="/auth?mode=login&email=${encodeURIComponent(invite.memberEmail)}" class="btn btn-ghost">${t('invite.already_have')}</a>
     `;
     return;
   }
 
   if (currentUser.email.toLowerCase() !== invite.memberEmail.toLowerCase()) {
     content.innerHTML = `
-      <h1>Wrong account</h1>
-      <div class="error-box">This invitation was sent to <strong>${invite.memberEmail}</strong>, but you're logged in as <strong>${currentUser.email}</strong>.</div>
-      <p>Please log out and log back in with the invited email address.</p>
-      <a href="/auth?mode=login&email=${encodeURIComponent(invite.memberEmail)}" class="btn btn-ghost">Switch Account</a>
+      <h1>${t('invite.wrong_account')}</h1>
+      <div class="error-box">${t('invite.wrong_account_p1')} <strong>${invite.memberEmail}</strong>, ${t('invite.wrong_account_p2')} <strong>${currentUser.email}</strong>.</div>
+      <p>${t('invite.switch_account_note')}</p>
+      <a href="/auth?mode=login&email=${encodeURIComponent(invite.memberEmail)}" class="btn btn-ghost">${t('invite.switch_account')}</a>
     `;
     return;
   }
 
   content.innerHTML = `
-    <h1>You're invited!</h1>
-    <p><strong>${invite.ownerName}</strong> has invited you to join their team on Arreyon Consult. Accepting will give you access to their account based on the permissions they've granted you.</p>
-    <button class="btn" id="acceptBtn" onclick="acceptInvite()">Accept Invitation</button>
+    <h1>${t('invite.youre_invited')}</h1>
+    <p><strong>${invite.ownerName}</strong> ${t('invite.accept_intro')}</p>
+    <button class="btn" id="acceptBtn" onclick="acceptInvite()">${t('invite.accept_btn')}</button>
     <div id="acceptMsg" style="display:none;margin-top:12px"></div>
   `;
 }
@@ -108,7 +125,7 @@ async function init() {
 async function acceptInvite() {
   const btn = document.getElementById('acceptBtn');
   btn.disabled = true;
-  btn.textContent = 'Joining...';
+  btn.textContent = t('invite.joining');
 
   try {
     const res = await fetch('/api/team/invite/' + token + '/accept', { method: 'POST' });
@@ -118,22 +135,27 @@ async function acceptInvite() {
 
     if (!res.ok) {
       btn.disabled = false;
-      btn.textContent = 'Accept Invitation';
-      msgEl.innerHTML = `<div class="error-box">${data.error || 'Failed to accept invitation.'}</div>`;
+      btn.textContent = t('invite.accept_btn');
+      msgEl.innerHTML = `<div class="error-box">${data.error || t('invite.failed_accept')}</div>`;
       return;
     }
 
-    msgEl.innerHTML = `<div class="success-box">You've joined the team! Redirecting to your dashboard...</div>`;
+    msgEl.innerHTML = `<div class="success-box">${t('invite.joined_success')}</div>`;
     setTimeout(() => { window.location.href = '/dashboard'; }, 1500);
   } catch (e) {
     document.getElementById('acceptMsg').style.display = 'block';
-    document.getElementById('acceptMsg').innerHTML = `<div class="error-box">Connection error. Please try again.</div>`;
+    document.getElementById('acceptMsg').innerHTML = `<div class="error-box">${t('invite.connection_error')}</div>`;
     btn.disabled = false;
-    btn.textContent = 'Accept Invitation';
+    btn.textContent = t('invite.accept_btn');
   }
 }
 
-init();
+// init() renders content dynamically via t() calls, so it must wait until
+// i18n.js has finished detecting/applying the language — otherwise the very
+// first render (including any error states) would always come out in English
+// regardless of the visitor's actual language, the same timing bug fixed
+// earlier on boardroom.html and dashboard.html.
+document.addEventListener('DOMContentLoaded', () => { init(); });
 </script>
 </body>
 </html>
