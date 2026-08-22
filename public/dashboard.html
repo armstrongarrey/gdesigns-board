@@ -725,6 +725,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div id="opportunityResults" style="display:none;max-width:820px">
         <div id="entResearchBadge" style="margin-bottom:16px"></div>
         <div id="opportunityCards" style="display:flex;flex-direction:column;gap:14px"></div>
+        <button class="btn-ghost" style="width:100%;padding:10px;margin-top:10px;font-size:13px" onclick="showMoreOpportunities()" id="showMoreOppsBtn" data-i18n="ent.show_more">Show More Opportunities</button>
         <div id="overallRecWrap" style="margin-top:18px;background:linear-gradient(135deg,var(--bg3),var(--bg2));border:1px solid var(--purple);border-radius:12px;padding:18px">
           <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px" data-i18n="ent.where_to_start">Where to Start</div>
           <div id="overallRecText" style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:10px"></div>
@@ -2288,6 +2289,8 @@ function downloadReport(format) {
 // ── ENTREPRENEUR MODE ─────────────────────────────────────────────────────────
 let entrepreneurTab = 'opportunity';
 let currentEntrepreneurSessionId = null;
+let currentOpportunitiesStructured = null;
+let currentOpportunitiesResearchBacked = false;
 
 function toggleEntDownloadMenu(suffix) {
   const menu = document.getElementById('entDownloadMenu' + suffix);
@@ -2554,7 +2557,9 @@ async function findOpportunities() {
   }
 }
 
-function renderOpportunities(structured, researchBacked) {
+function renderOpportunities(structured, researchBacked, preserveState) {
+  currentOpportunitiesStructured = structured;
+  currentOpportunitiesResearchBacked = researchBacked;
   document.getElementById('entResearchBadge').innerHTML = researchBadgeHTML(researchBacked);
 
   const levelColor = { high: 'var(--green)', medium: 'var(--gold)', low: '#ef4444' };
@@ -2587,11 +2592,52 @@ function renderOpportunities(structured, researchBacked) {
   const select = document.getElementById('opportunityPlanSelect');
   select.innerHTML = `<option value="">${t('ent.choose_opportunity')}</option>` + opps.map(o => `<option value="${o.name}">${o.name}</option>`).join('');
 
-  document.getElementById('businessPlanSectionOpp').innerHTML = '';
-  document.getElementById('discussionSectionOpp').innerHTML = buildDiscussionChatHTML('Opp');
+  if (!preserveState) {
+    document.getElementById('businessPlanSectionOpp').innerHTML = '';
+    document.getElementById('discussionSectionOpp').innerHTML = buildDiscussionChatHTML('Opp');
+  }
 
   document.getElementById('opportunityResults').style.display = 'block';
 }
+
+async function showMoreOpportunities() {
+  if (!currentEntrepreneurSessionId) return;
+  const btn = document.getElementById('showMoreOppsBtn');
+  btn.disabled = true;
+  btn.textContent = t('ent.finding_more');
+
+  try {
+    const res = await fetch(`/api/entrepreneur/${currentEntrepreneurSessionId}/more-opportunities`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: window.currentLang || 'en' })
+    });
+    const data = await res.json();
+    btn.disabled = false;
+    btn.textContent = t('ent.show_more');
+
+    if (!res.ok) {
+      document.getElementById('entError').textContent = data.error || t('ent.show_more_failed');
+      document.getElementById('entError').style.display = 'block';
+      return;
+    }
+
+    // Merge the newly-returned opportunities into what's already tracked,
+    // preserving overall_recommendation/what_to_learn_first from the
+    // original find, and re-render with preserveState so an in-progress
+    // Business Plan or discussion for an earlier opportunity isn't wiped out.
+    const merged = { ...currentOpportunitiesStructured, opportunities: data.allOpportunities };
+    renderOpportunities(merged, currentOpportunitiesResearchBacked, true);
+
+    // Scroll the newly-added cards into view rather than jumping back to the top
+    const cards = document.getElementById('opportunityCards').children;
+    if (cards.length) cards[cards.length - (data.newOpportunities?.length || 1)].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = t('ent.show_more');
+    document.getElementById('entError').textContent = t('board.connection_error');
+    document.getElementById('entError').style.display = 'block';
+  }
+}
+
 
 async function validateIdea() {
   const input = {
