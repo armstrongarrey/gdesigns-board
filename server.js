@@ -367,6 +367,26 @@ app.get('/api/business/:id/workspace-context', authRequired, async (req, res) =>
   }
 });
 
+// Condenses a full business context into a short paragraph suitable for
+// appending to an AI persona — deliberately brief (a few sentences, not a
+// JSON dump) since this gets re-sent on every single chat turn in an active
+// conversation, and token cost compounds quickly in a multi-turn session.
+function summarizeBusinessContextForAI(context) {
+  if (!context) return '';
+  const b = context.business;
+  const parts = [];
+  parts.push(`${b.name || 'This business'}${b.industry ? ', a ' + b.industry + ' business' : ''}${b.city || b.country ? ' based in ' + [b.city, b.country].filter(Boolean).join(', ') : ''}.`);
+  if (context.facts.length) {
+    const topFacts = context.facts.slice(0, 3).map(f => f.fact_value).filter(Boolean);
+    if (topFacts.length) parts.push(`Known about the business: ${topFacts.join('; ')}.`);
+  }
+  if (context.latestResearch) parts.push(`Market research has already been done for this business — you don't need to guess at their competitive landscape from scratch.`);
+  if (b.challenges && b.challenges.length) parts.push(`Stated challenges: ${b.challenges.join(', ')}.`);
+  if (b.goals && b.goals.length) parts.push(`Stated goals: ${JSON.stringify(b.goals)}.`);
+  if (!parts.length) return '';
+  return `\n\nBUSINESS CONTEXT (use this naturally — the founder shouldn't need to re-explain their business to you): ${parts.join(' ')}`;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
@@ -1693,7 +1713,7 @@ Pick the ONE director whose specialty best matches this challenge. Return ONLY t
 });
 
 app.post('/api/board/chat', authRequired, async (req, res) => {
-  const { persona, messages, ai, directorId, consultationId, language = 'en' } = req.body;
+  const { persona, messages, ai, directorId, consultationId, language = 'en', businessId } = req.body;
 
   try {
     const u = await resolveAccount(req.userId); // team members share the owner's plan/limits
@@ -1717,7 +1737,20 @@ app.post('/api/board/chat', authRequired, async (req, res) => {
       return res.status(403).json({ error: `Monthly consultation limit reached (${limits.consultations}/month). Upgrade for more.`, upgradeRequired: true });
     }
 
-    const localizedPersona = persona + frenchInstruction(language);
+    // Optional business link — validated against this account before ever
+    // being trusted, same pattern used for Entrepreneur Mode's linking.
+    // Failure here is silent and non-fatal: Boardroom must keep working
+    // exactly as before for anyone not using this feature, or if the lookup
+    // itself fails for any reason.
+    let businessContextText = '';
+    if (businessId) {
+      try {
+        const context = await getBusinessContext(businessId, u.id);
+        businessContextText = summarizeBusinessContextForAI(context);
+      } catch (e) { console.error('Boardroom business context lookup failed (non-fatal):', e.message); }
+    }
+
+    const localizedPersona = persona + frenchInstruction(language) + businessContextText;
 
     // Call the appropriate AI
     let reply;
