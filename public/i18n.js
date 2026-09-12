@@ -66,6 +66,8 @@ const I18N_DICT = {
     "ent.other_skills_placeholder": "e.g. cooking, sales, photography",
     "ent.optional": "(optional)",
     "ent.err_fill_required": "Please fill in at least your country, skills, or interests.",
+    "ent.link_business": "Link to an existing business",
+    "ent.link_business_none": "None — standalone search",
     "footer.rights": "All rights reserved.",
 
     // Consult page — Stage 1 form
@@ -155,6 +157,7 @@ const I18N_DICT = {
     // Boardroom
     "board.dashboard_link": "Dashboard",
     "board.get_verdict": "Get Board Verdict",
+    "board.no_business_linked": "No business linked",
     "board.consultations_left": "consultations left",
     "board.chat_error": "I apologize, there was an issue processing your request. Please try again.",
     "board.synthesis_failed": "Synthesis failed. Please try again.",
@@ -1001,6 +1004,8 @@ const I18N_DICT = {
     "ent.other_skills_placeholder": "ex. cuisine, vente, photographie",
     "ent.optional": "(facultatif)",
     "ent.err_fill_required": "Veuillez remplir au moins votre pays, vos compétences ou vos centres d'intérêt.",
+    "ent.link_business": "Associer à une entreprise existante",
+    "ent.link_business_none": "Aucune — recherche autonome",
     "footer.rights": "Tous droits réservés.",
 
     // Consult page — Stage 1 form
@@ -1090,6 +1095,7 @@ const I18N_DICT = {
     // Boardroom
     "board.dashboard_link": "Tableau de bord",
     "board.get_verdict": "Verdict du conseil",
+    "board.no_business_linked": "Aucune entreprise associée",
     "board.consultations_left": "consultations restantes",
     "board.chat_error": "Je suis désolé, un problème est survenu lors du traitement de votre demande. Veuillez réessayer.",
     "board.synthesis_failed": "Échec de la synthèse. Veuillez réessayer.",
