@@ -105,6 +105,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
       <span data-i18n="board.dashboard_link">Dashboard</span>
     </a>
     <div><div class="hdr-title">Boardroom</div><div class="hdr-sub">Arreyon Consult</div></div>
+    <select id="boardBusinessSelect" onchange="saveBoardBusinessSelection()" style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:12px;color:var(--muted);font-family:inherit;max-width:160px;display:none">
+      <option value="" data-i18n="board.no_business_linked">No business linked</option>
+    </select>
   </div>
   <div class="hdr-right">
     <button class="lang-switch-btn" data-lang-option="en" onclick="setLanguage('en')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit">EN</button>
@@ -374,6 +377,7 @@ const DIRS = [
 ];
 
 let user = null;
+let currentBoardBusinessId = null;
 let active = null;
 let convos = {};
 let busy = false;
@@ -403,6 +407,7 @@ async function init() {
     window.currentRemainingConsultations = remaining;
     document.getElementById('usagePill').textContent = remaining + ' ' + t('board.consultations_left');
     buildDirList();
+    loadBoardBusinesses();
 
     // Arriving from a dashboard category card ("Business Strategy", "Marketing &
     // Brand", etc.) — automatically match a director for that topic instead of
@@ -429,6 +434,42 @@ async function init() {
       }
     }
   } catch(e) { window.location.href = '/auth'; }
+}
+
+// Optional business link for this Boardroom session — mirrors the pattern
+// already used in Entrepreneur Mode. Populates from the account's existing
+// businesses; stays hidden entirely if there are none, so this never adds
+// visual noise for a brand-new account.
+async function loadBoardBusinesses() {
+  try {
+    const res = await fetch('/api/business');
+    const data = await res.json();
+    const businesses = data.businesses || [];
+    if (!businesses.length) return;
+
+    const select = document.getElementById('boardBusinessSelect');
+    const optionsHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+    select.innerHTML = select.options[0].outerHTML + optionsHTML;
+    select.style.display = 'block';
+
+    // Restore a prior selection for this browser, if any — a session-scoped
+    // preference, not tied to a specific director or conversation.
+    let saved;
+    try { saved = localStorage.getItem('arreyon_board_business_id'); } catch (e) {}
+    if (saved && businesses.some(b => b.id === saved)) {
+      select.value = saved;
+      currentBoardBusinessId = saved;
+    }
+  } catch (e) { /* Business linking is optional — Boardroom works fully without it */ }
+}
+
+function saveBoardBusinessSelection() {
+  const select = document.getElementById('boardBusinessSelect');
+  currentBoardBusinessId = select.value || null;
+  try {
+    if (currentBoardBusinessId) localStorage.setItem('arreyon_board_business_id', currentBoardBusinessId);
+    else localStorage.removeItem('arreyon_board_business_id');
+  } catch (e) {}
 }
 
 function buildDirList() {
@@ -719,7 +760,7 @@ async function sendMsg() {
   try {
     const res = await fetch('/api/board/chat', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ persona: fullPersona, messages: history, ai: active.ai, directorId: active.id, language: currentLang })
+      body: JSON.stringify({ persona: fullPersona, messages: history, ai: active.ai, directorId: active.id, language: currentLang, businessId: currentBoardBusinessId })
     });
     const data = await res.json();
     removeTyping();
