@@ -296,6 +296,78 @@ async function resolveAccount(userId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// BUSINESS WORKSPACE — Phase 1, Step 3
+// A single place that assembles whatever's known about a business, so future
+// AI features read from here instead of each separately re-fetching (or
+// re-asking the user for) the same context. Deliberately returns RAW English
+// data with no translation-on-read — that's a presentation-layer concern for
+// whichever feature displays it, not something baked into a shared data
+// helper multiple future callers will depend on.
+//
+// Ownership is checked INSIDE this function (against the resolved account),
+// not left to the caller to remember — every future consumer of this helper
+// gets that protection automatically.
+//
+// Honest current limitation: there is no persisted financial-calculation
+// history table (Financial Tools calculations are ephemeral, computed
+// client-side and never saved), so no financial history is included yet.
+// This will need its own schema work in a later phase, not invented here.
+// ═══════════════════════════════════════════════════════════════════════════
+async function getBusinessContext(businessId, accountId) {
+  const bizResult = await pool.query('SELECT * FROM businesses WHERE id = $1 AND user_id = $2', [businessId, accountId]);
+  if (!bizResult.rows.length) return null;
+  const business = bizResult.rows[0];
+
+  const factsResult = await pool.query(
+    `SELECT DISTINCT ON (fact_key) fact_key, fact_value, source_type, created_at
+     FROM business_facts WHERE business_id = $1 ORDER BY fact_key, created_at DESC`,
+    [businessId]
+  );
+
+  const researchResult = await pool.query(
+    `SELECT structured_data, verification_data, scope, created_at FROM research_sessions
+     WHERE business_id = $1 AND structured_data IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+    [businessId]
+  );
+
+  const entrepreneurResult = await pool.query(
+    `SELECT id, mode, research_backed, business_plan IS NOT NULL AS has_business_plan, created_at
+     FROM entrepreneur_sessions WHERE business_id = $1 ORDER BY created_at DESC LIMIT 10`,
+    [businessId]
+  );
+
+  return {
+    business: {
+      id: business.id, name: business.name, website: business.website, industry: business.industry,
+      country: business.country, region: business.region, city: business.city, currency: business.currency,
+      businessModel: business.business_model, stage: business.stage,
+      goals: business.goals, challenges: business.challenges, opportunities: business.opportunities,
+      strategySummary: business.strategy_summary
+    },
+    facts: factsResult.rows,
+    latestResearch: researchResult.rows[0] || null,
+    entrepreneurSessions: entrepreneurResult.rows,
+    financialHistory: null // not yet available — see function comment above
+  };
+}
+
+// Proof-of-concept endpoint for Step 3 — exercises getBusinessContext() in
+// isolation. Nothing else in the application calls this yet; it exists so
+// the helper can be verified against real data before Step 4 wires any
+// actual feature to it.
+app.get('/api/business/:id/workspace-context', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    res.json(context);
+  } catch (e) {
+    console.error('Workspace context error:', e.message);
+    res.status(500).json({ error: 'Failed to load business context' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
 // for an already-logged-in user, not authenticating them. Reuses the same
@@ -1846,12 +1918,21 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
       throw new Error('Could not generate opportunities — please try again');
     }
 
+    // Optional link to an existing business — validated against the resolved
+    // account (not just req.userId) so a team member can link to a business
+    // the whole team shares, but never to one they don't have access to.
+    let linkedBusinessId = null;
+    if (req.body.businessId) {
+      const bizCheck = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.body.businessId, account.id]);
+      if (bizCheck.rows.length) linkedBusinessId = req.body.businessId;
+    }
+
     const session = await pool.query(
-      `INSERT INTO entrepreneur_sessions (user_id, mode, input_data, structured_output, research_backed) VALUES ($1, 'opportunity_finder', $2, $3, $4) RETURNING id, created_at`,
-      [req.userId, JSON.stringify(input), JSON.stringify(structured), researchBacked]
+      `INSERT INTO entrepreneur_sessions (user_id, mode, input_data, structured_output, research_backed, business_id) VALUES ($1, 'opportunity_finder', $2, $3, $4, $5) RETURNING id, created_at`,
+      [req.userId, JSON.stringify(input), JSON.stringify(structured), researchBacked, linkedBusinessId]
     );
 
-    res.json({ success: true, sessionId: session.rows[0].id, structured, sources, researchBacked });
+    res.json({ success: true, sessionId: session.rows[0].id, structured, sources, researchBacked, linkedBusinessId });
   } catch (err) {
     console.error('Opportunity finder error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to find opportunities. Please try again.' });
@@ -2048,12 +2129,18 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
       throw new Error('Could not validate the idea — please try again');
     }
 
+    let linkedBusinessId = null;
+    if (req.body.businessId) {
+      const bizCheck = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.body.businessId, account.id]);
+      if (bizCheck.rows.length) linkedBusinessId = req.body.businessId;
+    }
+
     const session = await pool.query(
-      `INSERT INTO entrepreneur_sessions (user_id, mode, input_data, structured_output, research_backed) VALUES ($1, 'idea_validation', $2, $3, $4) RETURNING id, created_at`,
-      [req.userId, JSON.stringify(input), JSON.stringify(structured), researchBacked]
+      `INSERT INTO entrepreneur_sessions (user_id, mode, input_data, structured_output, research_backed, business_id) VALUES ($1, 'idea_validation', $2, $3, $4, $5) RETURNING id, created_at`,
+      [req.userId, JSON.stringify(input), JSON.stringify(structured), researchBacked, linkedBusinessId]
     );
 
-    res.json({ success: true, sessionId: session.rows[0].id, structured, sources, researchBacked });
+    res.json({ success: true, sessionId: session.rows[0].id, structured, sources, researchBacked, linkedBusinessId });
   } catch (err) {
     console.error('Idea validation error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to validate idea. Please try again.' });
