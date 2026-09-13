@@ -674,5 +674,21 @@ CREATE TABLE IF NOT EXISTS growth_progress_history (
 );
 CREATE INDEX IF NOT EXISTS idx_growth_progress_history_objective ON growth_progress_history(objective_id, recorded_at);
 
+-- Smaller checkpoints along the way to the bigger goal. target_value is
+-- optional — some milestones are numeric ("reach 250K"), others are events
+-- with no number ("launch the new product"), tracked by manually checking
+-- them off. achieved_at doubles as both the achievement flag and its
+-- timestamp, rather than a separate boolean.
+CREATE TABLE IF NOT EXISTS growth_milestones (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  objective_id UUID REFERENCES growth_objectives(id) ON DELETE CASCADE,
+  label VARCHAR(255) NOT NULL,
+  target_value NUMERIC(14,2),
+  target_date DATE,
+  achieved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_growth_milestones_objective ON growth_milestones(objective_id, created_at);
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
