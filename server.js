@@ -536,6 +536,7 @@ app.post('/api/business/:id/growth-objective', authRequired, async (req, res) =>
        VALUES ($1, $2, $3, $4, $5, $5, $6, $7) RETURNING *`,
       [req.params.id, account.id, metricName, unit || null, startNum, targetNum, targetDate || null]
     );
+    await pool.query('INSERT INTO growth_progress_history (objective_id, value) VALUES ($1, $2)', [inserted.rows[0].id, startNum]);
 
     res.json({ success: true, objective: inserted.rows[0], progress: computeGrowthProgress(startNum, startNum, targetNum) });
   } catch (e) {
@@ -609,11 +610,40 @@ app.put('/api/business/:id/growth-objective/:objectiveId/progress', authRequired
       `UPDATE growth_objectives SET current_value = $1, status = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
       [currentNum, newStatus, obj.id]
     );
+    await pool.query('INSERT INTO growth_progress_history (objective_id, value) VALUES ($1, $2)', [obj.id, currentNum]);
 
     res.json({ success: true, objective: updated.rows[0], progress });
   } catch (e) {
     console.error('Update growth progress error:', e.message);
     res.status(500).json({ error: 'Failed to update progress' });
+  }
+});
+
+app.get('/api/business/:id/growth-objective/:objectiveId/progress-history', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const objResult = await pool.query(
+      `SELECT go.* FROM growth_objectives go JOIN businesses b ON b.id = go.business_id
+       WHERE go.id = $1 AND go.business_id = $2 AND b.user_id = $3`,
+      [req.params.objectiveId, req.params.id, account.id]
+    );
+    if (!objResult.rows.length) return res.status(404).json({ error: 'Growth objective not found' });
+    const obj = objResult.rows[0];
+
+    const history = await pool.query(
+      'SELECT value, recorded_at FROM growth_progress_history WHERE objective_id = $1 ORDER BY recorded_at ASC',
+      [req.params.objectiveId]
+    );
+
+    res.json({
+      history: history.rows,
+      startingValue: parseFloat(obj.starting_value),
+      targetValue: parseFloat(obj.target_value),
+      unit: obj.unit
+    });
+  } catch (e) {
+    console.error('Growth progress history error:', e.message);
+    res.status(500).json({ error: 'Failed to load progress history' });
   }
 });
 
