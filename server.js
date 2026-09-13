@@ -5389,6 +5389,45 @@ app.get('/health', (req, res) => res.json({ status: 'ok', service: 'Arreyon Cons
 // acceptable for a daily digest, not something that needs second-precision.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Bilingual alert text, written directly rather than AI-translated — these
+// are simple, predictable templates with just numbers/names interpolated,
+// not free-form prose, so hand-writing both versions once costs nothing
+// ongoing and avoids the exact "wasted API credit to re-say the same thing
+// in a different language" problem the rest of this system was built to
+// avoid. Matches the same pattern already used for EMAIL_TEMPLATES.
+const ALERT_MESSAGES = {
+  trafficDrop: {
+    en: (pctDrop, latest, avg) => ({ title: 'Website traffic has dropped', message: `Sessions are down ${pctDrop}% compared to your recent average (${latest} vs ~${avg}).` }),
+    fr: (pctDrop, latest, avg) => ({ title: 'Le trafic du site web a chuté', message: `Les sessions ont baissé de ${pctDrop}% par rapport à votre moyenne récente (${latest} contre ~${avg}).` })
+  },
+  conversionsDrop: {
+    en: (pctDrop) => ({ title: 'Conversions have dropped', message: `Conversions are down ${pctDrop}% compared to your recent average.` }),
+    fr: (pctDrop) => ({ title: 'Les conversions ont chuté', message: `Les conversions ont baissé de ${pctDrop}% par rapport à votre moyenne récente.` })
+  },
+  competitorChange: {
+    en: (businessName, count, names) => ({
+      title: `New competitor${count > 1 ? 's' : ''} spotted for ${businessName}`,
+      message: `Your latest market research surfaced ${count > 1 ? 'competitors' : 'a competitor'} not seen in your previous research: ${names}.`
+    }),
+    fr: (businessName, count, names) => ({
+      title: `Nouveau${count > 1 ? 'x' : ''} concurrent${count > 1 ? 's' : ''} repéré${count > 1 ? 's' : ''} pour ${businessName}`,
+      message: `Votre dernière étude de marché a révélé ${count > 1 ? 'des concurrents' : 'un concurrent'} non observé${count > 1 ? 's' : ''} dans vos recherches précédentes : ${names}.`
+    })
+  },
+  newTeamMember: {
+    en: (email) => ({ title: 'New team member joined', message: `${email} accepted your invitation and is now active on your account.` }),
+    fr: (email) => ({ title: 'Nouveau membre d\u2019équipe', message: `${email} a accepté votre invitation et est maintenant actif sur votre compte.` })
+  },
+  seatsFull: {
+    en: (limit, plan) => ({ title: 'Team seats are full', message: `You're using all ${limit} seats on your ${plan} plan. Upgrade if you'd like to invite more people.` }),
+    fr: (limit, plan) => ({ title: 'Sièges d\u2019équipe complets', message: `Vous utilisez les ${limit} sièges de votre forfait ${plan}. Passez à un forfait supérieur pour inviter plus de personnes.` })
+  }
+};
+function alertText(templateKey, language, ...args) {
+  const lang = language === 'fr' ? 'fr' : 'en';
+  return ALERT_MESSAGES[templateKey][lang](...args);
+}
+
 async function createAlert(ownerId, businessId, alertType, severity, title, message, details) {
   const inserted = await pool.query(
     `INSERT INTO monitoring_alerts (owner_id, business_id, alert_type, severity, title, message, details)
@@ -5399,7 +5438,7 @@ async function createAlert(ownerId, businessId, alertType, severity, title, mess
 }
 
 // ── 1. Business metrics changes — needs Google Analytics connected ─────────
-async function checkMetricsChanges(ownerId, prefs) {
+async function checkMetricsChanges(ownerId, prefs, language) {
   if (prefs && prefs.metrics_alerts_enabled === false) return;
 
   const connResult = await pool.query('SELECT * FROM google_analytics_connections WHERE owner_id = $1', [ownerId]);
@@ -5419,18 +5458,18 @@ async function checkMetricsChanges(ownerId, prefs) {
 
   if (priorAvgSessions >= 5 && latest.sessions < priorAvgSessions * 0.6) {
     const pctDrop = Math.round((1 - latest.sessions / priorAvgSessions) * 100);
+    const { title, message } = alertText('trafficDrop', language, pctDrop, latest.sessions, Math.round(priorAvgSessions));
     await createAlert(ownerId, connection.business_id, 'metrics_change', 'warning',
-      'Website traffic has dropped',
-      `Sessions are down ${pctDrop}% compared to your recent average (${latest.sessions} vs ~${Math.round(priorAvgSessions)}).`,
+      title, message,
       { latestSessions: latest.sessions, priorAvgSessions: Math.round(priorAvgSessions), pctDrop }
     );
   }
 
   if (priorAvgConversions >= 1 && latest.conversions < priorAvgConversions * 0.5) {
     const pctDrop = Math.round((1 - latest.conversions / priorAvgConversions) * 100);
+    const { title, message } = alertText('conversionsDrop', language, pctDrop);
     await createAlert(ownerId, connection.business_id, 'metrics_change', 'warning',
-      'Conversions have dropped',
-      `Conversions are down ${pctDrop}% compared to your recent average.`,
+      title, message,
       { latestConversions: latest.conversions, priorAvgConversions: Math.round(priorAvgConversions), pctDrop }
     );
   }
@@ -5441,7 +5480,7 @@ async function checkMetricsChanges(ownerId, prefs) {
 // competitor names. Deliberately compares just the NAME SET rather than
 // trying to semantically diff AI-written descriptions, since that's a much
 // more reliable signal than fuzzy text comparison.
-async function checkCompetitorChanges(ownerId, prefs) {
+async function checkCompetitorChanges(ownerId, prefs, language) {
   if (prefs && prefs.competitor_alerts_enabled === false) return;
 
   const businesses = await pool.query('SELECT id, name FROM businesses WHERE user_id = $1 AND is_active = true', [ownerId]);
@@ -5463,9 +5502,9 @@ async function checkCompetitorChanges(ownerId, prefs) {
       const displayNames = (latest.structured_data?.competitors || [])
         .filter(c => newCompetitors.includes((c.name || '').toLowerCase().trim()))
         .map(c => c.name);
+      const { title, message } = alertText('competitorChange', language, business.name, displayNames.length, displayNames.join(', '));
       await createAlert(ownerId, business.id, 'competitor_change', 'info',
-        `New competitor${displayNames.length > 1 ? 's' : ''} spotted for ${business.name}`,
-        `Your latest market research surfaced ${displayNames.length > 1 ? 'competitors' : 'a competitor'} not seen in your previous research: ${displayNames.join(', ')}.`,
+        title, message,
         { newCompetitors: displayNames, businessName: business.name }
       );
     }
@@ -5473,7 +5512,7 @@ async function checkCompetitorChanges(ownerId, prefs) {
 }
 
 // ── 3. Team activity — new members joining, and seats running out ──────────
-async function checkTeamActivity(ownerId, ownerPlan, prefs) {
+async function checkTeamActivity(ownerId, ownerPlan, prefs, language) {
   if (prefs && prefs.team_activity_alerts_enabled === false) return;
 
   // New team members who joined in roughly the last day (this check runs
@@ -5485,9 +5524,9 @@ async function checkTeamActivity(ownerId, ownerPlan, prefs) {
     [ownerId]
   );
   for (const member of recentJoins.rows) {
+    const { title, message } = alertText('newTeamMember', language, member.member_email);
     await createAlert(ownerId, null, 'team_activity', 'info',
-      'New team member joined',
-      `${member.member_email} accepted your invitation and is now active on your account.`,
+      title, message,
       { memberEmail: member.member_email }
     );
   }
@@ -5499,9 +5538,9 @@ async function checkTeamActivity(ownerId, ownerPlan, prefs) {
   const activeCount = await pool.query(`SELECT COUNT(*) FROM team_members WHERE owner_id = $1 AND status != 'removed'`, [ownerId]);
   const seatsUsed = parseInt(activeCount.rows[0].count, 10) + 1; // +1 for the owner's own seat
   if (seatsUsed >= limits.team) {
+    const { title, message } = alertText('seatsFull', language, limits.team, ownerPlan);
     await createAlert(ownerId, null, 'team_activity', 'info',
-      'Team seats are full',
-      `You're using all ${limits.team} seats on your ${ownerPlan} plan. Upgrade if you'd like to invite more people.`,
+      title, message,
       { seatsUsed, seatLimit: limits.team, plan: ownerPlan }
     );
   }
@@ -5525,9 +5564,9 @@ async function runMonitoringSweep() {
         const prefResult = await pool.query('SELECT * FROM monitoring_preferences WHERE owner_id = $1', [owner.id]);
         const prefs = prefResult.rows[0] || null; // no row yet = all defaults (enabled)
 
-        await checkMetricsChanges(owner.id, prefs);
-        await checkCompetitorChanges(owner.id, prefs);
-        await checkTeamActivity(owner.id, owner.plan, prefs);
+        await checkMetricsChanges(owner.id, prefs, owner.preferred_language);
+        await checkCompetitorChanges(owner.id, prefs, owner.preferred_language);
+        await checkTeamActivity(owner.id, owner.plan, prefs, owner.preferred_language);
         ownersChecked++;
 
         // Digest email for anything created just now and not yet emailed
