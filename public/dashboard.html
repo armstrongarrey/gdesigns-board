@@ -974,15 +974,27 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
     <div class="form-group" style="max-width:400px;margin-bottom:20px">
       <label data-i18n="growth.select_business">Business</label>
-      <select class="form-input" id="growthBusinessSelect" onchange="loadGrowthObjective()"></select>
+      <select class="form-input" id="growthBusinessSelect" onchange="loadGrowthGoalsList()"></select>
     </div>
 
     <div id="growthNoBizPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;text-align:center;max-width:500px">
       <div style="font-size:13px;color:var(--muted)" data-i18n="growth.no_business_yet">Analyze a business first so Growth Center has somewhere to track progress.</div>
     </div>
 
+    <!-- GOALS LIST — shown when the business has one or more active goals -->
+    <div id="growthGoalsListWrap" style="display:none;max-width:700px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="section-title" style="margin:0;font-size:16px" data-i18n="growth.your_goals">Your Goals</div>
+        <button class="btn-primary" onclick="showNewGoalForm()" style="padding:8px 16px" data-i18n="growth.add_new_goal">+ Add New Goal</button>
+      </div>
+      <div id="growthGoalsList"></div>
+    </div>
+
     <!-- NO ACTIVE GOAL — creation form -->
     <div id="growthSetGoalWrap" style="display:none;max-width:500px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px">
+      <div id="growthBackToListWrap" style="display:none;margin-bottom:14px">
+        <a href="#" onclick="backToGoalsList();return false" style="font-size:12px;color:var(--purple-light);text-decoration:none" data-i18n="growth.back_to_goals">← Back to all goals</a>
+      </div>
       <div style="font-size:14px;font-weight:700;margin-bottom:14px" data-i18n="growth.set_goal_title">Set a Growth Objective</div>
       <div class="form-group"><label data-i18n="growth.metric_name">What are you trying to grow (or reduce)?</label><input class="form-input" id="goalMetricName" data-i18n-placeholder="growth.metric_placeholder" placeholder="e.g. Monthly Revenue"></div>
       <div class="form-row">
@@ -999,6 +1011,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
     <!-- ACTIVE GOAL — progress + plan -->
     <div id="growthActiveWrap" style="display:none;max-width:700px">
+      <a href="#" onclick="backToGoalsList();return false" style="font-size:12px;color:var(--purple-light);text-decoration:none;display:inline-block;margin-bottom:14px" data-i18n="growth.back_to_goals">← Back to all goals</a>
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:18px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:12px">
           <div id="growthObjectiveTitle" style="font-size:15px;font-weight:700"></div>
@@ -1702,16 +1715,20 @@ async function loadDashboardBusinessHealth() {
       .catch(() => {});
 
     // Growth Progress card — hidden entirely if there's no active goal, since
-    // an empty progress bar with nothing to show is worse than no card at all.
-    fetch(`/api/business/${primary.id}/growth-objective`)
+    // an empty progress bar with nothing to show is worse than no card at
+    // all. A business can now have several active goals at once, so this
+    // shows the most recent one as a representative sample — "Open Growth
+    // Center" is where the full list actually lives.
+    fetch(`/api/business/${primary.id}/growth-objectives`)
       .then(r => r.json())
       .then(data => {
         const card = document.getElementById('dashGrowthCard');
-        if (!data.objective) { card.style.display = 'none'; return; }
+        const objectives = data.objectives || [];
+        if (!objectives.length) { card.style.display = 'none'; return; }
         card.style.display = 'block';
-        const obj = data.objective, unit = obj.unit || '';
+        const obj = objectives[0], unit = obj.unit || '';
         document.getElementById('dashGrowthObjectiveLabel').textContent = `${obj.metric_name}: ${obj.current_value}${unit} → ${obj.target_value}${unit}`;
-        const pct = data.progress ? data.progress.pct : 0;
+        const pct = obj.progress ? obj.progress.pct : 0;
         document.getElementById('dashGrowthBar').style.width = pct + '%';
         document.getElementById('dashGrowthLabel').textContent = `${pct}% ${t('growth.of_the_way_there')}`;
       })
@@ -2090,7 +2107,8 @@ document.addEventListener('arreyon:langchange', async () => {
     }
   }
   if (document.getElementById('section-growth')?.classList.contains('active') && currentGrowthBusinessId) {
-    loadGrowthObjective();
+    if (currentGrowthObjectiveId) loadGrowthObjective();
+    else loadGrowthGoalsList();
   }
   // applyTranslations() re-tags every data-i18n element, which would wipe out
   // the 🔒 lock prefix we add on top of the base label — re-apply it after.
@@ -2895,6 +2913,7 @@ async function loadBusinessesForLinking() {
 // ── GROWTH CENTER ────────────────────────────────────────────────────────
 let currentGrowthBusinessId = null;
 let currentGrowthObjectiveId = null;
+let currentBusinessHasGoals = false;
 
 async function loadGrowthBusinesses() {
   try {
@@ -2906,6 +2925,7 @@ async function loadGrowthBusinesses() {
     if (!businesses.length) {
       document.getElementById('growthNoBizPrompt').style.display = 'block';
       select.parentElement.style.display = 'none';
+      document.getElementById('growthGoalsListWrap').style.display = 'none';
       document.getElementById('growthSetGoalWrap').style.display = 'none';
       document.getElementById('growthActiveWrap').style.display = 'none';
       return;
@@ -2925,28 +2945,27 @@ async function loadGrowthBusinesses() {
     currentGrowthBusinessId = stillExists ? savedId : businesses[0].id;
     select.value = currentGrowthBusinessId;
 
-    loadGrowthObjective();
+    loadGrowthGoalsList();
   } catch (e) {}
 }
 
 
 async function loadGrowthObjective() {
-  const select = document.getElementById('growthBusinessSelect');
-  currentGrowthBusinessId = select.value || currentGrowthBusinessId;
-  if (!currentGrowthBusinessId) return;
-  try { localStorage.setItem('arreyon_growth_business_id', currentGrowthBusinessId); } catch (e) {}
+  if (!currentGrowthBusinessId || !currentGrowthObjectiveId) return;
 
   try {
-    const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective?lang=${window.currentLang || 'en'}`);
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${currentGrowthObjectiveId}?lang=${window.currentLang || 'en'}`);
     const data = await res.json();
 
     if (!data.objective) {
-      showNewGoalForm();
+      // The goal this view was opened for no longer exists (e.g. deleted
+      // elsewhere) — fall back to the list rather than showing a broken view.
+      backToGoalsList();
       return;
     }
 
-    currentGrowthObjectiveId = data.objective.id;
     document.getElementById('growthSetGoalWrap').style.display = 'none';
+    document.getElementById('growthGoalsListWrap').style.display = 'none';
     document.getElementById('growthActiveWrap').style.display = 'block';
     renderGrowthObjective(data.objective, data.progress);
     loadGrowthProgressChart();
@@ -2984,10 +3003,67 @@ function renderGrowthObjective(obj, progress) {
   document.getElementById('growthUpdateValue').value = '';
 }
 
+// Populates the goals list — the new entry point for a business with one or
+// more active goals. A business with zero goals skips straight to the
+// creation form, matching the original single-goal behavior for that case.
+async function loadGrowthGoalsList() {
+  const select = document.getElementById('growthBusinessSelect');
+  currentGrowthBusinessId = select.value || currentGrowthBusinessId;
+  if (!currentGrowthBusinessId) return;
+  try { localStorage.setItem('arreyon_growth_business_id', currentGrowthBusinessId); } catch (e) {}
+
+  document.getElementById('growthActiveWrap').style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objectives`);
+    const data = await res.json();
+    const objectives = data.objectives || [];
+
+    if (!objectives.length) {
+      currentBusinessHasGoals = false;
+      document.getElementById('growthGoalsListWrap').style.display = 'none';
+      showNewGoalForm();
+      return;
+    }
+
+    currentBusinessHasGoals = true;
+    document.getElementById('growthSetGoalWrap').style.display = 'none';
+    document.getElementById('growthGoalsListWrap').style.display = 'block';
+    document.getElementById('growthGoalsList').innerHTML = objectives.map(obj => {
+      const unit = obj.unit || '';
+      const pct = obj.progress ? obj.progress.pct : 0;
+      return `
+        <div onclick="openGrowthGoal('${obj.id}')" style="cursor:pointer;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="font-size:13.5px;font-weight:600;color:var(--text)">${escapeHtml(obj.metric_name)}</span>
+            <span style="font-size:11px;color:var(--muted)">${obj.current_value}${unit} → ${obj.target_value}${unit}</span>
+          </div>
+          <div style="background:var(--bg3);border-radius:6px;height:6px;overflow:hidden"><div style="height:100%;background:var(--purple);width:${pct}%"></div></div>
+        </div>`;
+    }).join('');
+  } catch (e) {}
+}
+
+function openGrowthGoal(objectiveId) {
+  currentGrowthObjectiveId = objectiveId;
+  loadGrowthObjective();
+}
+
+function backToGoalsList() {
+  currentGrowthObjectiveId = null;
+  document.getElementById('growthActiveWrap').style.display = 'none';
+  document.getElementById('growthSetGoalWrap').style.display = 'none';
+  loadGrowthGoalsList();
+}
+
 function showNewGoalForm() {
   document.getElementById('growthActiveWrap').style.display = 'none';
+  document.getElementById('growthGoalsListWrap').style.display = 'none';
   document.getElementById('growthSetGoalWrap').style.display = 'block';
   document.getElementById('growthError').style.display = 'none';
+  // Only offer a way back to the list if there's actually something to go
+  // back to — a business with zero goals has no list yet to return to.
+  document.getElementById('growthBackToListWrap').style.display = currentBusinessHasGoals ? 'block' : 'none';
 }
 
 async function createGrowthObjective() {
@@ -3019,7 +3095,7 @@ async function createGrowthObjective() {
       return;
     }
     ['goalMetricName', 'goalStartingValue', 'goalTargetValue', 'goalUnit', 'goalTargetDate'].forEach(id => document.getElementById(id).value = '');
-    loadGrowthObjective();
+    openGrowthGoal(data.objective.id);
   } catch (e) {
     btn.disabled = false;
     document.getElementById('growthError').textContent = t('board.connection_error');
