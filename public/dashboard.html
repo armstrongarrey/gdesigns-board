@@ -1015,6 +1015,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
       </div>
 
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:18px">
+        <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:12px" data-i18n="growth.activity_history">Activity History</div>
+        <div id="growthActivityList" style="font-size:12.5px;color:var(--text2)"></div>
+      </div>
+
       <div id="growthChartWrap" style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:18px;display:none">
         <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:12px" data-i18n="growth.progress_over_time">Progress Over Time</div>
         <div id="growthChartContent"></div>
@@ -2909,15 +2914,27 @@ async function loadGrowthBusinesses() {
     document.getElementById('growthNoBizPrompt').style.display = 'none';
     select.parentElement.style.display = 'block';
     select.innerHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
-    currentGrowthBusinessId = businesses[0].id;
+
+    // Restore whichever business was last selected here, rather than always
+    // defaulting to the first in the list — otherwise, returning to this
+    // page silently switches businesses out from under the user, making a
+    // real goal on a different business look like it vanished.
+    let savedId;
+    try { savedId = localStorage.getItem('arreyon_growth_business_id'); } catch (e) {}
+    const stillExists = savedId && businesses.some(b => b.id === savedId);
+    currentGrowthBusinessId = stillExists ? savedId : businesses[0].id;
+    select.value = currentGrowthBusinessId;
+
     loadGrowthObjective();
   } catch (e) {}
 }
+
 
 async function loadGrowthObjective() {
   const select = document.getElementById('growthBusinessSelect');
   currentGrowthBusinessId = select.value || currentGrowthBusinessId;
   if (!currentGrowthBusinessId) return;
+  try { localStorage.setItem('arreyon_growth_business_id', currentGrowthBusinessId); } catch (e) {}
 
   try {
     const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective?lang=${window.currentLang || 'en'}`);
@@ -2934,6 +2951,7 @@ async function loadGrowthObjective() {
     renderGrowthObjective(data.objective, data.progress);
     loadGrowthProgressChart();
     renderMilestones(data.milestones || []);
+    loadGrowthActivity();
 
     // Reflect the stored plan's own timeframe back into the inputs, so
     // reopening an existing plan shows what it was actually built for
@@ -3045,6 +3063,34 @@ async function loadGrowthProgressChart() {
   } catch (e) {}
 }
 
+const GROWTH_ACTIVITY_LABELS = {
+  goal_set: (d) => `${t('growth.activity_goal_set')}: ${escapeHtml(d.metricName)} (${d.startingValue} → ${d.targetValue})`,
+  progress_update: (d) => `${t('growth.activity_progress_update')}: ${d.value}`,
+  milestone_added: (d) => `${t('growth.activity_milestone_added')}: ${escapeHtml(d.label)}`,
+  milestone_achieved: (d) => `🎉 ${t('growth.activity_milestone_achieved')}: ${escapeHtml(d.label)}`,
+  plan_generated: () => t('growth.activity_plan_generated'),
+  goal_achieved: (d) => `🎉 ${t('growth.activity_goal_achieved')}: ${escapeHtml(d.metricName)}`
+};
+
+async function loadGrowthActivity() {
+  if (!currentGrowthBusinessId || !currentGrowthObjectiveId) return;
+  try {
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${currentGrowthObjectiveId}/activity`);
+    const data = await res.json();
+    const listEl = document.getElementById('growthActivityList');
+    if (!res.ok || !data.activity || !data.activity.length) {
+      listEl.innerHTML = `<div style="color:var(--muted)" data-i18n="growth.no_activity_yet">Nothing recorded yet.</div>`;
+      return;
+    }
+    listEl.innerHTML = data.activity.map(ev => {
+      const dateStr = new Date(ev.timestamp).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const labelFn = GROWTH_ACTIVITY_LABELS[ev.type];
+      const label = labelFn ? labelFn(ev.detail || {}) : ev.type;
+      return `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><span>${label}</span><span style="color:var(--muted);white-space:nowrap">${dateStr}</span></div>`;
+    }).join('');
+  } catch (e) {}
+}
+
 function renderMilestones(milestones) {
   const listEl = document.getElementById('milestonesList');
   if (!milestones.length) {
@@ -3129,6 +3175,7 @@ async function generateGrowthPlan() {
       return;
     }
     renderGrowthPlan(data.plan, data.generatedAt);
+    loadGrowthActivity();
   } catch (e) {
     document.getElementById('growthPlanContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${t('board.connection_error')}</div>`;
   }
