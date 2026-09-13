@@ -5296,6 +5296,25 @@ app.get('/api/business/:id', authRequired, async (req, res) => {
         }
       }
       facts.rows.forEach(f => { if (f.fact_value_fr) f.fact_value = f.fact_value_fr; });
+
+      // Same discipline for the Business Intelligence snapshot (Phase 2) —
+      // translate it ONCE on first French view and cache the result, rather
+      // than silently showing stale English or requiring the user to click
+      // Regenerate (which would burn a full fresh AI analysis call just to
+      // get a different language, and could even produce a DIFFERENT
+      // analysis than the English version, since it's not a translation at
+      // that point — it's a brand new one).
+      const business = biz.rows[0];
+      if (business.intelligence_snapshot && !business.intelligence_snapshot_fr) {
+        try {
+          const translatedIntelligence = await translateStructuredContent(business.intelligence_snapshot, 'business intelligence analysis');
+          await pool.query('UPDATE businesses SET intelligence_snapshot_fr = $1 WHERE id = $2', [JSON.stringify(translatedIntelligence), business.id]);
+          business.intelligence_snapshot_fr = translatedIntelligence;
+        } catch (e) {
+          console.error('Business intelligence auto-translate failed (non-fatal, falling back to English):', e.message);
+        }
+      }
+      if (business.intelligence_snapshot_fr) business.intelligence_snapshot = business.intelligence_snapshot_fr;
     }
 
     res.json({ business: biz.rows[0], facts: facts.rows });
