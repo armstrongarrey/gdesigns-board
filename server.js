@@ -529,8 +529,6 @@ app.post('/api/business/:id/growth-objective', authRequired, async (req, res) =>
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
-    await pool.query(`UPDATE growth_objectives SET status = 'abandoned' WHERE business_id = $1 AND status = 'active'`, [req.params.id]);
-
     const inserted = await pool.query(
       `INSERT INTO growth_objectives (business_id, owner_id, metric_name, unit, starting_value, current_value, target_value, target_date)
        VALUES ($1, $2, $3, $4, $5, $5, $6, $7) RETURNING *`,
@@ -545,7 +543,32 @@ app.post('/api/business/:id/growth-objective', authRequired, async (req, res) =>
   }
 });
 
-app.get('/api/business/:id/growth-objective', authRequired, async (req, res) => {
+// Lists every active goal for a business — the new entry point now that a
+// business can have more than one at once. Kept intentionally lightweight
+// (no plan/milestones/translation) since this only needs to power a list of
+// compact cards; the full detail loads separately once a specific goal is opened.
+app.get('/api/business/:id/growth-objectives', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const result = await pool.query(
+      `SELECT * FROM growth_objectives WHERE business_id = $1 AND status = 'active' ORDER BY created_at DESC`,
+      [req.params.id]
+    );
+    const objectives = result.rows.map(obj => ({
+      ...obj,
+      progress: computeGrowthProgress(parseFloat(obj.starting_value), parseFloat(obj.current_value), parseFloat(obj.target_value))
+    }));
+    res.json({ objectives });
+  } catch (e) {
+    console.error('List growth objectives error:', e.message);
+    res.status(500).json({ error: 'Failed to load growth objectives' });
+  }
+});
+
+app.get('/api/business/:id/growth-objective/:objectiveId', authRequired, async (req, res) => {
   const lang = req.query.lang === 'fr' ? 'fr' : 'en';
   try {
     const account = await resolveAccount(req.userId);
@@ -553,8 +576,8 @@ app.get('/api/business/:id/growth-objective', authRequired, async (req, res) => 
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
     const result = await pool.query(
-      `SELECT * FROM growth_objectives WHERE business_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
-      [req.params.id]
+      `SELECT * FROM growth_objectives WHERE id = $1 AND business_id = $2`,
+      [req.params.objectiveId, req.params.id]
     );
     if (!result.rows.length) return res.json({ objective: null });
 
