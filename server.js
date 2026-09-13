@@ -666,6 +666,53 @@ app.get('/api/business/:id/growth-objective/:objectiveId/progress-history', auth
   }
 });
 
+// A unified, chronological activity log for a goal — built entirely from
+// records that already exist and are never auto-deleted (progress
+// check-ins, milestone creation/achievement, plan generation), rather than
+// a separate log table. Nothing here can silently disappear on its own;
+// each entry only goes away if its underlying record is explicitly removed
+// (e.g. deleting a milestone).
+app.get('/api/business/:id/growth-objective/:objectiveId/activity', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const objResult = await pool.query(
+      `SELECT go.* FROM growth_objectives go JOIN businesses b ON b.id = go.business_id
+       WHERE go.id = $1 AND go.business_id = $2 AND b.user_id = $3`,
+      [req.params.objectiveId, req.params.id, account.id]
+    );
+    if (!objResult.rows.length) return res.status(404).json({ error: 'Growth objective not found' });
+    const obj = objResult.rows[0];
+
+    const events = [];
+    events.push({ type: 'goal_set', timestamp: obj.created_at, detail: { metricName: obj.metric_name, startingValue: obj.starting_value, targetValue: obj.target_value } });
+
+    const progressRows = await pool.query('SELECT value, recorded_at FROM growth_progress_history WHERE objective_id = $1 ORDER BY recorded_at ASC', [obj.id]);
+    // Skip the very first entry — it's the seed value recorded at creation,
+    // already represented by the goal_set event above.
+    progressRows.rows.slice(1).forEach(p => events.push({ type: 'progress_update', timestamp: p.recorded_at, detail: { value: p.value } }));
+
+    const milestoneRows = await pool.query('SELECT * FROM growth_milestones WHERE objective_id = $1', [obj.id]);
+    milestoneRows.rows.forEach(m => {
+      events.push({ type: 'milestone_added', timestamp: m.created_at, detail: { label: m.label } });
+      if (m.achieved_at) events.push({ type: 'milestone_achieved', timestamp: m.achieved_at, detail: { label: m.label } });
+    });
+
+    if (obj.strategic_plan_generated_at) {
+      events.push({ type: 'plan_generated', timestamp: obj.strategic_plan_generated_at, detail: {} });
+    }
+
+    if (obj.status === 'achieved') {
+      events.push({ type: 'goal_achieved', timestamp: obj.updated_at, detail: { metricName: obj.metric_name } });
+    }
+
+    events.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)); // most recent first
+    res.json({ activity: events });
+  } catch (e) {
+    console.error('Growth activity error:', e.message);
+    res.status(500).json({ error: 'Failed to load activity history' });
+  }
+});
+
 app.post('/api/business/:id/growth-objective/:objectiveId/milestones', authRequired, async (req, res) => {
   const { label, targetValue, targetDate } = req.body;
   if (!label) return res.status(400).json({ error: 'Please give this milestone a name.' });
