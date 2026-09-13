@@ -135,6 +135,14 @@ const I18N_DICT = {
     "growth.milestone_value_placeholder": "Target value (optional)",
     "growth.add_milestone": "+ Add",
     "growth.mark_done": "Mark done",
+    "growth.activity_history": "Activity History",
+    "growth.no_activity_yet": "Nothing recorded yet.",
+    "growth.activity_goal_set": "Goal set",
+    "growth.activity_progress_update": "Progress updated to",
+    "growth.activity_milestone_added": "Milestone added",
+    "growth.activity_milestone_achieved": "Milestone achieved",
+    "growth.activity_plan_generated": "Growth plan generated",
+    "growth.activity_goal_achieved": "Goal achieved",
     "footer.rights": "All rights reserved.",
 
     // Consult page — Stage 1 form
@@ -1140,6 +1148,14 @@ const I18N_DICT = {
     "growth.milestone_value_placeholder": "Valeur cible (facultatif)",
     "growth.add_milestone": "+ Ajouter",
     "growth.mark_done": "Marquer comme fait",
+    "growth.activity_history": "Historique d'activité",
+    "growth.no_activity_yet": "Rien d'enregistré pour l'instant.",
+    "growth.activity_goal_set": "Objectif défini",
+    "growth.activity_progress_update": "Progression mise à jour à",
+    "growth.activity_milestone_added": "Jalon ajouté",
+    "growth.activity_milestone_achieved": "Jalon atteint",
+    "growth.activity_plan_generated": "Plan de croissance généré",
+    "growth.activity_goal_achieved": "Objectif atteint",
     "footer.rights": "Tous droits réservés.",
 
     // Consult page — Stage 1 form
