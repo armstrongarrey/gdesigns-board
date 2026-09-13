@@ -584,5 +584,39 @@ CREATE TABLE IF NOT EXISTS monitoring_preferences (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 1 — BUSINESS WORKSPACE FOUNDATION (Step 1)
+-- Extending the existing `businesses` table rather than creating a parallel
+-- concept, per the Database Architecture audit's canonical-concept guidance.
+-- These are additive, nullable/defaulted columns — no existing query against
+-- `businesses` is affected by their presence. Nothing reads or writes them
+-- yet; that begins in Step 2 onward.
+-- ═══════════════════════════════════════════════════════════════════════════
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS goals JSONB DEFAULT '[]';
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS challenges JSONB DEFAULT '[]';
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS opportunities JSONB DEFAULT '[]';
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS strategy_summary TEXT;
+
+-- Step 2: optional link from an Entrepreneur Mode session to a persistent
+-- business — nullable, so every existing session (which predates this
+-- column) is entirely unaffected. Unlike research_sessions (which has always
+-- linked to a business), entrepreneur_sessions previously existed as
+-- orphaned sessions with no such connection.
+ALTER TABLE entrepreneur_sessions ADD COLUMN IF NOT EXISTS business_id UUID REFERENCES businesses(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_entrepreneur_sessions_business ON entrepreneur_sessions(business_id) WHERE business_id IS NOT NULL;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 2 — INTELLIGENCE UPGRADE (Step 2)
+-- Stores the AI-generated qualitative analysis (SWOT, priority problems,
+-- critical bottleneck, and AI-inferred scores) separately from
+-- businesses.goals/challenges/opportunities — those are generic fields any
+-- future source (user input, a different feature) might populate; this is
+-- specifically the output of one AI analysis pass, with its own timestamp so
+-- the UI can show "as of" and future logic can decide whether to regenerate.
+-- ═══════════════════════════════════════════════════════════════════════════
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS intelligence_snapshot JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS intelligence_snapshot_fr JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS intelligence_generated_at TIMESTAMPTZ;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
