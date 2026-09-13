@@ -649,5 +649,11 @@ CREATE TABLE IF NOT EXISTS growth_objectives (
 );
 CREATE INDEX IF NOT EXISTS idx_growth_objectives_business ON growth_objectives(business_id, status);
 
+-- Phase 3, Step 2 — the AI-generated priorities and 30/60/90 plan for this
+-- specific objective. Same bilingual cache discipline as intelligence_snapshot.
+ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS strategic_plan JSONB;
+ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS strategic_plan_fr JSONB;
+ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS strategic_plan_generated_at TIMESTAMPTZ;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
