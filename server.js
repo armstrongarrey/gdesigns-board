@@ -545,6 +545,7 @@ app.post('/api/business/:id/growth-objective', authRequired, async (req, res) =>
 });
 
 app.get('/api/business/:id/growth-objective', authRequired, async (req, res) => {
+  const lang = req.query.lang === 'fr' ? 'fr' : 'en';
   try {
     const account = await resolveAccount(req.userId);
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
@@ -557,6 +558,22 @@ app.get('/api/business/:id/growth-objective', authRequired, async (req, res) => 
     if (!result.rows.length) return res.json({ objective: null });
 
     const obj = result.rows[0];
+
+    // Same "translate once, cache, never regenerate" discipline as
+    // intelligence_snapshot — this is what was missing before, which is why
+    // switching to French either showed stale English or required
+    // regenerating the whole plan from scratch.
+    if (lang === 'fr' && obj.strategic_plan && !obj.strategic_plan_fr) {
+      try {
+        const translated = await translateStructuredContent(obj.strategic_plan, 'growth plan');
+        await pool.query('UPDATE growth_objectives SET strategic_plan_fr = $1 WHERE id = $2', [JSON.stringify(translated), obj.id]);
+        obj.strategic_plan_fr = translated;
+      } catch (e) {
+        console.error('Growth plan auto-translate failed (non-fatal, falling back to English):', e.message);
+      }
+    }
+    if (lang === 'fr' && obj.strategic_plan_fr) obj.strategic_plan = obj.strategic_plan_fr;
+
     const progress = computeGrowthProgress(parseFloat(obj.starting_value), parseFloat(obj.current_value), parseFloat(obj.target_value));
     res.json({ objective: obj, progress });
   } catch (e) {
@@ -607,6 +624,7 @@ app.put('/api/business/:id/growth-objective/:objectiveId/progress', authRequired
 // apply to any goal at any business.
 app.post('/api/business/:id/growth-objective/:objectiveId/plan', authRequired, async (req, res) => {
   const language = req.body?.language === 'fr' ? 'fr' : 'en';
+  const { startDate, endDate, months } = req.body || {};
   try {
     const account = await resolveAccount(req.userId);
     const objResult = await pool.query(
@@ -616,6 +634,29 @@ app.post('/api/business/:id/growth-objective/:objectiveId/plan', authRequired, a
     );
     if (!objResult.rows.length) return res.status(404).json({ error: 'Growth objective not found' });
     const objective = objResult.rows[0];
+
+    // Resolve the plan's timeframe — either an explicit end date, or a
+    // number of months from the start date. Falls back to a sensible 90-day
+    // default only if the user genuinely supplied neither, so this stays
+    // backward-compatible with a bare "just generate something" request.
+    const planStart = startDate ? new Date(startDate) : new Date();
+    let planEnd;
+    if (endDate) {
+      planEnd = new Date(endDate);
+    } else if (months) {
+      planEnd = new Date(planStart);
+      planEnd.setMonth(planEnd.getMonth() + parseInt(months, 10));
+    } else {
+      planEnd = new Date(planStart);
+      planEnd.setMonth(planEnd.getMonth() + 3);
+    }
+    if (isNaN(planStart.getTime()) || isNaN(planEnd.getTime()) || planEnd <= planStart) {
+      return res.status(400).json({ error: 'Please provide a valid start date and a valid end date (or number of months) after it.' });
+    }
+    const totalMonths = Math.max(1, Math.round((planEnd - planStart) / (1000 * 60 * 60 * 24 * 30.44)));
+    const suggestedCheckpoints = Math.min(totalMonths, 12); // caps a multi-year plan at 12 checkpoints rather than one per month indefinitely
+    const planStartStr = planStart.toISOString().split('T')[0];
+    const planEndStr = planEnd.toISOString().split('T')[0];
 
     const context = await getBusinessContext(req.params.id, account.id);
     if (!context) return res.status(404).json({ error: 'Business not found' });
@@ -638,23 +679,31 @@ app.post('/api/business/:id/growth-objective/:objectiveId/plan', authRequired, a
 
 THE GOAL: Move "${objective.metric_name}" from ${objective.starting_value}${objective.unit || ''} to ${objective.target_value}${objective.unit || ''}${objective.target_date ? ` by ${objective.target_date}` : ''}.
 CURRENT PROGRESS: ${objective.current_value}${objective.unit || ''} (${progress ? progress.pct + '% of the way there' : 'just starting'}).
+PLANNING WINDOW: ${planStartStr} to ${planEndStr} (about ${totalMonths} month${totalMonths === 1 ? '' : 's'}).
 
 BUSINESS CONTEXT:
 ${contextSummary}${intelligenceSummary}
 
 YOUR TASK:
-Produce 2-3 strategic priorities specifically aimed at closing the gap between where they are now and this goal, then a concrete 30/60/90-day plan. Every action must plausibly move THIS metric, not be generic "grow your business" advice.
+Produce 2-3 strategic priorities specifically aimed at closing the gap between where they are now and this goal. Then build a timeline of exactly ${suggestedCheckpoints} checkpoint${suggestedCheckpoints === 1 ? '' : 's'} spanning the full planning window above — each checkpoint should cover a real, calendar-dated stretch of time (e.g. actual month ranges, not "Phase 1"), and each action needs a specific reason it should move THIS metric, not generic "grow your business" advice.
 
 Return ONLY valid JSON, no markdown, in exactly this structure:
 {
   "strategic_priorities": ["specific priority 1, tied directly to the gap", "priority 2", "priority 3 (optional)"],
-  "phase_30_days": ["specific action 1", "specific action 2", "specific action 3"],
-  "phase_60_days": ["specific action 1", "specific action 2"],
-  "phase_90_days": ["specific action 1", "specific action 2"],
+  "timeline": [
+    {
+      "period_label": "a real calendar range for this checkpoint, e.g. 'Feb 15 - Mar 15, 2026'",
+      "focus": "the one main theme of this checkpoint, one sentence",
+      "actions": [
+        { "action": "a specific, concrete action", "reason": "why this specific action should move the metric" }
+      ]
+    }
+  ],
   "reasoning_note": "one honest sentence on why this plan should move the needle, or what assumption it depends on"
-}`;
+}
+Each checkpoint's "actions" array should have 3-5 entries.`;
 
-    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Produce the plan now, as JSON only.' }], complexity: 'complex', context: { feature: 'growth_center', userId: req.userId }, maxTokens: 2000 });
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Produce the plan now, as JSON only.' }], complexity: 'complex', context: { feature: 'growth_center', userId: req.userId }, maxTokens: 3500 });
 
     let plan;
     try {
@@ -663,19 +712,23 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
       console.error('Growth plan JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
       throw new Error('Could not generate a growth plan — please try again');
     }
-    for (const field of ['strategic_priorities', 'phase_30_days', 'phase_60_days', 'phase_90_days']) {
-      if (!Array.isArray(plan[field])) {
-        console.error(`Growth plan field "${field}" was not an array:`, typeof plan[field]);
+    if (!Array.isArray(plan.strategic_priorities) || !Array.isArray(plan.timeline)) {
+      console.error('Growth plan malformed shape:', typeof plan.strategic_priorities, typeof plan.timeline);
+      throw new Error('Could not generate a growth plan — please try again');
+    }
+    for (const checkpoint of plan.timeline) {
+      if (!Array.isArray(checkpoint.actions)) {
+        console.error('Growth plan checkpoint missing actions array:', checkpoint);
         throw new Error('Could not generate a growth plan — please try again');
       }
     }
 
     await pool.query(
-      'UPDATE growth_objectives SET strategic_plan = $1, strategic_plan_fr = NULL, strategic_plan_generated_at = NOW() WHERE id = $2',
-      [JSON.stringify(plan), objective.id]
+      'UPDATE growth_objectives SET strategic_plan = $1, strategic_plan_fr = NULL, strategic_plan_generated_at = NOW(), plan_start_date = $2, plan_end_date = $3 WHERE id = $4',
+      [JSON.stringify(plan), planStartStr, planEndStr, objective.id]
     );
 
-    res.json({ plan, generatedAt: new Date().toISOString() });
+    res.json({ plan, generatedAt: new Date().toISOString(), planStartDate: planStartStr, planEndDate: planEndStr });
   } catch (err) {
     console.error('Growth plan generation error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to generate growth plan. Please try again.' });
