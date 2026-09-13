@@ -388,6 +388,119 @@ function summarizeBusinessContextForAI(context) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// BUSINESS INTELLIGENCE — Phase 2, Step 1
+// A deterministic score measuring how much is actually known and documented
+// about a business — NOT a qualitative "how healthy is this business"
+// judgment. That distinction matters: this number is 100% computed from data
+// presence, fully explainable via its breakdown, and can never be an AI
+// hallucination masquerading as fact. A qualitative AI-inferred assessment
+// (SWOT) is a separate, clearly-labeled concept — see Step 2.
+// ═══════════════════════════════════════════════════════════════════════════
+function computeBusinessCompletenessScore(context) {
+  const b = context.business;
+  const breakdown = {};
+
+  const coreFields = [b.name, b.industry, b.country, b.businessModel, b.stage];
+  const coreFilled = coreFields.filter(Boolean).length;
+  breakdown.coreIdentity = { points: coreFilled * 4, max: 20, detail: `${coreFilled}/5 core fields filled` };
+
+  const factCount = context.facts.length;
+  const factPoints = Math.min(factCount, 10) * 2.5;
+  breakdown.businessFacts = { points: Math.round(factPoints), max: 25, detail: `${factCount} fact${factCount === 1 ? '' : 's'} documented` };
+
+  breakdown.marketResearch = { points: context.latestResearch ? 20 : 0, max: 20, detail: context.latestResearch ? 'Research on file' : 'No research yet' };
+
+  breakdown.entrepreneurEngagement = { points: context.entrepreneurSessions.length ? 15 : 0, max: 15, detail: context.entrepreneurSessions.length ? `${context.entrepreneurSessions.length} session(s) linked` : 'No linked sessions' };
+
+  const strategicFields = [b.goals?.length > 0, b.challenges?.length > 0, b.opportunities?.length > 0, !!b.strategySummary];
+  const strategicFilled = strategicFields.filter(Boolean).length;
+  breakdown.strategicPlanning = { points: strategicFilled * 5, max: 20, detail: `${strategicFilled}/4 strategic fields filled` };
+
+  const score = Math.round(Object.values(breakdown).reduce((sum, v) => sum + v.points, 0));
+  return { score, breakdown };
+}
+
+// Proof-of-concept endpoint, isolated from any real feature — same pattern
+// used for getBusinessContext() in Phase 1. Nothing else calls this yet.
+app.get('/api/business/:id/completeness-score', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    res.json(computeBusinessCompletenessScore(context));
+  } catch (e) {
+    console.error('Completeness score error:', e.message);
+    res.status(500).json({ error: 'Failed to compute completeness score' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BUSINESS INTELLIGENCE — Phase 2, Step 2
+// Qualitative, AI-INFERRED analysis — genuinely different in kind from
+// Step 1's deterministic score, and must always be presented as such (an
+// "AI-inferred" label, never as verified fact — see the AI Trust
+// Architecture principle in the Phase 0 audit). Grounded in the same
+// getBusinessContext() used everywhere else, so this reflects actual known
+// facts rather than generic business-advice platitudes.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/api/business/:id/intelligence', authRequired, async (req, res) => {
+  const language = req.body?.language === 'fr' ? 'fr' : 'en';
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const completeness = computeBusinessCompletenessScore(context);
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+
+    const prompt = `You are a business intelligence analyst. Based on everything actually known about this business, provide a grounded, specific qualitative analysis — not generic business advice that could apply to any business.
+${contextSummary}
+
+DATA COMPLETENESS: ${completeness.score}/100. ${completeness.score < 40 ? 'This is LOW — be explicitly humble and tentative in your analysis rather than inventing specifics the data does not support.' : 'Use this as a general sense of how much is actually known.'}
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "strengths": ["specific strength grounded in what's actually known, or state there isn't enough data for this yet"],
+  "weaknesses": ["..."],
+  "opportunities": ["..."],
+  "threats": ["..."],
+  "critical_bottleneck": "the single most limiting factor right now, one sentence — or state that there isn't enough data to identify one confidently",
+  "priority_problems": ["the 2-3 most urgent problems to address, in order"],
+  "opportunity_score": "high|medium|low",
+  "competitive_position": "strong|moderate|weak|unclear",
+  "growth_readiness": "high|medium|low",
+  "confidence_note": "one honest sentence about how much this analysis can be trusted given the data actually available"
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the analysis now, as JSON only.' }], complexity: 'complex', context: { feature: 'business_intelligence', userId: req.userId }, maxTokens: 2000 });
+
+    let intelligence;
+    try {
+      intelligence = extractJSON(raw);
+    } catch (e) {
+      console.error('Business intelligence JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
+      throw new Error('Could not generate business intelligence — please try again');
+    }
+    for (const field of ['strengths', 'weaknesses', 'opportunities', 'threats', 'priority_problems']) {
+      if (!Array.isArray(intelligence[field])) {
+        console.error(`Business intelligence field "${field}" was not an array:`, typeof intelligence[field]);
+        throw new Error('Could not generate business intelligence — please try again');
+      }
+    }
+
+    await pool.query(
+      'UPDATE businesses SET intelligence_snapshot = $1, intelligence_snapshot_fr = NULL, intelligence_generated_at = NOW() WHERE id = $2',
+      [JSON.stringify(intelligence), req.params.id]
+    );
+
+    res.json({ intelligence, completeness, generatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('Business intelligence error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate business intelligence. Please try again.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
 // for an already-logged-in user, not authenticating them. Reuses the same
