@@ -235,6 +235,29 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
       </div>
 
+      <!-- BUSINESS HEALTH SUMMARY — Phase 2, Step 4. Reuses the completeness
+           score (Step 1) and the existing Alerts data — no new detection
+           logic here, just surfacing what already exists. -->
+      <div id="dashBizHealthCard" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:24px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div>
+            <div class="section-title" style="margin:0;font-size:15px" data-i18n="dash.business_health">Business Health</div>
+            <div id="dashBizHealthName" style="font-size:12px;color:var(--muted)"></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:70px;height:7px;background:var(--bg3);border-radius:4px;overflow:hidden"><div id="dashCompletenessBar" style="height:100%;background:var(--purple);width:0%;transition:width .4s"></div></div>
+            <span id="dashCompletenessLabel" style="font-size:12px;color:var(--muted);white-space:nowrap">—</span>
+          </div>
+        </div>
+        <div id="dashAttentionList"></div>
+        <a href="#" onclick="showSection('analyzer');return false" style="font-size:12px;color:var(--purple-light);text-decoration:none" data-i18n="dash.view_full_profile">View full business profile →</a>
+      </div>
+
+      <div id="dashNoBizPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;margin-bottom:24px;text-align:center">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:10px" data-i18n="dash.no_business_yet">Analyze your business to start seeing your Business Health here.</div>
+        <button class="btn-ghost" onclick="showSection('analyzer')" data-i18n="dash.analyze_now">Analyze My Business</button>
+      </div>
+
       <div class="stats-grid">
         <div class="stat-card">
           <div class="stat-label" data-i18n="dash.consultations_used">Consultations Used</div>
@@ -534,6 +557,21 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div id="socialLimitNotice" style="display:none;font-size:12.5px;color:var(--gold);background:#2a1f0022;border:1px solid var(--gold);border-radius:8px;padding:12px 14px;margin-bottom:18px"></div>
         <div id="factsGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px"></div>
 
+        <!-- BUSINESS INTELLIGENCE PANEL — Phase 2. Additive to the existing
+             detailed analysis above, never a replacement for it. -->
+        <div id="biPanel" style="margin-top:24px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+            <div class="section-title" style="margin:0;font-size:15px" data-i18n="bi.title">Business Intelligence</div>
+            <div id="biCompletenessWrap" style="display:flex;align-items:center;gap:8px">
+              <div style="width:60px;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden"><div id="biCompletenessBar" style="height:100%;background:var(--purple);width:0%;transition:width .4s"></div></div>
+              <span id="biCompletenessLabel" style="font-size:11px;color:var(--muted)">—</span>
+            </div>
+          </div>
+          <div id="biContent">
+            <div style="text-align:center;padding:24px;color:var(--muted);font-size:13px" data-i18n="bi.loading">Loading...</div>
+          </div>
+        </div>
+
         <div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
           <div style="min-width:220px">
             <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px" data-i18n="analyzer.research_scope">Research Scope</label>
@@ -664,6 +702,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
       <!-- OPPORTUNITY FINDER FORM -->
       <div id="opportunityFormWrap" style="max-width:600px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:24px">
+        <div class="form-group" id="oppBusinessLinkWrap" style="display:none">
+          <label data-i18n="ent.link_business">Link to an existing business <span style="color:var(--muted);font-weight:400" data-i18n="ent.optional">(optional)</span></label>
+          <select class="form-input" id="oppBusinessSelect">
+            <option value="" data-i18n="ent.link_business_none">None — standalone search</option>
+          </select>
+        </div>
         <div class="form-row">
           <div class="form-group"><label data-i18n="ent.country">Country</label><input class="form-input" id="entCountry" placeholder="e.g. Cameroon"></div>
           <div class="form-group"><label data-i18n="ent.city">City / Region</label><input class="form-input" id="entCity" placeholder="e.g. Buea"></div>
@@ -701,6 +745,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
       <!-- IDEA VALIDATION FORM -->
       <div id="validationFormWrap" style="display:none;max-width:600px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:24px">
+        <div class="form-group" id="ideaBusinessLinkWrap" style="display:none">
+          <label data-i18n="ent.link_business">Link to an existing business <span style="color:var(--muted);font-weight:400" data-i18n="ent.optional">(optional)</span></label>
+          <select class="form-input" id="ideaBusinessSelect">
+            <option value="" data-i18n="ent.link_business_none">None — standalone search</option>
+          </select>
+        </div>
         <div class="form-group"><label data-i18n="ent.your_idea">Your Business Idea</label><textarea class="form-input" id="entIdea" rows="3" data-i18n-placeholder="ent.idea_placeholder" placeholder="Describe the business idea you want validated..."></textarea></div>
         <div class="form-row">
           <div class="form-group"><label data-i18n="ent.country">Country</label><input class="form-input" id="entIdeaCountry" placeholder="e.g. Cameroon"></div>
@@ -1024,6 +1074,7 @@ async function init() {
     }
 
     loadUnreadAlertsBadge();
+    loadDashboardBusinessHealth();
 
     // The Google Analytics OAuth flow redirects back here with query params
     // indicating success/failure — jump to the Integrations section and show
@@ -1498,6 +1549,55 @@ async function loadUnreadAlertsBadge() {
   } catch (e) {}
 }
 
+// Business Health summary card — Phase 2, Step 4. Deliberately reuses the
+// existing /api/business and /api/alerts endpoints rather than any new
+// detection logic; this card is purely a surfacing layer on top of what
+// Steps 1 and the Alerts feature already compute. Shows the most recently
+// updated business, which covers the common single-business case cleanly —
+// a multi-business selector here is a reasonable future enhancement, not
+// something this step's scope calls for.
+async function loadDashboardBusinessHealth() {
+  try {
+    const bizRes = await fetch('/api/business');
+    const bizData = await bizRes.json();
+    const businesses = bizData.businesses || [];
+
+    if (!businesses.length) {
+      document.getElementById('dashNoBizPrompt').style.display = 'block';
+      document.getElementById('dashBizHealthCard').style.display = 'none';
+      return;
+    }
+
+    const primary = businesses[0];
+    document.getElementById('dashNoBizPrompt').style.display = 'none';
+    document.getElementById('dashBizHealthCard').style.display = 'block';
+    document.getElementById('dashBizHealthName').textContent = primary.name || primary.website || '';
+
+    fetch(`/api/business/${primary.id}/completeness-score`)
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('dashCompletenessBar').style.width = data.score + '%';
+        document.getElementById('dashCompletenessLabel').textContent = data.score + '% ' + t('bi.complete');
+      })
+      .catch(() => {});
+
+    fetch('/api/alerts')
+      .then(r => r.json())
+      .then(data => {
+        const relevant = (data.alerts || []).filter(a => !a.is_read && (!a.business_id || a.business_id === primary.id)).slice(0, 3);
+        const listEl = document.getElementById('dashAttentionList');
+        if (!relevant.length) {
+          listEl.innerHTML = `<div style="font-size:12.5px;color:var(--muted);margin-bottom:12px" data-i18n="dash.nothing_urgent">Nothing urgent right now.</div>`;
+          return;
+        }
+        listEl.innerHTML = `<div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:8px" data-i18n="dash.needs_attention">What Needs Your Attention</div>` +
+          relevant.map(a => `<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;font-size:12.5px"><span style="color:${ALERT_SEVERITY_COLORS[a.severity] || ALERT_SEVERITY_COLORS.info}">●</span><span style="color:var(--text2)">${escapeHtml(a.title)}</span></div>`).join('') +
+          '<br>';
+      })
+      .catch(() => {});
+  } catch (e) { /* Dashboard card is a convenience surface — failures here shouldn't disrupt the rest of the Dashboard */ }
+}
+
 let alertPrefsLoaded = false;
 function toggleAlertPreferences() {
   const panel = document.getElementById('alertPreferencesPanel');
@@ -1574,7 +1674,7 @@ function showSection(name) {
   document.querySelector('.topbar-title').textContent = titleKeys[name] ? t(titleKeys[name]) : t('dash.nav_dashboard');
   if (window.innerWidth < 900) document.getElementById('sidebar').classList.remove('open');
   if (name === 'analyzer') loadAnalyzedBusinesses();
-  if (name === 'entrepreneur') loadEntrepreneurHistory();
+  if (name === 'entrepreneur') { loadEntrepreneurHistory(); loadBusinessesForLinking(); }
   if (name === 'financial') { renderCalculatorForm(); restoreCurrencyPreference(); }
   if (name === 'scenario') {
     if (scenarioOptionCount === 0) { addScenarioOption(); addScenarioOption(); }
@@ -1756,6 +1856,7 @@ async function runAnalysis() {
     }
 
     renderAnalysisResults(data);
+    loadBusinessIntelligence(data.businessId, null, null);
     loadAnalyzedBusinesses();
   } catch (e) {
     clearInterval(progressTimer);
@@ -1804,6 +1905,7 @@ async function loadBusinessIntoView(businessId) {
       pagesAnalyzed: bizData.business.website ? [bizData.business.website] : ['Business description'],
       facts: factsMap
     });
+    loadBusinessIntelligence(bizData.business.id, bizData.business.intelligence_snapshot, bizData.business.intelligence_generated_at);
     document.getElementById('analyzerResults').style.display = 'block';
   } else {
     console.error('Failed to load business facts:', bizResult.reason?.message);
@@ -1918,6 +2020,84 @@ function renderAnalysisResults(data) {
   }).join('');
 
   document.getElementById('analyzerResults').style.display = 'block';
+}
+
+// ── BUSINESS INTELLIGENCE PANEL — Phase 2 ───────────────────────────────────
+const BI_LEVEL_COLORS = { high: 'var(--green)', strong: 'var(--green)', medium: 'var(--gold)', moderate: 'var(--gold)', low: '#ef4444', weak: '#ef4444', unclear: 'var(--muted)' };
+
+async function loadBusinessIntelligence(businessId, existingSnapshot, existingGeneratedAt) {
+  // Completeness score is cheap (no AI call) and always fresh — fetched
+  // every time regardless of whether a stored qualitative snapshot exists.
+  fetch(`/api/business/${businessId}/completeness-score`)
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('biCompletenessBar').style.width = data.score + '%';
+      document.getElementById('biCompletenessLabel').textContent = data.score + '% ' + t('bi.complete');
+    })
+    .catch(() => {});
+
+  const content = document.getElementById('biContent');
+  if (existingSnapshot) {
+    renderBusinessIntelligenceContent(businessId, existingSnapshot, existingGeneratedAt);
+  } else {
+    content.innerHTML = `
+      <div style="text-align:center;padding:20px">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:14px" data-i18n="bi.not_generated_yet">Get a grounded SWOT analysis, priority problems, and growth signals based on everything known about this business.</div>
+        <button class="btn-primary" onclick="generateBusinessIntelligence('${businessId}')" id="biGenerateBtn">🧠 <span data-i18n="bi.generate">Generate Business Intelligence</span></button>
+      </div>`;
+  }
+}
+
+async function generateBusinessIntelligence(businessId) {
+  const btn = document.getElementById('biGenerateBtn');
+  if (btn) { btn.disabled = true; btn.textContent = t('bi.generating'); }
+
+  try {
+    const res = await fetch(`/api/business/${businessId}/intelligence`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: window.currentLang || 'en' })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('biContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('bi.generate_failed')}</div>`;
+      return;
+    }
+    renderBusinessIntelligenceContent(businessId, data.intelligence, data.generatedAt);
+  } catch (e) {
+    document.getElementById('biContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderBusinessIntelligenceContent(businessId, intelligence, generatedAt) {
+  const dateStr = generatedAt ? new Date(generatedAt).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+
+  const swotBlock = (titleKey, defaultTitle, items, color) => `
+    <div style="background:var(--bg3);border-radius:10px;padding:14px">
+      <div style="font-size:11px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px" data-i18n="${titleKey}">${defaultTitle}</div>
+      <ul style="margin:0;padding-left:16px;font-size:12.5px;color:var(--text2);line-height:1.6">${(items || []).map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>
+    </div>`;
+
+  const scorePill = (label, value) => value ? `<div style="background:var(--bg3);border-radius:8px;padding:8px 12px;text-align:center"><div style="font-size:10px;color:var(--muted);text-transform:uppercase">${escapeHtml(label)}</div><div style="font-weight:700;color:${BI_LEVEL_COLORS[value] || 'var(--text)'};text-transform:capitalize">${escapeHtml(value)}</div></div>` : '';
+
+  document.getElementById('biContent').innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+      <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
+      ${dateStr ? `<span style="font-size:11px;color:var(--muted)">${t('bi.as_of')} ${escapeHtml(dateStr)}</span>` : ''}
+      <button onclick="generateBusinessIntelligence('${businessId}')" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px" data-i18n="bi.regenerate">↻ Regenerate</button>
+    </div>
+    ${intelligence.confidence_note ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-bottom:14px">${escapeHtml(intelligence.confidence_note)}</div>` : ''}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+      ${swotBlock('bi.strengths', 'Strengths', intelligence.strengths, 'var(--green)')}
+      ${swotBlock('bi.weaknesses', 'Weaknesses', intelligence.weaknesses, '#ef4444')}
+      ${swotBlock('bi.opportunities', 'Opportunities', intelligence.opportunities, 'var(--purple-light)')}
+      ${swotBlock('bi.threats', 'Threats', intelligence.threats, 'var(--gold)')}
+    </div>
+    ${intelligence.critical_bottleneck ? `<div style="background:rgba(239,68,68,.1);border:1px solid #ef4444;border-radius:8px;padding:12px 14px;margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:#ef4444;text-transform:uppercase;margin-bottom:4px" data-i18n="bi.critical_bottleneck">Critical Bottleneck</div><div style="font-size:13px;color:var(--text2)">${escapeHtml(intelligence.critical_bottleneck)}</div></div>` : ''}
+    ${intelligence.priority_problems && intelligence.priority_problems.length ? `<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:6px" data-i18n="bi.priority_problems">Priority Problems</div><ol style="margin:0;padding-left:18px;font-size:12.5px;color:var(--text2);line-height:1.7">${intelligence.priority_problems.map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ol></div>` : ''}
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      ${scorePill(t('bi.opportunity_score'), intelligence.opportunity_score)}
+      ${scorePill(t('bi.competitive_position'), intelligence.competitive_position)}
+      ${scorePill(t('bi.growth_readiness'), intelligence.growth_readiness)}
+    </div>`;
 }
 
 function startEditFact(key) {
@@ -2506,6 +2686,28 @@ function researchBadgeHTML(researchBacked) {
     : `<div style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:5px 12px;border-radius:7px;background:#2a1f0022;color:var(--gold)">⚠ AI estimate only — not grounded in live market research. <a href="#" onclick="showSection('billing');return false" style="color:var(--purple-light);margin-left:4px">Upgrade for research-backed results</a></div>`;
 }
 
+// Populates both Entrepreneur Mode business-link dropdowns from the
+// account's existing analyzed businesses (shared team data, via the same
+// GET /api/business endpoint the Analyzer section already uses). The
+// wrapper stays hidden if there's nothing to link to, so a brand-new
+// account sees no confusing empty dropdown.
+async function loadBusinessesForLinking() {
+  try {
+    const res = await fetch('/api/business');
+    const data = await res.json();
+    const businesses = data.businesses || [];
+    if (!businesses.length) return;
+
+    const optionsHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+    ['oppBusinessSelect', 'ideaBusinessSelect'].forEach(id => {
+      const select = document.getElementById(id);
+      select.innerHTML = select.options[0].outerHTML + optionsHTML;
+    });
+    document.getElementById('oppBusinessLinkWrap').style.display = 'block';
+    document.getElementById('ideaBusinessLinkWrap').style.display = 'block';
+  } catch (e) { /* Linking is optional — if this fails, both flows still work standalone */ }
+}
+
 async function findOpportunities() {
   const input = {
     country: document.getElementById('entCountry').value.trim(),
@@ -2519,7 +2721,8 @@ async function findOpportunities() {
     incomeTarget: document.getElementById('entIncomeTarget').value.trim(),
     preference: document.getElementById('entPreference').value,
     riskTolerance: document.getElementById('entRiskTolerance').value,
-    language: window.currentLang || 'en'
+    language: window.currentLang || 'en',
+    businessId: document.getElementById('oppBusinessSelect').value || null
   };
 
   if (!input.country && !input.primarySkill && !input.otherSkills && !input.interests) {
@@ -2648,7 +2851,8 @@ async function validateIdea() {
     city: document.getElementById('entIdeaCity').value.trim(),
     capital: document.getElementById('entIdeaCapital').value.trim(),
     time: document.getElementById('entIdeaTime').value.trim(),
-    language: window.currentLang || 'en'
+    language: window.currentLang || 'en',
+    businessId: document.getElementById('ideaBusinessSelect').value || null
   };
 
   if (input.idea.length < 10) {
