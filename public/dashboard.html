@@ -161,6 +161,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <button class="nav-item" onclick="showSection('scenario')" id="nav-scenario">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><line x1="12" y1="3" x2="12" y2="21"/></svg><span data-i18n="dash.nav_scenario">Compare Scenarios</span>
     </button>
+    <button class="nav-item" onclick="showSection('growth')" id="nav-growth">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg><span data-i18n="growth.nav_title">Growth Center</span>
+    </button>
     <button class="nav-item" onclick="showSection('history')" id="nav-history">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="dash.nav_history">History</span>
     </button>
@@ -250,7 +253,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           </div>
         </div>
         <div id="dashAttentionList"></div>
-        <a href="#" onclick="showSection('analyzer');return false" style="font-size:12px;color:var(--purple-light);text-decoration:none" data-i18n="dash.view_full_profile">View full business profile →</a>
+        <a href="#" onclick="viewBusinessFromDashboard();return false" style="font-size:12px;color:var(--purple-light);text-decoration:none" data-i18n="dash.view_full_profile">View full business profile →</a>
       </div>
 
       <div id="dashNoBizPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;margin-bottom:24px;text-align:center">
@@ -954,6 +957,66 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
   </div>
 
+  <!-- GROWTH CENTER SECTION -->
+  <div class="section-view" id="section-growth">
+    <div class="section-title" data-i18n="growth.title">Growth Center</div>
+    <div class="section-sub" data-i18n="growth.subtitle">Set one real goal, track honest progress toward it, and get a concrete plan to close the gap.</div>
+
+    <div class="form-group" style="max-width:400px;margin-bottom:20px">
+      <label data-i18n="growth.select_business">Business</label>
+      <select class="form-input" id="growthBusinessSelect" onchange="loadGrowthObjective()"></select>
+    </div>
+
+    <div id="growthNoBizPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;text-align:center;max-width:500px">
+      <div style="font-size:13px;color:var(--muted)" data-i18n="growth.no_business_yet">Analyze a business first so Growth Center has somewhere to track progress.</div>
+    </div>
+
+    <!-- NO ACTIVE GOAL — creation form -->
+    <div id="growthSetGoalWrap" style="display:none;max-width:500px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px" data-i18n="growth.set_goal_title">Set a Growth Objective</div>
+      <div class="form-group"><label data-i18n="growth.metric_name">What are you trying to grow (or reduce)?</label><input class="form-input" id="goalMetricName" data-i18n-placeholder="growth.metric_placeholder" placeholder="e.g. Monthly Revenue"></div>
+      <div class="form-row">
+        <div class="form-group"><label data-i18n="growth.starting_value">Current Value</label><input class="form-input" type="number" id="goalStartingValue" placeholder="200000"></div>
+        <div class="form-group"><label data-i18n="growth.target_value">Target Value</label><input class="form-input" type="number" id="goalTargetValue" placeholder="350000"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label data-i18n="growth.unit">Unit <span style="color:var(--muted);font-weight:400" data-i18n="ent.optional">(optional)</span></label><input class="form-input" id="goalUnit" placeholder="FCFA"></div>
+        <div class="form-group"><label data-i18n="growth.target_date">Target Date <span style="color:var(--muted);font-weight:400" data-i18n="ent.optional">(optional)</span></label><input class="form-input" type="date" id="goalTargetDate"></div>
+      </div>
+      <div id="growthError" style="display:none;color:#ff8080;font-size:13px;margin-bottom:10px"></div>
+      <button class="btn-primary" style="width:100%;padding:12px" onclick="createGrowthObjective()" id="growthCreateBtn" data-i18n="growth.set_goal_btn">Set This Goal</button>
+    </div>
+
+    <!-- ACTIVE GOAL — progress + plan -->
+    <div id="growthActiveWrap" style="display:none;max-width:700px">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:18px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+          <div id="growthObjectiveTitle" style="font-size:15px;font-weight:700"></div>
+          <button class="btn-ghost" style="font-size:12px;padding:6px 12px" onclick="showNewGoalForm()" data-i18n="growth.set_new_goal">Set New Goal</button>
+        </div>
+        <div style="background:var(--bg3);border-radius:6px;height:10px;overflow:hidden;margin-bottom:8px"><div id="growthProgressBar" style="height:100%;background:var(--purple);width:0%;transition:width .4s"></div></div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span id="growthProgressLabel" style="font-size:12.5px;color:var(--muted)"></span>
+          <span id="growthAchievedBadge" style="display:none;font-size:11px;font-weight:700;color:var(--green);background:rgba(16,185,129,.15);padding:3px 8px;border-radius:4px" data-i18n="growth.achieved">🎉 Achieved!</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <input class="form-input" type="number" id="growthUpdateValue" data-i18n-placeholder="growth.update_placeholder" placeholder="Update current value..." style="flex:1">
+          <button class="btn-ghost" onclick="updateGrowthProgress()" data-i18n="growth.update_btn">Update</button>
+        </div>
+      </div>
+
+      <div id="growthPlanWrap" style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px">
+        <div id="growthPlanContent">
+          <div style="text-align:center;padding:20px">
+            <div style="font-size:13px;color:var(--muted);margin-bottom:14px" data-i18n="growth.no_plan_yet">Get a concrete plan for closing the gap between where you are and this goal.</div>
+            <button class="btn-primary" onclick="generateGrowthPlan()">📈 <span data-i18n="growth.generate_plan">Generate Growth Plan</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
 </div>
 
 <!-- PAYMENT MODAL -->
@@ -1556,6 +1619,8 @@ async function loadUnreadAlertsBadge() {
 // updated business, which covers the common single-business case cleanly —
 // a multi-business selector here is a reasonable future enhancement, not
 // something this step's scope calls for.
+let dashboardPrimaryBusinessId = null;
+
 async function loadDashboardBusinessHealth() {
   try {
     const bizRes = await fetch('/api/business');
@@ -1569,6 +1634,7 @@ async function loadDashboardBusinessHealth() {
     }
 
     const primary = businesses[0];
+    dashboardPrimaryBusinessId = primary.id;
     document.getElementById('dashNoBizPrompt').style.display = 'none';
     document.getElementById('dashBizHealthCard').style.display = 'block';
     document.getElementById('dashBizHealthName').textContent = primary.name || primary.website || '';
@@ -1596,6 +1662,19 @@ async function loadDashboardBusinessHealth() {
       })
       .catch(() => {});
   } catch (e) { /* Dashboard card is a convenience surface — failures here shouldn't disrupt the rest of the Dashboard */ }
+}
+
+// The "View full business profile" link on the Dashboard card needs to open
+// the SPECIFIC business that card is showing — not just switch to the
+// Analyzer section generically, which would leave the user looking at
+// whatever (or nothing) was last shown there. loadBusinessIntoView() itself
+// doesn't set currentBusinessId, so this does it explicitly — matching what
+// every other entry point into a specific business's profile already does.
+function viewBusinessFromDashboard() {
+  if (!dashboardPrimaryBusinessId) return;
+  showSection('analyzer');
+  currentBusinessId = dashboardPrimaryBusinessId;
+  loadBusinessIntoView(dashboardPrimaryBusinessId);
 }
 
 let alertPrefsLoaded = false;
@@ -1670,7 +1749,7 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const navEl = document.getElementById('nav-' + name);
   if (navEl) navEl.classList.add('active');
-  const titleKeys = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title',alerts:'alerts.title'};
+  const titleKeys = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title',alerts:'alerts.title',growth:'growth.title'};
   document.querySelector('.topbar-title').textContent = titleKeys[name] ? t(titleKeys[name]) : t('dash.nav_dashboard');
   if (window.innerWidth < 900) document.getElementById('sidebar').classList.remove('open');
   if (name === 'analyzer') loadAnalyzedBusinesses();
@@ -1682,6 +1761,7 @@ function showSection(name) {
   }
   if (name === 'integrations') loadIntegrationsSection();
   if (name === 'alerts') loadAlertsSection();
+  if (name === 'growth') loadGrowthBusinesses();
 }
 
 function openPayment(plan) {
@@ -2711,6 +2791,173 @@ async function loadBusinessesForLinking() {
     document.getElementById('oppBusinessLinkWrap').style.display = 'block';
     document.getElementById('ideaBusinessLinkWrap').style.display = 'block';
   } catch (e) { /* Linking is optional — if this fails, both flows still work standalone */ }
+}
+
+// ── GROWTH CENTER ────────────────────────────────────────────────────────
+let currentGrowthBusinessId = null;
+let currentGrowthObjectiveId = null;
+
+async function loadGrowthBusinesses() {
+  try {
+    const res = await fetch('/api/business');
+    const data = await res.json();
+    const businesses = data.businesses || [];
+    const select = document.getElementById('growthBusinessSelect');
+
+    if (!businesses.length) {
+      document.getElementById('growthNoBizPrompt').style.display = 'block';
+      select.parentElement.style.display = 'none';
+      document.getElementById('growthSetGoalWrap').style.display = 'none';
+      document.getElementById('growthActiveWrap').style.display = 'none';
+      return;
+    }
+
+    document.getElementById('growthNoBizPrompt').style.display = 'none';
+    select.parentElement.style.display = 'block';
+    select.innerHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+    currentGrowthBusinessId = businesses[0].id;
+    loadGrowthObjective();
+  } catch (e) {}
+}
+
+async function loadGrowthObjective() {
+  const select = document.getElementById('growthBusinessSelect');
+  currentGrowthBusinessId = select.value || currentGrowthBusinessId;
+  if (!currentGrowthBusinessId) return;
+
+  try {
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective`);
+    const data = await res.json();
+
+    if (!data.objective) {
+      showNewGoalForm();
+      return;
+    }
+
+    currentGrowthObjectiveId = data.objective.id;
+    document.getElementById('growthSetGoalWrap').style.display = 'none';
+    document.getElementById('growthActiveWrap').style.display = 'block';
+    renderGrowthObjective(data.objective, data.progress);
+
+    if (data.objective.strategic_plan) {
+      renderGrowthPlan(data.objective.strategic_plan, data.objective.strategic_plan_generated_at);
+    } else {
+      document.getElementById('growthPlanContent').innerHTML = `
+        <div style="text-align:center;padding:20px">
+          <div style="font-size:13px;color:var(--muted);margin-bottom:14px" data-i18n="growth.no_plan_yet">Get a concrete plan for closing the gap between where you are and this goal.</div>
+          <button class="btn-primary" onclick="generateGrowthPlan()" id="growthGenerateBtn">📈 <span data-i18n="growth.generate_plan">Generate Growth Plan</span></button>
+        </div>`;
+    }
+  } catch (e) {}
+}
+
+function renderGrowthObjective(obj, progress) {
+  const unit = obj.unit || '';
+  document.getElementById('growthObjectiveTitle').textContent =
+    `${obj.metric_name}: ${obj.starting_value}${unit} → ${obj.target_value}${unit}`;
+  const pct = progress ? progress.pct : 0;
+  document.getElementById('growthProgressBar').style.width = pct + '%';
+  document.getElementById('growthProgressLabel').textContent =
+    `${obj.current_value}${unit} — ${pct}% ${t('growth.of_the_way_there')}`;
+  document.getElementById('growthAchievedBadge').style.display = obj.status === 'achieved' ? 'inline-block' : 'none';
+  document.getElementById('growthUpdateValue').value = '';
+}
+
+function showNewGoalForm() {
+  document.getElementById('growthActiveWrap').style.display = 'none';
+  document.getElementById('growthSetGoalWrap').style.display = 'block';
+  document.getElementById('growthError').style.display = 'none';
+}
+
+async function createGrowthObjective() {
+  const metricName = document.getElementById('goalMetricName').value.trim();
+  const startingValue = document.getElementById('goalStartingValue').value;
+  const targetValue = document.getElementById('goalTargetValue').value;
+  const unit = document.getElementById('goalUnit').value.trim();
+  const targetDate = document.getElementById('goalTargetDate').value;
+
+  if (!metricName || startingValue === '' || targetValue === '') {
+    document.getElementById('growthError').textContent = t('growth.err_fill_required');
+    document.getElementById('growthError').style.display = 'block';
+    return;
+  }
+
+  const btn = document.getElementById('growthCreateBtn');
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ metricName, startingValue, targetValue, unit, targetDate })
+    });
+    const data = await res.json();
+    btn.disabled = false;
+    if (!res.ok) {
+      document.getElementById('growthError').textContent = data.error || t('growth.err_create_failed');
+      document.getElementById('growthError').style.display = 'block';
+      return;
+    }
+    ['goalMetricName', 'goalStartingValue', 'goalTargetValue', 'goalUnit', 'goalTargetDate'].forEach(id => document.getElementById(id).value = '');
+    loadGrowthObjective();
+  } catch (e) {
+    btn.disabled = false;
+    document.getElementById('growthError').textContent = t('board.connection_error');
+    document.getElementById('growthError').style.display = 'block';
+  }
+}
+
+async function updateGrowthProgress() {
+  const currentValue = document.getElementById('growthUpdateValue').value;
+  if (currentValue === '' || !currentGrowthObjectiveId) return;
+
+  try {
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${currentGrowthObjectiveId}/progress`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentValue })
+    });
+    const data = await res.json();
+    if (res.ok) renderGrowthObjective(data.objective, data.progress);
+  } catch (e) {}
+}
+
+async function generateGrowthPlan() {
+  const btn = document.getElementById('growthGenerateBtn');
+  if (btn) { btn.disabled = true; btn.textContent = t('growth.generating'); }
+  document.getElementById('growthPlanContent').innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">${t('growth.generating')}</div>`;
+
+  try {
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${currentGrowthObjectiveId}/plan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: window.currentLang || 'en' })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('growthPlanContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('growth.generate_failed')}</div>`;
+      return;
+    }
+    renderGrowthPlan(data.plan, data.generatedAt);
+  } catch (e) {
+    document.getElementById('growthPlanContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderGrowthPlan(plan, generatedAt) {
+  const dateStr = generatedAt ? new Date(generatedAt).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric' }) : '';
+  const phaseBlock = (labelKey, defaultLabel, items) => `
+    <div style="margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:6px" data-i18n="${labelKey}">${defaultLabel}</div>
+      <ul style="margin:0;padding-left:18px;font-size:12.5px;color:var(--text2);line-height:1.7">${(items || []).map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>
+    </div>`;
+
+  document.getElementById('growthPlanContent').innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+      <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
+      ${dateStr ? `<span style="font-size:11px;color:var(--muted)">${t('bi.as_of')} ${dateStr}</span>` : ''}
+      <button onclick="generateGrowthPlan()" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px" data-i18n="bi.regenerate">↻ Regenerate</button>
+    </div>
+    ${plan.reasoning_note ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-bottom:14px">${escapeHtml(plan.reasoning_note)}</div>` : ''}
+    ${phaseBlock('growth.strategic_priorities', 'Strategic Priorities', plan.strategic_priorities)}
+    ${phaseBlock('growth.phase_30', 'First 30 Days', plan.phase_30_days)}
+    ${phaseBlock('growth.phase_60', 'Days 31-60', plan.phase_60_days)}
+    ${phaseBlock('growth.phase_90', 'Days 61-90', plan.phase_90_days)}`;
 }
 
 async function findOpportunities() {
