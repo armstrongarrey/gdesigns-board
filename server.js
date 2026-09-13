@@ -501,6 +501,106 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// GROWTH CENTER — Phase 3, Step 1
+// Deterministic progress tracking, same trust principle as the Financial
+// Tools and Business Intelligence completeness score — this number is never
+// AI-estimated, it's plain math against real user-reported figures.
+// ═══════════════════════════════════════════════════════════════════════════
+function computeGrowthProgress(startingValue, currentValue, targetValue) {
+  if (targetValue === startingValue) return null; // no actual change was requested — can't compute a meaningful percentage
+  const raw = (currentValue - startingValue) / (targetValue - startingValue);
+  return { pct: Math.max(0, Math.min(100, Math.round(raw * 100))), rawPct: Math.round(raw * 100) };
+}
+
+// Creating a new objective retires any existing active one for this business
+// — a business has one active Growth Objective at a time in this first
+// version, keeping the concept simple rather than juggling several at once.
+app.post('/api/business/:id/growth-objective', authRequired, async (req, res) => {
+  const { metricName, unit, startingValue, targetValue, targetDate } = req.body;
+  if (!metricName || startingValue === undefined || targetValue === undefined) {
+    return res.status(400).json({ error: 'Please provide a metric name, starting value, and target value.' });
+  }
+  const startNum = parseFloat(startingValue), targetNum = parseFloat(targetValue);
+  if (isNaN(startNum) || isNaN(targetNum)) return res.status(400).json({ error: 'Starting and target values must be numbers.' });
+  if (startNum === targetNum) return res.status(400).json({ error: 'Target value must be different from the starting value.' });
+
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    await pool.query(`UPDATE growth_objectives SET status = 'abandoned' WHERE business_id = $1 AND status = 'active'`, [req.params.id]);
+
+    const inserted = await pool.query(
+      `INSERT INTO growth_objectives (business_id, owner_id, metric_name, unit, starting_value, current_value, target_value, target_date)
+       VALUES ($1, $2, $3, $4, $5, $5, $6, $7) RETURNING *`,
+      [req.params.id, account.id, metricName, unit || null, startNum, targetNum, targetDate || null]
+    );
+
+    res.json({ success: true, objective: inserted.rows[0], progress: computeGrowthProgress(startNum, startNum, targetNum) });
+  } catch (e) {
+    console.error('Create growth objective error:', e.message);
+    res.status(500).json({ error: 'Failed to create growth objective' });
+  }
+});
+
+app.get('/api/business/:id/growth-objective', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const result = await pool.query(
+      `SELECT * FROM growth_objectives WHERE business_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
+      [req.params.id]
+    );
+    if (!result.rows.length) return res.json({ objective: null });
+
+    const obj = result.rows[0];
+    const progress = computeGrowthProgress(parseFloat(obj.starting_value), parseFloat(obj.current_value), parseFloat(obj.target_value));
+    res.json({ objective: obj, progress });
+  } catch (e) {
+    console.error('Get growth objective error:', e.message);
+    res.status(500).json({ error: 'Failed to load growth objective' });
+  }
+});
+
+app.put('/api/business/:id/growth-objective/:objectiveId/progress', authRequired, async (req, res) => {
+  const { currentValue } = req.body;
+  if (currentValue === undefined) return res.status(400).json({ error: 'Current value is required' });
+  const currentNum = parseFloat(currentValue);
+  if (isNaN(currentNum)) return res.status(400).json({ error: 'Current value must be a number' });
+
+  try {
+    const account = await resolveAccount(req.userId);
+    const objResult = await pool.query(
+      `SELECT go.* FROM growth_objectives go JOIN businesses b ON b.id = go.business_id
+       WHERE go.id = $1 AND go.business_id = $2 AND b.user_id = $3`,
+      [req.params.objectiveId, req.params.id, account.id]
+    );
+    if (!objResult.rows.length) return res.status(404).json({ error: 'Growth objective not found' });
+    const obj = objResult.rows[0];
+
+    const progress = computeGrowthProgress(parseFloat(obj.starting_value), currentNum, parseFloat(obj.target_value));
+    // Auto-detect achievement rather than requiring the user to remember to
+    // mark it — deterministic (>= 100% raw, correctly handling both growth
+    // and reduction goals since computeGrowthProgress already normalizes
+    // direction), never an AI guess about whether "close enough" counts.
+    const newStatus = (progress && progress.rawPct >= 100) ? 'achieved' : obj.status;
+
+    const updated = await pool.query(
+      `UPDATE growth_objectives SET current_value = $1, status = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
+      [currentNum, newStatus, obj.id]
+    );
+
+    res.json({ success: true, objective: updated.rows[0], progress });
+  } catch (e) {
+    console.error('Update growth progress error:', e.message);
+    res.status(500).json({ error: 'Failed to update progress' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
 // for an already-logged-in user, not authenticating them. Reuses the same
