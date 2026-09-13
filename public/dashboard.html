@@ -256,6 +256,18 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <a href="#" onclick="viewBusinessFromDashboard();return false" style="font-size:12px;color:var(--purple-light);text-decoration:none" data-i18n="dash.view_full_profile">View full business profile →</a>
       </div>
 
+      <div id="dashGrowthCard" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:24px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div class="section-title" style="margin:0;font-size:15px" data-i18n="dash.growth_progress">Growth Progress</div>
+        </div>
+        <div id="dashGrowthObjectiveLabel" style="font-size:13px;color:var(--text);margin-bottom:8px"></div>
+        <div style="background:var(--bg3);border-radius:6px;height:8px;overflow:hidden;margin-bottom:8px"><div id="dashGrowthBar" style="height:100%;background:var(--purple);width:0%;transition:width .4s"></div></div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span id="dashGrowthLabel" style="font-size:12px;color:var(--muted)"></span>
+          <a href="#" onclick="showSection('growth');return false" style="font-size:12px;color:var(--purple-light);text-decoration:none" data-i18n="dash.view_growth_center">Open Growth Center →</a>
+        </div>
+      </div>
+
       <div id="dashNoBizPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;margin-bottom:24px;text-align:center">
         <div style="font-size:13px;color:var(--muted);margin-bottom:10px" data-i18n="dash.no_business_yet">Analyze your business to start seeing your Business Health here.</div>
         <button class="btn-ghost" onclick="showSection('analyzer')" data-i18n="dash.analyze_now">Analyze My Business</button>
@@ -1008,6 +1020,17 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div id="growthChartContent"></div>
       </div>
 
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:18px">
+        <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:12px" data-i18n="growth.milestones">Milestones</div>
+        <div id="milestonesList" style="margin-bottom:14px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input class="form-input" id="newMilestoneLabel" data-i18n-placeholder="growth.milestone_label_placeholder" placeholder="e.g. Launch new product" style="flex:2;min-width:160px">
+          <input class="form-input" type="number" id="newMilestoneValue" data-i18n-placeholder="growth.milestone_value_placeholder" placeholder="Target value (optional)" style="flex:1;min-width:120px">
+          <input class="form-input" type="date" id="newMilestoneDate" style="flex:1;min-width:130px">
+          <button class="btn-ghost" onclick="addMilestone()" data-i18n="growth.add_milestone">+ Add</button>
+        </div>
+      </div>
+
       <div id="growthPlanWrap" style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
           <div class="form-group" style="margin-bottom:0"><label style="font-size:11px" data-i18n="growth.plan_start_date">Plan Start Date</label><input class="form-input" type="date" id="planStartDate" style="padding:8px 10px"></div>
@@ -1670,6 +1693,22 @@ async function loadDashboardBusinessHealth() {
         listEl.innerHTML = `<div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:8px" data-i18n="dash.needs_attention">What Needs Your Attention</div>` +
           relevant.map(a => `<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;font-size:12.5px"><span style="color:${ALERT_SEVERITY_COLORS[a.severity] || ALERT_SEVERITY_COLORS.info}">●</span><span style="color:var(--text2)">${escapeHtml(a.title)}</span></div>`).join('') +
           '<br>';
+      })
+      .catch(() => {});
+
+    // Growth Progress card — hidden entirely if there's no active goal, since
+    // an empty progress bar with nothing to show is worse than no card at all.
+    fetch(`/api/business/${primary.id}/growth-objective`)
+      .then(r => r.json())
+      .then(data => {
+        const card = document.getElementById('dashGrowthCard');
+        if (!data.objective) { card.style.display = 'none'; return; }
+        card.style.display = 'block';
+        const obj = data.objective, unit = obj.unit || '';
+        document.getElementById('dashGrowthObjectiveLabel').textContent = `${obj.metric_name}: ${obj.current_value}${unit} → ${obj.target_value}${unit}`;
+        const pct = data.progress ? data.progress.pct : 0;
+        document.getElementById('dashGrowthBar').style.width = pct + '%';
+        document.getElementById('dashGrowthLabel').textContent = `${pct}% ${t('growth.of_the_way_there')}`;
       })
       .catch(() => {});
   } catch (e) { /* Dashboard card is a convenience surface — failures here shouldn't disrupt the rest of the Dashboard */ }
@@ -2894,6 +2933,7 @@ async function loadGrowthObjective() {
     document.getElementById('growthActiveWrap').style.display = 'block';
     renderGrowthObjective(data.objective, data.progress);
     loadGrowthProgressChart();
+    renderMilestones(data.milestones || []);
 
     // Reflect the stored plan's own timeframe back into the inputs, so
     // reopening an existing plan shows what it was actually built for
@@ -2979,8 +3019,11 @@ async function updateGrowthProgress() {
     });
     const data = await res.json();
     if (res.ok) {
-      renderGrowthObjective(data.objective, data.progress);
-      loadGrowthProgressChart();
+      // loadGrowthObjective() re-fetches and re-renders the objective,
+      // progress, chart, AND milestones together — simpler and more
+      // reliable than trying to patch each piece separately client-side,
+      // especially now that a progress update can auto-achieve milestones.
+      loadGrowthObjective();
     }
   } catch (e) {}
 }
@@ -2999,6 +3042,64 @@ async function loadGrowthProgressChart() {
     }
     document.getElementById('growthChartWrap').style.display = 'block';
     document.getElementById('growthChartContent').innerHTML = buildLineChartSVG(data.history, data.targetValue, data.unit);
+  } catch (e) {}
+}
+
+function renderMilestones(milestones) {
+  const listEl = document.getElementById('milestonesList');
+  if (!milestones.length) {
+    listEl.innerHTML = `<div style="font-size:12.5px;color:var(--muted)" data-i18n="growth.no_milestones">No milestones yet — add smaller checkpoints along the way to your goal.</div>`;
+    return;
+  }
+  listEl.innerHTML = milestones.map(m => {
+    const achieved = !!m.achieved_at;
+    const detailParts = [];
+    if (m.target_value !== null && m.target_value !== undefined) detailParts.push(m.target_value);
+    if (m.target_date) detailParts.push(new Date(m.target_date).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric' }));
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <span style="font-size:16px">${achieved ? '✅' : '⬜'}</span>
+        <div style="flex:1">
+          <div style="font-size:13px;color:var(--text);${achieved ? 'text-decoration:line-through;opacity:.6' : ''}">${escapeHtml(m.label)}</div>
+          ${detailParts.length ? `<div style="font-size:11px;color:var(--muted)">${detailParts.map(escapeHtml).join(' · ')}</div>` : ''}
+        </div>
+        ${!achieved && (m.target_value === null || m.target_value === undefined) ? `<button onclick="markMilestoneAchieved('${m.id}')" style="background:none;border:none;color:var(--purple-light);cursor:pointer;font-size:11px" data-i18n="growth.mark_done">Mark done</button>` : ''}
+        <button onclick="deleteMilestone('${m.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0 4px">×</button>
+      </div>`;
+  }).join('');
+}
+
+async function addMilestone() {
+  const label = document.getElementById('newMilestoneLabel').value.trim();
+  const targetValue = document.getElementById('newMilestoneValue').value;
+  const targetDate = document.getElementById('newMilestoneDate').value;
+  if (!label || !currentGrowthObjectiveId) return;
+
+  try {
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${currentGrowthObjectiveId}/milestones`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label, targetValue: targetValue || undefined, targetDate: targetDate || undefined })
+    });
+    if (res.ok) {
+      document.getElementById('newMilestoneLabel').value = '';
+      document.getElementById('newMilestoneValue').value = '';
+      document.getElementById('newMilestoneDate').value = '';
+      loadGrowthObjective();
+    }
+  } catch (e) {}
+}
+
+async function markMilestoneAchieved(milestoneId) {
+  try {
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${currentGrowthObjectiveId}/milestones/${milestoneId}/achieve`, { method: 'PUT' });
+    if (res.ok) loadGrowthObjective();
+  } catch (e) {}
+}
+
+async function deleteMilestone(milestoneId) {
+  try {
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${currentGrowthObjectiveId}/milestones/${milestoneId}`, { method: 'DELETE' });
+    if (res.ok) loadGrowthObjective();
   } catch (e) {}
 }
 
