@@ -2051,6 +2051,11 @@ async function loadBusinessIntelligence(businessId, existingSnapshot, existingGe
 async function generateBusinessIntelligence(businessId) {
   const btn = document.getElementById('biGenerateBtn');
   if (btn) { btn.disabled = true; btn.textContent = t('bi.generating'); }
+  // The button-specific update above only ever applies to the FIRST generation
+  // (biGenerateBtn doesn't exist once a snapshot already exists) — this
+  // second update guarantees visible feedback on every click regardless of
+  // which button triggered it, including Regenerate.
+  document.getElementById('biContent').innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">${t('bi.generating')}</div>`;
 
   try {
     const res = await fetch(`/api/business/${businessId}/intelligence`, {
