@@ -1003,6 +1003,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
       </div>
 
+      <div id="growthChartWrap" style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:18px;display:none">
+        <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:12px" data-i18n="growth.progress_over_time">Progress Over Time</div>
+        <div id="growthChartContent"></div>
+      </div>
+
       <div id="growthPlanWrap" style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
           <div class="form-group" style="margin-bottom:0"><label style="font-size:11px" data-i18n="growth.plan_start_date">Plan Start Date</label><input class="form-input" type="date" id="planStartDate" style="padding:8px 10px"></div>
@@ -2335,6 +2340,47 @@ function buildBarChartSVG(data, { width = 480, barHeight = 26, gap = 12 } = {}) 
   return `<svg viewBox="0 0 ${width} ${height}" width="100%" style="max-width:${width}px">${bars}</svg>`;
 }
 
+// Progress-over-time chart for Growth Center — a real line, not the single
+// bar shown elsewhere in the UI. Scale is computed from the actual data
+// (including the target), not assumed, so it correctly handles both
+// under-target and over-target values without clipping.
+function buildLineChartSVG(historyPoints, targetValue, unit, { width = 560, height = 200 } = {}) {
+  const padding = 24;
+  const leftMargin = 55;
+  const chartW = width - leftMargin - padding;
+
+  if (!historyPoints.length) return '';
+
+  const values = historyPoints.map(p => parseFloat(p.value));
+  const allValues = [...values, targetValue];
+  const minVal = Math.min(...allValues);
+  const maxVal = Math.max(...allValues);
+  const range = (maxVal - minVal) || 1;
+
+  const valueToY = (value) => padding + (1 - (value - minVal) / range) * (height - 2 * padding);
+  const indexToX = (i) => historyPoints.length === 1 ? leftMargin + chartW / 2 : leftMargin + (i / (historyPoints.length - 1)) * chartW;
+
+  const linePoints = values.map((v, i) => `${indexToX(i)},${valueToY(v)}`).join(' ');
+  const targetY = valueToY(targetValue);
+
+  const dots = values.map((v, i) => {
+    const x = indexToX(i), y = valueToY(v);
+    const dateLabel = new Date(historyPoints[i].recorded_at).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric' });
+    return `
+      <circle cx="${x}" cy="${y}" r="4" fill="var(--purple, #7c3aed)"></circle>
+      <text x="${x}" y="${height - 4}" font-size="9" fill="#8b87b8" text-anchor="middle" font-family="Inter,sans-serif">${dateLabel}</text>`;
+  }).join('');
+
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" style="max-width:${width}px">
+    <line x1="${leftMargin}" y1="${targetY}" x2="${width - padding}" y2="${targetY}" stroke="#e6aa00" stroke-width="1.5" stroke-dasharray="4,4"></line>
+    <text x="${leftMargin}" y="${targetY - 6}" font-size="10" fill="#e6aa00" font-family="Inter,sans-serif">Target: ${targetValue}${unit || ''}</text>
+    <polyline points="${linePoints}" fill="none" stroke="#7c3aed" stroke-width="2.5"></polyline>
+    ${dots}
+    <text x="8" y="${valueToY(maxVal) + 4}" font-size="9" fill="#8b87b8" font-family="Inter,sans-serif">${Math.round(maxVal)}</text>
+    <text x="8" y="${valueToY(minVal) + 4}" font-size="9" fill="#8b87b8" font-family="Inter,sans-serif">${Math.round(minVal)}</text>
+  </svg>`;
+}
+
 // ── Verification Pass ────────────────────────────────────────────────────────
 function resetVerificationUI() {
   document.getElementById('verificationPromptWrap').style.display = 'block';
@@ -2847,6 +2893,7 @@ async function loadGrowthObjective() {
     document.getElementById('growthSetGoalWrap').style.display = 'none';
     document.getElementById('growthActiveWrap').style.display = 'block';
     renderGrowthObjective(data.objective, data.progress);
+    loadGrowthProgressChart();
 
     // Reflect the stored plan's own timeframe back into the inputs, so
     // reopening an existing plan shows what it was actually built for
@@ -2931,7 +2978,27 @@ async function updateGrowthProgress() {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ currentValue })
     });
     const data = await res.json();
-    if (res.ok) renderGrowthObjective(data.objective, data.progress);
+    if (res.ok) {
+      renderGrowthObjective(data.objective, data.progress);
+      loadGrowthProgressChart();
+    }
+  } catch (e) {}
+}
+
+async function loadGrowthProgressChart() {
+  if (!currentGrowthBusinessId || !currentGrowthObjectiveId) return;
+  try {
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${currentGrowthObjectiveId}/progress-history`);
+    const data = await res.json();
+    if (!res.ok || !data.history || data.history.length < 2) {
+      // Need at least 2 points for a meaningful line — a single check-in
+      // has nothing to compare against yet, so the chart stays hidden
+      // rather than showing a flat, uninformative single dot.
+      document.getElementById('growthChartWrap').style.display = 'none';
+      return;
+    }
+    document.getElementById('growthChartWrap').style.display = 'block';
+    document.getElementById('growthChartContent').innerHTML = buildLineChartSVG(data.history, data.targetValue, data.unit);
   } catch (e) {}
 }
 
