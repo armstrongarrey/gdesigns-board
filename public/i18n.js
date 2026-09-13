@@ -121,6 +121,11 @@ const I18N_DICT = {
     "growth.phase_90": "Days 61-90",
     "growth.err_fill_required": "Please fill in the metric name, current value, and target value.",
     "growth.err_create_failed": "Failed to set this goal.",
+    "growth.plan_start_date": "Plan Start Date",
+    "growth.plan_months": "Number of Months",
+    "growth.plan_end_date": "Specific End Date",
+    "growth.or": "or",
+    "growth.timeline": "Timeline",
     "footer.rights": "All rights reserved.",
 
     // Consult page — Stage 1 form
@@ -1112,6 +1117,11 @@ const I18N_DICT = {
     "growth.phase_90": "Jours 61-90",
     "growth.err_fill_required": "Veuillez remplir le nom de la mesure, la valeur actuelle et la valeur cible.",
     "growth.err_create_failed": "Échec de la définition de cet objectif.",
+    "growth.plan_start_date": "Date de début du plan",
+    "growth.plan_months": "Nombre de mois",
+    "growth.plan_end_date": "Date de fin précise",
+    "growth.or": "ou",
+    "growth.timeline": "Chronologie",
     "footer.rights": "Tous droits réservés.",
 
     // Consult page — Stage 1 form
