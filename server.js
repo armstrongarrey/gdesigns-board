@@ -576,7 +576,8 @@ app.get('/api/business/:id/growth-objective', authRequired, async (req, res) => 
     if (lang === 'fr' && obj.strategic_plan_fr) obj.strategic_plan = obj.strategic_plan_fr;
 
     const progress = computeGrowthProgress(parseFloat(obj.starting_value), parseFloat(obj.current_value), parseFloat(obj.target_value));
-    res.json({ objective: obj, progress });
+    const milestones = await pool.query('SELECT * FROM growth_milestones WHERE objective_id = $1 ORDER BY created_at ASC', [obj.id]);
+    res.json({ objective: obj, progress, milestones: milestones.rows });
   } catch (e) {
     console.error('Get growth objective error:', e.message);
     res.status(500).json({ error: 'Failed to load growth objective' });
@@ -612,7 +613,25 @@ app.put('/api/business/:id/growth-objective/:objectiveId/progress', authRequired
     );
     await pool.query('INSERT INTO growth_progress_history (objective_id, value) VALUES ($1, $2)', [obj.id, currentNum]);
 
-    res.json({ success: true, objective: updated.rows[0], progress });
+    // Auto-detect numeric milestones just crossed by this update — reuses
+    // the same directional progress math as the objective itself, so a
+    // milestone on a reduction goal (e.g. "costs down to 75") is detected
+    // correctly without special-casing. Non-numeric milestones (target_value
+    // IS NULL) are never touched here — those can only be checked off manually.
+    const pendingMilestones = await pool.query(
+      'SELECT * FROM growth_milestones WHERE objective_id = $1 AND achieved_at IS NULL AND target_value IS NOT NULL',
+      [obj.id]
+    );
+    const newlyAchieved = [];
+    for (const m of pendingMilestones.rows) {
+      const milestoneProgress = computeGrowthProgress(parseFloat(obj.starting_value), currentNum, parseFloat(m.target_value));
+      if (milestoneProgress && milestoneProgress.rawPct >= 100) {
+        const marked = await pool.query('UPDATE growth_milestones SET achieved_at = NOW() WHERE id = $1 RETURNING *', [m.id]);
+        newlyAchieved.push(marked.rows[0]);
+      }
+    }
+
+    res.json({ success: true, objective: updated.rows[0], progress, newlyAchievedMilestones: newlyAchieved });
   } catch (e) {
     console.error('Update growth progress error:', e.message);
     res.status(500).json({ error: 'Failed to update progress' });
@@ -644,6 +663,68 @@ app.get('/api/business/:id/growth-objective/:objectiveId/progress-history', auth
   } catch (e) {
     console.error('Growth progress history error:', e.message);
     res.status(500).json({ error: 'Failed to load progress history' });
+  }
+});
+
+app.post('/api/business/:id/growth-objective/:objectiveId/milestones', authRequired, async (req, res) => {
+  const { label, targetValue, targetDate } = req.body;
+  if (!label) return res.status(400).json({ error: 'Please give this milestone a name.' });
+  try {
+    const account = await resolveAccount(req.userId);
+    const objResult = await pool.query(
+      `SELECT go.id FROM growth_objectives go JOIN businesses b ON b.id = go.business_id
+       WHERE go.id = $1 AND go.business_id = $2 AND b.user_id = $3`,
+      [req.params.objectiveId, req.params.id, account.id]
+    );
+    if (!objResult.rows.length) return res.status(404).json({ error: 'Growth objective not found' });
+
+    const targetNum = targetValue !== undefined && targetValue !== '' ? parseFloat(targetValue) : null;
+    const inserted = await pool.query(
+      `INSERT INTO growth_milestones (objective_id, label, target_value, target_date) VALUES ($1, $2, $3, $4) RETURNING *`,
+      [req.params.objectiveId, label, targetNum, targetDate || null]
+    );
+    res.json({ success: true, milestone: inserted.rows[0] });
+  } catch (e) {
+    console.error('Create milestone error:', e.message);
+    res.status(500).json({ error: 'Failed to create milestone' });
+  }
+});
+
+app.put('/api/business/:id/growth-objective/:objectiveId/milestones/:milestoneId/achieve', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(
+      `UPDATE growth_milestones SET achieved_at = NOW()
+       WHERE id = $1 AND objective_id = $2 AND objective_id IN (
+         SELECT go.id FROM growth_objectives go JOIN businesses b ON b.id = go.business_id
+         WHERE go.business_id = $3 AND b.user_id = $4
+       ) RETURNING *`,
+      [req.params.milestoneId, req.params.objectiveId, req.params.id, account.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Milestone not found' });
+    res.json({ success: true, milestone: result.rows[0] });
+  } catch (e) {
+    console.error('Mark milestone achieved error:', e.message);
+    res.status(500).json({ error: 'Failed to update milestone' });
+  }
+});
+
+app.delete('/api/business/:id/growth-objective/:objectiveId/milestones/:milestoneId', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(
+      `DELETE FROM growth_milestones
+       WHERE id = $1 AND objective_id = $2 AND objective_id IN (
+         SELECT go.id FROM growth_objectives go JOIN businesses b ON b.id = go.business_id
+         WHERE go.business_id = $3 AND b.user_id = $4
+       ) RETURNING id`,
+      [req.params.milestoneId, req.params.objectiveId, req.params.id, account.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Milestone not found' });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Delete milestone error:', e.message);
+    res.status(500).json({ error: 'Failed to delete milestone' });
   }
 });
 
