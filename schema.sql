@@ -655,5 +655,12 @@ ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS strategic_plan JSONB;
 ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS strategic_plan_fr JSONB;
 ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS strategic_plan_generated_at TIMESTAMPTZ;
 
+-- The user-chosen timeframe the current strategic_plan was built for — lets
+-- the plan structure itself flex (monthly-ish checkpoints across however
+-- long the founder actually wants to plan for) instead of a fixed 30/60/90
+-- day structure regardless of how far out the goal really is.
+ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS plan_start_date DATE;
+ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS plan_end_date DATE;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
