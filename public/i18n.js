@@ -89,6 +89,8 @@ const I18N_DICT = {
     "bi.growth_readiness": "Growth Readiness",
     "dash.business_health": "Business Health",
     "dash.view_full_profile": "View full business profile →",
+    "dash.growth_progress": "Growth Progress",
+    "dash.view_growth_center": "Open Growth Center →",
     "dash.no_business_yet": "Analyze your business to start seeing your Business Health here.",
     "dash.analyze_now": "Analyze My Business",
     "dash.needs_attention": "What Needs Your Attention",
@@ -127,6 +129,12 @@ const I18N_DICT = {
     "growth.or": "or",
     "growth.timeline": "Timeline",
     "growth.progress_over_time": "Progress Over Time",
+    "growth.milestones": "Milestones",
+    "growth.no_milestones": "No milestones yet — add smaller checkpoints along the way to your goal.",
+    "growth.milestone_label_placeholder": "e.g. Launch new product",
+    "growth.milestone_value_placeholder": "Target value (optional)",
+    "growth.add_milestone": "+ Add",
+    "growth.mark_done": "Mark done",
     "footer.rights": "All rights reserved.",
 
     // Consult page — Stage 1 form
@@ -1086,6 +1094,8 @@ const I18N_DICT = {
     "bi.growth_readiness": "Préparation à la croissance",
     "dash.business_health": "Santé de l'entreprise",
     "dash.view_full_profile": "Voir le profil complet de l'entreprise →",
+    "dash.growth_progress": "Progression de croissance",
+    "dash.view_growth_center": "Ouvrir le Centre de croissance →",
     "dash.no_business_yet": "Analysez votre entreprise pour voir sa santé apparaître ici.",
     "dash.analyze_now": "Analyser mon entreprise",
     "dash.needs_attention": "Ce qui mérite votre attention",
@@ -1124,6 +1134,12 @@ const I18N_DICT = {
     "growth.or": "ou",
     "growth.timeline": "Chronologie",
     "growth.progress_over_time": "Progression dans le temps",
+    "growth.milestones": "Jalons",
+    "growth.no_milestones": "Aucun jalon pour l'instant — ajoutez de petites étapes vers votre objectif.",
+    "growth.milestone_label_placeholder": "ex. Lancer un nouveau produit",
+    "growth.milestone_value_placeholder": "Valeur cible (facultatif)",
+    "growth.add_milestone": "+ Ajouter",
+    "growth.mark_done": "Marquer comme fait",
     "footer.rights": "Tous droits réservés.",
 
     // Consult page — Stage 1 form
