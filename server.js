@@ -233,13 +233,13 @@ passport.use(new GoogleStrategy({
   callbackURL: `${BASE_URL}/auth/google/callback`
 }, async (accessToken, refreshToken, profile, done) => {
   try {
-    const email = profile.emails[0].value;
+    const email = profile.emails[0].value.trim().toLowerCase();
     const firstName = profile.name.givenName;
     const lastName = profile.name.familyName;
     const googleId = profile.id;
     const avatar = profile.photos[0]?.value;
 
-    let result = await pool.query('SELECT * FROM users WHERE google_id = $1 OR email = $2', [googleId, email]);
+    let result = await pool.query('SELECT * FROM users WHERE google_id = $1 OR LOWER(email) = LOWER($2)', [googleId, email]);
     let user = result.rows[0];
 
     if (!user) {
@@ -1127,12 +1127,13 @@ function setCookie(res, token, name = 'arreyon_token') {
 
 // Register
 app.post('/api/auth/register', async (req, res) => {
-  const { firstName, lastName, email, password, phone, country, language } = req.body;
+  const { firstName, lastName, password, phone, country, language } = req.body;
+  const email = req.body.email?.trim().toLowerCase();
   if (!firstName || !lastName || !email || !password) {
     return res.status(400).json({ error: 'All required fields must be filled' });
   }
   try {
-    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    const existing = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     if (existing.rows.length) return res.status(400).json({ error: 'Email already registered' });
 
     const hash = await bcrypt.hash(password, 10);
@@ -1178,9 +1179,10 @@ app.get('/auth/verify', async (req, res) => {
 
 // Login
 app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
+  const email = req.body.email?.trim().toLowerCase();
+  const { password } = req.body;
   try {
-    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     const user = result.rows[0];
     if (!user) return res.status(401).json({ error: 'Invalid email or password' });
     if (!user.password_hash) return res.status(401).json({ error: 'Please sign in with Google' });
@@ -1197,9 +1199,9 @@ app.post('/api/auth/login', async (req, res) => {
 
 // Resend verification
 app.post('/api/auth/resend-verification', async (req, res) => {
-  const { email } = req.body;
+  const email = req.body.email?.trim().toLowerCase();
   try {
-    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     const user = result.rows[0];
     if (!user || user.email_verified) return res.json({ success: true });
 
@@ -1217,9 +1219,9 @@ app.post('/api/auth/resend-verification', async (req, res) => {
 
 // Forgot password
 app.post('/api/auth/forgot-password', async (req, res) => {
-  const { email } = req.body;
+  const email = req.body.email?.trim().toLowerCase();
   try {
-    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     const user = result.rows[0];
     if (!user) return res.json({ success: true }); // Don't reveal if email exists
 
@@ -1252,7 +1254,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
 // Logout
 app.post('/api/auth/logout', (req, res) => {
-  res.clearCookie('arreyon_token');
+  res.clearCookie('arreyon_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
   res.json({ success: true });
 });
 
@@ -1298,9 +1300,10 @@ app.get('/api/auth/me', authRequired, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 app.post('/api/admin/login', async (req, res) => {
-  const { email, password } = req.body;
+  const email = req.body.email?.trim().toLowerCase();
+  const { password } = req.body;
   try {
-    const result = await pool.query('SELECT * FROM admin_users WHERE email = $1', [email]);
+    const result = await pool.query('SELECT * FROM admin_users WHERE LOWER(email) = LOWER($1)', [email]);
     const admin = result.rows[0];
     if (!admin) return res.status(401).json({ error: 'Invalid credentials' });
     const valid = await bcrypt.compare(password, admin.password_hash);
@@ -1312,7 +1315,7 @@ app.post('/api/admin/login', async (req, res) => {
 });
 
 app.post('/api/admin/logout', (req, res) => {
-  res.clearCookie('arreyon_admin_token');
+  res.clearCookie('arreyon_admin_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
   res.json({ success: true });
 });
 
