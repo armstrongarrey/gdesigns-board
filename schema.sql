@@ -662,5 +662,17 @@ ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS strategic_plan_generated_
 ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS plan_start_date DATE;
 ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS plan_end_date DATE;
 
+-- Every progress check-in, kept as its own row — growth_objectives.current_value
+-- only ever holds the LATEST figure, overwritten on each update, so a "progress
+-- over time" chart needs its own history rather than trying to reconstruct it
+-- from a column that doesn't retain the past.
+CREATE TABLE IF NOT EXISTS growth_progress_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  objective_id UUID REFERENCES growth_objectives(id) ON DELETE CASCADE,
+  value NUMERIC(14,2) NOT NULL,
+  recorded_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_growth_progress_history_objective ON growth_progress_history(objective_id, recorded_at);
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
