@@ -618,5 +618,36 @@ ALTER TABLE businesses ADD COLUMN IF NOT EXISTS intelligence_snapshot JSONB;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS intelligence_snapshot_fr JSONB;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS intelligence_generated_at TIMESTAMPTZ;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 3 — GROWTH CENTER (Step 1)
+-- A dedicated table, not another JSONB field on businesses — an objective has
+-- its own lifecycle (active/achieved/abandoned) and needs real numeric
+-- tracking (starting/current/target), unlike the simpler free-form
+-- goals/challenges fields added in Phase 1. starting_value is captured once,
+-- at creation, and never changes — it's the fixed baseline the progress
+-- percentage is measured against, regardless of which direction the goal
+-- moves (growth targets and reduction targets, e.g. "cut costs", use the
+-- exact same math correctly).
+-- current_value is user-reported, not automatically tracked — there's no
+-- connected revenue/accounting source of truth, so asking the founder to
+-- periodically update it themselves is the honest choice here, consistent
+-- with never fabricating progress the platform doesn't actually know.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS growth_objectives (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  owner_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  metric_name VARCHAR(255) NOT NULL,
+  unit VARCHAR(20),
+  starting_value NUMERIC(14,2) NOT NULL,
+  current_value NUMERIC(14,2) NOT NULL,
+  target_value NUMERIC(14,2) NOT NULL,
+  target_date DATE,
+  status VARCHAR(20) DEFAULT 'active', -- active | achieved | abandoned
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_growth_objectives_business ON growth_objectives(business_id, status);
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
