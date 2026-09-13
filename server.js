@@ -600,6 +600,88 @@ app.put('/api/business/:id/growth-objective/:objectiveId/progress', authRequired
   }
 });
 
+// Generates strategic priorities and a 30/60/90-day plan FOR this specific
+// objective — grounded in the real business context (Phase 1) and, where
+// available, the existing Business Intelligence analysis (Phase 2's priority
+// problems and critical bottleneck), rather than generic advice that could
+// apply to any goal at any business.
+app.post('/api/business/:id/growth-objective/:objectiveId/plan', authRequired, async (req, res) => {
+  const language = req.body?.language === 'fr' ? 'fr' : 'en';
+  try {
+    const account = await resolveAccount(req.userId);
+    const objResult = await pool.query(
+      `SELECT go.* FROM growth_objectives go JOIN businesses b ON b.id = go.business_id
+       WHERE go.id = $1 AND go.business_id = $2 AND b.user_id = $3`,
+      [req.params.objectiveId, req.params.id, account.id]
+    );
+    if (!objResult.rows.length) return res.status(404).json({ error: 'Growth objective not found' });
+    const objective = objResult.rows[0];
+
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+
+    // Pull the existing Business Intelligence analysis directly, if one
+    // exists — getBusinessContext() (Phase 1) predates this field and
+    // deliberately isn't being modified here to add it, to avoid touching a
+    // shared helper other features already depend on and have been tested
+    // against; a small direct query is simpler and safer for this one use.
+    const bizRow = await pool.query('SELECT intelligence_snapshot FROM businesses WHERE id = $1', [req.params.id]);
+    const intelligence = bizRow.rows[0]?.intelligence_snapshot;
+    const intelligenceSummary = intelligence
+      ? `\n\nEXISTING BUSINESS INTELLIGENCE ANALYSIS (ground your plan in this — don't ignore known problems):\nCritical bottleneck: ${intelligence.critical_bottleneck || 'none identified'}\nPriority problems: ${(intelligence.priority_problems || []).join('; ') || 'none identified'}`
+      : '';
+
+    const progress = computeGrowthProgress(parseFloat(objective.starting_value), parseFloat(objective.current_value), parseFloat(objective.target_value));
+
+    const prompt = `You are a business growth strategist. Build a concrete, specific plan to help this founder reach a specific goal — not generic business advice.
+
+THE GOAL: Move "${objective.metric_name}" from ${objective.starting_value}${objective.unit || ''} to ${objective.target_value}${objective.unit || ''}${objective.target_date ? ` by ${objective.target_date}` : ''}.
+CURRENT PROGRESS: ${objective.current_value}${objective.unit || ''} (${progress ? progress.pct + '% of the way there' : 'just starting'}).
+
+BUSINESS CONTEXT:
+${contextSummary}${intelligenceSummary}
+
+YOUR TASK:
+Produce 2-3 strategic priorities specifically aimed at closing the gap between where they are now and this goal, then a concrete 30/60/90-day plan. Every action must plausibly move THIS metric, not be generic "grow your business" advice.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "strategic_priorities": ["specific priority 1, tied directly to the gap", "priority 2", "priority 3 (optional)"],
+  "phase_30_days": ["specific action 1", "specific action 2", "specific action 3"],
+  "phase_60_days": ["specific action 1", "specific action 2"],
+  "phase_90_days": ["specific action 1", "specific action 2"],
+  "reasoning_note": "one honest sentence on why this plan should move the needle, or what assumption it depends on"
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Produce the plan now, as JSON only.' }], complexity: 'complex', context: { feature: 'growth_center', userId: req.userId }, maxTokens: 2000 });
+
+    let plan;
+    try {
+      plan = extractJSON(raw);
+    } catch (e) {
+      console.error('Growth plan JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
+      throw new Error('Could not generate a growth plan — please try again');
+    }
+    for (const field of ['strategic_priorities', 'phase_30_days', 'phase_60_days', 'phase_90_days']) {
+      if (!Array.isArray(plan[field])) {
+        console.error(`Growth plan field "${field}" was not an array:`, typeof plan[field]);
+        throw new Error('Could not generate a growth plan — please try again');
+      }
+    }
+
+    await pool.query(
+      'UPDATE growth_objectives SET strategic_plan = $1, strategic_plan_fr = NULL, strategic_plan_generated_at = NOW() WHERE id = $2',
+      [JSON.stringify(plan), objective.id]
+    );
+
+    res.json({ plan, generatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('Growth plan generation error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate growth plan. Please try again.' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
