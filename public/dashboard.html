@@ -892,6 +892,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <option value="roas" data-i18n="fin.calc_roas">Return on Ad Spend (ROAS)</option>
               <option value="growth_projection" data-i18n="fin.calc_growth_projection">Growth Projection</option>
               <option value="cashflow_projection" data-i18n="fin.calc_cashflow_projection">Cash Flow Projection</option>
+              <option value="pricing" data-i18n="fin.calc_pricing">Pricing (from margin)</option>
+              <option value="markup" data-i18n="fin.calc_markup">Markup vs. Margin</option>
+              <option value="runway" data-i18n="fin.calc_runway">Cash Runway</option>
+              <option value="budget_variance" data-i18n="fin.calc_budget_variance">Budget Variance</option>
+              <option value="valuation" data-i18n="fin.calc_valuation">Business Valuation</option>
             </select>
           </div>
           <div class="form-group" style="margin-bottom:0;max-width:170px">
@@ -4177,6 +4182,26 @@ const CALC_FIELD_DEFS = {
     { key: 'monthlyRevenue', labelKey: 'fin.field_monthly_revenue', placeholder: 'e.g. 2000' },
     { key: 'monthlyExpenses', labelKey: 'fin.field_monthly_expenses', placeholder: 'e.g. 3000' },
     { key: 'months', labelKey: 'fin.field_months', placeholder: 'e.g. 12', optional: true }
+  ],
+  pricing: [
+    { key: 'unitCost', labelKey: 'fin.field_unit_cost', placeholder: 'e.g. 50' },
+    { key: 'desiredMarginPct', labelKey: 'fin.field_desired_margin', placeholder: 'e.g. 40' }
+  ],
+  markup: [
+    { key: 'unitCost', labelKey: 'fin.field_unit_cost', placeholder: 'e.g. 50' },
+    { key: 'markupPct', labelKey: 'fin.field_markup_pct', placeholder: 'e.g. 40' }
+  ],
+  runway: [
+    { key: 'cashOnHand', labelKey: 'fin.field_cash_on_hand', placeholder: 'e.g. 50000' },
+    { key: 'monthlyBurnRate', labelKey: 'fin.field_monthly_burn', placeholder: 'e.g. 8000' }
+  ],
+  budget_variance: [
+    { key: 'budgetedAmount', labelKey: 'fin.field_budgeted_amount', placeholder: 'e.g. 10000' },
+    { key: 'actualAmount', labelKey: 'fin.field_actual_amount', placeholder: 'e.g. 12500' }
+  ],
+  valuation: [
+    { key: 'sde', labelKey: 'fin.field_sde', placeholder: 'e.g. 60000' },
+    { key: 'multiple', labelKey: 'fin.field_multiple', placeholder: 'e.g. 2.5' }
   ]
 };
 
@@ -4420,6 +4445,20 @@ function renderCalculatorResult(type, r) {
     }
     const chartData = r.projection.filter((p,i) => i % Math.ceil(r.projection.length/8) === 0 || i === r.projection.length-1).map(p => ({ label: 'M'+p.month, value: Math.max(p.runningBalance, 0), color: p.runningBalance < 0 ? '#ef4444' : '#10b981' }));
     html += `<div style="margin-top:16px">${buildBarChartSVG(chartData, { width: 500 })}</div>`;
+  } else if (type === 'pricing') {
+    html += calcResultRow(t('fin.result_selling_price'), formatMoney(r.sellingPrice)) + calcResultRow(t('fin.result_margin_amount'), formatMoney(r.marginAmount));
+  } else if (type === 'markup') {
+    html += calcResultRow(t('fin.result_selling_price'), formatMoney(r.sellingPrice)) + calcResultRow(t('fin.result_markup_amount'), formatMoney(r.markupAmount)) + calcResultRow(t('fin.result_equivalent_margin'), r.equivalentMarginPct + '%');
+    html += `<div style="margin-top:12px;font-size:12.5px;color:var(--text2);background:var(--bg3);border-radius:8px;padding:10px 12px">${t('fin.markup_vs_margin_note')}</div>`;
+  } else if (type === 'runway') {
+    html += calcResultRow(t('fin.result_runway_months'), r.runwayMonths) + calcResultRow(t('fin.result_runout_date'), r.estimatedRunOutDate);
+  } else if (type === 'budget_variance') {
+    const statusColor = r.status === 'over' ? '#ef4444' : r.status === 'under' ? 'var(--green)' : 'var(--muted)';
+    const statusLabel = r.status === 'over' ? t('fin.status_over') : r.status === 'under' ? t('fin.status_under') : t('fin.status_on_budget');
+    html += calcResultRow(t('fin.result_variance_amount'), formatMoney(r.varianceAmount)) + calcResultRow(t('fin.result_variance_pct'), r.variancePct + '%');
+    html += `<div style="margin-top:12px;font-size:12.5px;font-weight:700;color:${statusColor};background:var(--bg3);border-radius:8px;padding:10px 12px">${statusLabel}</div>`;
+  } else if (type === 'valuation') {
+    html += calcResultRow(t('fin.result_estimated_valuation'), formatMoney(r.estimatedValuation));
   }
 
   box.innerHTML = html;
