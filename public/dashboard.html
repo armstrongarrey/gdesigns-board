@@ -167,6 +167,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <a class="nav-item" href="#action" onclick="showSection('action');return false;" id="nav-action">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span data-i18n="action.nav_title">Action Center</span>
     </a>
+    <a class="nav-item" href="#market" onclick="showSection('market');return false;" id="nav-market">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span data-i18n="market.nav_title">Market Intelligence</span>
+    </a>
     <a class="nav-item" href="#history" onclick="showSection('history');return false;" id="nav-history">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="dash.nav_history">History</span>
     </a>
@@ -1121,6 +1124,34 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     </div>
   </div>
 
+  <!-- MARKET INTELLIGENCE SECTION -->
+  <div class="section-view" id="section-market">
+    <div class="section-title" data-i18n="market.title">Market Intelligence</div>
+    <div class="section-sub" data-i18n="market.subtitle">Track specific competitors by name and see how you stack up against them.</div>
+
+    <div class="form-group" style="max-width:400px;margin-bottom:20px">
+      <label data-i18n="market.select_business">Business</label>
+      <select class="form-input" id="marketBusinessSelect" onchange="loadCompetitors()"></select>
+    </div>
+
+    <div id="marketNoBizPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;text-align:center;max-width:500px">
+      <div style="font-size:13px;color:var(--muted)" data-i18n="growth.no_business_yet">Analyze a business first so Growth Center has somewhere to track progress.</div>
+    </div>
+
+    <div id="marketMainWrap" style="display:none;max-width:700px">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:18px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input class="form-input" id="newCompetitorName" data-i18n-placeholder="market.competitor_name_placeholder" placeholder="Competitor name" style="flex:1;min-width:160px">
+          <input class="form-input" id="newCompetitorWebsite" data-i18n-placeholder="market.competitor_website_placeholder" placeholder="Website (optional)" style="flex:1;min-width:160px">
+          <button class="btn-primary" onclick="addCompetitor()" data-i18n="market.add_competitor">+ Add Competitor</button>
+        </div>
+        <textarea class="form-input" id="newCompetitorNotes" data-i18n-placeholder="market.competitor_notes_placeholder" placeholder="Notes (optional) — anything you already know about them" rows="2" style="width:100%;margin-top:8px;resize:vertical"></textarea>
+      </div>
+
+      <div id="competitorsList"></div>
+    </div>
+  </div>
+
 </div>
 </div>
 <!-- /main -->
@@ -1879,7 +1910,7 @@ function renderBilling() {
     </div>`).join('');
 }
 
-const SECTION_TITLE_KEYS = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title',alerts:'alerts.title',growth:'growth.title',action:'action.title'};
+const SECTION_TITLE_KEYS = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title',alerts:'alerts.title',growth:'growth.title',action:'action.title',market:'market.title'};
 
 function showSection(name) {
   document.querySelectorAll('.section-view').forEach(s => s.classList.remove('active'));
@@ -1900,6 +1931,7 @@ function showSection(name) {
   if (name === 'alerts') loadAlertsSection();
   if (name === 'growth') loadGrowthBusinesses();
   if (name === 'action') loadActionBusinesses();
+  if (name === 'market') loadCompetitorBusinesses();
 
   // Keep the URL in sync with whichever section is showing, so a refresh or
   // an "open in new tab" lands back on the right page. replaceState (not
@@ -2188,6 +2220,9 @@ document.addEventListener('arreyon:langchange', async () => {
   }
   if (document.getElementById('section-action')?.classList.contains('active') && currentActionBusinessId) {
     loadActionTasks();
+  }
+  if (document.getElementById('section-market')?.classList.contains('active') && currentMarketBusinessId) {
+    loadCompetitors();
   }
   // applyTranslations() re-tags every data-i18n element, which would wipe out
   // the 🔒 lock prefix we add on top of the base label — re-apply it after.
@@ -3585,6 +3620,156 @@ async function deleteTask(taskId) {
     const res = await fetch(`/api/business/${currentActionBusinessId}/tasks/${taskId}`, { method: 'DELETE' });
     if (res.ok) loadActionTasks();
   } catch (e) {}
+}
+
+// ── MARKET INTELLIGENCE ──────────────────────────────────────────────────
+let currentMarketBusinessId = null;
+let currentCompetitorsForTasks = [];
+
+async function loadCompetitorBusinesses() {
+  try {
+    const res = await fetch('/api/business');
+    const data = await res.json();
+    const businesses = data.businesses || [];
+    const select = document.getElementById('marketBusinessSelect');
+
+    if (!businesses.length) {
+      document.getElementById('marketNoBizPrompt').style.display = 'block';
+      select.parentElement.style.display = 'none';
+      document.getElementById('marketMainWrap').style.display = 'none';
+      return;
+    }
+
+    document.getElementById('marketNoBizPrompt').style.display = 'none';
+    select.parentElement.style.display = 'block';
+    document.getElementById('marketMainWrap').style.display = 'block';
+    select.innerHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+
+    // Same "remember the last selection" fix already applied to Growth
+    // Center and Action Center.
+    let savedId;
+    try { savedId = localStorage.getItem('arreyon_market_business_id'); } catch (e) {}
+    const stillExists = savedId && businesses.some(b => b.id === savedId);
+    currentMarketBusinessId = stillExists ? savedId : businesses[0].id;
+    select.value = currentMarketBusinessId;
+
+    loadCompetitors();
+  } catch (e) {}
+}
+
+async function loadCompetitors() {
+  const select = document.getElementById('marketBusinessSelect');
+  currentMarketBusinessId = select.value || currentMarketBusinessId;
+  if (!currentMarketBusinessId) return;
+  try { localStorage.setItem('arreyon_market_business_id', currentMarketBusinessId); } catch (e) {}
+
+  try {
+    const res = await fetch(`/api/business/${currentMarketBusinessId}/competitors?lang=${window.currentLang || 'en'}`);
+    const data = await res.json();
+    const competitors = data.competitors || [];
+    currentCompetitorsForTasks = competitors;
+    const listEl = document.getElementById('competitorsList');
+
+    if (!competitors.length) {
+      listEl.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px" data-i18n="market.no_competitors">No competitors tracked yet — add one above.</div>`;
+      return;
+    }
+
+    listEl.innerHTML = competitors.map(c => renderCompetitorCard(c)).join('');
+  } catch (e) {}
+}
+
+function renderCompetitorCard(c) {
+  const analysis = c.positioning_analysis;
+  const addTaskBtn = (onclickCall) => `<button onclick="${onclickCall}" style="background:none;border:1px solid var(--purple);color:var(--purple-light);border-radius:4px;padding:1px 6px;font-size:9px;cursor:pointer;white-space:nowrap;margin-left:6px" data-i18n="growth.add_to_action_plan">+ Add to Action Plan</button>`;
+  const listBlock = (labelKey, defaultLabel, items) => `
+    <div style="margin-bottom:10px">
+      <div style="font-size:10px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:4px" data-i18n="${labelKey}">${defaultLabel}</div>
+      <ul style="margin:0;padding-left:16px;font-size:12px;color:var(--text2);line-height:1.6">${(items || []).map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>
+    </div>`;
+
+  return `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div>
+          <div style="font-size:14px;font-weight:600;color:var(--text)">${escapeHtml(c.name)}</div>
+          ${c.website ? `<a href="${escapeHtml(c.website)}" target="_blank" style="font-size:11px;color:var(--purple-light)">${escapeHtml(c.website)}</a>` : ''}
+          ${c.notes ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">${escapeHtml(c.notes)}</div>` : ''}
+        </div>
+        <button onclick="deleteCompetitor('${c.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:0 4px">×</button>
+      </div>
+      <div style="margin-top:10px">
+        ${analysis ? `
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
+            <button onclick="analyzeCompetitor('${c.id}', event)" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px" data-i18n="bi.regenerate">↻ Regenerate</button>
+          </div>
+          ${analysis.confidence_note ? `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:10px">${escapeHtml(analysis.confidence_note)}</div>` : ''}
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+            ${listBlock('market.our_advantages', 'Our Advantages', analysis.our_advantages)}
+            ${listBlock('market.their_advantages', 'Their Advantages', analysis.their_advantages)}
+          </div>
+          ${analysis.biggest_threat ? `<div style="font-size:12px;margin-bottom:6px"><strong style="color:#ef4444" data-i18n="market.biggest_threat">Biggest Threat:</strong> ${escapeHtml(analysis.biggest_threat)}${addTaskBtn(`addTaskFromCompetitor('${c.id}', 'threat', event)`)}</div>` : ''}
+          ${analysis.biggest_opportunity ? `<div style="font-size:12px;margin-bottom:6px"><strong style="color:var(--green)" data-i18n="market.biggest_opportunity">Biggest Opportunity:</strong> ${escapeHtml(analysis.biggest_opportunity)}${addTaskBtn(`addTaskFromCompetitor('${c.id}', 'opportunity', event)`)}</div>` : ''}
+          ${Array.isArray(analysis.recommended_actions) && analysis.recommended_actions.length ? `<div style="margin-top:8px"><div style="font-size:10px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:4px" data-i18n="market.recommended_actions">Recommended Actions</div><ul style="margin:0;padding-left:16px;font-size:12px;color:var(--text2);line-height:1.7">${analysis.recommended_actions.map((a, i) => `<li>${escapeHtml(a)}${addTaskBtn(`addTaskFromCompetitor('${c.id}', 'action:${i}', event)`)}</li>`).join('')}</ul></div>` : ''}
+        ` : `
+          <button class="btn-ghost" onclick="analyzeCompetitor('${c.id}', event)" style="font-size:12px;padding:6px 12px" data-i18n="market.analyze_competitor">📊 Analyze vs. This Competitor</button>
+        `}
+      </div>
+    </div>`;
+}
+
+async function addCompetitor() {
+  const name = document.getElementById('newCompetitorName').value.trim();
+  if (!name || !currentMarketBusinessId) return;
+  const website = document.getElementById('newCompetitorWebsite').value.trim();
+  const notes = document.getElementById('newCompetitorNotes').value.trim();
+
+  try {
+    const res = await fetch(`/api/business/${currentMarketBusinessId}/competitors`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, website: website || undefined, notes: notes || undefined })
+    });
+    if (res.ok) {
+      document.getElementById('newCompetitorName').value = '';
+      document.getElementById('newCompetitorWebsite').value = '';
+      document.getElementById('newCompetitorNotes').value = '';
+      loadCompetitors();
+    }
+  } catch (e) {}
+}
+
+async function deleteCompetitor(competitorId) {
+  try {
+    const res = await fetch(`/api/business/${currentMarketBusinessId}/competitors/${competitorId}`, { method: 'DELETE' });
+    if (res.ok) loadCompetitors();
+  } catch (e) {}
+}
+
+async function analyzeCompetitor(competitorId, event) {
+  const card = event?.target?.closest('div[style*="border-radius:12px"]');
+  if (card) card.style.opacity = '0.6';
+  try {
+    const res = await fetch(`/api/business/${currentMarketBusinessId}/competitors/${competitorId}/analyze`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: window.currentLang || 'en' })
+    });
+    if (res.ok) loadCompetitors();
+    else if (card) card.style.opacity = '1';
+  } catch (e) {
+    if (card) card.style.opacity = '1';
+  }
+}
+
+function addTaskFromCompetitor(competitorId, field, event) {
+  const c = currentCompetitorsForTasks.find(x => x.id === competitorId);
+  const analysis = c?.positioning_analysis;
+  if (!analysis || !currentMarketBusinessId) return;
+  let text;
+  if (field === 'threat') text = analysis.biggest_threat;
+  else if (field === 'opportunity') text = analysis.biggest_opportunity;
+  else if (field.startsWith('action:')) text = analysis.recommended_actions?.[parseInt(field.split(':')[1], 10)];
+  if (!text) return;
+  addTaskFromSuggestion(currentMarketBusinessId, text, 'market_intelligence', `competitor:${c.name}`, event?.target);
 }
 
 async function findOpportunities() {
