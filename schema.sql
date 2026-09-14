@@ -769,5 +769,18 @@ ALTER TABLE businesses ADD COLUMN IF NOT EXISTS marketing_strategy JSONB;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS marketing_strategy_fr JSONB;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS marketing_strategy_generated_at TIMESTAMPTZ;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 7 — MARKETING & SALES (Step 2: Content Calendar / Campaign Planner)
+-- One regenerable calendar per business, same pattern as Market Context —
+-- a content calendar is inherently tied to a specific timeframe the user
+-- picks each time (like Growth Center's plan), not something needing its
+-- own historical table for a first version.
+-- ═══════════════════════════════════════════════════════════════════════════
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS content_calendar JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS content_calendar_fr JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS content_calendar_generated_at TIMESTAMPTZ;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS content_calendar_start_date DATE;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS content_calendar_end_date DATE;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
