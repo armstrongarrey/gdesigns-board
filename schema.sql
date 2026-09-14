@@ -690,5 +690,30 @@ CREATE TABLE IF NOT EXISTS growth_milestones (
 );
 CREATE INDEX IF NOT EXISTS idx_growth_milestones_objective ON growth_milestones(objective_id, created_at);
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 4 — ACTION CENTER (Step 1)
+-- source/source_detail track provenance (a manually-typed task vs. one
+-- created from a Business Intelligence priority problem or a Growth Center
+-- plan action) — not required for the task to function, but useful context
+-- if a user later wonders "where did this come from."
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS action_tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  owner_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  priority VARCHAR(20) DEFAULT 'medium', -- high | medium | low
+  status VARCHAR(20) DEFAULT 'not_started', -- not_started | in_progress | done
+  due_date DATE,
+  category VARCHAR(50),
+  source VARCHAR(50) DEFAULT 'manual', -- manual | business_intelligence | growth_center
+  source_detail TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_action_tasks_business ON action_tasks(business_id, status);
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
