@@ -1099,6 +1099,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <input class="form-input" type="date" id="newTaskDueDate" style="flex:1;min-width:130px">
           <button class="btn-primary" onclick="createTask()" data-i18n="action.add_task">+ Add</button>
         </div>
+        <textarea class="form-input" id="newTaskDescription" data-i18n-placeholder="action.description_placeholder" placeholder="Description (optional) — what does the assignee need to know to do this?" rows="2" style="width:100%;margin-top:8px;resize:vertical"></textarea>
       </div>
 
       <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
@@ -3493,10 +3494,13 @@ async function loadActionTasks() {
       const isDone = task.status === 'done';
       const dueStr = task.due_date ? new Date(task.due_date).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric' }) : '';
       const sourceLabel = task.source !== 'manual' && TASK_SOURCE_LABELS[task.source] ? t(TASK_SOURCE_LABELS[task.source]) : '';
+      const assigneeOptions = `<option value="">${t('action.unassigned')}</option>` +
+        currentAssignableMembers.map(m => `<option value="${m.id}" ${task.assigned_to === m.id ? 'selected' : ''}>${escapeHtml(m.name || m.email)}</option>`).join('');
       return `
         <div style="display:flex;align-items:flex-start;gap:10px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:8px">
           <div style="flex:1;min-width:0">
             <div style="font-size:13.5px;color:var(--text);${isDone ? 'text-decoration:line-through;opacity:.6' : ''}">${escapeHtml(task.title)}</div>
+            ${task.description ? `<div style="font-size:12px;color:var(--muted);margin-top:3px;white-space:pre-wrap">${escapeHtml(task.description)}</div>` : ''}
             <div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap">
               <span style="font-size:10px;font-weight:700;color:${TASK_PRIORITY_COLORS[task.priority]};text-transform:uppercase">${escapeHtml(task.priority)}</span>
               <select onchange="updateTaskStatus('${task.id}', this.value)" style="font-size:11px;background:var(--bg3);color:var(--muted);border:none;border-radius:4px;padding:2px 6px">
@@ -3504,8 +3508,14 @@ async function loadActionTasks() {
                 <option value="in_progress" ${task.status === 'in_progress' ? 'selected' : ''}>${t('action.status_in_progress')}</option>
                 <option value="done" ${isDone ? 'selected' : ''}>${t('action.status_done')}</option>
               </select>
+              <select onchange="updateTaskAssignee('${task.id}', this.value)" style="font-size:11px;background:var(--bg3);color:var(--muted);border:none;border-radius:4px;padding:2px 6px">${assigneeOptions}</select>
               ${dueStr ? `<span style="font-size:11px;color:var(--muted)">📅 ${dueStr}</span>` : ''}
               ${sourceLabel ? `<span style="font-size:10px;color:var(--muted);background:var(--bg3);padding:1px 6px;border-radius:4px">${escapeHtml(sourceLabel)}</span>` : ''}
+              <button onclick="toggleTaskDescriptionEdit('${task.id}')" style="background:none;border:none;color:var(--purple-light);cursor:pointer;font-size:11px;padding:0">${task.description ? t('action.edit_description') : t('action.add_description')}</button>
+            </div>
+            <div id="descEdit-${task.id}" style="display:none;margin-top:8px">
+              <textarea id="descInput-${task.id}" class="form-input" rows="2" style="width:100%;resize:vertical">${escapeHtml(task.description || '')}</textarea>
+              <button class="btn-ghost" onclick="saveTaskDescription('${task.id}')" style="margin-top:4px;padding:4px 10px;font-size:12px" data-i18n="action.save_description">Save</button>
             </div>
           </div>
           <button onclick="deleteTask('${task.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:0 4px">×</button>
@@ -3517,6 +3527,7 @@ async function loadActionTasks() {
 async function createTask() {
   const title = document.getElementById('newTaskTitle').value.trim();
   if (!title || !currentActionBusinessId) return;
+  const description = document.getElementById('newTaskDescription').value.trim();
   const priority = document.getElementById('newTaskPriority').value;
   const dueDate = document.getElementById('newTaskDueDate').value;
   const assignedTo = document.getElementById('newTaskAssignee').value;
@@ -3524,10 +3535,11 @@ async function createTask() {
   try {
     const res = await fetch(`/api/business/${currentActionBusinessId}/tasks`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, priority, dueDate: dueDate || undefined, assignedTo: assignedTo || undefined })
+      body: JSON.stringify({ title, description: description || undefined, priority, dueDate: dueDate || undefined, assignedTo: assignedTo || undefined })
     });
     if (res.ok) {
       document.getElementById('newTaskTitle').value = '';
+      document.getElementById('newTaskDescription').value = '';
       document.getElementById('newTaskDueDate').value = '';
       document.getElementById('newTaskAssignee').value = '';
       loadActionTasks();
@@ -3548,6 +3560,21 @@ async function updateTaskAssignee(taskId, assignedTo) {
   try {
     const res = await fetch(`/api/business/${currentActionBusinessId}/tasks/${taskId}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assignedTo: assignedTo || null })
+    });
+    if (res.ok) loadActionTasks();
+  } catch (e) {}
+}
+
+function toggleTaskDescriptionEdit(taskId) {
+  const el = document.getElementById(`descEdit-${taskId}`);
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+async function saveTaskDescription(taskId) {
+  const description = document.getElementById(`descInput-${taskId}`).value.trim();
+  try {
+    const res = await fetch(`/api/business/${currentActionBusinessId}/tasks/${taskId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description })
     });
     if (res.ok) loadActionTasks();
   } catch (e) {}
