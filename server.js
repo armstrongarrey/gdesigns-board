@@ -917,6 +917,109 @@ Each checkpoint's "actions" array should have 3-5 entries.`;
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ACTION CENTER — Phase 4, Step 1
+// Task CRUD for a business — team-shared like everything else scoped by
+// resolveAccount(). source/sourceDetail let a task record where it came from
+// (a manual entry vs. a Business Intelligence priority problem or a Growth
+// Center plan action) without being required.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/api/business/:id/tasks', authRequired, async (req, res) => {
+  const { title, priority, dueDate, category, source, sourceDetail } = req.body;
+  if (!title || !title.trim()) return res.status(400).json({ error: 'Please give this task a title.' });
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const validPriority = ['high', 'medium', 'low'].includes(priority) ? priority : 'medium';
+    const inserted = await pool.query(
+      `INSERT INTO action_tasks (business_id, owner_id, title, priority, due_date, category, source, source_detail)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [req.params.id, account.id, title.trim(), validPriority, dueDate || null, category || null, source || 'manual', sourceDetail || null]
+    );
+    res.json({ success: true, task: inserted.rows[0] });
+  } catch (e) {
+    console.error('Create task error:', e.message);
+    res.status(500).json({ error: 'Failed to create task' });
+  }
+});
+
+app.get('/api/business/:id/tasks', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const conditions = ['business_id = $1'];
+    const params = [req.params.id];
+    if (req.query.status) { params.push(req.query.status); conditions.push(`status = $${params.length}`); }
+    if (req.query.priority) { params.push(req.query.priority); conditions.push(`priority = $${params.length}`); }
+
+    const result = await pool.query(
+      `SELECT * FROM action_tasks WHERE ${conditions.join(' AND ')} ORDER BY
+       CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+       CASE status WHEN 'done' THEN 1 ELSE 0 END,
+       created_at DESC`,
+      params
+    );
+    res.json({ tasks: result.rows });
+  } catch (e) {
+    console.error('List tasks error:', e.message);
+    res.status(500).json({ error: 'Failed to load tasks' });
+  }
+});
+
+app.put('/api/business/:id/tasks/:taskId', authRequired, async (req, res) => {
+  const { title, priority, status, dueDate, notes } = req.body;
+  try {
+    const account = await resolveAccount(req.userId);
+    const existing = await pool.query(
+      `SELECT t.* FROM action_tasks t JOIN businesses b ON b.id = t.business_id
+       WHERE t.id = $1 AND t.business_id = $2 AND b.user_id = $3`,
+      [req.params.taskId, req.params.id, account.id]
+    );
+    if (!existing.rows.length) return res.status(404).json({ error: 'Task not found' });
+    const task = existing.rows[0];
+
+    const newTitle = title !== undefined ? title.trim() : task.title;
+    const newPriority = ['high', 'medium', 'low'].includes(priority) ? priority : task.priority;
+    const newStatus = ['not_started', 'in_progress', 'done'].includes(status) ? status : task.status;
+    const newDueDate = dueDate !== undefined ? (dueDate || null) : task.due_date;
+    const newNotes = notes !== undefined ? notes : task.notes;
+    // completed_at reflects the CURRENT transition, not just "is it done" —
+    // set the moment it becomes done, cleared if it's moved back off done,
+    // so re-completing later gets an accurate new timestamp rather than a stale one.
+    const completedAt = newStatus === 'done' ? (task.status === 'done' ? task.completed_at : new Date()) : null;
+
+    const updated = await pool.query(
+      `UPDATE action_tasks SET title = $1, priority = $2, status = $3, due_date = $4, notes = $5, completed_at = $6, updated_at = NOW() WHERE id = $7 RETURNING *`,
+      [newTitle, newPriority, newStatus, newDueDate, newNotes, completedAt, task.id]
+    );
+    res.json({ success: true, task: updated.rows[0] });
+  } catch (e) {
+    console.error('Update task error:', e.message);
+    res.status(500).json({ error: 'Failed to update task' });
+  }
+});
+
+app.delete('/api/business/:id/tasks/:taskId', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(
+      `DELETE FROM action_tasks WHERE id = $1 AND business_id = $2 AND business_id IN (
+         SELECT id FROM businesses WHERE user_id = $3
+       ) RETURNING id`,
+      [req.params.taskId, req.params.id, account.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Task not found' });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Delete task error:', e.message);
+    res.status(500).json({ error: 'Failed to delete task' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
 // for an already-logged-in user, not authenticating them. Reuses the same
