@@ -1350,6 +1350,20 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
       [JSON.stringify(analysis), comp.id]
     );
 
+    // A genuine finding worth surfacing immediately, not waiting for the
+    // next periodic monitoring sweep — matches how checkCompetitorChanges()
+    // already flags a real signal the moment it's detected.
+    if (analysis.biggest_threat) {
+      try {
+        const bizRow = await pool.query('SELECT name FROM businesses WHERE id = $1', [req.params.id]);
+        const businessName = bizRow.rows[0]?.name || 'your business';
+        const { title, message } = alertText('competitorThreatIdentified', language, comp.name, businessName, analysis.biggest_threat);
+        await createAlert(account.id, req.params.id, 'competitor_threat', 'warning', title, message, { competitorName: comp.name, businessName, threat: analysis.biggest_threat });
+      } catch (e) {
+        console.error('Competitor threat alert creation failed (non-fatal — the analysis itself was still saved):', e.message);
+      }
+    }
+
     res.json({ analysis, generatedAt: new Date().toISOString() });
   } catch (err) {
     console.error('Competitor analysis error:', err.message);
@@ -1423,6 +1437,18 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
       'UPDATE businesses SET market_context = $1, market_context_fr = NULL, market_context_generated_at = NOW() WHERE id = $2',
       [JSON.stringify(marketContext), req.params.id]
     );
+
+    // A genuine finding worth surfacing immediately — same reasoning as the
+    // competitor threat alert above, not waiting for a periodic sweep.
+    if (marketContext.growth_trend && /declin/i.test(marketContext.growth_trend)) {
+      try {
+        const businessName = context.business?.name || 'your business';
+        const { title, message } = alertText('marketDeclining', language, businessName, marketContext.growth_trend);
+        await createAlert(account.id, req.params.id, 'market_decline', 'warning', title, message, { businessName, growthTrend: marketContext.growth_trend });
+      } catch (e) {
+        console.error('Market decline alert creation failed (non-fatal — the analysis itself was still saved):', e.message);
+      }
+    }
 
     res.json({ marketContext, generatedAt: new Date().toISOString() });
   } catch (err) {
@@ -6448,6 +6474,14 @@ const ALERT_MESSAGES = {
   taskAssigned: {
     en: (taskTitle, businessName, assignerName) => ({ title: 'A task was assigned to you', message: `${assignerName} assigned you a task on ${businessName}: "${taskTitle}"` }),
     fr: (taskTitle, businessName, assignerName) => ({ title: 'Une tâche vous a été assignée', message: `${assignerName} vous a assigné une tâche sur ${businessName} : « ${taskTitle} »` })
+  },
+  competitorThreatIdentified: {
+    en: (competitorName, businessName, threat) => ({ title: `New threat identified: ${competitorName}`, message: `Your analysis of ${competitorName} for ${businessName} flagged: ${threat}` }),
+    fr: (competitorName, businessName, threat) => ({ title: `Nouvelle menace identifiée : ${competitorName}`, message: `Votre analyse de ${competitorName} pour ${businessName} a signalé : ${threat}` })
+  },
+  marketDeclining: {
+    en: (businessName, growthTrend) => ({ title: `Market trend concern for ${businessName}`, message: growthTrend }),
+    fr: (businessName, growthTrend) => ({ title: `Préoccupation liée à la tendance du marché pour ${businessName}`, message: growthTrend })
   }
 };
 function alertText(templateKey, language, ...args) {
