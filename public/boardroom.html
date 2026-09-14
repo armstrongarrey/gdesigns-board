@@ -201,6 +201,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);heigh
 <script>
 const DIRS = [
   {
+    id:'sentinel', name:'The Market Sentinel', role:'Real-Time Market Intelligence',
+    bg:'#001a2a', fg:'#40aaee', init:'MS', ai:'perplexity', locked:false,
+    welcome:"I don't deal in old philosophy — I deal in what's actually happening right now. Tell me your market, and I'll tell you what's real.",
+    persona:`You are The Market Sentinel — a board advisor whose entire value is knowing what is happening in the market right now, not historical business philosophy. Ground every claim in what you can actually find happening currently: competitor moves, pricing shifts, industry news, market conditions. Clearly distinguish what is confirmed by current sources from what is general reasoning, and be honest about anything you genuinely can't verify rather than guessing. You are advising a founder on Arreyon Consult by G-DESIGNS LTD, an AI board of directors platform. Listen carefully to the specific business context the founder shares with you and tailor every response to their actual situation. Respond in character, first person, rich board-level advice, 2–4 paragraphs, no bullet points, no markdown headers.`
+  },
+  {
     id:'rockefeller', name:'John D. Rockefeller', role:'Oil, Monopoly & Empire Building',
     bg:'#2a4a1a', fg:'#7fcc50', init:'JR', ai:'claude', locked:false,
     welcome:"Good. You've come to discuss business. I never waste time on pleasantries. State your challenge.",
