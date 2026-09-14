@@ -1171,6 +1171,190 @@ app.delete('/api/business/:id/tasks/:taskId', authRequired, async (req, res) => 
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PHASE 5 — MARKET + COMPETITOR INTELLIGENCE (Step 1: Named Competitor Tracking)
+// Distinct from the AI-inferred competitors already surfaced by a general
+// business analysis — these are specific competitors the user names
+// themselves, tracked over time with an optional AI-generated positioning
+// comparison against their own business.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/api/business/:id/competitors', authRequired, async (req, res) => {
+  const { name, website, notes } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Please give this competitor a name.' });
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const inserted = await pool.query(
+      `INSERT INTO tracked_competitors (business_id, owner_id, name, website, notes) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [req.params.id, account.id, name.trim(), website?.trim() || null, notes?.trim() || null]
+    );
+    res.json({ success: true, competitor: inserted.rows[0] });
+  } catch (e) {
+    console.error('Create competitor error:', e.message);
+    res.status(500).json({ error: 'Failed to add competitor' });
+  }
+});
+
+app.get('/api/business/:id/competitors', authRequired, async (req, res) => {
+  const lang = req.query.lang === 'fr' ? 'fr' : 'en';
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const result = await pool.query('SELECT * FROM tracked_competitors WHERE business_id = $1 ORDER BY created_at ASC', [req.params.id]);
+    const competitors = result.rows;
+
+    // Same "translate once, cache, never regenerate" discipline as
+    // everywhere else, one AI call per competitor still needing it (these
+    // are relatively rare writes compared to something like task lists, so
+    // batching isn't worth the added complexity here).
+    if (lang === 'fr') {
+      for (const c of competitors) {
+        if (c.positioning_analysis && !c.positioning_analysis_fr) {
+          try {
+            const translated = await translateStructuredContent(c.positioning_analysis, 'competitor positioning analysis');
+            await pool.query('UPDATE tracked_competitors SET positioning_analysis_fr = $1 WHERE id = $2', [JSON.stringify(translated), c.id]);
+            c.positioning_analysis_fr = translated;
+          } catch (e) {
+            console.error('Competitor analysis auto-translate failed (non-fatal, falling back to English):', e.message);
+          }
+        }
+        if (c.positioning_analysis_fr) c.positioning_analysis = c.positioning_analysis_fr;
+      }
+    }
+
+    res.json({ competitors });
+  } catch (e) {
+    console.error('List competitors error:', e.message);
+    res.status(500).json({ error: 'Failed to load competitors' });
+  }
+});
+
+app.put('/api/business/:id/competitors/:competitorId', authRequired, async (req, res) => {
+  const { name, website, notes } = req.body;
+  try {
+    const account = await resolveAccount(req.userId);
+    const existing = await pool.query(
+      `SELECT c.* FROM tracked_competitors c JOIN businesses b ON b.id = c.business_id
+       WHERE c.id = $1 AND c.business_id = $2 AND b.user_id = $3`,
+      [req.params.competitorId, req.params.id, account.id]
+    );
+    if (!existing.rows.length) return res.status(404).json({ error: 'Competitor not found' });
+    const comp = existing.rows[0];
+
+    const newName = name !== undefined ? name.trim() : comp.name;
+    const newWebsite = website !== undefined ? (website.trim() || null) : comp.website;
+    const newNotes = notes !== undefined ? (notes.trim() || null) : comp.notes;
+
+    const updated = await pool.query(
+      `UPDATE tracked_competitors SET name = $1, website = $2, notes = $3, updated_at = NOW() WHERE id = $4 RETURNING *`,
+      [newName, newWebsite, newNotes, comp.id]
+    );
+    res.json({ success: true, competitor: updated.rows[0] });
+  } catch (e) {
+    console.error('Update competitor error:', e.message);
+    res.status(500).json({ error: 'Failed to update competitor' });
+  }
+});
+
+app.delete('/api/business/:id/competitors/:competitorId', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(
+      `DELETE FROM tracked_competitors WHERE id = $1 AND business_id = $2 AND business_id IN (
+         SELECT id FROM businesses WHERE user_id = $3
+       ) RETURNING id`,
+      [req.params.competitorId, req.params.id, account.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Competitor not found' });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Delete competitor error:', e.message);
+    res.status(500).json({ error: 'Failed to delete competitor' });
+  }
+});
+
+app.post('/api/business/:id/competitors/:competitorId/analyze', authRequired, async (req, res) => {
+  const language = req.body?.language === 'fr' ? 'fr' : 'en';
+  try {
+    const account = await resolveAccount(req.userId);
+    const existing = await pool.query(
+      `SELECT c.* FROM tracked_competitors c JOIN businesses b ON b.id = c.business_id
+       WHERE c.id = $1 AND c.business_id = $2 AND b.user_id = $3`,
+      [req.params.competitorId, req.params.id, account.id]
+    );
+    if (!existing.rows.length) return res.status(404).json({ error: 'Competitor not found' });
+    const comp = existing.rows[0];
+
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+
+    // Best-effort research on the competitor — if Tavily isn't configured or
+    // the search fails, proceed with whatever the user typed in notes plus
+    // general reasoning rather than blocking the whole analysis on it.
+    let researchSummary = '';
+    try {
+      const query = comp.website ? `${comp.name} ${comp.website}` : comp.name;
+      const results = await tavilySearch(query, { maxResults: 4 });
+      if (results.length) {
+        researchSummary = '\n\nWEB RESEARCH ON THIS COMPETITOR:\n' + results.map(r => `- ${r.title}: ${r.snippet}`).join('\n');
+      }
+    } catch (e) {
+      console.error('Competitor web research failed (non-fatal, proceeding without it):', e.message);
+    }
+
+    const prompt = `You are a competitive strategy analyst. Compare this business against a specific named competitor.
+
+THE USER'S BUSINESS:
+${contextSummary}
+
+THE COMPETITOR: ${comp.name}${comp.website ? ` (${comp.website})` : ''}
+${comp.notes ? `User's notes on this competitor: ${comp.notes}` : ''}${researchSummary}
+
+Produce a grounded, specific comparison — not generic competitive-analysis advice. If the web research above is thin or absent, say so plainly in your confidence_note rather than inventing specifics about the competitor.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "our_advantages": ["specific advantage 1", "specific advantage 2"],
+  "their_advantages": ["specific advantage 1", "specific advantage 2"],
+  "biggest_threat": "the single most important thing this competitor could do to hurt this business",
+  "biggest_opportunity": "the single most important gap or weakness in this competitor worth exploiting",
+  "recommended_actions": ["specific action 1", "specific action 2"],
+  "confidence_note": "one honest sentence on how much this analysis can actually be trusted given the research available"
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Produce the analysis now, as JSON only.' }], complexity: 'complex', context: { feature: 'competitor_tracking', userId: req.userId }, maxTokens: 2000 });
+
+    let analysis;
+    try {
+      analysis = extractJSON(raw);
+    } catch (e) {
+      console.error('Competitor analysis JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
+      throw new Error('Could not generate a competitor analysis — please try again');
+    }
+    for (const field of ['our_advantages', 'their_advantages', 'recommended_actions']) {
+      if (!Array.isArray(analysis[field])) {
+        console.error(`Competitor analysis field "${field}" was not an array:`, typeof analysis[field]);
+        throw new Error('Could not generate a competitor analysis — please try again');
+      }
+    }
+
+    await pool.query(
+      'UPDATE tracked_competitors SET positioning_analysis = $1, positioning_analysis_fr = NULL, last_analyzed_at = NOW() WHERE id = $2',
+      [JSON.stringify(analysis), comp.id]
+    );
+
+    res.json({ analysis, generatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('Competitor analysis error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate competitor analysis. Please try again.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
 // for an already-logged-in user, not authenticating them. Reuses the same
