@@ -1531,6 +1531,59 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   }
 });
 
+function buildMarketingStrategyDOCX(strategy, businessName) {
+  const children = [];
+  children.push(new Paragraph({ text: businessName || 'Marketing Strategy', heading: HeadingLevel.TITLE }));
+  children.push(new Paragraph({
+    children: [new TextRun({ text: `Marketing Strategy · Generated ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} · Arreyon Consult by G-DESIGNS LTD`, italics: true, size: 18, color: '777777' })]
+  }));
+  children.push(new Paragraph({ text: '' }));
+
+  function heading(text) { children.push(new Paragraph({ text, heading: HeadingLevel.HEADING_1 })); }
+  function para(text) { children.push(new Paragraph({ text: text || '', spacing: { after: 150 } })); }
+  function bullet(text) { children.push(new Paragraph({ text, bullet: { level: 0 } })); }
+
+  if (strategy.confidence_note) {
+    children.push(new Paragraph({ children: [new TextRun({ text: strategy.confidence_note, italics: true, size: 18, color: '888888' })], spacing: { after: 200 } }));
+  }
+
+  heading('Target Audience'); para(strategy.target_audience);
+  heading('Key Messaging'); para(strategy.key_messaging);
+  heading('Marketing Channels'); (strategy.marketing_channels || []).forEach(bullet); children.push(new Paragraph({ text: '' }));
+  heading('Content Strategy'); para(strategy.content_strategy);
+  heading('Promotional Tactics'); (strategy.promotional_tactics || []).forEach(bullet); children.push(new Paragraph({ text: '' }));
+  heading('Customer Acquisition Funnel'); para(strategy.customer_acquisition_funnel);
+  heading('Estimated Monthly Budget'); para(strategy.marketing_budget_estimate);
+
+  children.push(new Paragraph({ text: '' }));
+  children.push(new Paragraph({
+    children: [new TextRun({ text: 'Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com · This strategy was AI-generated and should be reviewed before major marketing spend.', size: 15, color: 'AAAAAA', italics: true })],
+    alignment: AlignmentType.CENTER
+  }));
+
+  const doc = new DocxDocument({ sections: [{ children }] });
+  return Packer.toBuffer(doc);
+}
+
+app.get('/api/business/:id/marketing-strategy/download', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT name, website, marketing_strategy FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    const business = biz.rows[0];
+    if (!business.marketing_strategy) return res.status(404).json({ error: 'No marketing strategy has been generated yet for this business.' });
+
+    const buffer = await buildMarketingStrategyDOCX(business.marketing_strategy, business.name || business.website);
+    const filename = sanitizeFilename(business.name || business.website);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}-marketing-strategy.docx"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('Marketing strategy download error:', err.message);
+    res.status(500).json({ error: 'Failed to generate the download. Please try again.' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 7 — MARKETING & SALES (Step 2: Content Calendar / Campaign Planner)
 // Builds directly on Marketing Strategy's target audience and channels when
@@ -1609,6 +1662,111 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   } catch (err) {
     console.error('Content calendar generation error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to generate content calendar. Please try again.' });
+  }
+});
+
+// Shared date-grid math for the visual month calendar — used here for the
+// Word download's table, and mirrored in the frontend for the on-screen
+// grid, so both present the exact same layout.
+function getMonthsInRange(startDateStr, endDateStr) {
+  const start = new Date(startDateStr);
+  const end = new Date(endDateStr);
+  const months = [];
+  let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  while (cursor <= end) {
+    months.push({ year: cursor.getFullYear(), month: cursor.getMonth() });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  return months;
+}
+
+function buildMonthGrid(year, month) {
+  const firstDay = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startWeekday = firstDay.getDay();
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
+}
+
+function buildContentCalendarDOCX(calendar, businessName, startDate, endDate) {
+  const children = [];
+  children.push(new Paragraph({ text: `${businessName || 'Content Calendar'}`, heading: HeadingLevel.TITLE }));
+  children.push(new Paragraph({
+    children: [new TextRun({ text: `Content Calendar · ${startDate} to ${endDate} · Arreyon Consult by G-DESIGNS LTD`, italics: true, size: 18, color: '777777' })]
+  }));
+  children.push(new Paragraph({ text: '' }));
+  if (calendar.confidence_note) {
+    children.push(new Paragraph({ children: [new TextRun({ text: calendar.confidence_note, italics: true, size: 18, color: '888888' })], spacing: { after: 200 } }));
+  }
+
+  // Index posts by their exact date string for quick lookup while building
+  // each day cell below.
+  const postsByDate = {};
+  (calendar.posts || []).forEach(p => {
+    if (!postsByDate[p.date]) postsByDate[p.date] = [];
+    postsByDate[p.date].push(p);
+  });
+
+  const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const months = getMonthsInRange(startDate, endDate);
+
+  months.forEach(({ year, month }) => {
+    const monthName = new Date(year, month, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    children.push(new Paragraph({ text: monthName, heading: HeadingLevel.HEADING_1 }));
+
+    const headerRow = new TableRow({ children: dayLabels.map(d => new TableCell({ children: [new Paragraph({ text: d, bold: true, alignment: AlignmentType.CENTER })] })) });
+    const weeks = buildMonthGrid(year, month);
+    const bodyRows = weeks.map(week => new TableRow({
+      children: week.map(dayNum => {
+        if (dayNum === null) return new TableCell({ children: [new Paragraph({ text: '' })] });
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+        const dayPosts = postsByDate[dateStr] || [];
+        const cellChildren = [new Paragraph({ children: [new TextRun({ text: String(dayNum), bold: true, size: 18 })] })];
+        dayPosts.forEach(p => {
+          cellChildren.push(new Paragraph({ children: [new TextRun({ text: `${p.platform || ''}${p.content_type ? ' · ' + p.content_type : ''}`, size: 14, bold: true, color: '6C3Bff' })] }));
+          cellChildren.push(new Paragraph({ children: [new TextRun({ text: p.topic || '', size: 14 })] }));
+        });
+        return new TableCell({ children: cellChildren, width: { size: 14, type: WidthType.PERCENTAGE } });
+      })
+    }));
+
+    children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [headerRow, ...bodyRows] }));
+    children.push(new Paragraph({ text: '' }));
+  });
+
+  children.push(new Paragraph({
+    children: [new TextRun({ text: 'Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com · This calendar was AI-generated and should be reviewed before scheduling.', size: 15, color: 'AAAAAA', italics: true })],
+    alignment: AlignmentType.CENTER
+  }));
+
+  const doc = new DocxDocument({ sections: [{ children }] });
+  return Packer.toBuffer(doc);
+}
+
+app.get('/api/business/:id/content-calendar/download', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT name, website, content_calendar, content_calendar_start_date, content_calendar_end_date FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    const business = biz.rows[0];
+    if (!business.content_calendar) return res.status(404).json({ error: 'No content calendar has been generated yet for this business.' });
+
+    const startStr = business.content_calendar_start_date.toISOString ? business.content_calendar_start_date.toISOString().split('T')[0] : business.content_calendar_start_date;
+    const endStr = business.content_calendar_end_date.toISOString ? business.content_calendar_end_date.toISOString().split('T')[0] : business.content_calendar_end_date;
+
+    const buffer = await buildContentCalendarDOCX(business.content_calendar, business.name || business.website, startStr, endStr);
+    const filename = sanitizeFilename(business.name || business.website);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}-content-calendar.docx"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('Content calendar download error:', err.message);
+    res.status(500).json({ error: 'Failed to generate the download. Please try again.' });
   }
 });
 
