@@ -1458,6 +1458,80 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PHASE 7 — MARKETING & SALES (Step 1: Standalone Marketing Strategy)
+// Same marketing_plan shape a full Business Plan already produces, but as
+// its own regenerable feature — no need to run the whole business-plan
+// flow just for marketing help.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/api/business/:id/marketing-strategy', authRequired, async (req, res) => {
+  const language = req.body?.language === 'fr' ? 'fr' : 'en';
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+
+    // Ground this in whatever else is already known about the business —
+    // Business Intelligence's priority problems and Market Context's
+    // opportunities are directly relevant to what a marketing strategy
+    // should actually focus on, not just the raw business facts.
+    const bizRow = await pool.query('SELECT intelligence_snapshot, market_context FROM businesses WHERE id = $1', [req.params.id]);
+    const intelligence = bizRow.rows[0]?.intelligence_snapshot;
+    const marketContext = bizRow.rows[0]?.market_context;
+    let additionalContext = '';
+    if (intelligence?.priority_problems?.length) {
+      additionalContext += `\n\nKNOWN PRIORITY PROBLEMS (from Business Intelligence): ${intelligence.priority_problems.join('; ')}`;
+    }
+    if (marketContext?.opportunities_from_context?.length) {
+      additionalContext += `\n\nKNOWN MARKET OPPORTUNITIES: ${marketContext.opportunities_from_context.join('; ')}`;
+    }
+
+    const prompt = `You are a marketing strategist. Produce a concrete, specific marketing strategy for this business — not generic marketing advice that could apply to any business.
+
+THE BUSINESS:
+${contextSummary}${additionalContext}
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "target_audience": "the specific customer profile marketing should focus on",
+  "key_messaging": "the core message or hook that should appear in all marketing",
+  "marketing_channels": ["specific channel 1 (e.g. WhatsApp groups, Instagram)", "specific channel 2"],
+  "content_strategy": "what kind of content to post and how often, concretely",
+  "promotional_tactics": ["specific tactic 1 (e.g. referral discount, launch offer)", "specific tactic 2"],
+  "customer_acquisition_funnel": "the step-by-step path from stranger to paying customer, specific to this business",
+  "marketing_budget_estimate": "realistic monthly marketing spend given what's known about this business",
+  "confidence_note": "one honest sentence on what this strategy assumes or where it's less certain"
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Produce the strategy now, as JSON only.' }], complexity: 'complex', context: { feature: 'marketing_strategy', userId: req.userId }, maxTokens: 2000 });
+
+    let strategy;
+    try {
+      strategy = extractJSON(raw);
+    } catch (e) {
+      console.error('Marketing strategy JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
+      throw new Error('Could not generate a marketing strategy — please try again');
+    }
+    for (const field of ['marketing_channels', 'promotional_tactics']) {
+      if (!Array.isArray(strategy[field])) {
+        console.error(`Marketing strategy field "${field}" was not an array:`, typeof strategy[field]);
+        throw new Error('Could not generate a marketing strategy — please try again');
+      }
+    }
+
+    await pool.query(
+      'UPDATE businesses SET marketing_strategy = $1, marketing_strategy_fr = NULL, marketing_strategy_generated_at = NOW() WHERE id = $2',
+      [JSON.stringify(strategy), req.params.id]
+    );
+
+    res.json({ strategy, generatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('Marketing strategy generation error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate marketing strategy. Please try again.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
 // for an already-logged-in user, not authenticating them. Reuses the same
@@ -6411,6 +6485,18 @@ app.get('/api/business/:id', authRequired, async (req, res) => {
         }
       }
       if (business.market_context_fr) business.market_context = business.market_context_fr;
+
+      // Same discipline for Marketing Strategy (Phase 7, Step 1).
+      if (business.marketing_strategy && !business.marketing_strategy_fr) {
+        try {
+          const translatedStrategy = await translateStructuredContent(business.marketing_strategy, 'marketing strategy');
+          await pool.query('UPDATE businesses SET marketing_strategy_fr = $1 WHERE id = $2', [JSON.stringify(translatedStrategy), business.id]);
+          business.marketing_strategy_fr = translatedStrategy;
+        } catch (e) {
+          console.error('Marketing strategy auto-translate failed (non-fatal, falling back to English):', e.message);
+        }
+      }
+      if (business.marketing_strategy_fr) business.marketing_strategy = business.marketing_strategy_fr;
     }
 
     res.json({ business: biz.rows[0], facts: facts.rows });
