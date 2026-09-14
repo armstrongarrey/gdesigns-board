@@ -1292,13 +1292,16 @@ app.post('/api/business/:id/competitors/:competitorId/analyze', authRequired, as
     if (!context) return res.status(404).json({ error: 'Business not found' });
     const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
 
-    // Best-effort research on the competitor — if Tavily isn't configured or
-    // the search fails, proceed with whatever the user typed in notes plus
-    // general reasoning rather than blocking the whole analysis on it.
+    // Best-effort research on the competitor — if Perplexity isn't
+    // configured or the search fails, proceed with whatever the user typed
+    // in notes plus general reasoning rather than blocking the whole
+    // analysis on it. Uses Perplexity specifically (not the Tavily-backed
+    // researchSearch() used elsewhere) since its synthesized, cited answers
+    // fit this kind of targeted competitor lookup better.
     let researchSummary = '';
     try {
       const query = comp.website ? `${comp.name} ${comp.website}` : comp.name;
-      const results = await tavilySearch(query, { maxResults: 4 });
+      const results = await perplexitySearch(query, { maxResults: 4 });
       if (results.length) {
         researchSummary = '\n\nWEB RESEARCH ON THIS COMPETITOR:\n' + results.map(r => `- ${r.title}: ${r.snippet}`).join('\n');
       }
@@ -1366,13 +1369,14 @@ app.post('/api/business/:id/market-context', authRequired, async (req, res) => {
     const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
 
     // Best-effort industry research — proceed with general reasoning if
-    // Tavily isn't configured or the search comes back thin, same as the
-    // competitor analysis above.
+    // Perplexity isn't configured or the search comes back thin, same as
+    // the competitor analysis above. Uses Perplexity specifically, not the
+    // Tavily-backed researchSearch() used elsewhere.
     let researchSummary = '';
     try {
       const industryQuery = context.business?.industry ? `${context.business.industry} market size trends ${context.business.country || ''}`.trim() : null;
       if (industryQuery) {
-        const results = await tavilySearch(industryQuery, { maxResults: 4 });
+        const results = await perplexitySearch(industryQuery, { maxResults: 4 });
         if (results.length) {
           researchSummary = '\n\nWEB RESEARCH ON THIS INDUSTRY:\n' + results.map(r => `- ${r.title}: ${r.snippet}`).join('\n');
         }
@@ -2803,6 +2807,8 @@ app.post('/api/board/chat', authRequired, async (req, res) => {
       reply = await askChatGPT(localizedPersona, messages, { feature: 'boardroom_chat', userId: req.userId });
     } else if (selectedAI === 'gemini') {
       reply = await askGemini(localizedPersona, messages, { feature: 'boardroom_chat', userId: req.userId });
+    } else if (selectedAI === 'perplexity') {
+      reply = await askPerplexity(localizedPersona, messages, { feature: 'boardroom_chat', userId: req.userId });
     } else {
       reply = await askClaude(localizedPersona, messages, { feature: 'boardroom_chat', userId: req.userId });
     }
@@ -3574,6 +3580,24 @@ async function _askGeminiRaw(persona, messages) {
   return data.candidates?.[0]?.content?.parts?.[0]?.text;
 }
 
+// Distinct from perplexitySearch() (used for one-off competitor/market
+// research) — this is the conversational form used for Boardroom chat,
+// matching the same persona + multi-turn messages shape as ChatGPT/Gemini
+// above, but naturally grounded in live web results since that's inherent
+// to how Perplexity's models work.
+async function _askPerplexityRaw(persona, messages) {
+  const apiKey = process.env.PERPLEXITY_API_KEY;
+  if (!apiKey) throw new Error('Perplexity API key not configured');
+  const response = await fetch('https://api.perplexity.ai/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({ model: 'sonar', messages: [{ role: 'system', content: persona }, ...messages] })
+  });
+  if (!response.ok) { const e = await response.json().catch(()=>({})); throw new Error(e?.error?.message || 'Perplexity error'); }
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content;
+}
+
 // ── Public AI functions — same signatures as before, now with usage logging ──
 async function askClaude(persona, messages, context = {}, maxTokens = 1024, model = 'claude-haiku-4-5-20251001') {
   const start = Date.now();
@@ -3607,6 +3631,18 @@ async function askGemini(persona, messages, context = {}) {
     return result;
   } catch (e) {
     logAIUsage({ provider: 'gemini', model: 'gemini-flash-latest', status: 'error', errorMessage: e.message, durationMs: Date.now() - start, ...context });
+    throw e;
+  }
+}
+
+async function askPerplexity(persona, messages, context = {}) {
+  const start = Date.now();
+  try {
+    const result = await _askPerplexityRaw(persona, messages);
+    logAIUsage({ provider: 'perplexity', model: 'sonar', status: 'success', durationMs: Date.now() - start, ...context });
+    return result;
+  } catch (e) {
+    logAIUsage({ provider: 'perplexity', model: 'sonar', status: 'error', errorMessage: e.message, durationMs: Date.now() - start, ...context });
     throw e;
   }
 }
@@ -3977,6 +4013,9 @@ RULES: ONE question only. Under 60 words total. Warm and conversational. Return 
 });
 
 const DIRECTORS = {
+    sentinel: { name: 'The Market Sentinel', role: 'Real-Time Market Intelligence',
+    domains: ['competitors','market trends','current events','real-time','news','pricing changes','industry shifts','breaking developments','what is happening now'], ai: 'perplexity', category: 'strategy',
+    framework: `You are The Market Sentinel, a board advisor whose entire value is knowing what is happening in the market RIGHT NOW — not historical business philosophy, but current, verifiable, cited reality. THINKING FRAMEWORK: 1) Ground every claim in what you can actually find happening currently — competitor moves, pricing shifts, industry news, market conditions. 2) Clearly distinguish what is confirmed by current sources from what is general reasoning. 3) Flag anything that looks stale or where you genuinely don't have current visibility, rather than guessing. 4) Recommend the one action that matters most given what is actually happening right now, not what would have mattered a year ago. Be precise, current, and honest about the limits of what you can verify.` },
     rockefeller: { name: 'John D. Rockefeller', role: 'Empire & Cost Strategy',
     domains: ['finance','cost','pricing','operations','scale','efficiency','manufacturing','resources'], ai: 'claude', category: 'strategy',
     framework: `You are John D. Rockefeller advising an external business founder as part of a board consultation. Think like a 19th century industrialist with modern insight. THINKING FRAMEWORK: 1) Identify the core inefficiency or cost leak. 2) Find the vertical integration opportunity. 3) Think in decades not quarters. 4) Recommend the single most impactful move. Be direct, measured, and absolute in your conviction. Never be generic. Cite specific principles from your own philosophy.` },
@@ -4148,6 +4187,7 @@ Format your response as plain text paragraphs. No headers. No bullet points.${la
       try {
         if (director.ai === 'chatgpt') insight = await askChatGPT(directorPrompt, [{ role: 'user', content: `As ${director.name}, what is your specific advice for this business?` }], { feature: 'consult_board' });
         else if (director.ai === 'gemini') insight = await askGemini(directorPrompt, [{ role: 'user', content: `As ${director.name}, what is your specific advice for this business?` }], { feature: 'consult_board' });
+        else if (director.ai === 'perplexity') insight = await askPerplexity(directorPrompt, [{ role: 'user', content: `As ${director.name}, what is your specific advice for this business?` }], { feature: 'consult_board' });
         else insight = await askClaude(directorPrompt, [{ role: 'user', content: `As ${director.name}, what is your specific advice for this business?` }], { feature: 'consult_board' });
       } catch (dirErr) {
         try { insight = await askClaude(directorPrompt, [{ role: 'user', content: `As ${director.name}, what is your specific advice for this business?` }], { feature: 'consult_board' }); }
@@ -4344,6 +4384,7 @@ app.post('/api/chat', async (req, res) => {
     const model = ai || 'claude';
     if (model === 'chatgpt') reply = await askChatGPT(localizedPersona, messages, { feature: 'internal_board_chat' });
     else if (model === 'gemini') reply = await askGemini(localizedPersona, messages, { feature: 'internal_board_chat' });
+    else if (model === 'perplexity') reply = await askPerplexity(localizedPersona, messages, { feature: 'internal_board_chat' });
     else reply = await askClaude(localizedPersona, messages, { feature: 'internal_board_chat' });
     res.json({ reply, ai: model });
   } catch (err) {
@@ -4524,6 +4565,46 @@ async function tavilySearch(query, { maxResults = 5 } = {}) {
   return (data.results || []).map(r => ({
     title: r.title, url: r.url, snippet: r.content, publishedDate: r.published_date || null
   }));
+}
+
+// ── ResearchProvider: Perplexity implementation ─────────────────────────────
+// Used specifically for competitor and market-context research (Phase 5),
+// not as a replacement for researchSearch()/tavilySearch() — those stay on
+// Tavily for every other feature. Perplexity's API returns one synthesized,
+// already-cited answer rather than a list of raw snippets like Tavily, so
+// this reshapes that into the same {title, url, snippet, publishedDate}
+// array shape the rest of the codebase already expects, keeping it a
+// drop-in wherever it's used.
+async function perplexitySearch(query, { maxResults = 5 } = {}) {
+  const apiKey = process.env.PERPLEXITY_API_KEY;
+  if (!apiKey) throw new Error('Perplexity research is not configured yet');
+
+  const res = await fetch('https://api.perplexity.ai/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: 'sonar',
+      messages: [{ role: 'user', content: query }]
+    })
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e?.error?.message || `Perplexity search failed with status ${res.status}`);
+  }
+  const data = await res.json();
+  const answer = data.choices?.[0]?.message?.content;
+  const citations = (data.citations || []).slice(0, maxResults);
+
+  const results = [];
+  if (answer) {
+    // The synthesized answer itself is the most useful single result —
+    // already grounded and summarized, unlike a raw scraped snippet.
+    results.push({ title: 'Perplexity research summary', url: citations[0] || null, snippet: answer, publishedDate: null });
+  }
+  citations.slice(answer ? 1 : 0).forEach(url => {
+    results.push({ title: 'Source', url, snippet: '', publishedDate: null });
+  });
+  return results;
 }
 
 // ── Provider-agnostic entry point — swap the implementation here, nowhere else ──
