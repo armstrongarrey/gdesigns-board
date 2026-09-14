@@ -720,6 +720,7 @@ CREATE INDEX IF NOT EXISTS idx_action_tasks_business ON action_tasks(business_id
 -- Growth Center) carry whatever language they were generated in, with no
 -- bilingual support at all until now.
 ALTER TABLE action_tasks ADD COLUMN IF NOT EXISTS title_fr TEXT;
+ALTER TABLE action_tasks ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES users(id) ON DELETE SET NULL;
 
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
