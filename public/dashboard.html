@@ -1205,6 +1205,17 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
         <div id="mktCalendarContent"></div>
       </div>
+
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;margin-top:18px">
+        <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:12px" data-i18n="mkt.leads_title">Leads</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+          <input class="form-input" id="newLeadName" data-i18n-placeholder="mkt.lead_name_placeholder" placeholder="Lead name" style="flex:1;min-width:140px">
+          <input class="form-input" id="newLeadContact" data-i18n-placeholder="mkt.lead_contact_placeholder" placeholder="Email or phone" style="flex:1;min-width:140px">
+          <input class="form-input" type="date" id="newLeadFollowUp" style="flex:1;min-width:130px">
+          <button class="btn-primary" onclick="addLead()" data-i18n="mkt.add_lead">+ Add Lead</button>
+        </div>
+        <div id="leadsList"></div>
+      </div>
     </div>
   </div>
 
@@ -3950,6 +3961,7 @@ async function loadMarketingStrategy() {
     if (data.business?.content_calendar_start_date) document.getElementById('calStartDate').value = data.business.content_calendar_start_date.split('T')[0];
     if (data.business?.content_calendar_end_date) document.getElementById('calEndDate').value = data.business.content_calendar_end_date.split('T')[0];
     renderContentCalendarContent(data.business?.content_calendar, data.business?.content_calendar_generated_at);
+    loadLeads();
   } catch (e) {}
 }
 
@@ -4096,6 +4108,83 @@ function addTaskFromCalendarPost(index, event) {
   if (!post || !currentMktBusinessId) return;
   const title = `${post.platform || ''}${post.content_type ? ' ' + post.content_type : ''}: ${post.topic}`.trim();
   addTaskFromSuggestion(currentMktBusinessId, title, 'content_calendar', post.date, event?.target);
+}
+
+const LEAD_STATUS_COLORS = { new: 'var(--muted)', contacted: 'var(--purple-light)', qualified: 'var(--gold)', won: 'var(--green)', lost: '#ef4444' };
+
+async function loadLeads() {
+  if (!currentMktBusinessId) return;
+  try {
+    const res = await fetch(`/api/business/${currentMktBusinessId}/leads`);
+    const data = await res.json();
+    const leads = data.leads || [];
+    const listEl = document.getElementById('leadsList');
+
+    if (!leads.length) {
+      listEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px" data-i18n="mkt.no_leads">No leads yet — add one above.</div>`;
+      return;
+    }
+
+    const todayMidnight = new Date().setHours(0, 0, 0, 0);
+    listEl.innerHTML = leads.map(lead => {
+      const isOverdue = lead.next_follow_up_date && new Date(lead.next_follow_up_date).getTime() < todayMidnight && !['won', 'lost'].includes(lead.status);
+      return `
+        <div style="display:flex;align-items:flex-start;gap:10px;background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13.5px;color:var(--text);font-weight:600">${escapeHtml(lead.name)}</div>
+            ${lead.contact_info ? `<div style="font-size:11.5px;color:var(--muted)">${escapeHtml(lead.contact_info)}</div>` : ''}
+            <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+              <select onchange="updateLead('${lead.id}', {status: this.value})" style="font-size:11px;background:var(--bg2);color:${LEAD_STATUS_COLORS[lead.status]};border:none;border-radius:4px;padding:2px 6px;font-weight:700">
+                <option value="new" ${lead.status==='new'?'selected':''}>${t('mkt.status_new')}</option>
+                <option value="contacted" ${lead.status==='contacted'?'selected':''}>${t('mkt.status_contacted')}</option>
+                <option value="qualified" ${lead.status==='qualified'?'selected':''}>${t('mkt.status_qualified')}</option>
+                <option value="won" ${lead.status==='won'?'selected':''}>${t('mkt.status_won')}</option>
+                <option value="lost" ${lead.status==='lost'?'selected':''}>${t('mkt.status_lost')}</option>
+              </select>
+              <input type="date" value="${lead.next_follow_up_date ? lead.next_follow_up_date.split('T')[0] : ''}" onchange="updateLead('${lead.id}', {nextFollowUpDate: this.value})" style="font-size:11px;background:var(--bg2);color:${isOverdue ? '#ef4444' : 'var(--muted)'};border:none;border-radius:4px;padding:2px 6px">
+              ${isOverdue ? `<span style="font-size:10px;font-weight:700;color:#ef4444">${t('mkt.overdue')}</span>` : ''}
+            </div>
+          </div>
+          <button onclick="deleteLead('${lead.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:0 4px">×</button>
+        </div>`;
+    }).join('');
+  } catch (e) {}
+}
+
+async function addLead() {
+  const name = document.getElementById('newLeadName').value.trim();
+  if (!name || !currentMktBusinessId) return;
+  const contactInfo = document.getElementById('newLeadContact').value.trim();
+  const nextFollowUpDate = document.getElementById('newLeadFollowUp').value;
+
+  try {
+    const res = await fetch(`/api/business/${currentMktBusinessId}/leads`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, contactInfo: contactInfo || undefined, nextFollowUpDate: nextFollowUpDate || undefined })
+    });
+    if (res.ok) {
+      document.getElementById('newLeadName').value = '';
+      document.getElementById('newLeadContact').value = '';
+      document.getElementById('newLeadFollowUp').value = '';
+      loadLeads();
+    }
+  } catch (e) {}
+}
+
+async function updateLead(leadId, changes) {
+  try {
+    const res = await fetch(`/api/business/${currentMktBusinessId}/leads/${leadId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes)
+    });
+    if (res.ok) loadLeads();
+  } catch (e) {}
+}
+
+async function deleteLead(leadId) {
+  try {
+    const res = await fetch(`/api/business/${currentMktBusinessId}/leads/${leadId}`, { method: 'DELETE' });
+    if (res.ok) loadLeads();
+  } catch (e) {}
 }
 
 async function findOpportunities() {
