@@ -218,6 +218,30 @@ const EMAIL_TEMPLATES = {
         <p style="color:#999;font-size:11px">Arreyon Consult par G-DESIGNS LTD · Vous pouvez désactiver n'importe quel type d'alerte depuis les paramètres de votre tableau de bord.</p>
       </div>`
     })
+  },
+  taskAssigned: {
+    en: (p) => ({
+      subject: `You've been assigned a task on Arreyon Consult`,
+      html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+        <h2>New task assigned to you</h2>
+        <p><strong>${p.assignerName}</strong> assigned you a task on <strong>${p.businessName}</strong>:</p>
+        <div style="background:#f5f5f5;border-radius:8px;padding:14px 16px;margin:14px 0">${p.taskTitle}</div>
+        <a href="${p.dashboardUrl}" style="display:inline-block;background:#6C3Bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">View in Action Center</a>
+        <hr style="margin-top:24px">
+        <p style="color:#999;font-size:11px">Arreyon Consult by G-DESIGNS LTD</p>
+      </div>`
+    }),
+    fr: (p) => ({
+      subject: `Une tâche vous a été assignée sur Arreyon Consult`,
+      html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+        <h2>Nouvelle tâche qui vous est assignée</h2>
+        <p><strong>${p.assignerName}</strong> vous a assigné une tâche sur <strong>${p.businessName}</strong> :</p>
+        <div style="background:#f5f5f5;border-radius:8px;padding:14px 16px;margin:14px 0">${p.taskTitle}</div>
+        <a href="${p.dashboardUrl}" style="display:inline-block;background:#6C3Bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Voir dans le Centre d'action</a>
+        <hr style="margin-top:24px">
+        <p style="color:#999;font-size:11px">Arreyon Consult par G-DESIGNS LTD</p>
+      </div>`
+    })
   }
 };
 
@@ -923,8 +947,61 @@ Each checkpoint's "actions" array should have 3-5 entries.`;
 // (a manual entry vs. a Business Intelligence priority problem or a Growth
 // Center plan action) without being required.
 // ═══════════════════════════════════════════════════════════════════════════
+
+// Who a task can be assigned to — the account owner plus every active team
+// member. Deliberately separate from GET /api/team, which is owner-only;
+// assigning a task is something any team member should be able to do, not
+// just the owner, so this needs to work for everyone on the team.
+app.get('/api/business/:id/assignable-members', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const members = [{ id: account.id, name: `${account.first_name} ${account.last_name}`.trim(), email: account.email }];
+    const teamResult = await pool.query(
+      `SELECT u.id, u.first_name, u.last_name, u.email FROM team_members tm
+       JOIN users u ON u.id = tm.member_id
+       WHERE tm.owner_id = $1 AND tm.status = 'active'`,
+      [account.id]
+    );
+    teamResult.rows.forEach(m => members.push({ id: m.id, name: `${m.first_name} ${m.last_name}`.trim(), email: m.email }));
+
+    res.json({ members });
+  } catch (e) {
+    console.error('Assignable members error:', e.message);
+    res.status(500).json({ error: 'Failed to load team members' });
+  }
+});
+
+// Fires both an in-app Alert and an immediate email when a task is assigned
+// — deliberately not batched into the daily digest like other alerts, since
+// being assigned a task is the kind of thing someone should hear about
+// promptly, not find in tomorrow's summary.
+async function notifyTaskAssignment(assignedUserId, taskTitle, businessId, assignerUserId) {
+  try {
+    const [assignedUser, assigner, business] = await Promise.all([
+      pool.query('SELECT email, first_name, last_name, preferred_language FROM users WHERE id = $1', [assignedUserId]),
+      pool.query('SELECT first_name, last_name FROM users WHERE id = $1', [assignerUserId]),
+      pool.query('SELECT name FROM businesses WHERE id = $1', [businessId])
+    ]);
+    if (!assignedUser.rows.length) return;
+    const user = assignedUser.rows[0];
+    const assignerName = assigner.rows[0] ? `${assigner.rows[0].first_name} ${assigner.rows[0].last_name}`.trim() : 'A teammate';
+    const businessName = business.rows[0]?.name || 'a business';
+
+    const { title, message } = alertText('taskAssigned', user.preferred_language, taskTitle, businessName, assignerName);
+    await createAlert(assignedUserId, businessId, 'task_assigned', 'info', title, message, { taskTitle, businessName, assignerName });
+
+    const { subject, html } = buildEmail('taskAssigned', user.preferred_language, { taskTitle, businessName, assignerName, dashboardUrl: `${BASE_URL}/dashboard` });
+    await sendEmail(user.email, subject, html);
+  } catch (e) {
+    console.error('Task assignment notification failed (non-fatal — the task itself was still created/updated):', e.message);
+  }
+}
+
 app.post('/api/business/:id/tasks', authRequired, async (req, res) => {
-  const { title, priority, dueDate, category, source, sourceDetail } = req.body;
+  const { title, priority, dueDate, category, source, sourceDetail, assignedTo } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: 'Please give this task a title.' });
   try {
     const account = await resolveAccount(req.userId);
@@ -933,10 +1010,13 @@ app.post('/api/business/:id/tasks', authRequired, async (req, res) => {
 
     const validPriority = ['high', 'medium', 'low'].includes(priority) ? priority : 'medium';
     const inserted = await pool.query(
-      `INSERT INTO action_tasks (business_id, owner_id, title, priority, due_date, category, source, source_detail)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [req.params.id, account.id, title.trim(), validPriority, dueDate || null, category || null, source || 'manual', sourceDetail || null]
+      `INSERT INTO action_tasks (business_id, owner_id, title, priority, due_date, category, source, source_detail, assigned_to)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [req.params.id, account.id, title.trim(), validPriority, dueDate || null, category || null, source || 'manual', sourceDetail || null, assignedTo || null]
     );
+
+    if (assignedTo) notifyTaskAssignment(assignedTo, title.trim(), req.params.id, req.userId);
+
     res.json({ success: true, task: inserted.rows[0] });
   } catch (e) {
     console.error('Create task error:', e.message);
@@ -997,7 +1077,7 @@ app.get('/api/business/:id/tasks', authRequired, async (req, res) => {
 });
 
 app.put('/api/business/:id/tasks/:taskId', authRequired, async (req, res) => {
-  const { title, priority, status, dueDate, notes } = req.body;
+  const { title, priority, status, dueDate, notes, assignedTo } = req.body;
   try {
     const account = await resolveAccount(req.userId);
     const existing = await pool.query(
@@ -1019,11 +1099,18 @@ app.put('/api/business/:id/tasks/:taskId', authRequired, async (req, res) => {
     // so re-completing later gets an accurate new timestamp rather than a stale one.
     const completedAt = newStatus === 'done' ? (task.status === 'done' ? task.completed_at : new Date()) : null;
     const newTitleFr = titleChanged ? null : task.title_fr;
+    const newAssignedTo = assignedTo !== undefined ? (assignedTo || null) : task.assigned_to;
+    // Notify only on a genuine reassignment to someone new — not on every
+    // save, and not if the field wasn't even part of this request.
+    const isNewAssignment = newAssignedTo && newAssignedTo !== task.assigned_to;
 
     const updated = await pool.query(
-      `UPDATE action_tasks SET title = $1, title_fr = $2, priority = $3, status = $4, due_date = $5, notes = $6, completed_at = $7, updated_at = NOW() WHERE id = $8 RETURNING *`,
-      [newTitle, newTitleFr, newPriority, newStatus, newDueDate, newNotes, completedAt, task.id]
+      `UPDATE action_tasks SET title = $1, title_fr = $2, priority = $3, status = $4, due_date = $5, notes = $6, completed_at = $7, assigned_to = $8, updated_at = NOW() WHERE id = $9 RETURNING *`,
+      [newTitle, newTitleFr, newPriority, newStatus, newDueDate, newNotes, completedAt, newAssignedTo, task.id]
     );
+
+    if (isNewAssignment) notifyTaskAssignment(newAssignedTo, newTitle, req.params.id, req.userId);
+
     res.json({ success: true, task: updated.rows[0] });
   } catch (e) {
     console.error('Update task error:', e.message);
@@ -5972,6 +6059,10 @@ const ALERT_MESSAGES = {
   seatsFull: {
     en: (limit, plan) => ({ title: 'Team seats are full', message: `You're using all ${limit} seats on your ${plan} plan. Upgrade if you'd like to invite more people.` }),
     fr: (limit, plan) => ({ title: 'Sièges d\u2019équipe complets', message: `Vous utilisez les ${limit} sièges de votre forfait ${plan}. Passez à un forfait supérieur pour inviter plus de personnes.` })
+  },
+  taskAssigned: {
+    en: (taskTitle, businessName, assignerName) => ({ title: 'A task was assigned to you', message: `${assignerName} assigned you a task on ${businessName}: "${taskTitle}"` }),
+    fr: (taskTitle, businessName, assignerName) => ({ title: 'Une tâche vous a été assignée', message: `${assignerName} vous a assigné une tâche sur ${businessName} : « ${taskTitle} »` })
   }
 };
 function alertText(templateKey, language, ...args) {
