@@ -715,5 +715,11 @@ CREATE TABLE IF NOT EXISTS action_tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_action_tasks_business ON action_tasks(business_id, status);
 
+-- Same "translate once, cache, never regenerate" discipline as everywhere
+-- else — task titles coming from AI suggestions (Business Intelligence,
+-- Growth Center) carry whatever language they were generated in, with no
+-- bilingual support at all until now.
+ALTER TABLE action_tasks ADD COLUMN IF NOT EXISTS title_fr TEXT;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
