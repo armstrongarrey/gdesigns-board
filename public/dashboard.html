@@ -170,6 +170,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <a class="nav-item" href="#market" onclick="showSection('market');return false;" id="nav-market">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span data-i18n="market.nav_title">Market Intelligence</span>
     </a>
+    <a class="nav-item" href="#marketingsales" onclick="showSection('marketingsales');return false;" id="nav-marketingsales">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg><span data-i18n="mkt.nav_title">Marketing &amp; Sales</span>
+    </a>
     <a class="nav-item" href="#history" onclick="showSection('history');return false;" id="nav-history">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="dash.nav_history">History</span>
     </a>
@@ -1174,6 +1177,28 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     </div>
   </div>
 
+  <!-- MARKETING & SALES SECTION -->
+  <div class="section-view" id="section-marketingsales">
+    <div class="section-title" data-i18n="mkt.title">Marketing &amp; Sales</div>
+    <div class="section-sub" data-i18n="mkt.subtitle">A concrete marketing strategy for this business, not generic advice.</div>
+
+    <div class="form-group" style="max-width:400px;margin-bottom:20px">
+      <label data-i18n="mkt.select_business">Business</label>
+      <select class="form-input" id="mktBusinessSelect" onchange="loadMarketingStrategy()"></select>
+    </div>
+
+    <div id="mktNoBizPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;text-align:center;max-width:500px">
+      <div style="font-size:13px;color:var(--muted)" data-i18n="growth.no_business_yet">Analyze a business first so Growth Center has somewhere to track progress.</div>
+    </div>
+
+    <div id="mktMainWrap" style="display:none;max-width:700px">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:18px">
+        <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:12px" data-i18n="mkt.strategy_title">Marketing Strategy</div>
+        <div id="mktStrategyContent"></div>
+      </div>
+    </div>
+  </div>
+
 </div>
 </div>
 <!-- /main -->
@@ -1932,7 +1957,7 @@ function renderBilling() {
     </div>`).join('');
 }
 
-const SECTION_TITLE_KEYS = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title',alerts:'alerts.title',growth:'growth.title',action:'action.title',market:'market.title'};
+const SECTION_TITLE_KEYS = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title',alerts:'alerts.title',growth:'growth.title',action:'action.title',market:'market.title',marketingsales:'mkt.title'};
 
 function showSection(name) {
   document.querySelectorAll('.section-view').forEach(s => s.classList.remove('active'));
@@ -1954,6 +1979,7 @@ function showSection(name) {
   if (name === 'growth') loadGrowthBusinesses();
   if (name === 'action') loadActionBusinesses();
   if (name === 'market') loadCompetitorBusinesses();
+  if (name === 'marketingsales') loadMarketingBusinesses();
 
   // Keep the URL in sync with whichever section is showing, so a refresh or
   // an "open in new tab" lands back on the right page. replaceState (not
@@ -2245,6 +2271,9 @@ document.addEventListener('arreyon:langchange', async () => {
   }
   if (document.getElementById('section-market')?.classList.contains('active') && currentMarketBusinessId) {
     loadCompetitors();
+  }
+  if (document.getElementById('section-marketingsales')?.classList.contains('active') && currentMktBusinessId) {
+    loadMarketingStrategy();
   }
   // applyTranslations() re-tags every data-i18n element, which would wipe out
   // the 🔒 lock prefix we add on top of the base label — re-apply it after.
@@ -3858,6 +3887,118 @@ function addTaskFromCompetitor(competitorId, field, event) {
   else if (field.startsWith('action:')) text = analysis.recommended_actions?.[parseInt(field.split(':')[1], 10)];
   if (!text) return;
   addTaskFromSuggestion(currentMarketBusinessId, text, 'market_intelligence', `competitor:${c.name}`, event?.target);
+}
+
+// ── MARKETING & SALES (Phase 7, Step 1: Marketing Strategy) ────────────────
+let currentMktBusinessId = null;
+let currentMktStrategyForTasks = null;
+
+async function loadMarketingBusinesses() {
+  try {
+    const res = await fetch('/api/business');
+    const data = await res.json();
+    const businesses = data.businesses || [];
+    const select = document.getElementById('mktBusinessSelect');
+
+    if (!businesses.length) {
+      document.getElementById('mktNoBizPrompt').style.display = 'block';
+      select.parentElement.style.display = 'none';
+      document.getElementById('mktMainWrap').style.display = 'none';
+      return;
+    }
+
+    document.getElementById('mktNoBizPrompt').style.display = 'none';
+    select.parentElement.style.display = 'block';
+    document.getElementById('mktMainWrap').style.display = 'block';
+    select.innerHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+
+    // Same "remember the last selection" fix already applied everywhere else.
+    let savedId;
+    try { savedId = localStorage.getItem('arreyon_mkt_business_id'); } catch (e) {}
+    const stillExists = savedId && businesses.some(b => b.id === savedId);
+    currentMktBusinessId = stillExists ? savedId : businesses[0].id;
+    select.value = currentMktBusinessId;
+
+    loadMarketingStrategy();
+  } catch (e) {}
+}
+
+async function loadMarketingStrategy() {
+  const select = document.getElementById('mktBusinessSelect');
+  currentMktBusinessId = select.value || currentMktBusinessId;
+  if (!currentMktBusinessId) return;
+  try { localStorage.setItem('arreyon_mkt_business_id', currentMktBusinessId); } catch (e) {}
+
+  try {
+    const res = await fetch(`/api/business/${currentMktBusinessId}?lang=${window.currentLang || 'en'}`);
+    const data = await res.json();
+    renderMarketingStrategyContent(data.business?.marketing_strategy, data.business?.marketing_strategy_generated_at);
+  } catch (e) {}
+}
+
+function renderMarketingStrategyContent(strategy, generatedAt) {
+  currentMktStrategyForTasks = strategy;
+  const contentEl = document.getElementById('mktStrategyContent');
+  if (!strategy) {
+    contentEl.innerHTML = `
+      <div style="text-align:center;padding:16px">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:12px" data-i18n="mkt.no_strategy_yet">Get a concrete marketing strategy for this business.</div>
+        <button class="btn-primary" onclick="generateMarketingStrategy()" id="mktGenerateBtn">📣 <span data-i18n="mkt.generate_strategy">Generate Marketing Strategy</span></button>
+      </div>`;
+    return;
+  }
+
+  const dateStr = generatedAt ? new Date(generatedAt).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+  const addTaskBtn = (onclickCall) => `<button onclick="${onclickCall}" style="background:none;border:1px solid var(--purple);color:var(--purple-light);border-radius:4px;padding:1px 6px;font-size:9px;cursor:pointer;white-space:nowrap;margin-left:6px" data-i18n="growth.add_to_action_plan">+ Add to Action Plan</button>`;
+  const listBlock = (labelKey, defaultLabel, items) => items && items.length ? `
+    <div style="margin-bottom:10px">
+      <div style="font-size:10px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:4px" data-i18n="${labelKey}">${defaultLabel}</div>
+      <ul style="margin:0;padding-left:16px;font-size:12.5px;color:var(--text2);line-height:1.6">${items.map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>
+    </div>` : '';
+
+  contentEl.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
+      ${dateStr ? `<span style="font-size:11px;color:var(--muted)">${t('bi.as_of')} ${dateStr}</span>` : ''}
+      <button onclick="generateMarketingStrategy()" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px" data-i18n="bi.regenerate">↻ Regenerate</button>
+    </div>
+    ${strategy.confidence_note ? `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:12px">${escapeHtml(strategy.confidence_note)}</div>` : ''}
+    <div style="margin-bottom:10px"><div style="font-size:10px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:4px" data-i18n="mkt.target_audience">Target Audience</div><div style="font-size:12.5px;color:var(--text2)">${escapeHtml(strategy.target_audience || '')}</div></div>
+    <div style="margin-bottom:10px"><div style="font-size:10px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:4px" data-i18n="mkt.key_messaging">Key Messaging</div><div style="font-size:12.5px;color:var(--text2)">${escapeHtml(strategy.key_messaging || '')}</div></div>
+    ${listBlock('mkt.marketing_channels', 'Marketing Channels', strategy.marketing_channels)}
+    <div style="margin-bottom:10px"><div style="font-size:10px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:4px" data-i18n="mkt.content_strategy">Content Strategy</div><div style="font-size:12.5px;color:var(--text2)">${escapeHtml(strategy.content_strategy || '')}</div></div>
+    <div style="margin-bottom:10px">
+      <div style="font-size:10px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:4px" data-i18n="mkt.promotional_tactics">Promotional Tactics</div>
+      <ul style="margin:0;padding-left:16px;font-size:12.5px;color:var(--text2);line-height:1.7">${(strategy.promotional_tactics || []).map((tac, i) => `<li>${escapeHtml(tac)}${addTaskBtn(`addTaskFromMarketingStrategy(${i}, event)`)}</li>`).join('')}</ul>
+    </div>
+    <div style="margin-bottom:10px"><div style="font-size:10px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:4px" data-i18n="mkt.acquisition_funnel">Customer Acquisition Funnel</div><div style="font-size:12.5px;color:var(--text2)">${escapeHtml(strategy.customer_acquisition_funnel || '')}</div></div>
+    <div><div style="font-size:10px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:4px" data-i18n="mkt.budget_estimate">Estimated Monthly Budget</div><div style="font-size:12.5px;color:var(--text2)">${escapeHtml(strategy.marketing_budget_estimate || '')}</div></div>`;
+}
+
+async function generateMarketingStrategy() {
+  const btn = document.getElementById('mktGenerateBtn');
+  if (btn) { btn.disabled = true; btn.textContent = t('growth.generating'); }
+  document.getElementById('mktStrategyContent').innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${t('growth.generating')}</div>`;
+
+  try {
+    const res = await fetch(`/api/business/${currentMktBusinessId}/marketing-strategy`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: window.currentLang || 'en' })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('mktStrategyContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('growth.generate_failed')}</div>`;
+      return;
+    }
+    renderMarketingStrategyContent(data.strategy, data.generatedAt);
+  } catch (e) {
+    document.getElementById('mktStrategyContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${t('board.connection_error')}</div>`;
+  }
+}
+
+function addTaskFromMarketingStrategy(index, event) {
+  const tactic = currentMktStrategyForTasks?.promotional_tactics?.[index];
+  if (!tactic || !currentMktBusinessId) return;
+  addTaskFromSuggestion(currentMktBusinessId, tactic, 'marketing_strategy', 'promotional_tactic', event?.target);
 }
 
 async function findOpportunities() {
