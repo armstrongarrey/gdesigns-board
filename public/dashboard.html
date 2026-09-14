@@ -1093,6 +1093,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <option value="medium" selected data-i18n="action.priority_medium">Medium Priority</option>
             <option value="low" data-i18n="action.priority_low">Low Priority</option>
           </select>
+          <select class="form-input" id="newTaskAssignee" style="flex:1;min-width:130px">
+            <option value="" data-i18n="action.unassigned">Unassigned</option>
+          </select>
           <input class="form-input" type="date" id="newTaskDueDate" style="flex:1;min-width:130px">
           <button class="btn-primary" onclick="createTask()" data-i18n="action.add_task">+ Add</button>
         </div>
@@ -3396,6 +3399,7 @@ function addTaskFromGrowthAction(checkpointIndex, actionIndex, event) {
 
 // ── ACTION CENTER ────────────────────────────────────────────────────────
 let currentActionBusinessId = null;
+let currentAssignableMembers = [];
 const TASK_PRIORITY_COLORS = { high: '#ef4444', medium: 'var(--gold)', low: 'var(--muted)' };
 const TASK_SOURCE_LABELS = { business_intelligence: 'bi.title', growth_center: 'growth.title' };
 
@@ -3426,6 +3430,15 @@ async function loadActionBusinesses() {
     const stillExists = savedId && businesses.some(b => b.id === savedId);
     currentActionBusinessId = stillExists ? savedId : businesses[0].id;
     select.value = currentActionBusinessId;
+
+    try {
+      const membersRes = await fetch(`/api/business/${currentActionBusinessId}/assignable-members`);
+      const membersData = await membersRes.json();
+      currentAssignableMembers = membersData.members || [];
+      const assigneeSelect = document.getElementById('newTaskAssignee');
+      assigneeSelect.innerHTML = `<option value="" data-i18n="action.unassigned">${t('action.unassigned')}</option>` +
+        currentAssignableMembers.map(m => `<option value="${m.id}">${escapeHtml(m.name || m.email)}</option>`).join('');
+    } catch (e) { currentAssignableMembers = []; }
 
     loadActionTasks();
   } catch (e) {}
@@ -3461,15 +3474,15 @@ async function loadActionTasks() {
       const sourceLabel = task.source !== 'manual' && TASK_SOURCE_LABELS[task.source] ? t(TASK_SOURCE_LABELS[task.source]) : '';
       return `
         <div style="display:flex;align-items:flex-start;gap:10px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:8px">
-          <input type="checkbox" ${isDone ? 'checked' : ''} onchange="updateTaskStatus('${task.id}', this.checked ? 'done' : 'not_started')" style="margin-top:3px">
           <div style="flex:1;min-width:0">
             <div style="font-size:13.5px;color:var(--text);${isDone ? 'text-decoration:line-through;opacity:.6' : ''}">${escapeHtml(task.title)}</div>
             <div style="display:flex;gap:8px;align-items:center;margin-top:4px;flex-wrap:wrap">
               <span style="font-size:10px;font-weight:700;color:${TASK_PRIORITY_COLORS[task.priority]};text-transform:uppercase">${escapeHtml(task.priority)}</span>
-              ${!isDone ? `<select onchange="updateTaskStatus('${task.id}', this.value)" style="font-size:11px;background:var(--bg3);color:var(--muted);border:none;border-radius:4px;padding:2px 6px">
+              <select onchange="updateTaskStatus('${task.id}', this.value)" style="font-size:11px;background:var(--bg3);color:var(--muted);border:none;border-radius:4px;padding:2px 6px">
                 <option value="not_started" ${task.status === 'not_started' ? 'selected' : ''}>${t('action.status_not_started')}</option>
                 <option value="in_progress" ${task.status === 'in_progress' ? 'selected' : ''}>${t('action.status_in_progress')}</option>
-              </select>` : ''}
+                <option value="done" ${isDone ? 'selected' : ''}>${t('action.status_done')}</option>
+              </select>
               ${dueStr ? `<span style="font-size:11px;color:var(--muted)">📅 ${dueStr}</span>` : ''}
               ${sourceLabel ? `<span style="font-size:10px;color:var(--muted);background:var(--bg3);padding:1px 6px;border-radius:4px">${escapeHtml(sourceLabel)}</span>` : ''}
             </div>
@@ -3485,15 +3498,17 @@ async function createTask() {
   if (!title || !currentActionBusinessId) return;
   const priority = document.getElementById('newTaskPriority').value;
   const dueDate = document.getElementById('newTaskDueDate').value;
+  const assignedTo = document.getElementById('newTaskAssignee').value;
 
   try {
     const res = await fetch(`/api/business/${currentActionBusinessId}/tasks`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, priority, dueDate: dueDate || undefined })
+      body: JSON.stringify({ title, priority, dueDate: dueDate || undefined, assignedTo: assignedTo || undefined })
     });
     if (res.ok) {
       document.getElementById('newTaskTitle').value = '';
       document.getElementById('newTaskDueDate').value = '';
+      document.getElementById('newTaskAssignee').value = '';
       loadActionTasks();
     }
   } catch (e) {}
@@ -3503,6 +3518,15 @@ async function updateTaskStatus(taskId, status) {
   try {
     const res = await fetch(`/api/business/${currentActionBusinessId}/tasks/${taskId}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status })
+    });
+    if (res.ok) loadActionTasks();
+  } catch (e) {}
+}
+
+async function updateTaskAssignee(taskId, assignedTo) {
+  try {
+    const res = await fetch(`/api/business/${currentActionBusinessId}/tasks/${taskId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assignedTo: assignedTo || null })
     });
     if (res.ok) loadActionTasks();
   } catch (e) {}
