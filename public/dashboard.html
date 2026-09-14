@@ -3989,7 +3989,8 @@ function renderMarketingStrategyContent(strategy, generatedAt) {
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
       <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
       ${dateStr ? `<span style="font-size:11px;color:var(--muted)">${t('bi.as_of')} ${dateStr}</span>` : ''}
-      <button onclick="generateMarketingStrategy()" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px" data-i18n="bi.regenerate">↻ Regenerate</button>
+      <a href="/api/business/${currentMktBusinessId}/marketing-strategy/download" style="margin-left:auto;color:var(--purple-light);text-decoration:none;font-size:11px" data-i18n="mkt.download_word">⬇ Download as Word</a>
+      <button onclick="generateMarketingStrategy()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px" data-i18n="bi.regenerate">↻ Regenerate</button>
     </div>
     ${strategy.confidence_note ? `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:12px">${escapeHtml(strategy.confidence_note)}</div>` : ''}
     <div style="margin-bottom:10px"><div style="font-size:10px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:4px" data-i18n="mkt.target_audience">Target Audience</div><div style="font-size:12.5px;color:var(--text2)">${escapeHtml(strategy.target_audience || '')}</div></div>
@@ -4045,21 +4046,46 @@ function renderContentCalendarContent(calendar, generatedAt) {
   }
 
   const dateStr = generatedAt ? new Date(generatedAt).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
-  const addTaskBtn = (onclickCall) => `<button onclick="${onclickCall}" style="background:none;border:1px solid var(--purple);color:var(--purple-light);border-radius:4px;padding:1px 6px;font-size:9px;cursor:pointer;white-space:nowrap;margin-left:6px" data-i18n="growth.add_to_action_plan">+ Add to Action Plan</button>`;
+  const addTaskBtn = (onclickCall) => `<button onclick="${onclickCall}" style="background:none;border:1px solid var(--purple);color:var(--purple-light);border-radius:3px;padding:0 4px;font-size:8px;cursor:pointer;white-space:nowrap;margin-top:2px" data-i18n="growth.add_to_action_plan">+ Add to Action Plan</button>`;
 
-  const sortedPosts = [...calendar.posts].sort((a, b) => new Date(a.date) - new Date(b.date));
-  const postsHtml = sortedPosts.map((post, i) => {
-    const originalIndex = calendar.posts.indexOf(post);
-    const postDateStr = post.date ? new Date(post.date).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
+  const startDate = document.getElementById('calStartDate').value;
+  const endDate = document.getElementById('calEndDate').value;
+  const postsByDate = {};
+  calendar.posts.forEach((p, i) => {
+    if (!postsByDate[p.date]) postsByDate[p.date] = [];
+    postsByDate[p.date].push({ ...p, originalIndex: i });
+  });
+
+  const dayLabels = window.currentLang === 'fr' ? ['Dim','Lun','Mar','Mer','Jeu','Ven','Sam'] : ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const monthNames = window.currentLang === 'fr' ? ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'] : ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const months = getMonthsInRangeClient(startDate, endDate);
+
+  const gridsHtml = months.map(({ year, month }) => {
+    const weeks = buildMonthGridClient(year, month);
+    const headerCells = dayLabels.map(d => `<th style="padding:6px;font-size:10px;color:var(--muted);text-align:center;border-bottom:1px solid var(--border)">${d}</th>`).join('');
+    const bodyRows = weeks.map(week => {
+      const cells = week.map(dayNum => {
+        if (dayNum === null) return `<td style="border:1px solid var(--border);vertical-align:top;height:70px;background:var(--bg3)"></td>`;
+        const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+        const dayPosts = postsByDate[dateKey] || [];
+        const postsMarkup = dayPosts.map(p => `
+          <div style="margin-top:3px;padding:3px 4px;background:var(--bg3);border-radius:4px">
+            <div style="font-size:9px;font-weight:700;color:var(--purple-light)">${escapeHtml(p.platform || '')}${p.content_type ? ' · ' + escapeHtml(p.content_type) : ''}</div>
+            <div style="font-size:10px;color:var(--text2)">${escapeHtml(p.topic || '')}</div>
+            ${addTaskBtn(`addTaskFromCalendarPost(${p.originalIndex}, event)`)}
+          </div>`).join('');
+        return `<td style="border:1px solid var(--border);vertical-align:top;padding:4px;height:70px;max-width:110px">
+          <div style="font-size:11px;color:var(--muted);font-weight:600">${dayNum}</div>
+          ${postsMarkup}
+        </td>`;
+      }).join('');
+      return `<tr>${cells}</tr>`;
+    }).join('');
+
     return `
-      <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-          <span style="font-size:11px;font-weight:700;color:var(--purple-light)">${escapeHtml(postDateStr)}</span>
-          <span style="font-size:10px;color:var(--muted);background:var(--bg2);padding:2px 8px;border-radius:4px">${escapeHtml(post.platform || '')}${post.content_type ? ' · ' + escapeHtml(post.content_type) : ''}</span>
-        </div>
-        <div style="font-size:13px;color:var(--text);font-weight:600">${escapeHtml(post.topic || '')}</div>
-        ${post.caption_hook ? `<div style="font-size:12px;color:var(--text2);margin-top:3px;font-style:italic">"${escapeHtml(post.caption_hook)}"</div>` : ''}
-        <div style="margin-top:6px">${addTaskBtn(`addTaskFromCalendarPost(${originalIndex}, event)`)}</div>
+      <div style="margin-bottom:20px">
+        <div style="font-size:12px;font-weight:700;color:var(--text);text-transform:capitalize;margin-bottom:8px">${monthNames[month]} ${year}</div>
+        <table style="width:100%;border-collapse:collapse;table-layout:fixed"><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>
       </div>`;
   }).join('');
 
@@ -4067,10 +4093,39 @@ function renderContentCalendarContent(calendar, generatedAt) {
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
       <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
       ${dateStr ? `<span style="font-size:11px;color:var(--muted)">${t('bi.as_of')} ${dateStr}</span>` : ''}
-      <button onclick="generateContentCalendar()" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px" data-i18n="bi.regenerate">↻ Regenerate</button>
+      <a href="/api/business/${currentMktBusinessId}/content-calendar/download" style="margin-left:auto;color:var(--purple-light);text-decoration:none;font-size:11px" data-i18n="mkt.download_word">⬇ Download as Word</a>
+      <button onclick="generateContentCalendar()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px" data-i18n="bi.regenerate">↻ Regenerate</button>
     </div>
     ${calendar.confidence_note ? `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:12px">${escapeHtml(calendar.confidence_note)}</div>` : ''}
-    ${postsHtml}`;
+    <div style="overflow-x:auto">${gridsHtml}</div>`;
+}
+
+// Mirrors the exact same date-grid math used server-side for the Word
+// download, so the on-screen calendar and the downloaded document always
+// agree on layout.
+function getMonthsInRangeClient(startDateStr, endDateStr) {
+  const start = new Date(startDateStr);
+  const end = new Date(endDateStr);
+  const months = [];
+  let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  while (cursor <= end) {
+    months.push({ year: cursor.getFullYear(), month: cursor.getMonth() });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  return months;
+}
+
+function buildMonthGridClient(year, month) {
+  const firstDay = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startWeekday = firstDay.getDay();
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
 }
 
 async function generateContentCalendar() {
