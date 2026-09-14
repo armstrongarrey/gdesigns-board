@@ -314,6 +314,27 @@ function esc(str) {
     .replace(/\n\n/g,'<br><br>').replace(/\n/g,'<br>');
 }
 
+// Perplexity-backed responses can include inline citation markers like
+// [1][2] that have no meaningful destination in this chat view — strip them
+// rather than show a dead reference. Safe on every message; this pattern
+// essentially never appears in ordinary Claude/ChatGPT/Gemini prose.
+function stripCitationMarkers(str) {
+  return str.replace(/\[\d+\](\[\d+\])*/g, '').replace(/ {2,}/g, ' ').replace(/ (?=[.,;:!?])/g, '');
+}
+
+// Lightweight markdown → HTML for chat bubbles — bold and italics only, not
+// a full parser. Must run AFTER esc() so the source text is already safely
+// escaped; only adds a small, fixed set of controlled tags on top.
+function renderMarkdownLite(str) {
+  return str
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
+}
+
+function renderMessageContent(text) {
+  return renderMarkdownLite(stripCitationMarkers(esc(text)));
+}
+
 // ── Build director scroll ──────────────────────────────────────────────────
 function buildScroll() {
   const el = document.getElementById('dirScroll');
@@ -628,9 +649,9 @@ function renderMsgsOnly() {
       const aiLabel = m.ai === 'chatgpt' ? 'ChatGPT' : m.ai === 'gemini' ? 'Gemini' : m.ai === 'perplexity' ? 'Perplexity' : 'Claude';
       const badge = m.ai ? `<span class="ai-badge badge-${m.ai}">${aiLabel}</span>` : '';
       row.innerHTML = `<div class="mav2" style="background:${active.bg};color:${active.fg}">${active.init}</div>
-                       <div><div class="bub">${esc(displayText)}</div>${badge}</div>`;
+                       <div><div class="bub">${renderMessageContent(displayText)}</div>${badge}</div>`;
     } else {
-      row.innerHTML = `<div class="bub">${esc(displayText)}</div>
+      row.innerHTML = `<div class="bub">${renderMessageContent(displayText)}</div>
                        <div class="mav2" style="background:#2a1f4e;color:#9070d0">YOU</div>`;
     }
     box.appendChild(row);
