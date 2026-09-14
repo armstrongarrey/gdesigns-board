@@ -728,5 +728,27 @@ ALTER TABLE action_tasks ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES us
 ALTER TABLE action_tasks ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE action_tasks ADD COLUMN IF NOT EXISTS description_fr TEXT;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 5 — MARKET + COMPETITOR INTELLIGENCE (Step 1: Named Competitor Tracking)
+-- Distinct from the AI-inferred competitors already surfaced during a
+-- general business analysis — these are specific competitors the user names
+-- themselves and tracks over time, each with an optional AI-generated
+-- positioning comparison against their own business.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS tracked_competitors (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  owner_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  name VARCHAR(255) NOT NULL,
+  website VARCHAR(500),
+  notes TEXT,
+  positioning_analysis JSONB,
+  positioning_analysis_fr JSONB,
+  last_analyzed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_tracked_competitors_business ON tracked_competitors(business_id);
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
