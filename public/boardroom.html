@@ -655,6 +655,31 @@ function selectDir(id) {
 function ts() { return new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
 
+// Perplexity-backed directors return inline citation markers like [1][2] that
+// have no meaningful destination in this simple chat view (the underlying
+// source URLs aren't surfaced to the frontend at all), so they just read as
+// visual clutter — strip them rather than show a dead reference. Safe to run
+// on every message: the pattern essentially never appears in ordinary
+// Claude/ChatGPT/Gemini prose, so this only ever removes real citation noise.
+function stripCitationMarkers(s) {
+  return s.replace(/\[\d+\](\[\d+\])*/g, '').replace(/ {2,}/g, ' ').replace(/ (?=[.,;:!?])/g, '');
+}
+
+// Lightweight markdown → HTML for chat bubbles — bold and italics only,
+// deliberately not a full markdown parser, since that's all the AI
+// responses here actually use. Must run AFTER esc() so the source text is
+// already safely escaped; this only adds a small, fixed set of controlled
+// tags on top; it never introduces raw user-controlled markup.
+function renderMarkdownLite(s) {
+  return s
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
+}
+
+function renderMessageContent(text) {
+  return renderMarkdownLite(stripCitationMarkers(esc(text)));
+}
+
 // Returns what to actually display for a message right now: the original
 // text if we're viewing in its original language, a cached translation if
 // one exists, or the original as a fallback while a translation is fetched
@@ -673,8 +698,8 @@ function renderMsgsOnly() {
   const msgs = convos[active.id] || [];
   box.innerHTML = msgs.map(m => {
     const displayText = getDisplayText(m);
-    if (m.from === 'them') return `<div class="mrow them"><div class="mav" style="background:${active.bg};color:${active.fg}">${active.init}</div><div class="bub">${esc(displayText)}</div></div><div class="mtime">${m.time}</div>`;
-    return `<div class="mrow me"><div class="bub">${esc(displayText)}</div><div class="mav" style="background:#2a1f4e;color:#9070d0">YOU</div></div><div class="mtime">${m.time}</div>`;
+    if (m.from === 'them') return `<div class="mrow them"><div class="mav" style="background:${active.bg};color:${active.fg}">${active.init}</div><div class="bub">${renderMessageContent(displayText)}</div></div><div class="mtime">${m.time}</div>`;
+    return `<div class="mrow me"><div class="bub">${renderMessageContent(displayText)}</div><div class="mav" style="background:#2a1f4e;color:#9070d0">YOU</div></div><div class="mtime">${m.time}</div>`;
   }).join('');
   box.scrollTop = box.scrollHeight;
 }
