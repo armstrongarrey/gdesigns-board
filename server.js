@@ -1532,6 +1532,87 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PHASE 7 — MARKETING & SALES (Step 2: Content Calendar / Campaign Planner)
+// Builds directly on Marketing Strategy's target audience and channels when
+// it exists, so post ideas are tied to the business's actual strategy
+// rather than generic content suggestions.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/api/business/:id/content-calendar', authRequired, async (req, res) => {
+  const language = req.body?.language === 'fr' ? 'fr' : 'en';
+  const { startDate, endDate } = req.body || {};
+  try {
+    const account = await resolveAccount(req.userId);
+
+    const calStart = startDate ? new Date(startDate) : new Date();
+    const calEnd = endDate ? new Date(endDate) : (() => { const d = new Date(calStart); d.setDate(d.getDate() + 30); return d; })();
+    if (isNaN(calStart.getTime()) || isNaN(calEnd.getTime()) || calEnd <= calStart) {
+      return res.status(400).json({ error: 'Please provide a valid start date and an end date after it.' });
+    }
+    const daysInRange = Math.round((calEnd - calStart) / (1000 * 60 * 60 * 24));
+    // Roughly 3-4 posts/week is a realistic cadence for a small business —
+    // capped so a multi-month range doesn't produce an overwhelming response.
+    const suggestedPostCount = Math.min(Math.round(daysInRange / 7 * 3.5), 30);
+    const calStartStr = calStart.toISOString().split('T')[0];
+    const calEndStr = calEnd.toISOString().split('T')[0];
+
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+
+    const bizRow = await pool.query('SELECT marketing_strategy FROM businesses WHERE id = $1', [req.params.id]);
+    const strategy = bizRow.rows[0]?.marketing_strategy;
+    const strategyContext = strategy
+      ? `\n\nEXISTING MARKETING STRATEGY (ground content ideas in this — use the actual target audience, channels, and messaging, don't invent different ones):\nTarget audience: ${strategy.target_audience || 'not specified'}\nKey messaging: ${strategy.key_messaging || 'not specified'}\nChannels: ${(strategy.marketing_channels || []).join(', ') || 'not specified'}\nContent strategy: ${strategy.content_strategy || 'not specified'}`
+      : '\n\nNo marketing strategy has been generated for this business yet — use general judgment about likely channels and audience based on the business context above.';
+
+    const prompt = `You are a content marketing planner. Produce a concrete content calendar for this business covering ${calStartStr} to ${calEndStr} (about ${daysInRange} days).
+
+THE BUSINESS:
+${contextSummary}${strategyContext}
+
+YOUR TASK: Produce exactly ${suggestedPostCount} post ideas spread sensibly across the date range above (not clustered on one day) — a realistic posting cadence, not one post every single day. Each post needs a real calendar date within the range, a specific platform, a content type, and a concrete topic/idea specific to this business — not generic content marketing filler.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "posts": [
+    { "date": "YYYY-MM-DD", "platform": "specific platform, e.g. Instagram", "content_type": "specific format, e.g. Reel, carousel, WhatsApp status", "topic": "the specific idea for this post", "caption_hook": "a short opening line or hook for the caption" }
+  ],
+  "confidence_note": "one honest sentence on what this calendar assumes"
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Produce the calendar now, as JSON only.' }], complexity: 'complex', context: { feature: 'content_calendar', userId: req.userId }, maxTokens: 3000 });
+
+    let calendar;
+    try {
+      calendar = extractJSON(raw);
+    } catch (e) {
+      console.error('Content calendar JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
+      throw new Error('Could not generate a content calendar — please try again');
+    }
+    if (!Array.isArray(calendar.posts)) {
+      console.error('Content calendar "posts" was not an array:', typeof calendar.posts);
+      throw new Error('Could not generate a content calendar — please try again');
+    }
+    for (const post of calendar.posts) {
+      if (!post.date || !post.platform || !post.topic) {
+        console.error('Content calendar post missing required fields:', post);
+        throw new Error('Could not generate a content calendar — please try again');
+      }
+    }
+
+    await pool.query(
+      'UPDATE businesses SET content_calendar = $1, content_calendar_fr = NULL, content_calendar_generated_at = NOW(), content_calendar_start_date = $2, content_calendar_end_date = $3 WHERE id = $4',
+      [JSON.stringify(calendar), calStartStr, calEndStr, req.params.id]
+    );
+
+    res.json({ calendar, generatedAt: new Date().toISOString(), startDate: calStartStr, endDate: calEndStr });
+  } catch (err) {
+    console.error('Content calendar generation error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate content calendar. Please try again.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
 // for an already-logged-in user, not authenticating them. Reuses the same
@@ -6497,6 +6578,18 @@ app.get('/api/business/:id', authRequired, async (req, res) => {
         }
       }
       if (business.marketing_strategy_fr) business.marketing_strategy = business.marketing_strategy_fr;
+
+      // Same discipline for Content Calendar (Phase 7, Step 2).
+      if (business.content_calendar && !business.content_calendar_fr) {
+        try {
+          const translatedCalendar = await translateStructuredContent(business.content_calendar, 'content calendar');
+          await pool.query('UPDATE businesses SET content_calendar_fr = $1 WHERE id = $2', [JSON.stringify(translatedCalendar), business.id]);
+          business.content_calendar_fr = translatedCalendar;
+        } catch (e) {
+          console.error('Content calendar auto-translate failed (non-fatal, falling back to English):', e.message);
+        }
+      }
+      if (business.content_calendar_fr) business.content_calendar = business.content_calendar_fr;
     }
 
     res.json({ business: biz.rows[0], facts: facts.rows });
