@@ -2161,6 +2161,9 @@ document.addEventListener('arreyon:langchange', async () => {
     if (currentGrowthObjectiveId) loadGrowthObjective();
     else loadGrowthGoalsList();
   }
+  if (document.getElementById('section-action')?.classList.contains('active') && currentActionBusinessId) {
+    loadActionTasks();
+  }
   // applyTranslations() re-tags every data-i18n element, which would wipe out
   // the 🔒 lock prefix we add on top of the base label — re-apply it after.
   applyFinancialCalcLocks();
@@ -3439,6 +3442,7 @@ async function loadActionTasks() {
   const params = new URLSearchParams();
   if (status) params.set('status', status);
   if (priority) params.set('priority', priority);
+  params.set('lang', window.currentLang || 'en');
 
   try {
     const res = await fetch(`/api/business/${currentActionBusinessId}/tasks?${params.toString()}`);
