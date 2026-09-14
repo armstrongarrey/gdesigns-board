@@ -722,5 +722,11 @@ CREATE INDEX IF NOT EXISTS idx_action_tasks_business ON action_tasks(business_id
 ALTER TABLE action_tasks ADD COLUMN IF NOT EXISTS title_fr TEXT;
 ALTER TABLE action_tasks ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES users(id) ON DELETE SET NULL;
 
+-- Longer free-text detail beyond the title — mainly so the person a task is
+-- assigned to actually knows what to do, not just a short label. Same
+-- translate-once-and-cache pattern already used for title_fr.
+ALTER TABLE action_tasks ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE action_tasks ADD COLUMN IF NOT EXISTS description_fr TEXT;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
