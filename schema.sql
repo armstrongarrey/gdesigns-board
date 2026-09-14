@@ -750,5 +750,13 @@ CREATE TABLE IF NOT EXISTS tracked_competitors (
 );
 CREATE INDEX IF NOT EXISTS idx_tracked_competitors_business ON tracked_competitors(business_id);
 
+-- Step 2: Market Context — broader industry-level intelligence (market size,
+-- growth trend, seasonality) as opposed to Step 1's specific named
+-- competitors. One snapshot per business, same translate-once-and-cache
+-- pattern as intelligence_snapshot.
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS market_context JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS market_context_fr JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS market_context_generated_at TIMESTAMPTZ;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
