@@ -1613,6 +1613,136 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PHASE 7 — MARKETING & SALES (Step 3: Simple Lead Tracking)
+// Deliberately not a CRM — name, contact info, a simple status, and a
+// follow-up date that stays in sync with a real Action Center task.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Keeps a lead's linked follow-up task in sync with its next_follow_up_date:
+// creates one if none exists yet, updates the existing one if the date
+// changed, or removes it entirely if the date was cleared — a lead with no
+// scheduled follow-up shouldn't leave a stale, meaningless task behind.
+async function syncLeadFollowUpTask(lead, ownerId, businessId) {
+  const title = `Follow up with ${lead.name}`;
+  if (lead.next_follow_up_date) {
+    if (lead.linked_task_id) {
+      await pool.query('UPDATE action_tasks SET title = $1, title_fr = NULL, due_date = $2, updated_at = NOW() WHERE id = $3', [title, lead.next_follow_up_date, lead.linked_task_id]);
+      return lead.linked_task_id;
+    } else {
+      const inserted = await pool.query(
+        `INSERT INTO action_tasks (business_id, owner_id, title, priority, due_date, source, source_detail, lead_id) VALUES ($1, $2, $3, 'medium', $4, 'lead_tracking', $5, $6) RETURNING id`,
+        [businessId, ownerId, title, lead.next_follow_up_date, lead.name, lead.id]
+      );
+      return inserted.rows[0].id;
+    }
+  } else if (lead.linked_task_id) {
+    await pool.query('DELETE FROM action_tasks WHERE id = $1', [lead.linked_task_id]);
+    return null;
+  }
+  return lead.linked_task_id || null;
+}
+
+app.post('/api/business/:id/leads', authRequired, async (req, res) => {
+  const { name, contactInfo, status, nextFollowUpDate, notes } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Please give this lead a name.' });
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const validStatus = ['new', 'contacted', 'qualified', 'won', 'lost'].includes(status) ? status : 'new';
+    const inserted = await pool.query(
+      `INSERT INTO leads (business_id, owner_id, name, contact_info, status, next_follow_up_date, notes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [req.params.id, account.id, name.trim(), contactInfo?.trim() || null, validStatus, nextFollowUpDate || null, notes?.trim() || null]
+    );
+    const lead = inserted.rows[0];
+    await syncLeadFollowUpTask({ ...lead, linked_task_id: null }, account.id, req.params.id);
+
+    res.json({ success: true, lead });
+  } catch (e) {
+    console.error('Create lead error:', e.message);
+    res.status(500).json({ error: 'Failed to create lead' });
+  }
+});
+
+app.get('/api/business/:id/leads', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const conditions = ['business_id = $1'];
+    const params = [req.params.id];
+    if (req.query.status) { params.push(req.query.status); conditions.push(`status = $${params.length}`); }
+
+    const result = await pool.query(
+      `SELECT * FROM leads WHERE ${conditions.join(' AND ')} ORDER BY
+       CASE WHEN next_follow_up_date IS NULL THEN 1 ELSE 0 END, next_follow_up_date ASC, created_at DESC`,
+      params
+    );
+    res.json({ leads: result.rows });
+  } catch (e) {
+    console.error('List leads error:', e.message);
+    res.status(500).json({ error: 'Failed to load leads' });
+  }
+});
+
+app.put('/api/business/:id/leads/:leadId', authRequired, async (req, res) => {
+  const { name, contactInfo, status, nextFollowUpDate, notes } = req.body;
+  try {
+    const account = await resolveAccount(req.userId);
+    const existing = await pool.query(
+      `SELECT l.* FROM leads l JOIN businesses b ON b.id = l.business_id
+       WHERE l.id = $1 AND l.business_id = $2 AND b.user_id = $3`,
+      [req.params.leadId, req.params.id, account.id]
+    );
+    if (!existing.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    const lead = existing.rows[0];
+
+    const newName = name !== undefined ? name.trim() : lead.name;
+    const newContactInfo = contactInfo !== undefined ? (contactInfo.trim() || null) : lead.contact_info;
+    const newStatus = ['new', 'contacted', 'qualified', 'won', 'lost'].includes(status) ? status : lead.status;
+    const newFollowUpDate = nextFollowUpDate !== undefined ? (nextFollowUpDate || null) : lead.next_follow_up_date;
+    const newNotes = notes !== undefined ? (notes.trim() || null) : lead.notes;
+    // A follow-up that's freshly reset (date changed) is no longer overdue
+    // in any meaningful sense — clear the alert-sent marker so a genuinely
+    // new date can trigger its own reminder later if it, too, passes.
+    const followUpChanged = String(newFollowUpDate) !== String(lead.next_follow_up_date);
+
+    const updated = await pool.query(
+      `UPDATE leads SET name = $1, contact_info = $2, status = $3, next_follow_up_date = $4, notes = $5, overdue_alert_sent_at = $6, updated_at = NOW() WHERE id = $7 RETURNING *`,
+      [newName, newContactInfo, newStatus, newFollowUpDate, newNotes, followUpChanged ? null : lead.overdue_alert_sent_at, lead.id]
+    );
+    const updatedLead = updated.rows[0];
+
+    const existingTask = await pool.query('SELECT id FROM action_tasks WHERE lead_id = $1', [lead.id]);
+    await syncLeadFollowUpTask({ ...updatedLead, linked_task_id: existingTask.rows[0]?.id || null }, account.id, req.params.id);
+
+    res.json({ success: true, lead: updatedLead });
+  } catch (e) {
+    console.error('Update lead error:', e.message);
+    res.status(500).json({ error: 'Failed to update lead' });
+  }
+});
+
+app.delete('/api/business/:id/leads/:leadId', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(
+      `DELETE FROM leads WHERE id = $1 AND business_id = $2 AND business_id IN (
+         SELECT id FROM businesses WHERE user_id = $3
+       ) RETURNING id`,
+      [req.params.leadId, req.params.id, account.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Lead not found' });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Delete lead error:', e.message);
+    res.status(500).json({ error: 'Failed to delete lead' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
 // for an already-logged-in user, not authenticating them. Reuses the same
@@ -6708,6 +6838,10 @@ const ALERT_MESSAGES = {
   marketDeclining: {
     en: (businessName, growthTrend) => ({ title: `Market trend concern for ${businessName}`, message: growthTrend }),
     fr: (businessName, growthTrend) => ({ title: `Préoccupation liée à la tendance du marché pour ${businessName}`, message: growthTrend })
+  },
+  leadFollowUpOverdue: {
+    en: (leadName, businessName, daysOverdue) => ({ title: `Overdue follow-up: ${leadName}`, message: `Your follow-up with ${leadName} for ${businessName} was due ${daysOverdue} day${daysOverdue === 1 ? '' : 's'} ago.` }),
+    fr: (leadName, businessName, daysOverdue) => ({ title: `Suivi en retard : ${leadName}`, message: `Votre suivi avec ${leadName} pour ${businessName} était prévu il y a ${daysOverdue} jour${daysOverdue === 1 ? '' : 's'}.` })
   }
 };
 function alertText(templateKey, language, ...args) {
@@ -6833,6 +6967,30 @@ async function checkTeamActivity(ownerId, ownerPlan, prefs, language) {
   }
 }
 
+// ── 4. Overdue lead follow-ups (Phase 7, Step 3) ────────────────────────────
+// Re-reminds every 3 days a lead stays overdue, rather than either alerting
+// once and never again (easy to forget) or every single day (noisy) — the
+// same middle ground already accepted elsewhere in this sweep for
+// conditions that can persist across multiple runs.
+async function checkOverdueLeadFollowUps(ownerId, prefs, language) {
+  if (prefs && prefs.lead_alerts_enabled === false) return;
+
+  const overdue = await pool.query(
+    `SELECT l.*, b.name AS business_name FROM leads l JOIN businesses b ON b.id = l.business_id
+     WHERE b.user_id = $1 AND l.next_follow_up_date < CURRENT_DATE
+       AND l.status NOT IN ('won', 'lost')
+       AND (l.overdue_alert_sent_at IS NULL OR l.overdue_alert_sent_at < NOW() - INTERVAL '3 days')`,
+    [ownerId]
+  );
+
+  for (const lead of overdue.rows) {
+    const daysOverdue = Math.max(1, Math.round((Date.now() - new Date(lead.next_follow_up_date).getTime()) / (1000 * 60 * 60 * 24)));
+    const { title, message } = alertText('leadFollowUpOverdue', language, lead.name, lead.business_name, daysOverdue);
+    await createAlert(ownerId, lead.business_id, 'lead_followup_overdue', 'warning', title, message, { leadName: lead.name, businessName: lead.business_name, daysOverdue });
+    await pool.query('UPDATE leads SET overdue_alert_sent_at = NOW() WHERE id = $1', [lead.id]);
+  }
+}
+
 // ── Orchestration — runs all 3 checks for every account owner, then sends ──
 // one digest email per owner covering everything new since the last run.
 // Each owner is processed independently: if one owner's data causes an
@@ -6854,6 +7012,7 @@ async function runMonitoringSweep() {
         await checkMetricsChanges(owner.id, prefs, owner.preferred_language);
         await checkCompetitorChanges(owner.id, prefs, owner.preferred_language);
         await checkTeamActivity(owner.id, owner.plan, prefs, owner.preferred_language);
+        await checkOverdueLeadFollowUps(owner.id, prefs, owner.preferred_language);
         ownersChecked++;
 
         // Digest email for anything created just now and not yet emailed
