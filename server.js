@@ -224,8 +224,11 @@ const EMAIL_TEMPLATES = {
       subject: `You've been assigned a task on Arreyon Consult`,
       html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
         <h2>New task assigned to you</h2>
-        <p><strong>${p.assignerName}</strong> assigned you a task on <strong>${p.businessName}</strong>:</p>
-        <div style="background:#f5f5f5;border-radius:8px;padding:14px 16px;margin:14px 0">${p.taskTitle}</div>
+        <p><strong>${escapeHtmlEmail(p.assignerName)}</strong> assigned you a task on <strong>${escapeHtmlEmail(p.businessName)}</strong>:</p>
+        <div style="background:#f5f5f5;border-radius:8px;padding:14px 16px;margin:14px 0">
+          <div style="font-weight:600">${escapeHtmlEmail(p.taskTitle)}</div>
+          ${p.taskDescription ? `<div style="margin-top:8px;color:#555;white-space:pre-wrap">${escapeHtmlEmail(p.taskDescription)}</div>` : ''}
+        </div>
         <a href="${p.dashboardUrl}" style="display:inline-block;background:#6C3Bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">View in Action Center</a>
         <hr style="margin-top:24px">
         <p style="color:#999;font-size:11px">Arreyon Consult by G-DESIGNS LTD</p>
@@ -235,8 +238,11 @@ const EMAIL_TEMPLATES = {
       subject: `Une tâche vous a été assignée sur Arreyon Consult`,
       html: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
         <h2>Nouvelle tâche qui vous est assignée</h2>
-        <p><strong>${p.assignerName}</strong> vous a assigné une tâche sur <strong>${p.businessName}</strong> :</p>
-        <div style="background:#f5f5f5;border-radius:8px;padding:14px 16px;margin:14px 0">${p.taskTitle}</div>
+        <p><strong>${escapeHtmlEmail(p.assignerName)}</strong> vous a assigné une tâche sur <strong>${escapeHtmlEmail(p.businessName)}</strong> :</p>
+        <div style="background:#f5f5f5;border-radius:8px;padding:14px 16px;margin:14px 0">
+          <div style="font-weight:600">${escapeHtmlEmail(p.taskTitle)}</div>
+          ${p.taskDescription ? `<div style="margin-top:8px;color:#555;white-space:pre-wrap">${escapeHtmlEmail(p.taskDescription)}</div>` : ''}
+        </div>
         <a href="${p.dashboardUrl}" style="display:inline-block;background:#6C3Bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Voir dans le Centre d'action</a>
         <hr style="margin-top:24px">
         <p style="color:#999;font-size:11px">Arreyon Consult par G-DESIGNS LTD</p>
@@ -244,6 +250,14 @@ const EMAIL_TEMPLATES = {
     })
   }
 };
+
+// Email HTML is built directly from user-entered text (task titles,
+// descriptions) — escape it so a task containing HTML or a stray link can't
+// alter the email's structure in a recipient's mail client.
+function escapeHtmlEmail(str) {
+  if (!str) return '';
+  return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 
 function buildEmail(type, lang, params) {
   const langKey = lang === 'fr' ? 'fr' : 'en';
@@ -978,7 +992,7 @@ app.get('/api/business/:id/assignable-members', authRequired, async (req, res) =
 // — deliberately not batched into the daily digest like other alerts, since
 // being assigned a task is the kind of thing someone should hear about
 // promptly, not find in tomorrow's summary.
-async function notifyTaskAssignment(assignedUserId, taskTitle, businessId, assignerUserId) {
+async function notifyTaskAssignment(assignedUserId, taskTitle, taskDescription, businessId, assignerUserId) {
   try {
     const [assignedUser, assigner, business] = await Promise.all([
       pool.query('SELECT email, first_name, last_name, preferred_language FROM users WHERE id = $1', [assignedUserId]),
@@ -993,7 +1007,7 @@ async function notifyTaskAssignment(assignedUserId, taskTitle, businessId, assig
     const { title, message } = alertText('taskAssigned', user.preferred_language, taskTitle, businessName, assignerName);
     await createAlert(assignedUserId, businessId, 'task_assigned', 'info', title, message, { taskTitle, businessName, assignerName });
 
-    const { subject, html } = buildEmail('taskAssigned', user.preferred_language, { taskTitle, businessName, assignerName, dashboardUrl: `${BASE_URL}/dashboard` });
+    const { subject, html } = buildEmail('taskAssigned', user.preferred_language, { taskTitle, taskDescription, businessName, assignerName, dashboardUrl: `${BASE_URL}/dashboard` });
     await sendEmail(user.email, subject, html);
   } catch (e) {
     console.error('Task assignment notification failed (non-fatal — the task itself was still created/updated):', e.message);
@@ -1001,7 +1015,7 @@ async function notifyTaskAssignment(assignedUserId, taskTitle, businessId, assig
 }
 
 app.post('/api/business/:id/tasks', authRequired, async (req, res) => {
-  const { title, priority, dueDate, category, source, sourceDetail, assignedTo } = req.body;
+  const { title, description, priority, dueDate, category, source, sourceDetail, assignedTo } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: 'Please give this task a title.' });
   try {
     const account = await resolveAccount(req.userId);
@@ -1010,12 +1024,12 @@ app.post('/api/business/:id/tasks', authRequired, async (req, res) => {
 
     const validPriority = ['high', 'medium', 'low'].includes(priority) ? priority : 'medium';
     const inserted = await pool.query(
-      `INSERT INTO action_tasks (business_id, owner_id, title, priority, due_date, category, source, source_detail, assigned_to)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [req.params.id, account.id, title.trim(), validPriority, dueDate || null, category || null, source || 'manual', sourceDetail || null, assignedTo || null]
+      `INSERT INTO action_tasks (business_id, owner_id, title, description, priority, due_date, category, source, source_detail, assigned_to)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [req.params.id, account.id, title.trim(), description?.trim() || null, validPriority, dueDate || null, category || null, source || 'manual', sourceDetail || null, assignedTo || null]
     );
 
-    if (assignedTo) notifyTaskAssignment(assignedTo, title.trim(), req.params.id, req.userId);
+    if (assignedTo) notifyTaskAssignment(assignedTo, title.trim(), description?.trim(), req.params.id, req.userId);
 
     res.json({ success: true, task: inserted.rows[0] });
   } catch (e) {
@@ -1067,6 +1081,24 @@ app.get('/api/business/:id/tasks', authRequired, async (req, res) => {
         }
       }
       tasks.forEach(t => { if (t.title_fr) t.title = t.title_fr; });
+
+      const missingDesc = tasks.filter(t => t.description && !t.description_fr);
+      if (missingDesc.length) {
+        try {
+          const toTranslate = Object.fromEntries(missingDesc.map(t => [t.id, t.description]));
+          const translated = await translateBusinessFacts(toTranslate);
+          for (const t of missingDesc) {
+            const frDesc = translated[t.id];
+            if (frDesc) {
+              await pool.query('UPDATE action_tasks SET description_fr = $1 WHERE id = $2', [frDesc, t.id]);
+              t.description_fr = frDesc;
+            }
+          }
+        } catch (e) {
+          console.error('Task description auto-translate failed (non-fatal, falling back to English):', e.message);
+        }
+      }
+      tasks.forEach(t => { if (t.description_fr) t.description = t.description_fr; });
     }
 
     res.json({ tasks });
@@ -1077,7 +1109,7 @@ app.get('/api/business/:id/tasks', authRequired, async (req, res) => {
 });
 
 app.put('/api/business/:id/tasks/:taskId', authRequired, async (req, res) => {
-  const { title, priority, status, dueDate, notes, assignedTo } = req.body;
+  const { title, description, priority, status, dueDate, notes, assignedTo } = req.body;
   try {
     const account = await resolveAccount(req.userId);
     const existing = await pool.query(
@@ -1090,6 +1122,8 @@ app.put('/api/business/:id/tasks/:taskId', authRequired, async (req, res) => {
 
     const newTitle = title !== undefined ? title.trim() : task.title;
     const titleChanged = newTitle !== task.title;
+    const newDescription = description !== undefined ? (description.trim() || null) : task.description;
+    const descriptionChanged = newDescription !== task.description;
     const newPriority = ['high', 'medium', 'low'].includes(priority) ? priority : task.priority;
     const newStatus = ['not_started', 'in_progress', 'done'].includes(status) ? status : task.status;
     const newDueDate = dueDate !== undefined ? (dueDate || null) : task.due_date;
@@ -1099,17 +1133,18 @@ app.put('/api/business/:id/tasks/:taskId', authRequired, async (req, res) => {
     // so re-completing later gets an accurate new timestamp rather than a stale one.
     const completedAt = newStatus === 'done' ? (task.status === 'done' ? task.completed_at : new Date()) : null;
     const newTitleFr = titleChanged ? null : task.title_fr;
+    const newDescriptionFr = descriptionChanged ? null : task.description_fr;
     const newAssignedTo = assignedTo !== undefined ? (assignedTo || null) : task.assigned_to;
     // Notify only on a genuine reassignment to someone new — not on every
     // save, and not if the field wasn't even part of this request.
     const isNewAssignment = newAssignedTo && newAssignedTo !== task.assigned_to;
 
     const updated = await pool.query(
-      `UPDATE action_tasks SET title = $1, title_fr = $2, priority = $3, status = $4, due_date = $5, notes = $6, completed_at = $7, assigned_to = $8, updated_at = NOW() WHERE id = $9 RETURNING *`,
-      [newTitle, newTitleFr, newPriority, newStatus, newDueDate, newNotes, completedAt, newAssignedTo, task.id]
+      `UPDATE action_tasks SET title = $1, title_fr = $2, description = $3, description_fr = $4, priority = $5, status = $6, due_date = $7, notes = $8, completed_at = $9, assigned_to = $10, updated_at = NOW() WHERE id = $11 RETURNING *`,
+      [newTitle, newTitleFr, newDescription, newDescriptionFr, newPriority, newStatus, newDueDate, newNotes, completedAt, newAssignedTo, task.id]
     );
 
-    if (isNewAssignment) notifyTaskAssignment(newAssignedTo, newTitle, req.params.id, req.userId);
+    if (isNewAssignment) notifyTaskAssignment(newAssignedTo, newTitle, newDescription, req.params.id, req.userId);
 
     res.json({ success: true, task: updated.rows[0] });
   } catch (e) {
