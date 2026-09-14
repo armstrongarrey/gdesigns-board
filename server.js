@@ -81,8 +81,8 @@ const PLAN_LIMITS = {
 // three most fundamental ones; Pro and Business get the full engine.
 const FINANCIAL_TOOLS_ACCESS = {
   starter:  ['roi', 'breakeven', 'growth_projection'],
-  pro:      ['revenue', 'profit_margin', 'breakeven', 'roi', 'cac', 'ltv', 'ltv_cac_ratio', 'roas', 'growth_projection', 'cashflow_projection'],
-  business: ['revenue', 'profit_margin', 'breakeven', 'roi', 'cac', 'ltv', 'ltv_cac_ratio', 'roas', 'growth_projection', 'cashflow_projection']
+  pro:      ['revenue', 'profit_margin', 'breakeven', 'roi', 'cac', 'ltv', 'ltv_cac_ratio', 'roas', 'growth_projection', 'cashflow_projection', 'pricing', 'markup', 'runway', 'budget_variance', 'valuation'],
+  business: ['revenue', 'profit_margin', 'breakeven', 'roi', 'cac', 'ltv', 'ltv_cac_ratio', 'roas', 'growth_projection', 'cashflow_projection', 'pricing', 'markup', 'runway', 'budget_variance', 'valuation']
 };
 
 const STARTER_DIRECTORS = ['rockefeller', 'ogilvy', 'buffett', 'dangote', 'kotler'];
@@ -3823,6 +3823,48 @@ function calcCashFlowProjection({ startingCash, monthlyRevenue, monthlyExpenses,
   return { projection, negativeMonth, warning: negativeMonth ? `Cash goes negative in month ${negativeMonth} at this rate — revisit costs or revenue assumptions before this point.` : null };
 }
 
+// ── Phase 6 additions ────────────────────────────────────────────────────
+function calcPricing({ unitCost, desiredMarginPct }) {
+  if (desiredMarginPct >= 100) return { error: 'Desired margin must be less than 100%.' };
+  const sellingPrice = unitCost / (1 - desiredMarginPct / 100);
+  return { sellingPrice: round2(sellingPrice), marginAmount: round2(sellingPrice - unitCost) };
+}
+
+// Markup (% of cost added on top) and margin (% of the final price that is
+// profit) are the single most common pricing confusion for new founders —
+// this deliberately surfaces both numbers so the difference is visible,
+// not just the one the user asked for.
+function calcMarkup({ unitCost, markupPct }) {
+  const sellingPrice = unitCost * (1 + markupPct / 100);
+  const equivalentMarginPct = sellingPrice !== 0 ? ((sellingPrice - unitCost) / sellingPrice) * 100 : 0;
+  return { sellingPrice: round2(sellingPrice), markupAmount: round2(sellingPrice - unitCost), equivalentMarginPct: round2(equivalentMarginPct) };
+}
+
+function calcRunway({ cashOnHand, monthlyBurnRate }) {
+  if (monthlyBurnRate <= 0) return { error: 'Monthly burn rate must be greater than zero — if you are profitable or breakeven, runway is not the right metric.' };
+  const runwayMonths = cashOnHand / monthlyBurnRate;
+  const runwayDate = new Date();
+  runwayDate.setMonth(runwayDate.getMonth() + Math.floor(runwayMonths));
+  return { runwayMonths: round2(runwayMonths), estimatedRunOutDate: runwayDate.toISOString().split('T')[0] };
+}
+
+function calcBudgetVariance({ budgetedAmount, actualAmount }) {
+  if (budgetedAmount === 0) return { error: 'Budgeted amount cannot be zero.' };
+  const varianceAmount = actualAmount - budgetedAmount;
+  const variancePct = (varianceAmount / budgetedAmount) * 100;
+  const status = varianceAmount > 0 ? 'over' : varianceAmount < 0 ? 'under' : 'on-budget';
+  return { varianceAmount: round2(varianceAmount), variancePct: round2(variancePct), status };
+}
+
+// Deliberately takes the multiple as a user-supplied input rather than
+// having the system pick or invent one — real valuation multiples vary too
+// much by industry and circumstance to guess responsibly, which would
+// violate the platform's deterministic-math-only rule for financial figures.
+function calcValuation({ sde, multiple }) {
+  if (multiple <= 0) return { error: 'Multiple must be greater than zero.' };
+  return { estimatedValuation: round2(sde * multiple) };
+}
+
 const FINANCIAL_CALCULATORS = {
   revenue: { fn: calcRevenue, requiredInputs: ['unitsSold', 'pricePerUnit'] },
   profit_margin: { fn: calcProfitMargin, requiredInputs: ['revenue', 'cogs'] },
@@ -3833,7 +3875,12 @@ const FINANCIAL_CALCULATORS = {
   ltv_cac_ratio: { fn: calcLTVtoCAC, requiredInputs: ['ltv', 'cac'] },
   roas: { fn: calcROAS, requiredInputs: ['revenueFromAds', 'adSpend'] },
   growth_projection: { fn: calcGrowthProjection, requiredInputs: ['startValue', 'monthlyGrowthRatePct'] },
-  cashflow_projection: { fn: calcCashFlowProjection, requiredInputs: ['startingCash', 'monthlyRevenue', 'monthlyExpenses'] }
+  cashflow_projection: { fn: calcCashFlowProjection, requiredInputs: ['startingCash', 'monthlyRevenue', 'monthlyExpenses'] },
+  pricing: { fn: calcPricing, requiredInputs: ['unitCost', 'desiredMarginPct'] },
+  markup: { fn: calcMarkup, requiredInputs: ['unitCost', 'markupPct'] },
+  runway: { fn: calcRunway, requiredInputs: ['cashOnHand', 'monthlyBurnRate'] },
+  budget_variance: { fn: calcBudgetVariance, requiredInputs: ['budgetedAmount', 'actualAmount'] },
+  valuation: { fn: calcValuation, requiredInputs: ['sde', 'multiple'] }
 };
 
 // ── Financial Calculator endpoint — pure math, no AI call, available to all plans ──
