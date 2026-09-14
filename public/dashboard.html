@@ -1139,6 +1139,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     </div>
 
     <div id="marketMainWrap" style="display:none;max-width:700px">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:18px">
+        <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:12px" data-i18n="market.context_title">Market Context</div>
+        <div id="marketContextContent"></div>
+      </div>
+
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:18px">
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <input class="form-input" id="newCompetitorName" data-i18n-placeholder="market.competitor_name_placeholder" placeholder="Competitor name" style="flex:1;min-width:160px">
@@ -3663,6 +3668,8 @@ async function loadCompetitors() {
   if (!currentMarketBusinessId) return;
   try { localStorage.setItem('arreyon_market_business_id', currentMarketBusinessId); } catch (e) {}
 
+  loadMarketContext();
+
   try {
     const res = await fetch(`/api/business/${currentMarketBusinessId}/competitors?lang=${window.currentLang || 'en'}`);
     const data = await res.json();
@@ -3677,6 +3684,70 @@ async function loadCompetitors() {
 
     listEl.innerHTML = competitors.map(c => renderCompetitorCard(c)).join('');
   } catch (e) {}
+}
+
+async function loadMarketContext() {
+  if (!currentMarketBusinessId) return;
+  try {
+    const res = await fetch(`/api/business/${currentMarketBusinessId}?lang=${window.currentLang || 'en'}`);
+    const data = await res.json();
+    renderMarketContextContent(data.business?.market_context, data.business?.market_context_generated_at);
+  } catch (e) {}
+}
+
+function renderMarketContextContent(mc, generatedAt) {
+  const contentEl = document.getElementById('marketContextContent');
+  if (!mc) {
+    contentEl.innerHTML = `
+      <div style="text-align:center;padding:16px">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:12px" data-i18n="market.no_context_yet">Get a picture of the broader market this business operates in.</div>
+        <button class="btn-primary" onclick="generateMarketContext()" id="marketContextGenerateBtn">🌍 <span data-i18n="market.generate_context">Analyze Market Context</span></button>
+      </div>`;
+    return;
+  }
+
+  const dateStr = generatedAt ? new Date(generatedAt).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+  const listBlock = (labelKey, defaultLabel, items) => items && items.length ? `
+    <div style="margin-bottom:10px">
+      <div style="font-size:10px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:4px" data-i18n="${labelKey}">${defaultLabel}</div>
+      <ul style="margin:0;padding-left:16px;font-size:12.5px;color:var(--text2);line-height:1.6">${items.map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>
+    </div>` : '';
+
+  contentEl.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
+      ${dateStr ? `<span style="font-size:11px;color:var(--muted)">${t('bi.as_of')} ${dateStr}</span>` : ''}
+      <button onclick="generateMarketContext()" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px" data-i18n="bi.regenerate">↻ Regenerate</button>
+    </div>
+    ${mc.confidence_note ? `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:12px">${escapeHtml(mc.confidence_note)}</div>` : ''}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><div style="font-size:10px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:4px" data-i18n="market.market_size">Market Size</div><div style="font-size:12.5px;color:var(--text2)">${escapeHtml(mc.market_size_estimate || '')}</div></div>
+      <div><div style="font-size:10px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:4px" data-i18n="market.growth_trend">Growth Trend</div><div style="font-size:12.5px;color:var(--text2)">${escapeHtml(mc.growth_trend || '')}</div></div>
+    </div>
+    <div style="margin-bottom:10px"><div style="font-size:10px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:4px" data-i18n="market.seasonality">Seasonality</div><div style="font-size:12.5px;color:var(--text2)">${escapeHtml(mc.seasonality || '')}</div></div>
+    ${listBlock('market.key_trends', 'Key Industry Trends', mc.key_industry_trends)}
+    ${listBlock('market.opportunities_from_context', 'Opportunities', mc.opportunities_from_context)}
+    ${listBlock('market.risks_from_context', 'Risks', mc.risks_from_context)}`;
+}
+
+async function generateMarketContext() {
+  const btn = document.getElementById('marketContextGenerateBtn');
+  if (btn) { btn.disabled = true; btn.textContent = t('growth.generating'); }
+  document.getElementById('marketContextContent').innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${t('growth.generating')}</div>`;
+
+  try {
+    const res = await fetch(`/api/business/${currentMarketBusinessId}/market-context`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: window.currentLang || 'en' })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('marketContextContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('growth.generate_failed')}</div>`;
+      return;
+    }
+    renderMarketContextContent(data.marketContext, data.generatedAt);
+  } catch (e) {
+    document.getElementById('marketContextContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${t('board.connection_error')}</div>`;
+  }
 }
 
 function renderCompetitorCard(c) {
