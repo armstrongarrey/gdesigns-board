@@ -250,7 +250,7 @@ const DIRECTOR_AI = {
 let active = null;
 let convos = {};
 let busy = false;
-let manualAI = null; // null = auto mode, 'claude'/'chatgpt'/'gemini' = manual override
+let manualAI = null; // null = auto mode, 'claude'/'chatgpt'/'gemini'/'perplexity' = manual override
 
 // ── AI Selection Logic ─────────────────────────────────────────────────────
 function getAIForDirector(dirId) {
@@ -276,7 +276,7 @@ function updateToggleUI() {
 
 function updateWhoBar(d) {
   const ai = getAIForDirector(d.id);
-  const aiLabel = ai === 'chatgpt' ? 'ChatGPT' : ai === 'gemini' ? 'Gemini' : 'Claude';
+  const aiLabel = ai === 'chatgpt' ? 'ChatGPT' : ai === 'gemini' ? 'Gemini' : ai === 'perplexity' ? 'Perplexity' : 'Claude';
   document.getElementById('whoBar').innerHTML = `
     <div class="who-av" style="background:${d.bg};color:${d.fg}">${d.init}</div>
     <div style="flex:1">
@@ -625,7 +625,7 @@ function renderMsgsOnly() {
     const row = document.createElement('div');
     row.className = 'mrow ' + (m.from === 'them' ? 'them' : 'me');
     if (m.from === 'them') {
-      const aiLabel = m.ai === 'chatgpt' ? 'ChatGPT' : m.ai === 'gemini' ? 'Gemini' : 'Claude';
+      const aiLabel = m.ai === 'chatgpt' ? 'ChatGPT' : m.ai === 'gemini' ? 'Gemini' : m.ai === 'perplexity' ? 'Perplexity' : 'Claude';
       const badge = m.ai ? `<span class="ai-badge badge-${m.ai}">${aiLabel}</span>` : '';
       row.innerHTML = `<div class="mav2" style="background:${active.bg};color:${active.fg}">${active.init}</div>
                        <div><div class="bub">${esc(displayText)}</div>${badge}</div>`;
