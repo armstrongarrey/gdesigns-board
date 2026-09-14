@@ -758,5 +758,16 @@ ALTER TABLE businesses ADD COLUMN IF NOT EXISTS market_context JSONB;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS market_context_fr JSONB;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS market_context_generated_at TIMESTAMPTZ;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 7 — MARKETING & SALES (Step 1: Standalone Marketing Strategy)
+-- Same marketing_plan shape already produced inside a full Business Plan
+-- generation, but as its own regenerable feature tied directly to a
+-- business — no need to run the full business-plan flow just to get
+-- marketing help. Same translate-once-and-cache pattern as everywhere else.
+-- ═══════════════════════════════════════════════════════════════════════════
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS marketing_strategy JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS marketing_strategy_fr JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS marketing_strategy_generated_at TIMESTAMPTZ;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
