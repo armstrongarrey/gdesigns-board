@@ -1354,6 +1354,79 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   }
 });
 
+// Broader industry-level intelligence — market size, growth trend,
+// seasonality — as opposed to the specific named competitors tracked above.
+// One snapshot per business, regenerated on demand.
+app.post('/api/business/:id/market-context', authRequired, async (req, res) => {
+  const language = req.body?.language === 'fr' ? 'fr' : 'en';
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+
+    // Best-effort industry research — proceed with general reasoning if
+    // Tavily isn't configured or the search comes back thin, same as the
+    // competitor analysis above.
+    let researchSummary = '';
+    try {
+      const industryQuery = context.business?.industry ? `${context.business.industry} market size trends ${context.business.country || ''}`.trim() : null;
+      if (industryQuery) {
+        const results = await tavilySearch(industryQuery, { maxResults: 4 });
+        if (results.length) {
+          researchSummary = '\n\nWEB RESEARCH ON THIS INDUSTRY:\n' + results.map(r => `- ${r.title}: ${r.snippet}`).join('\n');
+        }
+      }
+    } catch (e) {
+      console.error('Market context web research failed (non-fatal, proceeding without it):', e.message);
+    }
+
+    const prompt = `You are a market analyst. Assess the broader industry/market context this business operates in — not the business itself, and not specific named competitors, but the bigger picture backdrop: how big the market is, whether it's growing, and any seasonal patterns that matter.
+
+THE BUSINESS:
+${contextSummary}${researchSummary}
+
+If the web research above is thin or absent, be honest about that in your confidence_note rather than inventing specific numbers.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "market_size_estimate": "a grounded description of the market size, or an honest statement that this can't be estimated with confidence",
+  "growth_trend": "growing | stable | declining | unclear, with one sentence of explanation",
+  "seasonality": "any seasonal patterns relevant to this market, or 'No strong seasonal pattern identified' if none",
+  "key_industry_trends": ["trend 1", "trend 2", "trend 3 (optional)"],
+  "opportunities_from_context": ["specific opportunity tied to this market context", "opportunity 2 (optional)"],
+  "risks_from_context": ["specific risk tied to this market context", "risk 2 (optional)"],
+  "confidence_note": "one honest sentence on how much this analysis can be trusted given the research available"
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Produce the analysis now, as JSON only.' }], complexity: 'complex', context: { feature: 'market_context', userId: req.userId }, maxTokens: 2000 });
+
+    let marketContext;
+    try {
+      marketContext = extractJSON(raw);
+    } catch (e) {
+      console.error('Market context JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
+      throw new Error('Could not generate market context — please try again');
+    }
+    for (const field of ['key_industry_trends', 'opportunities_from_context', 'risks_from_context']) {
+      if (!Array.isArray(marketContext[field])) {
+        console.error(`Market context field "${field}" was not an array:`, typeof marketContext[field]);
+        throw new Error('Could not generate market context — please try again');
+      }
+    }
+
+    await pool.query(
+      'UPDATE businesses SET market_context = $1, market_context_fr = NULL, market_context_generated_at = NOW() WHERE id = $2',
+      [JSON.stringify(marketContext), req.params.id]
+    );
+
+    res.json({ marketContext, generatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('Market context generation error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate market context. Please try again.' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
@@ -6172,6 +6245,18 @@ app.get('/api/business/:id', authRequired, async (req, res) => {
         }
       }
       if (business.intelligence_snapshot_fr) business.intelligence_snapshot = business.intelligence_snapshot_fr;
+
+      // Same discipline for Market Context (Phase 5, Step 2).
+      if (business.market_context && !business.market_context_fr) {
+        try {
+          const translatedContext = await translateStructuredContent(business.market_context, 'market context analysis');
+          await pool.query('UPDATE businesses SET market_context_fr = $1 WHERE id = $2', [JSON.stringify(translatedContext), business.id]);
+          business.market_context_fr = translatedContext;
+        } catch (e) {
+          console.error('Market context auto-translate failed (non-fatal, falling back to English):', e.message);
+        }
+      }
+      if (business.market_context_fr) business.market_context = business.market_context_fr;
     }
 
     res.json({ business: biz.rows[0], facts: facts.rows });
