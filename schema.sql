@@ -782,5 +782,31 @@ ALTER TABLE businesses ADD COLUMN IF NOT EXISTS content_calendar_generated_at TI
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS content_calendar_start_date DATE;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS content_calendar_end_date DATE;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 7 — MARKETING & SALES (Step 3: Simple Lead Tracking)
+-- Deliberately NOT a CRM, per the brief's explicit instruction — just enough
+-- to track a prospective client and get reminded to follow up. A lead's
+-- next_follow_up_date drives a real Action Center task (linked via
+-- action_tasks.lead_id, kept in sync rather than duplicated on every edit)
+-- and an overdue reminder through the existing Alerts sweep.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS leads (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  owner_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  name VARCHAR(255) NOT NULL,
+  contact_info VARCHAR(255),
+  status VARCHAR(20) DEFAULT 'new', -- new | contacted | qualified | won | lost
+  next_follow_up_date DATE,
+  notes TEXT,
+  overdue_alert_sent_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_leads_business ON leads(business_id, status);
+
+ALTER TABLE action_tasks ADD COLUMN IF NOT EXISTS lead_id UUID REFERENCES leads(id) ON DELETE SET NULL;
+ALTER TABLE monitoring_preferences ADD COLUMN IF NOT EXISTS lead_alerts_enabled BOOLEAN DEFAULT TRUE;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
