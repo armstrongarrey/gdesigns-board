@@ -945,6 +945,7 @@ app.post('/api/business/:id/tasks', authRequired, async (req, res) => {
 });
 
 app.get('/api/business/:id/tasks', authRequired, async (req, res) => {
+  const lang = req.query.lang === 'fr' ? 'fr' : 'en';
   try {
     const account = await resolveAccount(req.userId);
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
@@ -962,7 +963,33 @@ app.get('/api/business/:id/tasks', authRequired, async (req, res) => {
        created_at DESC`,
       params
     );
-    res.json({ tasks: result.rows });
+    const tasks = result.rows;
+
+    // Same "translate once, cache, never regenerate" discipline used
+    // everywhere else — batched into a single AI call for however many
+    // tasks need it, rather than one call per task, which would be
+    // wasteful for a list.
+    if (lang === 'fr') {
+      const missing = tasks.filter(t => t.title && !t.title_fr);
+      if (missing.length) {
+        try {
+          const toTranslate = Object.fromEntries(missing.map(t => [t.id, t.title]));
+          const translated = await translateBusinessFacts(toTranslate);
+          for (const t of missing) {
+            const frTitle = translated[t.id];
+            if (frTitle) {
+              await pool.query('UPDATE action_tasks SET title_fr = $1 WHERE id = $2', [frTitle, t.id]);
+              t.title_fr = frTitle;
+            }
+          }
+        } catch (e) {
+          console.error('Task title auto-translate failed (non-fatal, falling back to English):', e.message);
+        }
+      }
+      tasks.forEach(t => { if (t.title_fr) t.title = t.title_fr; });
+    }
+
+    res.json({ tasks });
   } catch (e) {
     console.error('List tasks error:', e.message);
     res.status(500).json({ error: 'Failed to load tasks' });
@@ -982,6 +1009,7 @@ app.put('/api/business/:id/tasks/:taskId', authRequired, async (req, res) => {
     const task = existing.rows[0];
 
     const newTitle = title !== undefined ? title.trim() : task.title;
+    const titleChanged = newTitle !== task.title;
     const newPriority = ['high', 'medium', 'low'].includes(priority) ? priority : task.priority;
     const newStatus = ['not_started', 'in_progress', 'done'].includes(status) ? status : task.status;
     const newDueDate = dueDate !== undefined ? (dueDate || null) : task.due_date;
@@ -990,10 +1018,11 @@ app.put('/api/business/:id/tasks/:taskId', authRequired, async (req, res) => {
     // set the moment it becomes done, cleared if it's moved back off done,
     // so re-completing later gets an accurate new timestamp rather than a stale one.
     const completedAt = newStatus === 'done' ? (task.status === 'done' ? task.completed_at : new Date()) : null;
+    const newTitleFr = titleChanged ? null : task.title_fr;
 
     const updated = await pool.query(
-      `UPDATE action_tasks SET title = $1, priority = $2, status = $3, due_date = $4, notes = $5, completed_at = $6, updated_at = NOW() WHERE id = $7 RETURNING *`,
-      [newTitle, newPriority, newStatus, newDueDate, newNotes, completedAt, task.id]
+      `UPDATE action_tasks SET title = $1, title_fr = $2, priority = $3, status = $4, due_date = $5, notes = $6, completed_at = $7, updated_at = NOW() WHERE id = $8 RETURNING *`,
+      [newTitle, newTitleFr, newPriority, newStatus, newDueDate, newNotes, completedAt, task.id]
     );
     res.json({ success: true, task: updated.rows[0] });
   } catch (e) {
