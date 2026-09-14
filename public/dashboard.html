@@ -2180,6 +2180,7 @@ function renderAnalysisResults(data) {
 
 // ── BUSINESS INTELLIGENCE PANEL — Phase 2 ───────────────────────────────────
 const BI_LEVEL_COLORS = { high: 'var(--green)', strong: 'var(--green)', medium: 'var(--gold)', moderate: 'var(--gold)', low: '#ef4444', weak: '#ef4444', unclear: 'var(--muted)' };
+let currentBiIntelligenceForTasks = null;
 
 async function loadBusinessIntelligence(businessId, existingSnapshot, existingGeneratedAt) {
   // Completeness score is cheap (no AI call) and always fresh — fetched
@@ -2229,6 +2230,7 @@ async function generateBusinessIntelligence(businessId) {
 }
 
 function renderBusinessIntelligenceContent(businessId, intelligence, generatedAt) {
+  currentBiIntelligenceForTasks = intelligence; // read by index from the Add-to-Action-Plan buttons below, avoiding any risk of quotes/apostrophes in the text breaking an inline onclick attribute
   const dateStr = generatedAt ? new Date(generatedAt).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 
   const swotBlock = (titleKey, defaultTitle, items, color) => `
@@ -2238,6 +2240,8 @@ function renderBusinessIntelligenceContent(businessId, intelligence, generatedAt
     </div>`;
 
   const scorePill = (label, value) => value ? `<div style="background:var(--bg3);border-radius:8px;padding:8px 12px;text-align:center"><div style="font-size:10px;color:var(--muted);text-transform:uppercase">${escapeHtml(label)}</div><div style="font-weight:700;color:${BI_LEVEL_COLORS[value] || 'var(--text)'};text-transform:capitalize">${escapeHtml(value)}</div></div>` : '';
+
+  const addTaskBtn = (onclickCall) => `<button onclick="${onclickCall}" style="background:none;border:1px solid var(--purple);color:var(--purple-light);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;white-space:nowrap;margin-left:8px" data-i18n="growth.add_to_action_plan">+ Add to Action Plan</button>`;
 
   document.getElementById('biContent').innerHTML = `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
@@ -2252,13 +2256,44 @@ function renderBusinessIntelligenceContent(businessId, intelligence, generatedAt
       ${swotBlock('bi.opportunities', 'Opportunities', intelligence.opportunities, 'var(--purple-light)')}
       ${swotBlock('bi.threats', 'Threats', intelligence.threats, 'var(--gold)')}
     </div>
-    ${intelligence.critical_bottleneck ? `<div style="background:rgba(239,68,68,.1);border:1px solid #ef4444;border-radius:8px;padding:12px 14px;margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:#ef4444;text-transform:uppercase;margin-bottom:4px" data-i18n="bi.critical_bottleneck">Critical Bottleneck</div><div style="font-size:13px;color:var(--text2)">${escapeHtml(intelligence.critical_bottleneck)}</div></div>` : ''}
-    ${intelligence.priority_problems && intelligence.priority_problems.length ? `<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:6px" data-i18n="bi.priority_problems">Priority Problems</div><ol style="margin:0;padding-left:18px;font-size:12.5px;color:var(--text2);line-height:1.7">${intelligence.priority_problems.map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ol></div>` : ''}
+    ${intelligence.critical_bottleneck ? `<div style="background:rgba(239,68,68,.1);border:1px solid #ef4444;border-radius:8px;padding:12px 14px;margin-bottom:14px"><div style="display:flex;align-items:center;font-size:11px;font-weight:700;color:#ef4444;text-transform:uppercase;margin-bottom:4px"><span data-i18n="bi.critical_bottleneck">Critical Bottleneck</span>${addTaskBtn(`addTaskFromBottleneck('${businessId}', event)`)}</div><div style="font-size:13px;color:var(--text2)">${escapeHtml(intelligence.critical_bottleneck)}</div></div>` : ''}
+    ${intelligence.priority_problems && intelligence.priority_problems.length ? `<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:6px" data-i18n="bi.priority_problems">Priority Problems</div><ol style="margin:0;padding-left:18px;font-size:12.5px;color:var(--text2);line-height:1.7">${intelligence.priority_problems.map((p, i) => `<li style="margin-bottom:4px">${escapeHtml(p)}${addTaskBtn(`addTaskFromPriorityProblem('${businessId}', ${i}, event)`)}</li>`).join('')}</ol></div>` : ''}
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
       ${scorePill(t('bi.opportunity_score'), intelligence.opportunity_score)}
       ${scorePill(t('bi.competitive_position'), intelligence.competitive_position)}
       ${scorePill(t('bi.growth_readiness'), intelligence.growth_readiness)}
     </div>`;
+}
+
+// Shared by every "+ Add to Action Plan" button across Business Intelligence
+// and Growth Center — takes the clicked button itself so it can show
+// immediate feedback (checkmark, then disable) without needing to re-render
+// the whole surrounding section just to confirm the click registered.
+async function addTaskFromSuggestion(businessId, title, source, sourceDetail, btnEl) {
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = '...'; }
+  try {
+    const res = await fetch(`/api/business/${businessId}/tasks`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, source, sourceDetail })
+    });
+    if (btnEl) {
+      if (res.ok) { btnEl.textContent = '✓ ' + t('growth.added'); btnEl.style.color = 'var(--green)'; btnEl.style.borderColor = 'var(--green)'; }
+      else { btnEl.disabled = false; btnEl.textContent = t('growth.add_to_action_plan'); }
+    }
+  } catch (e) {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = t('growth.add_to_action_plan'); }
+  }
+}
+
+function addTaskFromBottleneck(businessId, event) {
+  if (!currentBiIntelligenceForTasks?.critical_bottleneck) return;
+  addTaskFromSuggestion(businessId, currentBiIntelligenceForTasks.critical_bottleneck, 'business_intelligence', 'critical_bottleneck', event?.target);
+}
+
+function addTaskFromPriorityProblem(businessId, index, event) {
+  const text = currentBiIntelligenceForTasks?.priority_problems?.[index];
+  if (!text) return;
+  addTaskFromSuggestion(businessId, text, 'business_intelligence', 'priority_problem', event?.target);
 }
 
 function startEditFact(key) {
@@ -2914,6 +2949,7 @@ async function loadBusinessesForLinking() {
 let currentGrowthBusinessId = null;
 let currentGrowthObjectiveId = null;
 let currentBusinessHasGoals = false;
+let currentGrowthPlanForTasks = null;
 
 async function loadGrowthBusinesses() {
   try {
@@ -3258,6 +3294,7 @@ async function generateGrowthPlan() {
 }
 
 function renderGrowthPlan(plan, generatedAt) {
+  currentGrowthPlanForTasks = plan; // read by [checkpointIndex, actionIndex] from the Add-to-Action-Plan buttons below
   const dateStr = generatedAt ? new Date(generatedAt).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric' }) : '';
   const phaseBlock = (labelKey, defaultLabel, items) => `
     <div style="margin-bottom:14px">
@@ -3265,16 +3302,20 @@ function renderGrowthPlan(plan, generatedAt) {
       <ul style="margin:0;padding-left:18px;font-size:12.5px;color:var(--text2);line-height:1.7">${(items || []).map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>
     </div>`;
 
+  const addTaskBtn = (onclickCall) => `<button onclick="${onclickCall}" style="background:none;border:1px solid var(--purple);color:var(--purple-light);border-radius:4px;padding:1px 6px;font-size:9px;cursor:pointer;white-space:nowrap;margin-left:6px" data-i18n="growth.add_to_action_plan">+ Add to Action Plan</button>`;
+
   // Plans generated before flexible timeframes existed still have the old
   // fixed phase_30/60/90 shape — render those exactly as before rather than
   // showing a broken/empty timeline for a plan that was never regenerated.
+  // (No Add-to-Action-Plan button on this legacy shape — not worth building
+  // for a data format that's already deprecated in favor of the timeline.)
   const timelineHtml = Array.isArray(plan.timeline)
-    ? plan.timeline.map(checkpoint => `
+    ? plan.timeline.map((checkpoint, ci) => `
         <div style="background:var(--bg3);border-radius:10px;padding:14px;margin-bottom:10px">
           <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:2px">${escapeHtml(checkpoint.period_label || '')}</div>
           ${checkpoint.focus ? `<div style="font-size:12.5px;color:var(--text);font-weight:600;margin-bottom:8px">${escapeHtml(checkpoint.focus)}</div>` : ''}
           <ul style="margin:0;padding-left:18px;font-size:12.5px;color:var(--text2);line-height:1.7">
-            ${(checkpoint.actions || []).map(a => `<li><strong style="color:var(--text)">${escapeHtml(a.action || '')}</strong>${a.reason ? ` — <span style="color:var(--muted)">${escapeHtml(a.reason)}</span>` : ''}</li>`).join('')}
+            ${(checkpoint.actions || []).map((a, ai) => `<li style="margin-bottom:4px"><strong style="color:var(--text)">${escapeHtml(a.action || '')}</strong>${a.reason ? ` — <span style="color:var(--muted)">${escapeHtml(a.reason)}</span>` : ''}${addTaskBtn(`addTaskFromGrowthAction(${ci}, ${ai}, event)`)}</li>`).join('')}
           </ul>
         </div>`).join('')
     : phaseBlock('growth.phase_30', 'First 30 Days', plan.phase_30_days) +
@@ -3291,6 +3332,12 @@ function renderGrowthPlan(plan, generatedAt) {
     ${phaseBlock('growth.strategic_priorities', 'Strategic Priorities', plan.strategic_priorities)}
     <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:8px" data-i18n="growth.timeline">Timeline</div>
     ${timelineHtml}`;
+}
+
+function addTaskFromGrowthAction(checkpointIndex, actionIndex, event) {
+  const action = currentGrowthPlanForTasks?.timeline?.[checkpointIndex]?.actions?.[actionIndex];
+  if (!action?.action || !currentGrowthBusinessId) return;
+  addTaskFromSuggestion(currentGrowthBusinessId, action.action, 'growth_center', 'plan_action', event?.target);
 }
 
 async function findOpportunities() {
