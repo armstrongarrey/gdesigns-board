@@ -960,6 +960,18 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           </div>
         </div>
 
+        <div class="form-group" style="margin-bottom:16px">
+          <label data-i18n="scen.start_from_template">Start from a template (optional)</label>
+          <select class="form-input" id="scenarioTemplateSelect" onchange="applyScenarioTemplate(this.value)">
+            <option value="" data-i18n="scen.template_none">— Build from scratch —</option>
+            <option value="hire" data-i18n="scen.template_hire">Hiring someone</option>
+            <option value="price_change" data-i18n="scen.template_price_change">Changing prices</option>
+            <option value="new_location" data-i18n="scen.template_new_location">Opening a new location</option>
+            <option value="new_product" data-i18n="scen.template_new_product">Launching a new product/service</option>
+            <option value="cut_costs" data-i18n="scen.template_cut_costs">Cutting costs</option>
+          </select>
+        </div>
+
         <div id="scenarioOptionsWrap"></div>
 
         <div style="display:flex;gap:10px;margin-top:6px">
@@ -4469,7 +4481,49 @@ function renderCalculatorResult(type, r) {
 let scenarioOptionCount = 0;
 let lastScenarioResults = null;
 
-function addScenarioOption() {
+// Guided starting points (Phase 6, Step 2) — pre-fills option names and
+// description hints for common founder decisions, so the user fills in
+// just the numbers for their specific situation instead of building a
+// comparison from a blank form. Avoid literal double-quote characters in
+// any name/hint string here — these get inserted into an HTML value/
+// placeholder attribute via escapeHtml(), which (like the browser itself)
+// does not need to escape quotes within ordinary text content, only within
+// attribute values — safe here only because this data is fixed and
+// developer-authored, never user-supplied.
+const SCENARIO_TEMPLATES = {
+  hire: [
+    { name: 'Hire a full-time employee', hint: 'e.g. what role, and the change in output or revenue you expect from having them' },
+    { name: 'Don\u2019t hire \u2014 stay as is', hint: 'e.g. what stays the same, what you might miss out on by not hiring' }
+  ],
+  price_change: [
+    { name: 'Raise prices', hint: 'e.g. by how much, and the expected effect on demand' },
+    { name: 'Keep prices the same', hint: 'e.g. what staying the same protects or risks' }
+  ],
+  new_location: [
+    { name: 'Open a new location', hint: 'e.g. where, and expected new revenue vs. added costs' },
+    { name: 'Stay at current location only', hint: 'e.g. what growth this limits, what risk it avoids' }
+  ],
+  new_product: [
+    { name: 'Launch the new product or service', hint: 'e.g. what it is, and expected revenue vs. cost to build and launch it' },
+    { name: 'Don\u2019t launch it', hint: 'e.g. what resources this frees up instead' }
+  ],
+  cut_costs: [
+    { name: 'Cut costs', hint: 'e.g. what specifically gets cut, and the monthly savings' },
+    { name: 'Maintain current spending', hint: 'e.g. what continued spending protects or enables' }
+  ]
+};
+
+function applyScenarioTemplate(key) {
+  if (!key) return;
+  const template = SCENARIO_TEMPLATES[key];
+  if (!template) return;
+
+  document.getElementById('scenarioOptionsWrap').innerHTML = '';
+  scenarioOptionCount = 0;
+  template.forEach(opt => addScenarioOption(opt.name, opt.hint));
+}
+
+function addScenarioOption(prefillName = '', descPlaceholder = '') {
   if (scenarioOptionCount >= 4) { alert('You can compare up to 4 options at once.'); return; }
   scenarioOptionCount++;
   const letter = String.fromCharCode(64 + scenarioOptionCount); // A, B, C, D
@@ -4482,8 +4536,8 @@ function addScenarioOption() {
       <div style="font-size:12px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.05em">${t('scen.option')} ${letter}</div>
       ${scenarioOptionCount > 2 ? `<button type="button" onclick="removeScenarioOption(${scenarioOptionCount})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px">${t('scen.remove')}</button>` : ''}
     </div>
-    <div class="form-group"><label>${t('scen.name')}</label><input class="form-input" id="scenOptName_${scenarioOptionCount}" placeholder="e.g. Hire a full-time employee"></div>
-    <div class="form-group"><label>${t('scen.description')}</label><textarea class="form-input" id="scenOptDesc_${scenarioOptionCount}" rows="2" placeholder="${t('scen.desc_placeholder')}"></textarea></div>
+    <div class="form-group"><label>${t('scen.name')}</label><input class="form-input" id="scenOptName_${scenarioOptionCount}" placeholder="e.g. Hire a full-time employee" value="${escapeHtml(prefillName)}"></div>
+    <div class="form-group"><label>${t('scen.description')}</label><textarea class="form-input" id="scenOptDesc_${scenarioOptionCount}" rows="2" placeholder="${descPlaceholder ? escapeHtml(descPlaceholder) : t('scen.desc_placeholder')}"></textarea></div>
     <div style="font-size:11px;color:var(--muted);margin:8px 0 6px">${t('scen.financial_impact')}</div>
     <div class="form-row">
       <div class="form-group"><label>${t('scen.monthly_revenue_impact')}</label><input class="form-input" type="number" step="any" id="scenOptRevenue_${scenarioOptionCount}" placeholder="e.g. 50000"></div>
