@@ -1210,7 +1210,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:12px" data-i18n="mkt.leads_title">Leads</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
           <input class="form-input" id="newLeadName" data-i18n-placeholder="mkt.lead_name_placeholder" placeholder="Lead name" style="flex:1;min-width:140px">
-          <input class="form-input" id="newLeadContact" data-i18n-placeholder="mkt.lead_contact_placeholder" placeholder="Email or phone" style="flex:1;min-width:140px">
+          <input class="form-input" type="email" id="newLeadContact" data-i18n-placeholder="mkt.lead_email_placeholder" placeholder="Email" style="flex:1;min-width:140px">
+          <input class="form-input" type="tel" id="newLeadPhone" data-i18n-placeholder="mkt.lead_phone_placeholder" placeholder="Phone number" style="flex:1;min-width:140px">
           <input class="form-input" type="date" id="newLeadFollowUp" style="flex:1;min-width:130px">
           <button class="btn-primary" onclick="addLead()" data-i18n="mkt.add_lead">+ Add Lead</button>
         </div>
@@ -4208,7 +4209,7 @@ async function loadLeads() {
         <div style="display:flex;align-items:flex-start;gap:10px;background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
           <div style="flex:1;min-width:0">
             <div style="font-size:13.5px;color:var(--text);font-weight:600">${escapeHtml(lead.name)}</div>
-            ${lead.contact_info ? `<div style="font-size:11.5px;color:var(--muted)">${escapeHtml(lead.contact_info)}</div>` : ''}
+            ${(lead.contact_info || lead.phone) ? `<div style="font-size:11.5px;color:var(--muted)">${[lead.contact_info, lead.phone].filter(Boolean).map(escapeHtml).join(' · ')}</div>` : ''}
             <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
               <select onchange="updateLead('${lead.id}', {status: this.value})" style="font-size:11px;background:var(--bg2);color:${LEAD_STATUS_COLORS[lead.status]};border:none;border-radius:4px;padding:2px 6px;font-weight:700">
                 <option value="new" ${lead.status==='new'?'selected':''}>${t('mkt.status_new')}</option>
@@ -4231,16 +4232,18 @@ async function addLead() {
   const name = document.getElementById('newLeadName').value.trim();
   if (!name || !currentMktBusinessId) return;
   const contactInfo = document.getElementById('newLeadContact').value.trim();
+  const phone = document.getElementById('newLeadPhone').value.trim();
   const nextFollowUpDate = document.getElementById('newLeadFollowUp').value;
 
   try {
     const res = await fetch(`/api/business/${currentMktBusinessId}/leads`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, contactInfo: contactInfo || undefined, nextFollowUpDate: nextFollowUpDate || undefined })
+      body: JSON.stringify({ name, contactInfo: contactInfo || undefined, phone: phone || undefined, nextFollowUpDate: nextFollowUpDate || undefined })
     });
     if (res.ok) {
       document.getElementById('newLeadName').value = '';
       document.getElementById('newLeadContact').value = '';
+      document.getElementById('newLeadPhone').value = '';
       document.getElementById('newLeadFollowUp').value = '';
       loadLeads();
     }
