@@ -836,5 +836,17 @@ ALTER TABLE businesses ADD COLUMN IF NOT EXISTS pitch_deck JSONB;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS pitch_deck_fr JSONB;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS pitch_deck_generated_at TIMESTAMPTZ;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 8 — BUSINESS PLAN + FUNDING (Step 4: Share)
+-- One share token per business. When set, an unauthenticated visitor with
+-- the link can view a read-only combined view of the business's plan,
+-- funding readiness, and pitch deck outline — the natural "investor
+-- package" a founder would want to send as a single link. Revoking sharing
+-- clears the token, immediately invalidating any link already sent out.
+-- ═══════════════════════════════════════════════════════════════════════════
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS share_token VARCHAR(64) UNIQUE;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS share_created_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_businesses_share_token ON businesses(share_token) WHERE share_token IS NOT NULL;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
