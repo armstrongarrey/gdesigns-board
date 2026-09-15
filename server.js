@@ -458,6 +458,41 @@ function computeBusinessCompletenessScore(context) {
   return { score, breakdown };
 }
 
+// Deterministic funding readiness score — built entirely from objective,
+// verifiable signals already tracked elsewhere in the platform (has a plan,
+// has verified financials, tracks growth over time, etc.), never an
+// AI-invented number. Profile completeness reuses the existing Phase 2
+// score rather than a separate calculation.
+function computeFundingReadinessScore({
+  hasBusinessPlan,
+  hasVerifiedFinancials,
+  hasGrowthTracking,
+  hasBusinessIntelligence,
+  hasMarketContext,
+  trackedCompetitorCount,
+  profileCompletenessPct
+}) {
+  let score = 0;
+  const breakdown = [];
+  const add = (points, key, met) => {
+    if (met) score += points;
+    breakdown.push({ key, points: met ? points : 0, maxPoints: points, met: !!met });
+  };
+
+  add(20, 'has_business_plan', hasBusinessPlan);
+  add(20, 'has_verified_financials', hasVerifiedFinancials);
+  add(15, 'has_growth_tracking', hasGrowthTracking);
+  add(15, 'has_business_intelligence', hasBusinessIntelligence);
+  add(10, 'has_market_context', hasMarketContext);
+  add(10, 'has_tracked_competitor', trackedCompetitorCount > 0);
+
+  const profilePoints = Math.round((profileCompletenessPct / 100) * 10);
+  score += profilePoints;
+  breakdown.push({ key: 'profile_completeness', points: profilePoints, maxPoints: 10, met: profileCompletenessPct >= 80 });
+
+  return { score: Math.min(score, 100), breakdown };
+}
+
 // Proof-of-concept endpoint, isolated from any real feature — same pattern
 // used for getBusinessContext() in Phase 1. Nothing else calls this yet.
 app.get('/api/business/:id/completeness-score', authRequired, async (req, res) => {
@@ -1937,6 +1972,112 @@ app.delete('/api/business/:id/leads/:leadId', authRequired, async (req, res) => 
   } catch (e) {
     console.error('Delete lead error:', e.message);
     res.status(500).json({ error: 'Failed to delete lead' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 8 — BUSINESS PLAN + FUNDING (Step 2: Funding Readiness Score)
+// The score is deterministic (computeFundingReadinessScore, computed from
+// real signals already tracked elsewhere) — only the qualitative
+// strengths/gaps/next-steps are AI-generated, and they're grounded in the
+// computed breakdown, not free to invent their own assessment of readiness.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/api/business/:id/funding-readiness', authRequired, async (req, res) => {
+  const language = req.body?.language === 'fr' ? 'fr' : 'en';
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+
+    const hasBusinessPlan = context.entrepreneurSessions.some(s => s.has_business_plan);
+    let hasVerifiedFinancials = false;
+    if (hasBusinessPlan) {
+      const latestPlanRow = await pool.query(
+        `SELECT business_plan FROM entrepreneur_sessions WHERE business_id = $1 AND business_plan IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+        [req.params.id]
+      );
+      hasVerifiedFinancials = !!latestPlanRow.rows[0]?.business_plan?.computed_financials;
+    }
+
+    // "Real" growth tracking means at least one objective has been checked
+    // in on beyond its initial seed value — not just that a goal exists.
+    const growthTrackingRow = await pool.query(
+      `SELECT go.id FROM growth_objectives go
+       JOIN growth_progress_history gph ON gph.objective_id = go.id
+       WHERE go.business_id = $1
+       GROUP BY go.id HAVING COUNT(gph.id) > 1 LIMIT 1`,
+      [req.params.id]
+    );
+    const hasGrowthTracking = growthTrackingRow.rows.length > 0;
+
+    const bizRow = await pool.query('SELECT intelligence_snapshot, market_context FROM businesses WHERE id = $1', [req.params.id]);
+    const hasBusinessIntelligence = !!bizRow.rows[0]?.intelligence_snapshot;
+    const hasMarketContext = !!bizRow.rows[0]?.market_context;
+
+    const competitorCountRow = await pool.query('SELECT COUNT(*) FROM tracked_competitors WHERE business_id = $1', [req.params.id]);
+    const trackedCompetitorCount = parseInt(competitorCountRow.rows[0].count, 10);
+
+    const completeness = computeBusinessCompletenessScore(context);
+    const { score, breakdown } = computeFundingReadinessScore({
+      hasBusinessPlan, hasVerifiedFinancials, hasGrowthTracking, hasBusinessIntelligence,
+      hasMarketContext, trackedCompetitorCount, profileCompletenessPct: completeness.score
+    });
+
+    const BREAKDOWN_KEY_DESCRIPTIONS = {
+      has_business_plan: 'Has a generated business plan',
+      has_verified_financials: 'Has verified (not just estimated) financial data',
+      has_growth_tracking: 'Has tracked growth progress over time',
+      has_business_intelligence: 'Has a Business Intelligence analysis',
+      has_market_context: 'Has a Market Context analysis',
+      has_tracked_competitor: 'Tracks at least one named competitor',
+      profile_completeness: 'Business profile completeness'
+    };
+    const prompt = `You are a startup funding advisor. This business has a COMPUTED, deterministic funding readiness score of ${score}/100 based on real signals (not your own estimate) — do not restate or recalculate this score, only explain and build on it.
+
+THE COMPUTED BREAKDOWN (what's actually in place vs. missing):
+${breakdown.map(b => `- ${b.met ? '✓' : '✗'} ${BREAKDOWN_KEY_DESCRIPTIONS[b.key] || b.key} (${b.points}/${b.maxPoints} points)`).join('\n')}
+
+THE BUSINESS:
+${contextSummary}
+
+YOUR TASK: Explain what this score actually means for this specific business, grounded in the breakdown above — not generic fundraising advice. Identify genuine strengths already in place, the specific gaps that would most concern an investor, and concrete next steps to close them.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "readiness_summary": "one or two sentences on what this score means for this business specifically",
+  "strengths": ["specific strength already in place, tied to the breakdown", "strength 2 (optional)"],
+  "gaps": ["specific gap that would concern an investor, tied to what's missing in the breakdown", "gap 2"],
+  "recommended_next_steps": ["specific, actionable step to close the biggest gap", "step 2", "step 3 (optional)"],
+  "confidence_note": "one honest sentence on what this assessment assumes or where it's less certain"
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Produce the assessment now, as JSON only.' }], complexity: 'complex', context: { feature: 'funding_readiness', userId: req.userId }, maxTokens: 2000 });
+
+    let assessment;
+    try {
+      assessment = extractJSON(raw);
+    } catch (e) {
+      console.error('Funding readiness JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
+      throw new Error('Could not generate a funding readiness assessment — please try again');
+    }
+    for (const field of ['strengths', 'gaps', 'recommended_next_steps']) {
+      if (!Array.isArray(assessment[field])) {
+        console.error(`Funding readiness field "${field}" was not an array:`, typeof assessment[field]);
+        throw new Error('Could not generate a funding readiness assessment — please try again');
+      }
+    }
+
+    const fundingReadiness = { score, breakdown, ...assessment };
+    await pool.query(
+      'UPDATE businesses SET funding_readiness = $1, funding_readiness_fr = NULL, funding_readiness_generated_at = NOW() WHERE id = $2',
+      [JSON.stringify(fundingReadiness), req.params.id]
+    );
+
+    res.json({ fundingReadiness, generatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('Funding readiness generation error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate funding readiness assessment. Please try again.' });
   }
 });
 
@@ -7059,6 +7200,26 @@ app.get('/api/business/:id', authRequired, async (req, res) => {
         }
       }
       if (business.content_calendar_fr) business.content_calendar = business.content_calendar_fr;
+
+      // Same discipline for Funding Readiness (Phase 8, Step 2) — score and
+      // breakdown are deterministic and use stable keys (e.g.
+      // "has_business_plan") for the frontend to look up and translate via
+      // its own i18n system, not natural-language text. Stripped before
+      // translation and reattached unchanged, so a translation pass can
+      // never risk mangling a key the frontend depends on matching exactly.
+      if (business.funding_readiness && !business.funding_readiness_fr) {
+        try {
+          const { score, breakdown, ...readinessForTranslation } = business.funding_readiness;
+          const translatedReadiness = await translateStructuredContent(readinessForTranslation, 'funding readiness assessment');
+          translatedReadiness.score = score;
+          translatedReadiness.breakdown = breakdown;
+          await pool.query('UPDATE businesses SET funding_readiness_fr = $1 WHERE id = $2', [JSON.stringify(translatedReadiness), business.id]);
+          business.funding_readiness_fr = translatedReadiness;
+        } catch (e) {
+          console.error('Funding readiness auto-translate failed (non-fatal, falling back to English):', e.message);
+        }
+      }
+      if (business.funding_readiness_fr) business.funding_readiness = business.funding_readiness_fr;
     }
 
     res.json({ business: biz.rows[0], facts: facts.rows });
