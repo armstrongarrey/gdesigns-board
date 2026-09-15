@@ -4230,13 +4230,13 @@ app.post('/api/entrepreneur/:sessionId/business-plan', authRequired, async (req,
 - Gain mensuel net (revenu moins coûts) : ${computedFinancials.netMonthlyGain}
 - Période de rentabilité : ${computedFinancials.paybackMonths !== null ? computedFinancials.paybackMonths + ' mois' : "n'atteint pas la rentabilité à ce rythme — signalez-le honnêtement dans key_assumption"}
 - ROI sur 12 mois : ${computedFinancials.roiPct !== null ? computedFinancials.roiPct + '%' : 'non calculable (aucun coût de démarrage fourni)'}
-Pour les champs de financial_snapshot, reformulez ces chiffres exacts calculés en langage clair, en français — ne les remplacez pas par votre propre estimation.`
+Pour les champs de financial_snapshot, utilisez ces chiffres EXACTS — ne les remplacez jamais par votre propre estimation — mais expliquez le raisonnement derrière eux avec 2-3 phrases par champ.`
         : `\nVERIFIED FINANCIAL BASELINE (computed by deterministic calculator, not estimated — use these EXACT figures in financial_snapshot, do not recalculate or invent different numbers):
 - Estimated startup cost: ${computedFinancials.investment !== null ? computedFinancials.investment : 'not provided'}
 - Net monthly gain (revenue minus costs): ${computedFinancials.netMonthlyGain}
 - Payback/breakeven period: ${computedFinancials.paybackMonths !== null ? computedFinancials.paybackMonths + ' months' : 'does not break even at this rate — flag this honestly as key_assumption'}
 - 12-month ROI: ${computedFinancials.roiPct !== null ? computedFinancials.roiPct + '%' : 'not calculable (no startup cost provided)'}
-For the financial_snapshot fields, restate these exact computed figures in plain language — do not substitute your own estimate.`)
+For the financial_snapshot fields, use these EXACT figures — never substitute your own estimate — but explain the reasoning behind them in 2-3 sentences per field.`)
       : '';
 
     const prompt = `You are a business planning consultant at Arreyon Consult. Build a complete, practical business plan for this founder.
@@ -4252,9 +4252,9 @@ ${isOpp ? `PRIOR OPPORTUNITY ANALYSIS:\n${JSON.stringify((session.structured_out
 YOUR TASK:
 Produce a complete, detailed, professional business plan grounded in the founder's actual stated capital and time — not a generic template, and not a thin summary. Write this as if it will be read by a real investor: specific, substantive, and well-reasoned in every section. Marketing must be a genuinely separate, detailed section — not a single throwaway line.
 
-DEPTH: Business Model, Strategy, Marketing Plan, and Execution Plan should each be written in full, professional detail — multiple sentences per field where the topic warrants it, with concrete specifics (real numbers, named channels, named competitors or comparable businesses where relevant) rather than vague generalities. This should read like a document worth submitting to an investor, not a bullet-point outline.
+DEPTH: Every section — including Financial Snapshot — should be written in full, professional detail: multiple sentences per field where the topic warrants it, with concrete specifics (real numbers, named channels, named competitors or comparable businesses where relevant) and genuine reasoning behind each figure or conclusion, rather than a bare number with no justification. This should read like a document worth submitting to an investor, not a bullet-point outline.
 
-FINANCIAL SNAPSHOT EXCEPTION: the four fields under financial_snapshot are the one place to stay concise — a single figure or narrow range, one sentence, no reasoning chain. Founders and investors want a plain number there, not a paragraph of justification.
+FINANCIAL SNAPSHOT: if verified financial figures are provided above, restate those exact numbers — never recalculate or invent different ones — but explain the reasoning behind them (why this startup cost, what drives the monthly operating cost, what the breakeven timeline assumes) rather than stating the number alone.
 
 Return ONLY valid JSON, no markdown, in exactly this structure:
 {
@@ -4288,10 +4288,10 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     "phase_90_days": ["specific task 1", "specific task 2"]
   },
   "financial_snapshot": {
-    "estimated_startup_cost": "a single figure or narrow range, one sentence, no reasoning chain",
-    "monthly_operating_cost": "a single figure or narrow range, one sentence, no reasoning chain",
-    "breakeven_estimate": "a single timeframe, one sentence, no reasoning chain",
-    "key_assumption": "the single biggest assumption, stated plainly in one sentence"
+    "estimated_startup_cost": "a figure or narrow range, with 2-3 sentences explaining what makes up this cost",
+    "monthly_operating_cost": "a figure or narrow range, with 2-3 sentences explaining the main components driving it",
+    "breakeven_estimate": "a timeframe, with 2-3 sentences explaining the assumptions behind it",
+    "key_assumption": "the single biggest assumption this plan rests on, explained in full with its implications"
   }
 }`;
 
@@ -4363,10 +4363,10 @@ const BUSINESS_PLAN_SECTION_SHAPES = {
   "phase_90_days": ["specific task 1", "specific task 2"]
 }`,
   financial_snapshot: `{
-  "estimated_startup_cost": "a single figure or narrow range, one sentence, no reasoning chain",
-  "monthly_operating_cost": "a single figure or narrow range, one sentence, no reasoning chain",
-  "breakeven_estimate": "a single timeframe, one sentence, no reasoning chain",
-  "key_assumption": "the single biggest assumption, stated plainly in one sentence"
+  "estimated_startup_cost": "a figure or narrow range, with 2-3 sentences explaining what makes up this cost",
+  "monthly_operating_cost": "a figure or narrow range, with 2-3 sentences explaining the main components driving it",
+  "breakeven_estimate": "a timeframe, with 2-3 sentences explaining the assumptions behind it",
+  "key_assumption": "the single biggest assumption this plan rests on, explained in full with its implications"
 }`
 };
 
@@ -4408,18 +4408,16 @@ app.post('/api/entrepreneur/:sessionId/business-plan/section', authRequired, asy
 - Gain mensuel net (revenu moins coûts) : ${cf.netMonthlyGain}
 - Période de rentabilité : ${cf.paybackMonths !== null ? cf.paybackMonths + ' mois' : "n'atteint pas la rentabilité à ce rythme — signalez-le honnêtement dans key_assumption"}
 - ROI sur 12 mois : ${cf.roiPct !== null ? cf.roiPct + '%' : 'non calculable (aucun coût de démarrage fourni)'}
-Reformulez ces chiffres exacts calculés en langage clair — ne les remplacez pas par votre propre estimation.`
+Utilisez ces chiffres EXACTS — ne les remplacez jamais par votre propre estimation — mais expliquez le raisonnement derrière eux avec 2-3 phrases par champ.`
         : `\nVERIFIED FINANCIAL BASELINE (computed by deterministic calculator, not estimated — use these EXACT figures, do not recalculate or invent different numbers):
 - Estimated startup cost: ${cf.investment !== null ? cf.investment : 'not provided'}
 - Net monthly gain (revenue minus costs): ${cf.netMonthlyGain}
 - Payback/breakeven period: ${cf.paybackMonths !== null ? cf.paybackMonths + ' months' : 'does not break even at this rate — flag this honestly as key_assumption'}
 - 12-month ROI: ${cf.roiPct !== null ? cf.roiPct + '%' : 'not calculable (no startup cost provided)'}
-Restate these exact computed figures in plain language — do not substitute your own estimate.`;
+Use these EXACT figures — never substitute your own estimate — but explain the reasoning behind them in 2-3 sentences per field.`;
     }
 
-    const lengthGuidance = section === 'financial_snapshot'
-      ? 'CRITICAL LENGTH RULE: Every field must be ONE sentence, no reasoning chain. State the number or conclusion plainly.'
-      : 'DEPTH: Write this section in full, professional detail — multiple sentences per field where the topic warrants it, with concrete specifics rather than vague generalities, consistent in depth with the rest of the plan shown above. This should read like part of a document worth submitting to an investor.';
+    const lengthGuidance = 'DEPTH: Write this section in full, professional detail — multiple sentences per field where the topic warrants it, with concrete specifics and genuine reasoning behind each figure or conclusion, rather than vague generalities or a bare number with no justification. Consistent in depth with the rest of the plan shown above. This should read like part of a document worth submitting to an investor.';
 
     const prompt = `You are a business planning consultant at Arreyon Consult. This founder already has a complete business plan — regenerate ONLY the "${section}" section, keeping it consistent with the rest of the plan shown below. Do not contradict the other sections.
 
