@@ -2082,6 +2082,137 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PHASE 8 — BUSINESS PLAN + FUNDING (Step 3: Investor Materials)
+// A structured pitch deck outline grounded in whatever real data already
+// exists for this business (business plan, funding readiness, business
+// intelligence) — the financial slide restates verified numbers rather
+// than inventing new ones.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/api/business/:id/pitch-deck', authRequired, async (req, res) => {
+  const language = req.body?.language === 'fr' ? 'fr' : 'en';
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+
+    const bizRow = await pool.query('SELECT intelligence_snapshot, funding_readiness FROM businesses WHERE id = $1', [req.params.id]);
+    const intelligence = bizRow.rows[0]?.intelligence_snapshot;
+    const fundingReadiness = bizRow.rows[0]?.funding_readiness;
+
+    const latestPlanRow = await pool.query(
+      `SELECT business_plan FROM entrepreneur_sessions WHERE business_id = $1 AND business_plan IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+      [req.params.id]
+    );
+    const businessPlan = latestPlanRow.rows[0]?.business_plan;
+
+    let additionalContext = '';
+    if (businessPlan) {
+      additionalContext += `\n\nEXISTING BUSINESS PLAN (ground the deck in this, especially the financial slide — do not invent different figures than what's here):\n${JSON.stringify(businessPlan)}`;
+    }
+    if (fundingReadiness) {
+      additionalContext += `\n\nFUNDING READINESS ASSESSMENT (score ${fundingReadiness.score}/100): Strengths: ${(fundingReadiness.strengths || []).join('; ')}. Gaps: ${(fundingReadiness.gaps || []).join('; ')}.`;
+    }
+    if (intelligence?.strengths?.length || intelligence?.threats?.length) {
+      additionalContext += `\n\nBUSINESS INTELLIGENCE: Strengths: ${(intelligence.strengths || []).join('; ')}. Threats: ${(intelligence.threats || []).join('; ')}.`;
+    }
+
+    const prompt = `You are an investor-pitch consultant. Produce a structured pitch deck outline for this business — specific to this business, not a generic template with placeholder text.
+
+THE BUSINESS:
+${contextSummary}${additionalContext}
+
+YOUR TASK: Produce exactly 9 slides in this order: Title, Problem, Solution, Market Opportunity, Business Model, Traction, Competition, Financial Highlights, The Ask. Each slide needs 3-5 concrete, specific bullet points — not generic pitch-deck filler. The Financial Highlights slide must restate only numbers that are actually known from the business plan or context above; if no verified numbers exist, say so honestly in that slide's content rather than inventing figures.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "slides": [
+    { "slide_number": 1, "title": "Title Slide", "content": ["business name and one-line tagline", "founder name if known"] },
+    { "slide_number": 2, "title": "Problem", "content": ["specific point 1", "specific point 2"] }
+  ],
+  "confidence_note": "one honest sentence on what this deck assumes or where the underlying data is thin"
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Produce the pitch deck outline now, as JSON only.' }], complexity: 'complex', context: { feature: 'pitch_deck', userId: req.userId }, maxTokens: 3000 });
+
+    let pitchDeck;
+    try {
+      pitchDeck = extractJSON(raw);
+    } catch (e) {
+      console.error('Pitch deck JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
+      throw new Error('Could not generate a pitch deck outline — please try again');
+    }
+    if (!Array.isArray(pitchDeck.slides)) {
+      console.error('Pitch deck "slides" was not an array:', typeof pitchDeck.slides);
+      throw new Error('Could not generate a pitch deck outline — please try again');
+    }
+    for (const slide of pitchDeck.slides) {
+      if (!slide.title || !Array.isArray(slide.content)) {
+        console.error('Pitch deck slide missing required fields:', slide);
+        throw new Error('Could not generate a pitch deck outline — please try again');
+      }
+    }
+
+    await pool.query(
+      'UPDATE businesses SET pitch_deck = $1, pitch_deck_fr = NULL, pitch_deck_generated_at = NOW() WHERE id = $2',
+      [JSON.stringify(pitchDeck), req.params.id]
+    );
+
+    res.json({ pitchDeck, generatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('Pitch deck generation error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate pitch deck outline. Please try again.' });
+  }
+});
+
+function buildPitchDeckDOCX(pitchDeck, businessName) {
+  const children = [];
+  children.push(new Paragraph({ text: `${businessName || 'Pitch Deck'} — Investor Pitch Outline`, heading: HeadingLevel.TITLE }));
+  children.push(new Paragraph({
+    children: [new TextRun({ text: `Generated ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} · Arreyon Consult by G-DESIGNS LTD`, italics: true, size: 18, color: '777777' })]
+  }));
+  children.push(new Paragraph({ text: '' }));
+  if (pitchDeck.confidence_note) {
+    children.push(new Paragraph({ children: [new TextRun({ text: pitchDeck.confidence_note, italics: true, size: 18, color: '888888' })], spacing: { after: 200 } }));
+  }
+
+  (pitchDeck.slides || []).forEach(slide => {
+    children.push(new Paragraph({ text: `Slide ${slide.slide_number || ''}: ${slide.title}`, heading: HeadingLevel.HEADING_1 }));
+    (slide.content || []).forEach(point => {
+      children.push(new Paragraph({ text: point, bullet: { level: 0 } }));
+    });
+    children.push(new Paragraph({ text: '' }));
+  });
+
+  children.push(new Paragraph({
+    children: [new TextRun({ text: 'Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com · This outline was AI-generated and is a starting point for a real pitch deck, not a finished one.', size: 15, color: 'AAAAAA', italics: true })],
+    alignment: AlignmentType.CENTER
+  }));
+
+  const doc = new DocxDocument({ sections: [{ children }] });
+  return Packer.toBuffer(doc);
+}
+
+app.get('/api/business/:id/pitch-deck/download', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT name, website, pitch_deck FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    const business = biz.rows[0];
+    if (!business.pitch_deck) return res.status(404).json({ error: 'No pitch deck outline has been generated yet for this business.' });
+
+    const buffer = await buildPitchDeckDOCX(business.pitch_deck, business.name || business.website);
+    const filename = sanitizeFilename(business.name || business.website);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}-pitch-deck.docx"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('Pitch deck download error:', err.message);
+    res.status(500).json({ error: 'Failed to generate the download. Please try again.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
 // for an already-logged-in user, not authenticating them. Reuses the same
@@ -7220,6 +7351,18 @@ app.get('/api/business/:id', authRequired, async (req, res) => {
         }
       }
       if (business.funding_readiness_fr) business.funding_readiness = business.funding_readiness_fr;
+
+      // Same discipline for Pitch Deck (Phase 8, Step 3).
+      if (business.pitch_deck && !business.pitch_deck_fr) {
+        try {
+          const translatedDeck = await translateStructuredContent(business.pitch_deck, 'investor pitch deck outline');
+          await pool.query('UPDATE businesses SET pitch_deck_fr = $1 WHERE id = $2', [JSON.stringify(translatedDeck), business.id]);
+          business.pitch_deck_fr = translatedDeck;
+        } catch (e) {
+          console.error('Pitch deck auto-translate failed (non-fatal, falling back to English):', e.message);
+        }
+      }
+      if (business.pitch_deck_fr) business.pitch_deck = business.pitch_deck_fr;
     }
 
     res.json({ business: biz.rows[0], facts: facts.rows });
