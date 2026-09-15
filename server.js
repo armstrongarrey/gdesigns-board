@@ -2213,6 +2213,74 @@ app.get('/api/business/:id/pitch-deck/download', authRequired, async (req, res) 
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PHASE 8 — BUSINESS PLAN + FUNDING (Step 4: Share)
+// One share token per business. The public read endpoint deliberately
+// selects ONLY the specific fields meant for sharing — the business's name,
+// its plan, funding readiness, and pitch deck — never the full business
+// row, which holds far more (leads, growth objectives, internal notes,
+// financial facts) that has no business being exposed on an unauthenticated
+// link, however that link was obtained.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/api/business/:id/share', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    await pool.query('UPDATE businesses SET share_token = $1, share_created_at = NOW() WHERE id = $2', [token, req.params.id]);
+
+    res.json({ success: true, shareUrl: `${BASE_URL}/shared-plan.html?token=${token}` });
+  } catch (err) {
+    console.error('Share creation error:', err.message);
+    res.status(500).json({ error: 'Failed to create share link. Please try again.' });
+  }
+});
+
+app.delete('/api/business/:id/share', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(
+      'UPDATE businesses SET share_token = NULL, share_created_at = NULL WHERE id = $1 AND user_id = $2 RETURNING id',
+      [req.params.id, account.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Business not found' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Share revocation error:', err.message);
+    res.status(500).json({ error: 'Failed to revoke share link. Please try again.' });
+  }
+});
+
+app.get('/api/share/:token', async (req, res) => {
+  try {
+    const bizRow = await pool.query(
+      'SELECT id, name, website, industry, funding_readiness, pitch_deck, share_created_at FROM businesses WHERE share_token = $1',
+      [req.params.token]
+    );
+    if (!bizRow.rows.length) return res.status(404).json({ error: 'This share link is invalid or has been revoked.' });
+    const business = bizRow.rows[0];
+
+    const latestPlanRow = await pool.query(
+      `SELECT business_plan FROM entrepreneur_sessions WHERE business_id = $1 AND business_plan IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+      [business.id]
+    );
+
+    res.json({
+      businessName: business.name || business.website,
+      industry: business.industry,
+      businessPlan: latestPlanRow.rows[0]?.business_plan || null,
+      fundingReadiness: business.funding_readiness || null,
+      pitchDeck: business.pitch_deck || null,
+      sharedSince: business.share_created_at
+    });
+  } catch (err) {
+    console.error('Public share view error:', err.message);
+    res.status(500).json({ error: 'Failed to load this shared plan. Please try again.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
 // for an already-logged-in user, not authenticating them. Reuses the same
