@@ -3026,14 +3026,16 @@ function renderBusinessPlan(container, plan) {
   const mk = plan.marketing_plan || {};
   const ex = plan.execution_plan || {};
   const fin = plan.financial_snapshot || {};
+  container.id = container.id || ('planContainer_' + Math.random().toString(36).slice(2));
 
   const listRow = (label, val) => val ? `<div style="margin-bottom:8px"><span style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</span><div style="font-size:12.5px;color:var(--text2);line-height:1.5">${Array.isArray(val) ? val.map(v=>`• ${v}`).join('<br>') : val}</div></div>` : '';
+  const sectionHeading = (label, sectionKey) => `<div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;display:flex;align-items:center;gap:8px"><span>${label}</span><button onclick="regenerateBusinessPlanSection('${sectionKey}', '${container.id}', event)" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;text-transform:none;letter-spacing:0" data-i18n="bi.regenerate">↻ Regenerate</button></div>`;
 
   container.innerHTML = `
     <div style="margin-top:20px;background:var(--bg2);border:1px solid var(--purple);border-radius:12px;padding:20px">
       <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:16px">📋 ${t('plan.title')}</div>
 
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">${t('plan.business_model')}</div>
+      ${sectionHeading(t('plan.business_model'), 'business_model')}
       <div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:16px">
         ${listRow(t('plan.value_proposition'), bm.value_proposition)}
         ${listRow(t('plan.customer_segments'), bm.customer_segments)}
@@ -3045,14 +3047,14 @@ function renderBusinessPlan(container, plan) {
         ${listRow(t('plan.channels'), bm.channels)}
       </div>
 
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">${t('plan.strategy')}</div>
+      ${sectionHeading(t('plan.strategy'), 'strategy')}
       <div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:16px">
         ${listRow(t('plan.positioning'), st.positioning)}
         ${listRow(t('plan.competitive_advantage'), st.competitive_advantage)}
         ${listRow(t('plan.differentiation'), st.differentiation)}
       </div>
 
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">${t('plan.marketing_plan')}</div>
+      ${sectionHeading(t('plan.marketing_plan'), 'marketing_plan')}
       <div style="background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:16px">
         ${listRow(t('plan.target_audience'), mk.target_audience)}
         ${listRow(t('plan.key_messaging'), mk.key_messaging)}
@@ -3063,7 +3065,7 @@ function renderBusinessPlan(container, plan) {
         ${listRow(t('plan.marketing_budget'), mk.marketing_budget_estimate)}
       </div>
 
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px">${t('plan.execution_plan')}</div>
+      ${sectionHeading(t('plan.execution_plan'), 'execution_plan')}
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
         <div style="background:var(--bg3);border-radius:8px;padding:12px"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">${t('plan.first_30_days')}</div>${(ex.phase_30_days||[]).map(step=>`<div style="font-size:11.5px;color:var(--text2);margin-bottom:4px">• ${step}</div>`).join('')}</div>
         <div style="background:var(--bg3);border-radius:8px;padding:12px"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">${t('plan.days_31_60')}</div>${(ex.phase_60_days||[]).map(step=>`<div style="font-size:11.5px;color:var(--text2);margin-bottom:4px">• ${step}</div>`).join('')}</div>
@@ -3073,6 +3075,7 @@ function renderBusinessPlan(container, plan) {
       <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;display:flex;align-items:center;gap:8px">
         ${t('plan.financial_snapshot')}
         ${plan.computed_financials ? `<span style="font-size:9px;font-weight:700;color:var(--green);background:rgba(16,185,129,.15);padding:2px 7px;border-radius:4px;text-transform:none;letter-spacing:0">${t('plan.computed_badge')}</span>` : `<span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px;text-transform:none;letter-spacing:0">${t('plan.estimated_badge')}</span>`}
+        <button onclick="regenerateBusinessPlanSection('financial_snapshot', '${container.id}', event)" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;text-transform:none;letter-spacing:0" data-i18n="bi.regenerate">↻ Regenerate</button>
       </div>
       <div style="background:var(--bg3);border-radius:8px;padding:14px">
         ${listRow(t('plan.startup_cost'), fin.estimated_startup_cost)}
@@ -3081,6 +3084,33 @@ function renderBusinessPlan(container, plan) {
         ${listRow(t('plan.key_assumption'), fin.key_assumption)}
       </div>
     </div>`;
+
+  container._latestPlan = plan;
+}
+
+async function regenerateBusinessPlanSection(sectionKey, containerId, event) {
+  const btn = event?.target;
+  const originalText = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+
+  try {
+    const res = await fetch(`/api/entrepreneur/${currentEntrepreneurSessionId}/business-plan/section`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ section: sectionKey, language: window.currentLang || 'en' })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      if (btn) { btn.disabled = false; btn.textContent = originalText; }
+      alert(data.error || t('growth.generate_failed'));
+      return;
+    }
+    // Re-render the whole plan display from the merged result — simpler and
+    // more reliable than trying to surgically patch just one section's DOM,
+    // and guarantees what's shown always matches what's actually stored.
+    renderBusinessPlan(document.getElementById(containerId), data.businessPlan);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = originalText; }
+  }
 }
 
 
