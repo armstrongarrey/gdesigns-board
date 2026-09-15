@@ -1399,6 +1399,20 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
       }
     }
 
+    // Opportunity Radar counterpart — the exact same immediate-fire
+    // reasoning, but for the positive finding rather than the risk.
+    if (analysis.biggest_opportunity) {
+      try {
+        const bizRow = await pool.query('SELECT name FROM businesses WHERE id = $1', [req.params.id]);
+        const businessName = bizRow.rows[0]?.name || 'your business';
+        const { title, message } = alertText('competitorOpportunityIdentified', language, comp.name, businessName, analysis.biggest_opportunity);
+        await createAlert(account.id, req.params.id, 'competitor_opportunity', 'opportunity', title, message, { competitorName: comp.name, businessName, opportunity: analysis.biggest_opportunity });
+        await pool.query('UPDATE tracked_competitors SET opportunity_radar_sent_at = NOW() WHERE id = $1', [comp.id]);
+      } catch (e) {
+        console.error('Competitor opportunity radar item creation failed (non-fatal — the analysis itself was still saved):', e.message);
+      }
+    }
+
     res.json({ analysis, generatedAt: new Date().toISOString() });
   } catch (err) {
     console.error('Competitor analysis error:', err.message);
@@ -1482,6 +1496,21 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
         await createAlert(account.id, req.params.id, 'market_decline', 'warning', title, message, { businessName, growthTrend: marketContext.growth_trend });
       } catch (e) {
         console.error('Market decline alert creation failed (non-fatal — the analysis itself was still saved):', e.message);
+      }
+    }
+
+    // Opportunity Radar counterpart — surfaces only the first (most
+    // prominent) opportunity rather than one alert per item, since the
+    // model typically orders these by importance and several separate
+    // alerts for one analysis would be noisy rather than useful.
+    if (marketContext.opportunities_from_context?.length) {
+      try {
+        const businessName = context.business?.name || 'your business';
+        const { title, message } = alertText('marketOpportunityIdentified', language, businessName, marketContext.opportunities_from_context[0]);
+        await createAlert(account.id, req.params.id, 'market_opportunity', 'opportunity', title, message, { businessName, opportunity: marketContext.opportunities_from_context[0] });
+        await pool.query('UPDATE businesses SET market_opportunity_radar_sent_at = NOW() WHERE id = $1', [req.params.id]);
+      } catch (e) {
+        console.error('Market opportunity radar item creation failed (non-fatal — the analysis itself was still saved):', e.message);
       }
     }
 
@@ -2073,6 +2102,24 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
       'UPDATE businesses SET funding_readiness = $1, funding_readiness_fr = NULL, funding_readiness_generated_at = NOW() WHERE id = $2',
       [JSON.stringify(fundingReadiness), req.params.id]
     );
+
+    // Opportunity Radar: only a genuine crossing into a stronger band fires
+    // — staying in the same band, or dropping to a weaker one, never does.
+    // The band is still updated either way, so a later re-crossing back up
+    // is correctly detected as new rather than suppressed.
+    const bandRank = { weak: 0, developing: 1, strong: 2 };
+    const newBand = score >= 70 ? 'strong' : score >= 40 ? 'developing' : 'weak';
+    const lastBandRow = await pool.query('SELECT funding_readiness_last_band, name FROM businesses WHERE id = $1', [req.params.id]);
+    const lastBand = lastBandRow.rows[0]?.funding_readiness_last_band;
+    const isUpgrade = !lastBand || bandRank[newBand] > bandRank[lastBand];
+    if (isUpgrade) {
+      const bandLabel = language === 'fr'
+        ? { weak: 'faible', developing: 'en développement', strong: 'solide' }[newBand]
+        : newBand;
+      const { title, message } = alertText('fundingMilestoneReached', language, lastBandRow.rows[0]?.name || 'this business', bandLabel);
+      await createAlert(account.id, req.params.id, 'funding_milestone_reached', 'opportunity', title, message, { band: newBand, score });
+    }
+    await pool.query('UPDATE businesses SET funding_readiness_last_band = $1 WHERE id = $2', [newBand, req.params.id]);
 
     res.json({ fundingReadiness, generatedAt: new Date().toISOString() });
   } catch (err) {
@@ -7726,6 +7773,22 @@ const ALERT_MESSAGES = {
   growthNoCheckin: {
     en: (metricName, businessName, daysSince) => ({ title: `No recent check-in on ${metricName}`, message: `You haven't updated your progress on ${metricName} for ${businessName} in ${daysSince} days. A quick check-in keeps your growth tracking meaningful.` }),
     fr: (metricName, businessName, daysSince) => ({ title: `Aucun suivi récent sur ${metricName}`, message: `Vous n'avez pas mis à jour votre progression sur ${metricName} pour ${businessName} depuis ${daysSince} jours. Un suivi rapide garde le suivi de croissance pertinent.` })
+  },
+  fundingMilestoneReached: {
+    en: (businessName, band) => ({ title: `${businessName} just reached "${band}" funding readiness`, message: `Your funding readiness for ${businessName} has crossed into the "${band}" range. This could be a good time to move forward on investor materials or outreach.` }),
+    fr: (businessName, band) => ({ title: `${businessName} a atteint le niveau de préparation "${band}"`, message: `La préparation au financement de ${businessName} a franchi le seuil "${band}". C'est peut-être le bon moment pour avancer sur les documents pour investisseurs ou la prospection.` })
+  },
+  growthAheadSchedule: {
+    en: (metricName, businessName) => ({ title: `Ahead of schedule on ${metricName}`, message: `Your progress on ${metricName} for ${businessName} is meaningfully ahead of where your target date expects it to be. Worth considering a more ambitious target.` }),
+    fr: (metricName, businessName) => ({ title: `En avance sur ${metricName}`, message: `Votre progression sur ${metricName} pour ${businessName} est sensiblement en avance par rapport à ce que votre date cible prévoit. Cela vaut la peine d'envisager un objectif plus ambitieux.` })
+  },
+  competitorOpportunityIdentified: {
+    en: (competitorName, businessName, opportunity) => ({ title: `Opportunity vs. ${competitorName}`, message: `Your analysis of ${competitorName} for ${businessName} identified: ${opportunity}` }),
+    fr: (competitorName, businessName, opportunity) => ({ title: `Opportunité face à ${competitorName}`, message: `Votre analyse de ${competitorName} pour ${businessName} a identifié : ${opportunity}` })
+  },
+  marketOpportunityIdentified: {
+    en: (businessName, opportunity) => ({ title: `Market opportunity for ${businessName}`, message: opportunity }),
+    fr: (businessName, opportunity) => ({ title: `Opportunité de marché pour ${businessName}`, message: opportunity })
   }
 };
 function alertText(templateKey, language, ...args) {
@@ -7969,6 +8032,52 @@ async function checkGrowthAlerts(ownerId, prefs, language) {
   }
 }
 
+// Inverse of isGrowthObjectiveBehindSchedule — genuinely ahead in whichever
+// direction this goal actually moves (increasing or decreasing).
+function isGrowthObjectiveAheadOfSchedule({ startingValue, currentValue, targetValue, targetDate, createdAt, now }) {
+  if (!targetDate) return false;
+  const totalSpan = new Date(targetDate) - new Date(createdAt);
+  if (totalSpan <= 0) return false;
+  const elapsedFraction = Math.min(Math.max((now - new Date(createdAt)) / totalSpan, 0), 1);
+  const expectedValue = startingValue + elapsedFraction * (targetValue - startingValue);
+
+  const isIncreasingGoal = targetValue >= startingValue;
+  const totalRange = Math.abs(targetValue - startingValue) || 1;
+  const gap = isIncreasingGoal ? (currentValue - expectedValue) : (expectedValue - currentValue);
+  return (gap / totalRange) > 0.2;
+}
+
+// ── Opportunity Radar (Phase 9, Step 4) ─────────────────────────────────────
+// Reuses the existing monitoring_alerts plumbing with a distinct 'opportunity'
+// severity, rather than a parallel system, since read/unread tracking,
+// digest emails, and preferences all genuinely apply here too. This periodic
+// piece covers the one signal that isn't tied to a specific user action
+// (funding milestones and competitor/market opportunities fire immediately
+// when generated, covered elsewhere) — growth pace needs to be checked
+// continuously against the plan's timeline.
+async function checkOpportunityRadar(ownerId, prefs, language) {
+  if (prefs && prefs.opportunity_radar_enabled === false) return;
+
+  const objectives = await pool.query(
+    `SELECT go.*, b.name AS business_name FROM growth_objectives go JOIN businesses b ON b.id = go.business_id
+     WHERE b.user_id = $1 AND go.status = 'active' AND go.target_date IS NOT NULL`,
+    [ownerId]
+  );
+
+  const now = new Date();
+  for (const obj of objectives.rows) {
+    const canAlert = !obj.ahead_schedule_alert_sent_at || (now - new Date(obj.ahead_schedule_alert_sent_at)) > 14 * 24 * 60 * 60 * 1000;
+    if (canAlert && isGrowthObjectiveAheadOfSchedule({
+      startingValue: parseFloat(obj.starting_value), currentValue: parseFloat(obj.current_value),
+      targetValue: parseFloat(obj.target_value), targetDate: obj.target_date, createdAt: obj.created_at, now
+    })) {
+      const { title, message } = alertText('growthAheadSchedule', language, obj.metric_name, obj.business_name);
+      await createAlert(ownerId, obj.business_id, 'growth_ahead_schedule', 'opportunity', title, message, { metricName: obj.metric_name, businessName: obj.business_name });
+      await pool.query('UPDATE growth_objectives SET ahead_schedule_alert_sent_at = NOW() WHERE id = $1', [obj.id]);
+    }
+  }
+}
+
 // ── Orchestration — runs all 3 checks for every account owner, then sends ──
 // one digest email per owner covering everything new since the last run.
 // Each owner is processed independently: if one owner's data causes an
@@ -7993,6 +8102,7 @@ async function runMonitoringSweep() {
         await checkOverdueLeadFollowUps(owner.id, prefs, owner.preferred_language);
         await checkMarketingAlerts(owner.id, prefs, owner.preferred_language);
         await checkGrowthAlerts(owner.id, prefs, owner.preferred_language);
+        await checkOpportunityRadar(owner.id, prefs, owner.preferred_language);
         ownersChecked++;
 
         // Digest email for anything created just now and not yet emailed
@@ -8094,21 +8204,21 @@ app.get('/api/alerts/preferences', authRequired, async (req, res) => {
     const result = await pool.query('SELECT * FROM monitoring_preferences WHERE owner_id = $1', [account.id]);
     // No row yet means every alert type is on by default — matches the
     // column defaults, so this is safe to hand back as-is.
-    const prefs = result.rows[0] || { metrics_alerts_enabled: true, competitor_alerts_enabled: true, team_activity_alerts_enabled: true, email_alerts_enabled: true };
+    const prefs = result.rows[0] || { metrics_alerts_enabled: true, competitor_alerts_enabled: true, team_activity_alerts_enabled: true, email_alerts_enabled: true, lead_alerts_enabled: true, marketing_alerts_enabled: true, growth_alerts_enabled: true, opportunity_radar_enabled: true };
     res.json({ preferences: prefs });
   } catch (e) { res.status(500).json({ error: 'Failed to load preferences' }); }
 });
 
 app.put('/api/alerts/preferences', authRequired, async (req, res) => {
-  const { metricsAlertsEnabled, competitorAlertsEnabled, teamActivityAlertsEnabled, emailAlertsEnabled } = req.body;
+  const { metricsAlertsEnabled, competitorAlertsEnabled, teamActivityAlertsEnabled, emailAlertsEnabled, leadAlertsEnabled, marketingAlertsEnabled, growthAlertsEnabled, opportunityRadarEnabled } = req.body;
   try {
     const account = await resolveAccount(req.userId);
     if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can manage alert preferences' });
     await pool.query(
-      `INSERT INTO monitoring_preferences (owner_id, metrics_alerts_enabled, competitor_alerts_enabled, team_activity_alerts_enabled, email_alerts_enabled, updated_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       ON CONFLICT (owner_id) DO UPDATE SET metrics_alerts_enabled = $2, competitor_alerts_enabled = $3, team_activity_alerts_enabled = $4, email_alerts_enabled = $5, updated_at = NOW()`,
-      [account.id, metricsAlertsEnabled !== false, competitorAlertsEnabled !== false, teamActivityAlertsEnabled !== false, emailAlertsEnabled !== false]
+      `INSERT INTO monitoring_preferences (owner_id, metrics_alerts_enabled, competitor_alerts_enabled, team_activity_alerts_enabled, email_alerts_enabled, lead_alerts_enabled, marketing_alerts_enabled, growth_alerts_enabled, opportunity_radar_enabled, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+       ON CONFLICT (owner_id) DO UPDATE SET metrics_alerts_enabled = $2, competitor_alerts_enabled = $3, team_activity_alerts_enabled = $4, email_alerts_enabled = $5, lead_alerts_enabled = $6, marketing_alerts_enabled = $7, growth_alerts_enabled = $8, opportunity_radar_enabled = $9, updated_at = NOW()`,
+      [account.id, metricsAlertsEnabled !== false, competitorAlertsEnabled !== false, teamActivityAlertsEnabled !== false, emailAlertsEnabled !== false, leadAlertsEnabled !== false, marketingAlertsEnabled !== false, growthAlertsEnabled !== false, opportunityRadarEnabled !== false]
     );
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Failed to save preferences' }); }
