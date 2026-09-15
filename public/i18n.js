@@ -14,6 +14,7 @@
 
 const I18N_DICT = {
   en: {
+    "lang.translating": "Translating…",
     // Nav
     "nav.how_it_works": "How It Works",
     "nav.the_board": "The Board",
@@ -1201,6 +1202,7 @@ const I18N_DICT = {
     "report.powered_by": "Powered by G-DESIGNS LTD AI Board of Directors"
   },
   fr: {
+    "lang.translating": "Traduction en cours…",
     // Nav
     "nav.how_it_works": "Comment ça marche",
     "nav.the_board": "Le Conseil",
