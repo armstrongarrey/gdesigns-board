@@ -822,5 +822,19 @@ ALTER TABLE businesses ADD COLUMN IF NOT EXISTS funding_readiness JSONB;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS funding_readiness_fr JSONB;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS funding_readiness_generated_at TIMESTAMPTZ;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 8 — BUSINESS PLAN + FUNDING (Step 3: Investor Materials)
+-- A structured, slide-by-slide pitch deck outline — not an actual .pptx
+-- file, since no presentation-generation library exists in this project and
+-- adding one is a bigger dependency decision than reusing docx, which is
+-- already proven here. Downloadable as an editable Word document instead.
+-- Its financial slide references whatever verified numbers already exist
+-- (from the business plan or funding readiness) rather than duplicating
+-- the projection calculators that already exist in Financial Tools.
+-- ═══════════════════════════════════════════════════════════════════════════
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS pitch_deck JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS pitch_deck_fr JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS pitch_deck_generated_at TIMESTAMPTZ;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
