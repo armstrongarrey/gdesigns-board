@@ -2615,6 +2615,237 @@ app.get('/api/integrations/google-analytics/metrics', authRequired, async (req, 
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// GOOGLE SEARCH CONSOLE — same Google Cloud OAuth client (GOOGLE_CLIENT_ID/
+// SECRET) as Google Analytics, but its own scope and callback URL. Requires
+// the Search Console API enabled on that same Google Cloud project, and
+// this callback URL added to its authorized redirect URIs — both one-time
+// setup steps in Google Cloud Console this server cannot do on its own.
+// One connection per Arreyon account, owned and managed by the account
+// owner only, shared by the whole team — deliberately not per-team-member.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const GSC_SCOPE = 'https://www.googleapis.com/auth/webmasters.readonly';
+const GSC_CALLBACK_URL = `${BASE_URL}/api/integrations/google-search-console/callback`;
+
+app.get('/api/integrations/google-search-console/connect', authRequired, async (req, res) => {
+  const account = await resolveAccount(req.userId);
+  if (!account) return res.status(404).json({ error: 'Account not found' });
+  if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can connect integrations' });
+
+  const state = jwt.sign({ ownerId: req.userId }, JWT_SECRET, { expiresIn: '10m' });
+  const params = new URLSearchParams({
+    client_id: process.env.GOOGLE_CLIENT_ID,
+    redirect_uri: GSC_CALLBACK_URL,
+    response_type: 'code',
+    scope: GSC_SCOPE,
+    access_type: 'offline',
+    prompt: 'consent',
+    state
+  });
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+
+app.get('/api/integrations/google-search-console/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  if (error || !code) return res.redirect('/dashboard?section=integrations&error=gsc_connect_failed');
+
+  let ownerId;
+  try {
+    ownerId = jwt.verify(state, JWT_SECRET).ownerId;
+  } catch (e) {
+    return res.redirect('/dashboard?section=integrations&error=gsc_connect_failed');
+  }
+
+  try {
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: GSC_CALLBACK_URL,
+        grant_type: 'authorization_code'
+      })
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok || !tokenData.refresh_token) {
+      console.error('GSC token exchange failed:', tokenData);
+      return res.redirect('/dashboard?section=integrations&error=gsc_connect_failed');
+    }
+
+    const expiresAt = new Date(Date.now() + (tokenData.expires_in || 3600) * 1000);
+    await pool.query(
+      `INSERT INTO google_search_console_connections (owner_id, access_token, refresh_token, token_expires_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (owner_id) DO UPDATE SET access_token = $2, refresh_token = $3, token_expires_at = $4, connected_at = NOW()`,
+      [ownerId, tokenData.access_token, tokenData.refresh_token, expiresAt]
+    );
+
+    res.redirect('/dashboard?section=integrations&connected=google-search-console');
+  } catch (e) {
+    console.error('GSC callback error:', e.message);
+    res.redirect('/dashboard?section=integrations&error=gsc_connect_failed');
+  }
+});
+
+async function getValidGSCAccessToken(connection) {
+  const expiresAt = new Date(connection.token_expires_at);
+  const now = new Date();
+  if (expiresAt.getTime() - now.getTime() > 5 * 60 * 1000) return connection.access_token;
+
+  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      refresh_token: connection.refresh_token,
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      grant_type: 'refresh_token'
+    })
+  });
+  const tokenData = await tokenRes.json();
+  if (!tokenRes.ok) throw new Error('Failed to refresh Google Search Console access token: ' + (tokenData.error || tokenRes.status));
+
+  const newExpiresAt = new Date(Date.now() + (tokenData.expires_in || 3600) * 1000);
+  await pool.query('UPDATE google_search_console_connections SET access_token = $1, token_expires_at = $2 WHERE id = $3',
+    [tokenData.access_token, newExpiresAt, connection.id]);
+
+  return tokenData.access_token;
+}
+
+app.get('/api/integrations/google-search-console/status', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query('SELECT id, site_url, connected_at, last_synced_at FROM google_search_console_connections WHERE owner_id = $1', [account.id]);
+    if (!result.rows.length) return res.json({ connected: false });
+    res.json({ connected: true, ...result.rows[0] });
+  } catch (e) { res.status(500).json({ error: 'Failed to load integration status' }); }
+});
+
+app.get('/api/integrations/google-search-console/sites', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const connResult = await pool.query('SELECT * FROM google_search_console_connections WHERE owner_id = $1', [account.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'Google Search Console is not connected' });
+    const connection = connResult.rows[0];
+
+    const accessToken = await getValidGSCAccessToken(connection);
+    const sitesRes = await fetch('https://www.googleapis.com/webmasters/v3/sites', {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    const data = await sitesRes.json();
+    if (!sitesRes.ok) throw new Error(data.error?.message || 'Failed to list Search Console sites');
+
+    const sites = (data.siteEntry || []).map(s => ({ siteUrl: s.siteUrl, permissionLevel: s.permissionLevel }));
+    res.json({ sites });
+  } catch (e) {
+    console.error('GSC sites error:', e.message);
+    res.status(500).json({ error: 'Failed to load Search Console sites. Try reconnecting Google Search Console.' });
+  }
+});
+
+app.put('/api/integrations/google-search-console/site', authRequired, async (req, res) => {
+  const { siteUrl } = req.body;
+  if (!siteUrl) return res.status(400).json({ error: 'Site URL is required' });
+  try {
+    const account = await resolveAccount(req.userId);
+    if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can manage integrations' });
+    const result = await pool.query(
+      'UPDATE google_search_console_connections SET site_url = $1 WHERE owner_id = $2 RETURNING id',
+      [siteUrl, account.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Google Search Console is not connected' });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to save selected site' }); }
+});
+
+app.delete('/api/integrations/google-search-console', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can manage integrations' });
+    await pool.query('DELETE FROM google_search_console_connections WHERE owner_id = $1', [account.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to disconnect' }); }
+});
+
+// Search Console data typically lags 2-3 days behind real-time — querying
+// through "today" risks an incomplete or empty final day skewing the
+// report, so the window ends 3 days back instead.
+function getGSCDateRange(days = 28) {
+  const end = new Date();
+  end.setDate(end.getDate() - 3);
+  const start = new Date(end);
+  start.setDate(start.getDate() - days);
+  const fmt = d => d.toISOString().split('T')[0];
+  return { startDate: fmt(start), endDate: fmt(end) };
+}
+
+async function fetchGSCMetrics(connection, days = 28) {
+  const accessToken = await getValidGSCAccessToken(connection);
+  const { startDate, endDate } = getGSCDateRange(days);
+
+  // Overall totals first — no dimension breakdown, matching the same
+  // "one aggregate summary" shape the Analytics metrics call returns.
+  const totalsRes = await fetch(`https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(connection.site_url)}/searchAnalytics/query`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startDate, endDate })
+  });
+  const totalsData = await totalsRes.json();
+  if (!totalsRes.ok) throw new Error(totalsData.error?.message || 'Failed to fetch Search Console data');
+
+  const totalsRow = totalsData.rows?.[0];
+  const clicks = totalsRow ? Math.round(totalsRow.clicks) : 0;
+  const impressions = totalsRow ? Math.round(totalsRow.impressions) : 0;
+  const ctr = totalsRow ? round2(totalsRow.ctr * 100) : 0;
+  const avgPosition = totalsRow ? round2(totalsRow.position) : 0;
+
+  // Top query by clicks — the one piece of genuinely distinctive GSC data
+  // worth surfacing alongside the totals.
+  let topQuery = null;
+  try {
+    const queryRes = await fetch(`https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(connection.site_url)}/searchAnalytics/query`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ startDate, endDate, dimensions: ['query'], rowLimit: 1 })
+    });
+    const queryData = await queryRes.json();
+    if (queryRes.ok) topQuery = queryData.rows?.[0]?.keys?.[0] || null;
+  } catch (e) {
+    // Non-fatal — the overall totals above are the primary data; a missing
+    // top query just means that one extra detail isn't shown.
+  }
+
+  return { clicks, impressions, ctr, avgPosition, topQuery, startDate, endDate };
+}
+
+app.get('/api/integrations/google-search-console/metrics', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const connResult = await pool.query('SELECT * FROM google_search_console_connections WHERE owner_id = $1', [account.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'Google Search Console is not connected' });
+    const connection = connResult.rows[0];
+    if (!connection.site_url) return res.status(400).json({ error: 'No Search Console site selected yet' });
+
+    const metrics = await fetchGSCMetrics(connection, 28);
+
+    await pool.query(
+      `INSERT INTO search_console_snapshots (connection_id, snapshot_date, clicks, impressions, ctr, avg_position, top_query, raw_data)
+       VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (connection_id, snapshot_date) DO UPDATE SET clicks = $2, impressions = $3, ctr = $4, avg_position = $5, top_query = $6, raw_data = $7`,
+      [connection.id, metrics.clicks, metrics.impressions, metrics.ctr, metrics.avgPosition, metrics.topQuery, JSON.stringify(metrics)]
+    );
+    await pool.query('UPDATE google_search_console_connections SET last_synced_at = NOW() WHERE id = $1', [connection.id]);
+
+    res.json({ metrics, siteUrl: connection.site_url });
+  } catch (e) {
+    console.error('GSC metrics error:', e.message);
+    res.status(500).json({ error: 'Failed to load Search Console metrics. Try reconnecting Google Search Console.' });
+  }
+});
+
 function adminRequired(req, res, next) {
   const token = req.cookies.arreyon_admin_token || req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Admin authentication required' });
