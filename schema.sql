@@ -796,6 +796,7 @@ CREATE TABLE IF NOT EXISTS leads (
   owner_id UUID REFERENCES users(id) ON DELETE CASCADE,
   name VARCHAR(255) NOT NULL,
   contact_info VARCHAR(255),
+  phone VARCHAR(50),
   status VARCHAR(20) DEFAULT 'new', -- new | contacted | qualified | won | lost
   next_follow_up_date DATE,
   notes TEXT,
@@ -807,6 +808,7 @@ CREATE INDEX IF NOT EXISTS idx_leads_business ON leads(business_id, status);
 
 ALTER TABLE action_tasks ADD COLUMN IF NOT EXISTS lead_id UUID REFERENCES leads(id) ON DELETE SET NULL;
 ALTER TABLE monitoring_preferences ADD COLUMN IF NOT EXISTS lead_alerts_enabled BOOLEAN DEFAULT TRUE;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
 
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
