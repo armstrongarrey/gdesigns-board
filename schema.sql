@@ -869,5 +869,20 @@ ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS behind_schedule_alert_sen
 ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS no_checkin_alert_sent_at TIMESTAMPTZ;
 ALTER TABLE monitoring_preferences ADD COLUMN IF NOT EXISTS growth_alerts_enabled BOOLEAN DEFAULT TRUE;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 9 — REPORTS + ALERTS + OPPORTUNITY RADAR (Step 4: Opportunity Radar)
+-- Reuses the existing monitoring_alerts table and createAlert() plumbing —
+-- severity has no database constraint, so a new 'opportunity' value needs
+-- no migration — rather than building a parallel storage/display system for
+-- what is, mechanically, still just an alert with a different tone.
+-- funding_readiness_band tracks the LAST SURFACED band so only a genuine
+-- crossing into a stronger band re-alerts, not merely staying there.
+-- ═══════════════════════════════════════════════════════════════════════════
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS funding_readiness_last_band VARCHAR(20);
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS market_opportunity_radar_sent_at TIMESTAMPTZ;
+ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS ahead_schedule_alert_sent_at TIMESTAMPTZ;
+ALTER TABLE tracked_competitors ADD COLUMN IF NOT EXISTS opportunity_radar_sent_at TIMESTAMPTZ;
+ALTER TABLE monitoring_preferences ADD COLUMN IF NOT EXISTS opportunity_radar_enabled BOOLEAN DEFAULT TRUE;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
