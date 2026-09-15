@@ -4486,12 +4486,18 @@ app.post('/api/entrepreneur/:sessionId/track', authRequired, async (req, res) =>
     }
 
     const isOpp = session.mode === 'opportunity_finder';
+    // For opportunity_finder the frontend sends the chosen opportunity's
+    // name only (not its full data) — re-find the matching object so its
+    // description can seed the new business's facts below.
+    const chosenOpportunity = isOpp
+      ? (session.structured_output?.opportunities || []).find(o => o.name === req.body?.name) || (session.structured_output?.opportunities || [])[0]
+      : null;
+
     let defaultName;
     if (req.body?.name && req.body.name.trim()) {
       defaultName = req.body.name.trim();
     } else if (isOpp) {
-      const chosen = (session.structured_output?.opportunities || [])[0];
-      defaultName = chosen?.name || 'Untitled Business';
+      defaultName = chosenOpportunity?.name || 'Untitled Business';
     } else {
       defaultName = (session.input_data?.idea || 'Untitled Business').slice(0, 100);
     }
@@ -4503,6 +4509,32 @@ app.post('/api/entrepreneur/:sessionId/track', authRequired, async (req, res) =>
     const newBusiness = inserted.rows[0];
 
     await pool.query('UPDATE entrepreneur_sessions SET business_id = $1 WHERE id = $2', [newBusiness.id, req.params.sessionId]);
+
+    // Seed the Analyzer's fact fields from whatever this session already
+    // established, so opening this business doesn't show an empty profile
+    // the founder has to re-describe from scratch — using the same
+    // fact_key vocabulary and source_type convention the Analyzer itself
+    // uses, so the existing facts display renders these with no changes.
+    const facts = [];
+    if (isOpp && chosenOpportunity) {
+      const description = [chosenOpportunity.description, chosenOpportunity.why_it_fits].filter(Boolean).join(' ');
+      if (description) facts.push(['value_proposition', description]);
+    } else if (!isOpp && session.input_data?.idea) {
+      facts.push(['value_proposition', session.input_data.idea]);
+      if (session.structured_output?.target_customer) facts.push(['target_customers', session.structured_output.target_customer]);
+      if (session.structured_output?.suggested_pricing) facts.push(['pricing_info', session.structured_output.suggested_pricing]);
+    }
+    if (session.input_data?.country || session.input_data?.city) {
+      facts.push(['location', [session.input_data.city, session.input_data.country].filter(Boolean).join(', ')]);
+    }
+
+    for (const [factKey, factValue] of facts) {
+      await pool.query(
+        `INSERT INTO business_facts (business_id, fact_key, fact_value, source_type, source_detail)
+         VALUES ($1, $2, $3, 'user_provided', 'From Start a Business')`,
+        [newBusiness.id, factKey, factValue]
+      );
+    }
 
     res.json({ success: true, alreadyTracked: false, businessId: newBusiness.id, businessName: newBusiness.name });
   } catch (err) {
