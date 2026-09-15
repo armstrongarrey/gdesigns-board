@@ -3979,6 +3979,147 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   }
 });
 
+// Regenerates ONE section of an already-generated business plan, merging it
+// into the existing plan rather than requiring a full regeneration — the
+// existing plan's OTHER sections are sent as context so the regenerated
+// section stays consistent with what's already there instead of drifting.
+const BUSINESS_PLAN_SECTION_ARRAY_FIELDS = {
+  business_model: ['revenue_streams', 'cost_structure', 'key_resources', 'key_activities', 'key_partners', 'channels'],
+  strategy: [],
+  marketing_plan: ['marketing_channels', 'promotional_tactics'],
+  execution_plan: ['phase_30_days', 'phase_60_days', 'phase_90_days'],
+  financial_snapshot: []
+};
+const BUSINESS_PLAN_SECTION_SHAPES = {
+  business_model: `{
+  "value_proposition": "the core value delivered, one sentence",
+  "customer_segments": "who specifically this serves",
+  "revenue_streams": ["stream 1", "stream 2"],
+  "cost_structure": ["major cost 1", "major cost 2"],
+  "key_resources": ["what's needed to operate"],
+  "key_activities": ["what must be done regularly"],
+  "key_partners": ["who to partner with, if relevant"],
+  "channels": ["how customers are reached"]
+}`,
+  strategy: `{
+  "positioning": "how this should be positioned in the market",
+  "competitive_advantage": "the specific edge this has or must build",
+  "differentiation": "what makes this different from alternatives"
+}`,
+  marketing_plan: `{
+  "target_audience": "the specific customer profile marketing should focus on",
+  "key_messaging": "the core message/hook that should appear in all marketing",
+  "marketing_channels": ["specific channel 1 (e.g. WhatsApp groups, Instagram)", "specific channel 2"],
+  "content_strategy": "what kind of content to post and how often, concretely",
+  "promotional_tactics": ["specific tactic 1 (e.g. referral discount, launch offer)", "specific tactic 2"],
+  "customer_acquisition_funnel": "the step-by-step path from stranger to paying customer, specific to this business",
+  "marketing_budget_estimate": "realistic monthly marketing spend given their stated capital"
+}`,
+  execution_plan: `{
+  "phase_30_days": ["specific task 1", "specific task 2", "specific task 3"],
+  "phase_60_days": ["specific task 1", "specific task 2"],
+  "phase_90_days": ["specific task 1", "specific task 2"]
+}`,
+  financial_snapshot: `{
+  "estimated_startup_cost": "a single figure or narrow range, max 25 words, no reasoning chain",
+  "monthly_operating_cost": "a single figure or narrow range, max 25 words, no reasoning chain",
+  "breakeven_estimate": "a single timeframe, max 25 words, no reasoning chain",
+  "key_assumption": "the single biggest assumption, stated plainly in max 25 words"
+}`
+};
+
+app.post('/api/entrepreneur/:sessionId/business-plan/section', authRequired, async (req, res) => {
+  const { section, language = 'en' } = req.body;
+  if (!BUSINESS_PLAN_SECTION_SHAPES[section]) {
+    return res.status(400).json({ error: 'Unknown section. Must be one of: ' + Object.keys(BUSINESS_PLAN_SECTION_SHAPES).join(', ') });
+  }
+  try {
+    const sessionResult = await pool.query(
+      'SELECT * FROM entrepreneur_sessions WHERE id = $1 AND user_id = $2',
+      [req.params.sessionId, req.userId]
+    );
+    if (!sessionResult.rows.length) return res.status(404).json({ error: 'Session not found' });
+    const session = sessionResult.rows[0];
+    if (!session.business_plan) return res.status(400).json({ error: 'No business plan exists yet for this session — generate the full plan first.' });
+
+    const isOpp = session.mode === 'opportunity_finder';
+    const businessDescription = isOpp
+      ? (session.structured_output.opportunities || []).map(o => `${o.name}: ${o.description}`).join(' / ')
+      : session.input_data?.idea;
+    const context = formatEntrepreneurContext(session.input_data);
+
+    const otherSections = { ...session.business_plan };
+    delete otherSections[section];
+    delete otherSections.computed_financials;
+
+    // If financial_snapshot is the section being regenerated and verified
+    // figures already exist, they must be restated exactly — otherwise the
+    // AI has nothing but the vague prose in otherSections to reason from
+    // and could invent different numbers than what's actually stored in
+    // computed_financials, creating a real inconsistency in the plan.
+    let financialInstruction = '';
+    if (section === 'financial_snapshot' && session.business_plan.computed_financials) {
+      const cf = session.business_plan.computed_financials;
+      financialInstruction = language === 'fr'
+        ? `\nDONNÉES FINANCIÈRES VÉRIFIÉES (calculées par un moteur déterministe, non estimées — utilisez ces chiffres EXACTS, ne recalculez pas et n'inventez pas d'autres chiffres) :
+- Coût de démarrage estimé : ${cf.investment !== null ? cf.investment : 'non fourni'}
+- Gain mensuel net (revenu moins coûts) : ${cf.netMonthlyGain}
+- Période de rentabilité : ${cf.paybackMonths !== null ? cf.paybackMonths + ' mois' : "n'atteint pas la rentabilité à ce rythme — signalez-le honnêtement dans key_assumption"}
+- ROI sur 12 mois : ${cf.roiPct !== null ? cf.roiPct + '%' : 'non calculable (aucun coût de démarrage fourni)'}
+Reformulez ces chiffres exacts calculés en langage clair — ne les remplacez pas par votre propre estimation.`
+        : `\nVERIFIED FINANCIAL BASELINE (computed by deterministic calculator, not estimated — use these EXACT figures, do not recalculate or invent different numbers):
+- Estimated startup cost: ${cf.investment !== null ? cf.investment : 'not provided'}
+- Net monthly gain (revenue minus costs): ${cf.netMonthlyGain}
+- Payback/breakeven period: ${cf.paybackMonths !== null ? cf.paybackMonths + ' months' : 'does not break even at this rate — flag this honestly as key_assumption'}
+- 12-month ROI: ${cf.roiPct !== null ? cf.roiPct + '%' : 'not calculable (no startup cost provided)'}
+Restate these exact computed figures in plain language — do not substitute your own estimate.`;
+    }
+
+    const prompt = `You are a business planning consultant at Arreyon Consult. This founder already has a complete business plan — regenerate ONLY the "${section}" section, keeping it consistent with the rest of the plan shown below. Do not contradict the other sections.
+
+BUSINESS: ${businessDescription}
+
+FOUNDER'S CIRCUMSTANCES:
+${context || 'Limited context available.'}
+${financialInstruction}
+
+THE REST OF THE EXISTING PLAN (for consistency — do not regenerate these, only use them as context):
+${JSON.stringify(otherSections)}
+
+CRITICAL LENGTH RULE: Every field must be ONE sentence, maximum 25 words. State the number or conclusion plainly, no reasoning chains.
+
+Return ONLY valid JSON for the "${section}" section, no markdown, in exactly this structure:
+${BUSINESS_PLAN_SECTION_SHAPES[section]}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: `Regenerate the ${section} section now, as JSON only.` }], complexity: 'complex', context: { feature: 'entrepreneur_mode_section', userId: req.userId }, maxTokens: 2000 });
+
+    let newSection;
+    try {
+      newSection = extractJSON(raw);
+    } catch (e) {
+      console.error(`Business plan section "${section}" JSON parse failed. Length:`, e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
+      throw new Error('Could not regenerate this section — please try again');
+    }
+    for (const field of BUSINESS_PLAN_SECTION_ARRAY_FIELDS[section]) {
+      if (!Array.isArray(newSection[field])) {
+        console.error(`Business plan section "${section}" field "${field}" was not an array:`, typeof newSection[field]);
+        throw new Error('Could not regenerate this section — please try again');
+      }
+    }
+
+    const updatedPlan = { ...session.business_plan, [section]: newSection };
+    // The regenerated section invalidates only the cached French translation
+    // as a whole (translateStructuredContent has no notion of partial
+    // re-translation), same as a full regeneration would.
+    await pool.query('UPDATE entrepreneur_sessions SET business_plan = $1, business_plan_fr = NULL WHERE id = $2', [JSON.stringify(updatedPlan), req.params.sessionId]);
+
+    res.json({ success: true, businessPlan: updatedPlan });
+  } catch (err) {
+    console.error('Business plan section regeneration error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to regenerate this section. Please try again.' });
+  }
+});
+
 // Save consultation
 app.post('/api/board/save', authRequired, async (req, res) => {
   const { title, businessType, industry, directorsUsed, reportText, synthesis, videoUrl, messages } = req.body;
