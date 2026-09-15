@@ -7636,6 +7636,22 @@ const ALERT_MESSAGES = {
   leadFollowUpOverdue: {
     en: (leadName, businessName, daysOverdue) => ({ title: `Overdue follow-up: ${leadName}`, message: `Your follow-up with ${leadName} for ${businessName} was due ${daysOverdue} day${daysOverdue === 1 ? '' : 's'} ago.` }),
     fr: (leadName, businessName, daysOverdue) => ({ title: `Suivi en retard : ${leadName}`, message: `Votre suivi avec ${leadName} pour ${businessName} était prévu il y a ${daysOverdue} jour${daysOverdue === 1 ? '' : 's'}.` })
+  },
+  contentCalendarGap: {
+    en: (businessName) => ({ title: `No content scheduled for ${businessName}`, message: `Your content calendar for ${businessName} has run out — there's nothing scheduled going forward. Generate a new one to keep posting consistently.` }),
+    fr: (businessName) => ({ title: `Aucun contenu planifié pour ${businessName}`, message: `Votre calendrier de contenu pour ${businessName} est épuisé — rien n'est prévu pour la suite. Générez-en un nouveau pour continuer à publier régulièrement.` })
+  },
+  staleMarketingStrategy: {
+    en: (businessName, daysOld) => ({ title: `Marketing strategy may be stale for ${businessName}`, message: `Your marketing strategy for ${businessName} hasn't been refreshed in ${daysOld} days. Consider regenerating it to reflect anything that's changed.` }),
+    fr: (businessName, daysOld) => ({ title: `La stratégie marketing pourrait être obsolète pour ${businessName}`, message: `Votre stratégie marketing pour ${businessName} n'a pas été actualisée depuis ${daysOld} jours. Envisagez de la régénérer pour refléter ce qui a changé.` })
+  },
+  growthBehindSchedule: {
+    en: (metricName, businessName) => ({ title: `Behind on ${metricName} for ${businessName}`, message: `Your progress on ${metricName} for ${businessName} is meaningfully behind where your target date expects it to be. Worth reviewing your plan or adjusting the timeline.` }),
+    fr: (metricName, businessName) => ({ title: `En retard sur ${metricName} pour ${businessName}`, message: `Votre progression sur ${metricName} pour ${businessName} est sensiblement en retard par rapport à ce que votre date cible prévoit. Cela vaut la peine de revoir votre plan ou d'ajuster l'échéance.` })
+  },
+  growthNoCheckin: {
+    en: (metricName, businessName, daysSince) => ({ title: `No recent check-in on ${metricName}`, message: `You haven't updated your progress on ${metricName} for ${businessName} in ${daysSince} days. A quick check-in keeps your growth tracking meaningful.` }),
+    fr: (metricName, businessName, daysSince) => ({ title: `Aucun suivi récent sur ${metricName}`, message: `Vous n'avez pas mis à jour votre progression sur ${metricName} pour ${businessName} depuis ${daysSince} jours. Un suivi rapide garde le suivi de croissance pertinent.` })
   }
 };
 function alertText(templateKey, language, ...args) {
@@ -7785,6 +7801,100 @@ async function checkOverdueLeadFollowUps(ownerId, prefs, language) {
   }
 }
 
+// ── Marketing alerts (Phase 9, Step 1) ──────────────────────────────────────
+// Content calendar gap re-reminds every 14 days, stale strategy every 30 —
+// both longer than the lead follow-up cadence, since neither is as
+// time-critical as a specific missed commitment to a named person.
+async function checkMarketingAlerts(ownerId, prefs, language) {
+  if (prefs && prefs.marketing_alerts_enabled === false) return;
+
+  const calendarGaps = await pool.query(
+    `SELECT id, name FROM businesses
+     WHERE user_id = $1 AND is_active = true
+       AND content_calendar_end_date IS NOT NULL AND content_calendar_end_date < CURRENT_DATE
+       AND (calendar_gap_alert_sent_at IS NULL OR calendar_gap_alert_sent_at < NOW() - INTERVAL '14 days')`,
+    [ownerId]
+  );
+  for (const biz of calendarGaps.rows) {
+    const { title, message } = alertText('contentCalendarGap', language, biz.name);
+    await createAlert(ownerId, biz.id, 'content_calendar_gap', 'info', title, message, { businessName: biz.name });
+    await pool.query('UPDATE businesses SET calendar_gap_alert_sent_at = NOW() WHERE id = $1', [biz.id]);
+  }
+
+  const staleStrategies = await pool.query(
+    `SELECT id, name, marketing_strategy_generated_at FROM businesses
+     WHERE user_id = $1 AND is_active = true
+       AND marketing_strategy_generated_at IS NOT NULL AND marketing_strategy_generated_at < NOW() - INTERVAL '90 days'
+       AND (stale_strategy_alert_sent_at IS NULL OR stale_strategy_alert_sent_at < NOW() - INTERVAL '30 days')`,
+    [ownerId]
+  );
+  for (const biz of staleStrategies.rows) {
+    const daysOld = Math.round((Date.now() - new Date(biz.marketing_strategy_generated_at).getTime()) / (1000 * 60 * 60 * 24));
+    const { title, message } = alertText('staleMarketingStrategy', language, biz.name, daysOld);
+    await createAlert(ownerId, biz.id, 'stale_marketing_strategy', 'info', title, message, { businessName: biz.name, daysOld });
+    await pool.query('UPDATE businesses SET stale_strategy_alert_sent_at = NOW() WHERE id = $1', [biz.id]);
+  }
+}
+
+// Direction-aware "behind schedule" check — works whether the goal is to
+// increase a metric (revenue growth) or decrease one (cost reduction).
+// Pulled out as its own function so its logic can be tested in isolation
+// from the database query around it.
+function isGrowthObjectiveBehindSchedule({ startingValue, currentValue, targetValue, targetDate, createdAt, now }) {
+  if (!targetDate) return false;
+  const totalSpan = new Date(targetDate) - new Date(createdAt);
+  if (totalSpan <= 0) return false;
+  const elapsedFraction = Math.min(Math.max((now - new Date(createdAt)) / totalSpan, 0), 1);
+  const expectedValue = startingValue + elapsedFraction * (targetValue - startingValue);
+
+  const isIncreasingGoal = targetValue >= startingValue;
+  const totalRange = Math.abs(targetValue - startingValue) || 1;
+  const gap = isIncreasingGoal ? (expectedValue - currentValue) : (currentValue - expectedValue);
+  return (gap / totalRange) > 0.2;
+}
+
+// ── Growth alerts (Phase 9, Step 2) ─────────────────────────────────────────
+// Behind-schedule re-reminds every 14 days, no-checkin every 14 days too —
+// both tracked independently so one being recently alerted never suppresses
+// the other for the same objective.
+async function checkGrowthAlerts(ownerId, prefs, language) {
+  if (prefs && prefs.growth_alerts_enabled === false) return;
+
+  const objectives = await pool.query(
+    `SELECT go.*, b.name AS business_name,
+       (SELECT recorded_at FROM growth_progress_history WHERE objective_id = go.id ORDER BY recorded_at DESC LIMIT 1) AS last_checkin_at
+     FROM growth_objectives go JOIN businesses b ON b.id = go.business_id
+     WHERE b.user_id = $1 AND go.status = 'active'`,
+    [ownerId]
+  );
+
+  const now = new Date();
+  for (const obj of objectives.rows) {
+    const canAlertBehind = !obj.behind_schedule_alert_sent_at || (now - new Date(obj.behind_schedule_alert_sent_at)) > 14 * 24 * 60 * 60 * 1000;
+    if (canAlertBehind && obj.target_date && isGrowthObjectiveBehindSchedule({
+      startingValue: parseFloat(obj.starting_value), currentValue: parseFloat(obj.current_value),
+      targetValue: parseFloat(obj.target_value), targetDate: obj.target_date, createdAt: obj.created_at, now
+    })) {
+      const { title, message } = alertText('growthBehindSchedule', language, obj.metric_name, obj.business_name);
+      await createAlert(ownerId, obj.business_id, 'growth_behind_schedule', 'warning', title, message, { metricName: obj.metric_name, businessName: obj.business_name });
+      await pool.query('UPDATE growth_objectives SET behind_schedule_alert_sent_at = NOW() WHERE id = $1', [obj.id]);
+    }
+
+    // "No check-in" measures from whichever is more recent: the last
+    // recorded progress entry, or the objective's own creation — a
+    // brand-new objective with zero check-ins yet shouldn't be flagged
+    // stale the moment it's created.
+    const sinceReference = obj.last_checkin_at || obj.created_at;
+    const daysSinceCheckin = Math.round((now - new Date(sinceReference)) / (1000 * 60 * 60 * 24));
+    const canAlertNoCheckin = !obj.no_checkin_alert_sent_at || (now - new Date(obj.no_checkin_alert_sent_at)) > 14 * 24 * 60 * 60 * 1000;
+    if (canAlertNoCheckin && daysSinceCheckin >= 30) {
+      const { title, message } = alertText('growthNoCheckin', language, obj.metric_name, obj.business_name, daysSinceCheckin);
+      await createAlert(ownerId, obj.business_id, 'growth_no_checkin', 'info', title, message, { metricName: obj.metric_name, businessName: obj.business_name, daysSinceCheckin });
+      await pool.query('UPDATE growth_objectives SET no_checkin_alert_sent_at = NOW() WHERE id = $1', [obj.id]);
+    }
+  }
+}
+
 // ── Orchestration — runs all 3 checks for every account owner, then sends ──
 // one digest email per owner covering everything new since the last run.
 // Each owner is processed independently: if one owner's data causes an
@@ -7807,6 +7917,8 @@ async function runMonitoringSweep() {
         await checkCompetitorChanges(owner.id, prefs, owner.preferred_language);
         await checkTeamActivity(owner.id, owner.plan, prefs, owner.preferred_language);
         await checkOverdueLeadFollowUps(owner.id, prefs, owner.preferred_language);
+        await checkMarketingAlerts(owner.id, prefs, owner.preferred_language);
+        await checkGrowthAlerts(owner.id, prefs, owner.preferred_language);
         ownersChecked++;
 
         // Digest email for anything created just now and not yet emailed
