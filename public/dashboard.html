@@ -231,6 +231,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <div class="topbar-actions">
       <button class="lang-switch-btn" data-lang-option="en" onclick="setLanguage('en')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;margin-right:4px">EN</button>
       <button class="lang-switch-btn" data-lang-option="fr" onclick="setLanguage('fr')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;margin-right:10px">FR</button>
+      <span id="translatingIndicator" style="display:none;font-size:11px;color:var(--purple-light);margin-right:10px;white-space:nowrap">⏳ <span data-i18n="lang.translating">Translating…</span></span>
       <a href="/boardroom" class="btn-primary">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         <span data-i18n="dash.new_session">New Session</span>
@@ -2357,39 +2358,53 @@ async function loadBusinessIntoView(businessId) {
 // so the newly-selected language's cached (or freshly auto-translated)
 // content is shown, instead of leaving stale English text on screen.
 document.addEventListener('arreyon:langchange', async () => {
-  if (currentBusinessId && document.getElementById('section-analyzer')?.classList.contains('active')) {
-    loadBusinessIntoView(currentBusinessId);
-  }
-  if (document.getElementById('section-entrepreneur')?.classList.contains('active')) {
-    await loadEntrepreneurHistory();
-    // The history list itself was just correctly refreshed with translated
-    // content, but whatever session is CURRENTLY OPEN on screen was rendered
-    // once at generation/click time and nothing re-painted it — re-render it
-    // now from the freshly-translated cache so it doesn't stay stuck in
-    // whichever language it happened to be generated in.
-    if (currentEntrepreneurSessionId) {
-      const current = entrepreneurSessionsCache.find(s => s.id === currentEntrepreneurSessionId);
-      if (current) renderEntrepreneurSession(current, false);
+  // Switching to French can trigger a live AI translation call on the
+  // backend for content not yet cached in French — this can take several
+  // seconds. Without visible feedback here, the screen just sits unchanged
+  // in English with no indication anything is happening, which reads as
+  // "the French translation isn't working" rather than "it's still loading."
+  const indicator = document.getElementById('translatingIndicator');
+  if (indicator) indicator.style.display = 'inline';
+  try {
+    if (currentBusinessId && document.getElementById('section-analyzer')?.classList.contains('active')) {
+      await loadBusinessIntoView(currentBusinessId);
     }
-  }
-  if (document.getElementById('section-growth')?.classList.contains('active') && currentGrowthBusinessId) {
-    if (currentGrowthObjectiveId) loadGrowthObjective();
-    else loadGrowthGoalsList();
-  }
-  if (document.getElementById('section-action')?.classList.contains('active') && currentActionBusinessId) {
-    loadActionTasks();
-  }
-  if (document.getElementById('section-market')?.classList.contains('active') && currentMarketBusinessId) {
-    loadCompetitors();
-  }
-  if (document.getElementById('section-marketingsales')?.classList.contains('active') && currentMktBusinessId) {
-    loadMarketingStrategy();
-  }
-  if (document.getElementById('section-funding')?.classList.contains('active') && currentFundBusinessId) {
-    loadFundingReadiness();
-  }
-  if (document.getElementById('section-reportscenter')?.classList.contains('active') && currentReportsBusinessId) {
-    loadReportsCenter();
+    if (document.getElementById('section-entrepreneur')?.classList.contains('active')) {
+      await loadEntrepreneurHistory();
+      // The history list itself was just correctly refreshed with translated
+      // content, but whatever session is CURRENTLY OPEN on screen was rendered
+      // once at generation/click time and nothing re-painted it — re-render it
+      // now from the freshly-translated cache so it doesn't stay stuck in
+      // whichever language it happened to be generated in.
+      if (currentEntrepreneurSessionId) {
+        const current = entrepreneurSessionsCache.find(s => s.id === currentEntrepreneurSessionId);
+        if (current) renderEntrepreneurSession(current, false);
+      }
+    }
+    if (document.getElementById('section-growth')?.classList.contains('active') && currentGrowthBusinessId) {
+      if (currentGrowthObjectiveId) await loadGrowthObjective();
+      else await loadGrowthGoalsList();
+    }
+    if (document.getElementById('section-action')?.classList.contains('active') && currentActionBusinessId) {
+      await loadActionTasks();
+    }
+    if (document.getElementById('section-market')?.classList.contains('active') && currentMarketBusinessId) {
+      await loadCompetitors();
+    }
+    if (document.getElementById('section-marketingsales')?.classList.contains('active') && currentMktBusinessId) {
+      await loadMarketingStrategy();
+    }
+    if (document.getElementById('section-funding')?.classList.contains('active') && currentFundBusinessId) {
+      await loadFundingReadiness();
+    }
+    if (document.getElementById('section-reportscenter')?.classList.contains('active') && currentReportsBusinessId) {
+      await loadReportsCenter();
+    }
+  } finally {
+    // Always hide, even if one of the loads above threw — an indicator
+    // stuck on screen forever would be a worse problem than the one this
+    // is meant to fix.
+    if (indicator) indicator.style.display = 'none';
   }
   // applyTranslations() re-tags every data-i18n element, which would wipe out
   // the 🔒 lock prefix we add on top of the base label — re-apply it after.
