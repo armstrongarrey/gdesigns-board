@@ -810,5 +810,17 @@ ALTER TABLE action_tasks ADD COLUMN IF NOT EXISTS lead_id UUID REFERENCES leads(
 ALTER TABLE monitoring_preferences ADD COLUMN IF NOT EXISTS lead_alerts_enabled BOOLEAN DEFAULT TRUE;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 8 — BUSINESS PLAN + FUNDING (Step 2: Funding Readiness Score)
+-- The score itself and its breakdown are deterministic, computed from
+-- objective signals already tracked elsewhere (has a plan, has verified
+-- financials, tracks growth, etc.) — never an AI-invented number. Only the
+-- qualitative strengths/gaps/next-steps are AI-generated, grounded in the
+-- computed breakdown. Same translate-once-and-cache pattern as everywhere else.
+-- ═══════════════════════════════════════════════════════════════════════════
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS funding_readiness JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS funding_readiness_fr JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS funding_readiness_generated_at TIMESTAMPTZ;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
