@@ -884,5 +884,44 @@ ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS ahead_schedule_alert_sent
 ALTER TABLE tracked_competitors ADD COLUMN IF NOT EXISTS opportunity_radar_sent_at TIMESTAMPTZ;
 ALTER TABLE monitoring_preferences ADD COLUMN IF NOT EXISTS opportunity_radar_enabled BOOLEAN DEFAULT TRUE;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 10 — INTEGRATIONS (Step 1: Google Search Console)
+-- One connection per account, owned and managed by the account owner only,
+-- shared by the whole team — same model as google_analytics_connections,
+-- deliberately not a per-team-member connection. Requires the Search
+-- Console API enabled on the same Google Cloud project already used for
+-- Analytics, and a new authorized redirect URI added there — a one-time
+-- setup step in Google Cloud Console this server cannot do on its own.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS google_search_console_connections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  token_expires_at TIMESTAMPTZ NOT NULL,
+  site_url VARCHAR(500),
+  business_id UUID REFERENCES businesses(id) ON DELETE SET NULL,
+  connected_at TIMESTAMPTZ DEFAULT NOW(),
+  last_synced_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_gsc_connections_owner ON google_search_console_connections(owner_id);
+
+-- Same reasoning as analytics_snapshots — daily figures kept for trend
+-- display and as the baseline the monitoring system compares against.
+CREATE TABLE IF NOT EXISTS search_console_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  connection_id UUID REFERENCES google_search_console_connections(id) ON DELETE CASCADE,
+  snapshot_date DATE NOT NULL,
+  clicks INTEGER,
+  impressions INTEGER,
+  ctr NUMERIC(6,3),
+  avg_position NUMERIC(6,2),
+  top_query VARCHAR(500),
+  raw_data JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(connection_id, snapshot_date)
+);
+CREATE INDEX IF NOT EXISTS idx_search_console_snapshots_connection ON search_console_snapshots(connection_id, snapshot_date DESC);
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
