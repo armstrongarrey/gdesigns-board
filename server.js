@@ -5757,7 +5757,7 @@ async function runBusinessResearch(business, userId, scope = 'both', knownFacts 
   const allSources = [];
   for (const q of queries) {
     try {
-      const results = await researchSearch(q, { maxResults: 4 });
+      const results = await researchSearch(q, { maxResults: 6 });
       allSources.push(...results.map(r => ({ ...r, query: q })));
     } catch (e) {
       continue;
@@ -5798,40 +5798,40 @@ ${knownFactsBlock}
 Below are real search results from queries aimed at finding this business's competitors and market context.
 
 SEARCH RESULTS:
-${sourcesText.slice(0, 8000)}
+${sourcesText.slice(0, 14000)}
 
 YOUR TASK:
-Produce a complete report based ONLY on the search results above and the known facts about ${bizName}: (1) full detailed market and competitor analysis, (2) a competitive gap comparison, (3) a summary and audit of research reliability, (4) recommendations broken into clear, structured sections — not one paragraph.
+Produce a complete, professional-grade report based ONLY on the search results above and the known facts about ${bizName} — written as if for a real investor or strategic decision, not a summary. (1) full detailed market and competitor analysis, (2) a competitive gap comparison, (3) a summary and audit of research reliability, (4) recommendations broken into clear, structured sections — not one paragraph.
 
 CRITICAL RULES:
 - Every competitor and claim must be traceable to one of the numbered sources above — cite using the source number in "source_ref"
 - ${scopeInstruction}
-- If the search results don't clearly answer something, say so explicitly rather than guessing — do not invent competitor names, statistics, or facts not present above
+- If the search results don't clearly answer something, say so explicitly rather than guessing — do not invent competitor names, statistics, or facts not present above. Depth means writing substantively about what the evidence actually supports, never padding with invented specifics.
 - For "competitive_gaps": compare what competitors are shown doing/offering against what we know ${bizName} offers. Only list a gap if a specific competitor's description clearly shows something ${bizName}'s known facts do NOT mention. Do not guess at gaps with no evidence.
-- Each recommendation must have a short title, a specific solution/strategy (1-2 sentences), and 2-4 concrete action steps — no vague advice
+- Each recommendation must have a short title, a substantive solution/strategy with real reasoning, and 2-4 concrete action steps — no vague advice
 - The audit section must honestly assess coverage gaps, not just praise the findings
 
 Return ONLY valid JSON, no markdown formatting, in exactly this structure:
 {
-  "market_context": "2-3 sentences on the overall market situation",
-  "full_analysis": "A detailed 4-6 sentence analysis covering market dynamics, competitive intensity, and positioning implications for ${bizName} specifically",
+  "market_context": "4-6 sentences on the overall market situation — size and growth if the evidence supports an estimate, key dynamics, and what's actually driving demand",
+  "full_analysis": "A detailed, substantive analysis (aim for 8-10 sentences) covering market dynamics, competitive intensity, barriers to entry, pricing dynamics, customer behavior, and positioning implications for ${bizName} specifically — written with the depth of a professional analyst's report",
   "local_coverage_note": "Only include this key if results were thin overall — explain what was actually found instead",
   "competitors": [
-    {"name": "...", "description": "what they offer, one sentence", "differentiator": "their apparent edge or weakness", "scope": "local", "source_ref": "1"}
+    {"name": "...", "description": "what they offer, their apparent scale and reach, and how they're positioned — 2-3 sentences with real substance", "differentiator": "their apparent edge or weakness, explained with reasoning, not just a label", "scope": "local", "source_ref": "1"}
   ],
   "competitive_gaps": [
-    {"gap": "specific thing competitors offer that ${bizName} does not appear to", "competitor_names": ["Name1","Name2"], "source_ref": "1"}
+    {"gap": "specific thing competitors offer that ${bizName} does not appear to, explained with enough context to understand why it matters", "competitor_names": ["Name1","Name2"], "source_ref": "1"}
   ],
-  "opportunity_gap": "The clearest gap or underserved angle this business could exploit",
-  "audit_summary": "2-3 sentences honestly assessing how complete and reliable this research is",
+  "opportunity_gap": "The clearest gap or underserved angle this business could exploit — 2-3 sentences explaining why it's real and what capturing it would take",
+  "audit_summary": "3-4 sentences honestly assessing how complete and reliable this research is",
   "audit_coverage": [
-    {"area": "e.g. Local competitor pricing", "status": "covered|partial|not covered", "note": "brief explanation"}
+    {"area": "e.g. Local competitor pricing", "status": "covered|partial|not covered", "note": "explanation with enough detail to be useful, not just a label"}
   ],
   "strategic_recommendations": [
     {
       "title": "short 3-6 word recommendation title",
-      "problem_addressed": "the specific gap or finding this responds to, one sentence",
-      "solution": "the recommended solution or strategy, 1-2 sentences",
+      "problem_addressed": "the specific gap or finding this responds to, explained with real context",
+      "solution": "the recommended solution or strategy, explained substantively with reasoning — 2-3 sentences",
       "action_steps": ["concrete step 1", "concrete step 2", "concrete step 3"],
       "priority": "high|medium|low"
     }
@@ -5840,7 +5840,7 @@ Return ONLY valid JSON, no markdown formatting, in exactly this structure:
 
 List up to 8 competitors total${includeInternational ? ', aiming for a mix of local and international where results support it' : ' (national only)'}. Up to 4 competitive_gaps (omit the key entirely if none can be evidenced). Up to 4 strategic_recommendations, ranked by priority. Up to 4 audit_coverage rows. Omit "local_coverage_note" entirely if results were adequate.`;
 
-  const raw = await askClaude(synthesisPrompt + frenchInstruction(language, { jsonMode: true }), [{ role: 'user', content: 'Produce the complete structured report now, as JSON only.' }], { feature: 'research_engine', userId }, 3500);
+  const raw = await askClaude(synthesisPrompt + frenchInstruction(language, { jsonMode: true }), [{ role: 'user', content: 'Produce the complete structured report now, as JSON only.' }], { feature: 'research_engine', userId }, 6000);
   let structured;
   try {
     structured = extractJSON(raw);
