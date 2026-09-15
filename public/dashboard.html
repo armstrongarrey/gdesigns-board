@@ -176,6 +176,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <a class="nav-item" href="#funding" onclick="showSection('funding');return false;" id="nav-funding">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span data-i18n="fund.nav_title">Funding Readiness</span>
     </a>
+    <a class="nav-item" href="#reportscenter" onclick="showSection('reportscenter');return false;" id="nav-reportscenter">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg><span data-i18n="reports.nav_title">Reports Center</span>
+    </a>
     <a class="nav-item" href="#history" onclick="showSection('history');return false;" id="nav-history">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="dash.nav_history">History</span>
     </a>
@@ -1266,6 +1269,23 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     </div>
   </div>
 
+  <!-- REPORTS CENTER SECTION -->
+  <div class="section-view" id="section-reportscenter">
+    <div class="section-title" data-i18n="reports.title">Reports Center</div>
+    <div class="section-sub" data-i18n="reports.subtitle">Everything generated for this business, in one place.</div>
+
+    <div class="form-group" style="max-width:400px;margin-bottom:20px">
+      <label data-i18n="reports.select_business">Business</label>
+      <select class="form-input" id="reportsBusinessSelect" onchange="loadReportsCenter()"></select>
+    </div>
+
+    <div id="reportsNoBizPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;text-align:center;max-width:500px">
+      <div style="font-size:13px;color:var(--muted)" data-i18n="growth.no_business_yet">Analyze a business first so Growth Center has somewhere to track progress.</div>
+    </div>
+
+    <div id="reportsGrid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:14px;max-width:900px"></div>
+  </div>
+
 </div>
 </div>
 <!-- /main -->
@@ -2024,7 +2044,7 @@ function renderBilling() {
     </div>`).join('');
 }
 
-const SECTION_TITLE_KEYS = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title',alerts:'alerts.title',growth:'growth.title',action:'action.title',market:'market.title',marketingsales:'mkt.title',funding:'fund.title'};
+const SECTION_TITLE_KEYS = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title',alerts:'alerts.title',growth:'growth.title',action:'action.title',market:'market.title',marketingsales:'mkt.title',funding:'fund.title',reportscenter:'reports.title'};
 
 function showSection(name) {
   document.querySelectorAll('.section-view').forEach(s => s.classList.remove('active'));
@@ -2048,6 +2068,7 @@ function showSection(name) {
   if (name === 'market') loadCompetitorBusinesses();
   if (name === 'marketingsales') loadMarketingBusinesses();
   if (name === 'funding') loadFundingBusinesses();
+  if (name === 'reportscenter') loadReportsCenterBusinesses();
 
   // Keep the URL in sync with whichever section is showing, so a refresh or
   // an "open in new tab" lands back on the right page. replaceState (not
@@ -2345,6 +2366,9 @@ document.addEventListener('arreyon:langchange', async () => {
   }
   if (document.getElementById('section-funding')?.classList.contains('active') && currentFundBusinessId) {
     loadFundingReadiness();
+  }
+  if (document.getElementById('section-reportscenter')?.classList.contains('active') && currentReportsBusinessId) {
+    loadReportsCenter();
   }
   // applyTranslations() re-tags every data-i18n element, which would wipe out
   // the 🔒 lock prefix we add on top of the base label — re-apply it after.
@@ -4623,6 +4647,89 @@ function copyShareLink() {
     document.execCommand('copy');
     showCopiedFeedback();
   }
+}
+
+// ── REPORTS CENTER (Phase 9, Step 3) ────────────────────────────────────────
+// Deliberately just a status + navigation view — every report already has
+// its own dedicated section elsewhere with full rendering, download links,
+// and regenerate controls. Duplicating that display here would mean two
+// places to keep in sync; this only answers "what exists, and where do I
+// go to see it."
+let currentReportsBusinessId = null;
+
+const REPORTS_CENTER_TYPES = [
+  { key: 'business_report', icon: '📄', titleKey: 'reports.type_business_report', section: 'analyzer' },
+  { key: 'business_intelligence', icon: '🧠', titleKey: 'reports.type_business_intelligence', section: 'analyzer' },
+  { key: 'market_context', icon: '🌍', titleKey: 'reports.type_market_context', section: 'market' },
+  { key: 'market_research', icon: '🔍', titleKey: 'reports.type_market_research', section: 'analyzer' },
+  { key: 'marketing_strategy', icon: '📣', titleKey: 'reports.type_marketing_strategy', section: 'marketingsales' },
+  { key: 'content_calendar', icon: '🗓️', titleKey: 'reports.type_content_calendar', section: 'marketingsales' },
+  { key: 'business_plan', icon: '📋', titleKey: 'reports.type_business_plan', section: 'entrepreneur' },
+  { key: 'funding_readiness', icon: '💰', titleKey: 'reports.type_funding_readiness', section: 'funding' },
+  { key: 'pitch_deck', icon: '🎤', titleKey: 'reports.type_pitch_deck', section: 'funding' }
+];
+
+async function loadReportsCenterBusinesses() {
+  try {
+    const res = await fetch('/api/business');
+    const data = await res.json();
+    const businesses = data.businesses || [];
+    const select = document.getElementById('reportsBusinessSelect');
+
+    if (!businesses.length) {
+      document.getElementById('reportsNoBizPrompt').style.display = 'block';
+      select.parentElement.style.display = 'none';
+      document.getElementById('reportsGrid').style.display = 'none';
+      return;
+    }
+
+    document.getElementById('reportsNoBizPrompt').style.display = 'none';
+    select.parentElement.style.display = 'block';
+    document.getElementById('reportsGrid').style.display = 'grid';
+    select.innerHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+
+    let savedId;
+    try { savedId = localStorage.getItem('arreyon_reports_business_id'); } catch (e) {}
+    const stillExists = savedId && businesses.some(b => b.id === savedId);
+    currentReportsBusinessId = stillExists ? savedId : businesses[0].id;
+    select.value = currentReportsBusinessId;
+
+    loadReportsCenter();
+  } catch (e) {}
+}
+
+async function loadReportsCenter() {
+  const select = document.getElementById('reportsBusinessSelect');
+  currentReportsBusinessId = select.value || currentReportsBusinessId;
+  if (!currentReportsBusinessId) return;
+  try { localStorage.setItem('arreyon_reports_business_id', currentReportsBusinessId); } catch (e) {}
+
+  try {
+    const res = await fetch(`/api/business/${currentReportsBusinessId}/reports-center`);
+    const data = await res.json();
+    if (!res.ok) return;
+    renderReportsGrid(data.reports || []);
+  } catch (e) {}
+}
+
+function renderReportsGrid(reports) {
+  const grid = document.getElementById('reportsGrid');
+  const byKey = {};
+  reports.forEach(r => { byKey[r.key] = r; });
+
+  grid.innerHTML = REPORTS_CENTER_TYPES.map(type => {
+    const report = byKey[type.key];
+    const generatedAt = report?.generatedAt;
+    const dateStr = generatedAt ? new Date(generatedAt).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+    return `
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;cursor:pointer" onclick="showSection('${type.section}')">
+        <div style="font-size:22px;margin-bottom:8px">${type.icon}</div>
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px">${t(type.titleKey)}</div>
+        ${generatedAt
+          ? `<div style="font-size:11px;color:var(--green)">✓ ${t('reports.generated_on')} ${dateStr}</div>`
+          : `<div style="font-size:11px;color:var(--muted)">${t('reports.not_generated_yet')}</div>`}
+      </div>`;
+  }).join('');
 }
 
 async function findOpportunities() {
