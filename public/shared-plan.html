@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-XLECQ8G62E"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XLECQ8G62E');
+</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shared Business Plan — Arreyon Consult</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0e0b1a">
+<style>
+:root {
+  --purple:#6C3Bff; --purple-light:#a78bfa; --bg:#0e0b1a; --bg2:#14102a; --bg3:#1a1438; --bg4:#090717;
+  --border:#2a1f4e; --border2:#1a1030; --text:#e8e0ff; --text2:#c8b8f0;
+  --muted:#5a4a7a; --muted2:#3a2f5a; --green:#10a37f; --gold:#e6aa00;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:20px}
+.lang-switch{position:fixed;top:16px;right:16px;display:flex;gap:6px;z-index:10}
+.lang-switch-btn{background:none;border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit}
+.lang-switch-btn.active{background:var(--purple)!important;border-color:var(--purple)!important;color:#fff!important}
+.wrap{max-width:760px;margin:0 auto;padding:40px 0}
+.header{text-align:center;margin-bottom:28px}
+.mark{width:44px;height:44px;background:var(--purple);border-radius:11px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;color:#fff;margin:0 auto 14px}
+h1{font-size:22px;font-weight:700;margin-bottom:4px}
+.subtitle{font-size:13px;color:var(--muted)}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:18px}
+.card-title{font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px}
+.section-block{background:var(--bg3);border-radius:8px;padding:14px;margin-bottom:14px}
+.field-label{font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.field-value{font-size:13px;color:var(--text2);line-height:1.6;margin-top:2px}
+.score-row{display:flex;align-items:center;gap:16px;margin-bottom:14px}
+.score-num{font-size:36px;font-weight:800}
+.score-bar-bg{background:var(--bg3);border-radius:6px;height:10px;overflow:hidden;flex:1}
+.score-bar-fill{height:100%}
+.breakdown-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12.5px;color:var(--text2)}
+.slide-block{background:var(--bg3);border-radius:8px;padding:12px 14px;margin-bottom:8px}
+.slide-title{font-size:10px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:4px}
+ul.plain{margin:0;padding-left:16px;font-size:12.5px;color:var(--text2);line-height:1.6}
+.spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--purple);border-radius:50%;margin:60px auto;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.error-box{background:#2a0a0a;border:1px solid #4a1010;border-radius:10px;padding:16px;font-size:13px;color:#ff8080;text-align:center;max-width:440px;margin:60px auto}
+.footer-note{text-align:center;font-size:11.5px;color:var(--muted);margin-top:24px}
+.empty-note{font-size:12.5px;color:var(--muted);font-style:italic;padding:8px 0}
+</style>
+<script src="/i18n.js"></script>
+</head>
+<body>
+
+<div class="lang-switch">
+  <button class="lang-switch-btn" data-lang-option="en" onclick="setLanguage('en')">EN</button>
+  <button class="lang-switch-btn" data-lang-option="fr" onclick="setLanguage('fr')">FR</button>
+</div>
+
+<div class="wrap" id="wrap">
+  <div class="spinner" id="spinner"></div>
+</div>
+
+<script>
+const params = new URLSearchParams(window.location.search);
+const token = params.get('token');
+const wrap = document.getElementById('wrap');
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+
+function listRow(label, val) {
+  if (!val) return '';
+  const body = Array.isArray(val) ? val.map(v => `• ${esc(v)}`).join('<br>') : esc(val);
+  return `<div style="margin-bottom:8px"><span class="field-label">${esc(label)}</span><div class="field-value">${body}</div></div>`;
+}
+
+function renderBusinessPlanReadOnly(plan) {
+  if (!plan) return '';
+  const bm = plan.business_model || {}, st = plan.strategy || {}, mk = plan.marketing_plan || {}, ex = plan.execution_plan || {}, fin = plan.financial_snapshot || {};
+  return `
+    <div class="card">
+      <div class="card-title">${t('shared.business_plan')}</div>
+      <div class="section-block">
+        <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:8px">${t('plan.business_model')}</div>
+        ${listRow(t('plan.value_proposition'), bm.value_proposition)}
+        ${listRow(t('plan.customer_segments'), bm.customer_segments)}
+        ${listRow(t('plan.revenue_streams'), bm.revenue_streams)}
+        ${listRow(t('plan.channels'), bm.channels)}
+      </div>
+      <div class="section-block">
+        <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:8px">${t('plan.strategy')}</div>
+        ${listRow(t('plan.positioning'), st.positioning)}
+        ${listRow(t('plan.competitive_advantage'), st.competitive_advantage)}
+        ${listRow(t('plan.differentiation'), st.differentiation)}
+      </div>
+      <div class="section-block">
+        <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:8px">${t('plan.marketing_plan')}</div>
+        ${listRow(t('plan.target_audience'), mk.target_audience)}
+        ${listRow(t('plan.marketing_channels'), mk.marketing_channels)}
+        ${listRow(t('plan.acquisition_funnel'), mk.customer_acquisition_funnel)}
+      </div>
+      <div class="section-block">
+        <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:8px">${t('plan.execution_plan')}</div>
+        ${listRow(t('plan.first_30_days'), ex.phase_30_days)}
+        ${listRow(t('plan.days_31_60'), ex.phase_60_days)}
+        ${listRow(t('plan.days_61_90'), ex.phase_90_days)}
+      </div>
+      <div class="section-block">
+        <div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:8px">${t('plan.financial_snapshot')}</div>
+        ${listRow(t('plan.startup_cost'), fin.estimated_startup_cost)}
+        ${listRow(t('plan.monthly_operating_cost'), fin.monthly_operating_cost)}
+        ${listRow(t('plan.breakeven_estimate'), fin.breakeven_estimate)}
+      </div>
+    </div>`;
+}
+
+function renderFundingReadinessReadOnly(readiness) {
+  if (!readiness) return '';
+  const scoreColor = readiness.score >= 70 ? 'var(--green)' : readiness.score >= 40 ? 'var(--gold)' : '#ef4444';
+  const FUND_LABELS = {
+    has_business_plan: 'fund.check_business_plan', has_verified_financials: 'fund.check_verified_financials',
+    has_growth_tracking: 'fund.check_growth_tracking', has_business_intelligence: 'fund.check_business_intelligence',
+    has_market_context: 'fund.check_market_context', has_tracked_competitor: 'fund.check_tracked_competitor',
+    profile_completeness: 'fund.check_profile_completeness'
+  };
+  const breakdownHtml = (readiness.breakdown || []).map(b => `
+    <div class="breakdown-row"><span>${b.met ? '✅' : '⬜'}</span><span style="flex:1">${t(FUND_LABELS[b.key] || b.key)}</span><span style="color:var(--muted)">${b.points}/${b.maxPoints}</span></div>`).join('');
+  return `
+    <div class="card">
+      <div class="card-title">${t('fund.title')}</div>
+      <div class="score-row">
+        <div class="score-num" style="color:${scoreColor}">${readiness.score}</div>
+        <div style="flex:1">
+          <div class="score-bar-bg"><div class="score-bar-fill" style="background:${scoreColor};width:${readiness.score}%"></div></div>
+          <div class="field-value" style="margin-top:6px">${esc(readiness.readiness_summary || '')}</div>
+        </div>
+      </div>
+      <div style="margin-bottom:14px">${breakdownHtml}</div>
+      ${readiness.strengths && readiness.strengths.length ? `<div class="section-block"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">${t('fund.strengths')}</div><ul class="plain">${readiness.strengths.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>` : ''}
+      ${readiness.gaps && readiness.gaps.length ? `<div class="section-block"><div style="font-size:11px;font-weight:700;color:var(--text);margin-bottom:6px">${t('fund.gaps')}</div><ul class="plain">${readiness.gaps.map(g => `<li>${esc(g)}</li>`).join('')}</ul></div>` : ''}
+    </div>`;
+}
+
+function renderPitchDeckReadOnly(pitchDeck) {
+  if (!pitchDeck || !Array.isArray(pitchDeck.slides) || !pitchDeck.slides.length) return '';
+  const slidesHtml = pitchDeck.slides.map(slide => `
+    <div class="slide-block">
+      <div class="slide-title">${slide.slide_number ? slide.slide_number + '. ' : ''}${esc(slide.title || '')}</div>
+      <ul class="plain">${(slide.content || []).map(c => `<li>${esc(c)}</li>`).join('')}</ul>
+    </div>`).join('');
+  return `<div class="card"><div class="card-title">${t('fund.pitch_deck_title')}</div>${slidesHtml}</div>`;
+}
+
+async function init() {
+  if (!token) {
+    wrap.innerHTML = `<div class="error-box">${t('shared.missing_link')}</div>`;
+    return;
+  }
+  try {
+    const res = await fetch('/api/share/' + token);
+    const data = await res.json();
+    if (!res.ok) {
+      wrap.innerHTML = `<div class="error-box">${data.error || t('shared.invalid_link')}</div>`;
+      return;
+    }
+
+    const hasAnyContent = data.businessPlan || data.fundingReadiness || data.pitchDeck;
+    wrap.innerHTML = `
+      <div class="header">
+        <div class="mark">A</div>
+        <h1>${esc(data.businessName || '')}</h1>
+        <div class="subtitle">${esc(data.industry || '')}${data.industry ? ' · ' : ''}${t('shared.shared_via')}</div>
+      </div>
+      ${renderFundingReadinessReadOnly(data.fundingReadiness)}
+      ${renderPitchDeckReadOnly(data.pitchDeck)}
+      ${renderBusinessPlanReadOnly(data.businessPlan)}
+      ${!hasAnyContent ? `<div class="card"><div class="empty-note">${t('shared.no_content_yet')}</div></div>` : ''}
+      <div class="footer-note">${t('shared.footer_note')}</div>`;
+  } catch (e) {
+    wrap.innerHTML = `<div class="error-box">${t('shared.load_error')}</div>`;
+  }
+}
+
+init();
+</script>
+</body>
+</html>
