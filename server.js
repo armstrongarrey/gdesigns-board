@@ -1840,7 +1840,7 @@ async function syncLeadFollowUpTask(lead, ownerId, businessId) {
 }
 
 app.post('/api/business/:id/leads', authRequired, async (req, res) => {
-  const { name, contactInfo, status, nextFollowUpDate, notes } = req.body;
+  const { name, contactInfo, phone, status, nextFollowUpDate, notes } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Please give this lead a name.' });
   try {
     const account = await resolveAccount(req.userId);
@@ -1849,8 +1849,8 @@ app.post('/api/business/:id/leads', authRequired, async (req, res) => {
 
     const validStatus = ['new', 'contacted', 'qualified', 'won', 'lost'].includes(status) ? status : 'new';
     const inserted = await pool.query(
-      `INSERT INTO leads (business_id, owner_id, name, contact_info, status, next_follow_up_date, notes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [req.params.id, account.id, name.trim(), contactInfo?.trim() || null, validStatus, nextFollowUpDate || null, notes?.trim() || null]
+      `INSERT INTO leads (business_id, owner_id, name, contact_info, phone, status, next_follow_up_date, notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [req.params.id, account.id, name.trim(), contactInfo?.trim() || null, phone?.trim() || null, validStatus, nextFollowUpDate || null, notes?.trim() || null]
     );
     const lead = inserted.rows[0];
     await syncLeadFollowUpTask({ ...lead, linked_task_id: null }, account.id, req.params.id);
@@ -1885,7 +1885,7 @@ app.get('/api/business/:id/leads', authRequired, async (req, res) => {
 });
 
 app.put('/api/business/:id/leads/:leadId', authRequired, async (req, res) => {
-  const { name, contactInfo, status, nextFollowUpDate, notes } = req.body;
+  const { name, contactInfo, phone, status, nextFollowUpDate, notes } = req.body;
   try {
     const account = await resolveAccount(req.userId);
     const existing = await pool.query(
@@ -1898,6 +1898,7 @@ app.put('/api/business/:id/leads/:leadId', authRequired, async (req, res) => {
 
     const newName = name !== undefined ? name.trim() : lead.name;
     const newContactInfo = contactInfo !== undefined ? (contactInfo.trim() || null) : lead.contact_info;
+    const newPhone = phone !== undefined ? (phone.trim() || null) : lead.phone;
     const newStatus = ['new', 'contacted', 'qualified', 'won', 'lost'].includes(status) ? status : lead.status;
     const newFollowUpDate = nextFollowUpDate !== undefined ? (nextFollowUpDate || null) : lead.next_follow_up_date;
     const newNotes = notes !== undefined ? (notes.trim() || null) : lead.notes;
@@ -1907,8 +1908,8 @@ app.put('/api/business/:id/leads/:leadId', authRequired, async (req, res) => {
     const followUpChanged = String(newFollowUpDate) !== String(lead.next_follow_up_date);
 
     const updated = await pool.query(
-      `UPDATE leads SET name = $1, contact_info = $2, status = $3, next_follow_up_date = $4, notes = $5, overdue_alert_sent_at = $6, updated_at = NOW() WHERE id = $7 RETURNING *`,
-      [newName, newContactInfo, newStatus, newFollowUpDate, newNotes, followUpChanged ? null : lead.overdue_alert_sent_at, lead.id]
+      `UPDATE leads SET name = $1, contact_info = $2, phone = $3, status = $4, next_follow_up_date = $5, notes = $6, overdue_alert_sent_at = $7, updated_at = NOW() WHERE id = $8 RETURNING *`,
+      [newName, newContactInfo, newPhone, newStatus, newFollowUpDate, newNotes, followUpChanged ? null : lead.overdue_alert_sent_at, lead.id]
     );
     const updatedLead = updated.rows[0];
 
