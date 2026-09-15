@@ -5783,7 +5783,7 @@ async function runBusinessResearch(business, userId, scope = 'both', knownFacts 
 
   const scopeInstruction = includeInternational
     ? `Include BOTH kinds of competitors found: companies based only in ${country || 'the local market'} ("scope": "local"), and companies that operate across multiple countries or globally while also serving ${country || 'this market'} ("scope": "international"). Do not exclude international competitors.`
-    : `The client asked for NATIONAL research only. Only include competitors based in or primarily operating within ${country || 'the local market'} ("scope": "local"). Exclude international/global-only players even if they appear in search results.`;
+    : `The client asked for NATIONAL research only. Only include competitors based in or primarily operating within ${country || 'the local market'} ("scope": "local"). Exclude international/global-only players even if they appear in search results — do not include one just to reach a higher competitor count. It is better to return 2 genuinely local competitors than 8 that include international ones. Every competitor listed must be tagged "scope": "local" — never "scope": "international" for this request.`;
 
   // What we already know about the business itself, for a real gap comparison
   const knownFactsText = Object.entries(knownFacts).filter(([,v]) => v).map(([k, v]) => `- ${k}: ${v}`).join('\n');
@@ -5847,6 +5847,25 @@ List up to 8 competitors total${includeInternational ? ', aiming for a mix of lo
   } catch (e) {
     console.error('Research JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
     throw new Error('Could not parse market research — please try again');
+  }
+
+  // The prompt instructs the model to exclude international competitors for
+  // a national-only request, but a prompt instruction is not a guarantee —
+  // enforce it deterministically here rather than trusting compliance.
+  // Only removes competitors EXPLICITLY tagged "international"; a missing
+  // or malformed scope tag is never treated as a reason to remove one,
+  // since that risks losing a genuine local competitor the model simply
+  // forgot to tag.
+  if (!includeInternational && Array.isArray(structured.competitors)) {
+    const beforeCount = structured.competitors.length;
+    structured.competitors = structured.competitors.filter(c => c.scope !== 'international');
+    const removedCount = beforeCount - structured.competitors.length;
+    if (removedCount > 0) {
+      const filterNote = language === 'fr'
+        ? `${removedCount} concurrent(s) international(aux) trouvé(s) dans les résultats de recherche ont été exclus conformément à votre demande de portée nationale uniquement.`
+        : `${removedCount} international competitor${removedCount === 1 ? '' : 's'} found in the search results ${removedCount === 1 ? 'was' : 'were'} excluded per your national-only request.`;
+      structured.local_coverage_note = structured.local_coverage_note ? `${structured.local_coverage_note} ${filterNote}` : filterNote;
+    }
   }
 
   const flatSummary = [
