@@ -848,5 +848,26 @@ ALTER TABLE businesses ADD COLUMN IF NOT EXISTS share_token VARCHAR(64) UNIQUE;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS share_created_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_businesses_share_token ON businesses(share_token) WHERE share_token IS NOT NULL;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 9 — REPORTS + ALERTS + OPPORTUNITY RADAR (Step 1: Marketing Alerts)
+-- Tracks when each marketing-related alert was last sent per business, so
+-- a stale condition re-reminds periodically rather than firing daily or
+-- only once and being forgotten — same reasoning as the lead follow-up
+-- alert's cadence in Phase 7.
+-- ═══════════════════════════════════════════════════════════════════════════
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS calendar_gap_alert_sent_at TIMESTAMPTZ;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS stale_strategy_alert_sent_at TIMESTAMPTZ;
+ALTER TABLE monitoring_preferences ADD COLUMN IF NOT EXISTS marketing_alerts_enabled BOOLEAN DEFAULT TRUE;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 9 — REPORTS + ALERTS + OPPORTUNITY RADAR (Step 2: Growth Alerts)
+-- Same per-condition cadence tracking as Marketing Alerts — behind_schedule
+-- and no-checkin are independent conditions, tracked separately so one
+-- being recently alerted doesn't suppress the other.
+-- ═══════════════════════════════════════════════════════════════════════════
+ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS behind_schedule_alert_sent_at TIMESTAMPTZ;
+ALTER TABLE growth_objectives ADD COLUMN IF NOT EXISTS no_checkin_alert_sent_at TIMESTAMPTZ;
+ALTER TABLE monitoring_preferences ADD COLUMN IF NOT EXISTS growth_alerts_enabled BOOLEAN DEFAULT TRUE;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
