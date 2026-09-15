@@ -516,8 +516,20 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;cursor:pointer">
           <input type="checkbox" id="prefCompetitor" onchange="saveAlertPreferences()"> <span data-i18n="alerts.pref_competitor">New competitors spotted in research</span>
         </label>
-        <label style="display:flex;align-items:center;gap:10px;margin-bottom:16px;font-size:13px;cursor:pointer">
+        <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;cursor:pointer">
           <input type="checkbox" id="prefTeam" onchange="saveAlertPreferences()"> <span data-i18n="alerts.pref_team">Team activity (new members, seat limits)</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="prefLead" onchange="saveAlertPreferences()"> <span data-i18n="alerts.pref_lead">Overdue lead follow-ups</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="prefMarketing" onchange="saveAlertPreferences()"> <span data-i18n="alerts.pref_marketing">Marketing (content calendar gaps, stale strategy)</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="prefGrowth" onchange="saveAlertPreferences()"> <span data-i18n="alerts.pref_growth">Growth (behind schedule, no recent check-in)</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:10px;margin-bottom:16px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="prefOpportunity" onchange="saveAlertPreferences()"> <span data-i18n="alerts.pref_opportunity">📡 Opportunity Radar (positive signals worth acting on)</span>
         </label>
         <hr style="border-color:var(--border);margin-bottom:16px">
         <label style="display:flex;align-items:center;gap:10px;font-size:13px;cursor:pointer">
@@ -1820,7 +1832,7 @@ function showIntMsg(text, type) {
 }
 
 // ── ALERTS (Autonomous Monitoring) ──────────────────────────────────────────
-const ALERT_SEVERITY_COLORS = { info: 'var(--purple-light)', warning: '#e6aa00', critical: '#ef4444' };
+const ALERT_SEVERITY_COLORS = { info: 'var(--purple-light)', warning: '#e6aa00', critical: '#ef4444', opportunity: 'var(--green)' };
 
 // Alert titles/messages are AI-generated free text and business names are
 // user-provided — neither should ever be inserted as raw HTML.
@@ -1850,6 +1862,7 @@ async function loadAlertsSection() {
       <div style="display:flex;gap:12px;padding:14px;border-radius:10px;margin-bottom:10px;background:${a.is_read ? 'var(--bg2)' : 'var(--bg3)'};border:1px solid var(--border);${a.is_read ? '' : 'border-left:3px solid ' + color}">
         <div style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            ${a.severity === 'opportunity' ? `<span style="font-size:9px;font-weight:700;color:var(--green);background:rgba(16,163,127,.15);padding:2px 7px;border-radius:4px;white-space:nowrap" data-i18n="radar.badge">📡 OPPORTUNITY</span>` : ''}
             <span style="font-size:13.5px;font-weight:700;color:var(--text)">${escapeHtml(a.title)}</span>
             ${a.business_name ? `<span style="font-size:10px;color:var(--muted);background:var(--bg3);padding:2px 6px;border-radius:4px">${escapeHtml(a.business_name)}</span>` : ''}
           </div>
@@ -1994,6 +2007,10 @@ async function loadAlertPreferences() {
     document.getElementById('prefMetrics').checked = p.metrics_alerts_enabled !== false;
     document.getElementById('prefCompetitor').checked = p.competitor_alerts_enabled !== false;
     document.getElementById('prefTeam').checked = p.team_activity_alerts_enabled !== false;
+    document.getElementById('prefLead').checked = p.lead_alerts_enabled !== false;
+    document.getElementById('prefMarketing').checked = p.marketing_alerts_enabled !== false;
+    document.getElementById('prefGrowth').checked = p.growth_alerts_enabled !== false;
+    document.getElementById('prefOpportunity').checked = p.opportunity_radar_enabled !== false;
     document.getElementById('prefEmail').checked = p.email_alerts_enabled !== false;
     alertPrefsLoaded = true;
   } catch (e) {}
@@ -2007,6 +2024,10 @@ async function saveAlertPreferences() {
         metricsAlertsEnabled: document.getElementById('prefMetrics').checked,
         competitorAlertsEnabled: document.getElementById('prefCompetitor').checked,
         teamActivityAlertsEnabled: document.getElementById('prefTeam').checked,
+        leadAlertsEnabled: document.getElementById('prefLead').checked,
+        marketingAlertsEnabled: document.getElementById('prefMarketing').checked,
+        growthAlertsEnabled: document.getElementById('prefGrowth').checked,
+        opportunityRadarEnabled: document.getElementById('prefOpportunity').checked,
         emailAlertsEnabled: document.getElementById('prefEmail').checked
       })
     });
