@@ -173,6 +173,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <a class="nav-item" href="#marketingsales" onclick="showSection('marketingsales');return false;" id="nav-marketingsales">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg><span data-i18n="mkt.nav_title">Marketing &amp; Sales</span>
     </a>
+    <a class="nav-item" href="#funding" onclick="showSection('funding');return false;" id="nav-funding">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span data-i18n="fund.nav_title">Funding Readiness</span>
+    </a>
     <a class="nav-item" href="#history" onclick="showSection('history');return false;" id="nav-history">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span data-i18n="dash.nav_history">History</span>
     </a>
@@ -1220,6 +1223,27 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     </div>
   </div>
 
+  <!-- FUNDING READINESS SECTION -->
+  <div class="section-view" id="section-funding">
+    <div class="section-title" data-i18n="fund.title">Funding Readiness</div>
+    <div class="section-sub" data-i18n="fund.subtitle">A real, computed score of how ready this business is to raise funding — and exactly what to fix.</div>
+
+    <div class="form-group" style="max-width:400px;margin-bottom:20px">
+      <label data-i18n="fund.select_business">Business</label>
+      <select class="form-input" id="fundBusinessSelect" onchange="loadFundingReadiness()"></select>
+    </div>
+
+    <div id="fundNoBizPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;text-align:center;max-width:500px">
+      <div style="font-size:13px;color:var(--muted)" data-i18n="growth.no_business_yet">Analyze a business first so Growth Center has somewhere to track progress.</div>
+    </div>
+
+    <div id="fundMainWrap" style="display:none;max-width:700px">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px">
+        <div id="fundContent"></div>
+      </div>
+    </div>
+  </div>
+
 </div>
 </div>
 <!-- /main -->
@@ -1978,7 +2002,7 @@ function renderBilling() {
     </div>`).join('');
 }
 
-const SECTION_TITLE_KEYS = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title',alerts:'alerts.title',growth:'growth.title',action:'action.title',market:'market.title',marketingsales:'mkt.title'};
+const SECTION_TITLE_KEYS = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title',alerts:'alerts.title',growth:'growth.title',action:'action.title',market:'market.title',marketingsales:'mkt.title',funding:'fund.title'};
 
 function showSection(name) {
   document.querySelectorAll('.section-view').forEach(s => s.classList.remove('active'));
@@ -2001,6 +2025,7 @@ function showSection(name) {
   if (name === 'action') loadActionBusinesses();
   if (name === 'market') loadCompetitorBusinesses();
   if (name === 'marketingsales') loadMarketingBusinesses();
+  if (name === 'funding') loadFundingBusinesses();
 
   // Keep the URL in sync with whichever section is showing, so a refresh or
   // an "open in new tab" lands back on the right page. replaceState (not
@@ -2295,6 +2320,9 @@ document.addEventListener('arreyon:langchange', async () => {
   }
   if (document.getElementById('section-marketingsales')?.classList.contains('active') && currentMktBusinessId) {
     loadMarketingStrategy();
+  }
+  if (document.getElementById('section-funding')?.classList.contains('active') && currentFundBusinessId) {
+    loadFundingReadiness();
   }
   // applyTranslations() re-tags every data-i18n element, which would wipe out
   // the 🔒 lock prefix we add on top of the base label — re-apply it after.
@@ -4294,6 +4322,134 @@ async function deleteLead(leadId) {
     const res = await fetch(`/api/business/${currentMktBusinessId}/leads/${leadId}`, { method: 'DELETE' });
     if (res.ok) loadLeads();
   } catch (e) {}
+}
+
+// ── FUNDING READINESS (Phase 8, Step 2) ─────────────────────────────────────
+let currentFundBusinessId = null;
+
+// Maps the deterministic breakdown's stable keys to translation keys — the
+// score and breakdown itself are computed server-side and never
+// translated, so this is the only place these labels become French.
+const FUND_BREAKDOWN_LABELS = {
+  has_business_plan: 'fund.check_business_plan',
+  has_verified_financials: 'fund.check_verified_financials',
+  has_growth_tracking: 'fund.check_growth_tracking',
+  has_business_intelligence: 'fund.check_business_intelligence',
+  has_market_context: 'fund.check_market_context',
+  has_tracked_competitor: 'fund.check_tracked_competitor',
+  profile_completeness: 'fund.check_profile_completeness'
+};
+
+async function loadFundingBusinesses() {
+  try {
+    const res = await fetch('/api/business');
+    const data = await res.json();
+    const businesses = data.businesses || [];
+    const select = document.getElementById('fundBusinessSelect');
+
+    if (!businesses.length) {
+      document.getElementById('fundNoBizPrompt').style.display = 'block';
+      select.parentElement.style.display = 'none';
+      document.getElementById('fundMainWrap').style.display = 'none';
+      return;
+    }
+
+    document.getElementById('fundNoBizPrompt').style.display = 'none';
+    select.parentElement.style.display = 'block';
+    document.getElementById('fundMainWrap').style.display = 'block';
+    select.innerHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+
+    // Same "remember the last selection" fix already applied everywhere else.
+    let savedId;
+    try { savedId = localStorage.getItem('arreyon_fund_business_id'); } catch (e) {}
+    const stillExists = savedId && businesses.some(b => b.id === savedId);
+    currentFundBusinessId = stillExists ? savedId : businesses[0].id;
+    select.value = currentFundBusinessId;
+
+    loadFundingReadiness();
+  } catch (e) {}
+}
+
+async function loadFundingReadiness() {
+  const select = document.getElementById('fundBusinessSelect');
+  currentFundBusinessId = select.value || currentFundBusinessId;
+  if (!currentFundBusinessId) return;
+  try { localStorage.setItem('arreyon_fund_business_id', currentFundBusinessId); } catch (e) {}
+
+  try {
+    const res = await fetch(`/api/business/${currentFundBusinessId}?lang=${window.currentLang || 'en'}`);
+    const data = await res.json();
+    renderFundingReadinessContent(data.business?.funding_readiness, data.business?.funding_readiness_generated_at);
+  } catch (e) {}
+}
+
+function renderFundingReadinessContent(readiness, generatedAt) {
+  const contentEl = document.getElementById('fundContent');
+  if (!readiness) {
+    contentEl.innerHTML = `
+      <div style="text-align:center;padding:16px">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:12px" data-i18n="fund.no_score_yet">Get a real, computed score of how ready this business is to raise funding.</div>
+        <button class="btn-primary" onclick="generateFundingReadiness()" id="fundGenerateBtn">💰 <span data-i18n="fund.generate_score">Assess Funding Readiness</span></button>
+      </div>`;
+    return;
+  }
+
+  const dateStr = generatedAt ? new Date(generatedAt).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+  const scoreColor = readiness.score >= 70 ? 'var(--green)' : readiness.score >= 40 ? 'var(--gold)' : '#ef4444';
+  const listBlock = (labelKey, defaultLabel, items) => items && items.length ? `
+    <div style="margin-bottom:12px">
+      <div style="font-size:10px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:4px" data-i18n="${labelKey}">${defaultLabel}</div>
+      <ul style="margin:0;padding-left:16px;font-size:12.5px;color:var(--text2);line-height:1.6">${items.map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>
+    </div>` : '';
+
+  const breakdownHtml = (readiness.breakdown || []).map(b => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+      <span style="font-size:14px">${b.met ? '✅' : '⬜'}</span>
+      <span style="flex:1;font-size:12.5px;color:var(--text2)">${t(FUND_BREAKDOWN_LABELS[b.key] || b.key)}</span>
+      <span style="font-size:11px;color:var(--muted)">${b.points}/${b.maxPoints}</span>
+    </div>`).join('');
+
+  contentEl.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+      <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
+      ${dateStr ? `<span style="font-size:11px;color:var(--muted)">${t('bi.as_of')} ${dateStr}</span>` : ''}
+      <button onclick="generateFundingReadiness()" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px" data-i18n="bi.regenerate">↻ Regenerate</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+      <div style="font-size:36px;font-weight:800;color:${scoreColor}">${readiness.score}</div>
+      <div style="flex:1">
+        <div style="background:var(--bg3);border-radius:6px;height:10px;overflow:hidden"><div style="height:100%;background:${scoreColor};width:${readiness.score}%"></div></div>
+        <div style="font-size:12.5px;color:var(--text2);margin-top:6px">${escapeHtml(readiness.readiness_summary || '')}</div>
+      </div>
+    </div>
+    ${readiness.confidence_note ? `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:14px">${escapeHtml(readiness.confidence_note)}</div>` : ''}
+    <div style="margin-bottom:16px">
+      <div style="font-size:10px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:6px" data-i18n="fund.breakdown_title">What's In Place</div>
+      ${breakdownHtml}
+    </div>
+    ${listBlock('fund.strengths', 'Strengths', readiness.strengths)}
+    ${listBlock('fund.gaps', 'Gaps to Address', readiness.gaps)}
+    ${listBlock('fund.next_steps', 'Recommended Next Steps', readiness.recommended_next_steps)}`;
+}
+
+async function generateFundingReadiness() {
+  const btn = document.getElementById('fundGenerateBtn');
+  if (btn) { btn.disabled = true; btn.textContent = t('growth.generating'); }
+  document.getElementById('fundContent').innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${t('growth.generating')}</div>`;
+
+  try {
+    const res = await fetch(`/api/business/${currentFundBusinessId}/funding-readiness`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: window.currentLang || 'en' })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('fundContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('growth.generate_failed')}</div>`;
+      return;
+    }
+    renderFundingReadinessContent(data.fundingReadiness, data.generatedAt);
+  } catch (e) {
+    document.getElementById('fundContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${t('board.connection_error')}</div>`;
+  }
 }
 
 async function findOpportunities() {
