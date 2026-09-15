@@ -1238,8 +1238,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     </div>
 
     <div id="fundMainWrap" style="display:none;max-width:700px">
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:18px">
         <div id="fundContent"></div>
+      </div>
+
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px">
+        <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:12px" data-i18n="fund.pitch_deck_title">Investor Pitch Deck Outline</div>
+        <div id="pitchDeckContent"></div>
       </div>
     </div>
   </div>
@@ -4380,6 +4385,7 @@ async function loadFundingReadiness() {
     const res = await fetch(`/api/business/${currentFundBusinessId}?lang=${window.currentLang || 'en'}`);
     const data = await res.json();
     renderFundingReadinessContent(data.business?.funding_readiness, data.business?.funding_readiness_generated_at);
+    renderPitchDeckContent(data.business?.pitch_deck, data.business?.pitch_deck_generated_at);
   } catch (e) {}
 }
 
@@ -4449,6 +4455,55 @@ async function generateFundingReadiness() {
     renderFundingReadinessContent(data.fundingReadiness, data.generatedAt);
   } catch (e) {
     document.getElementById('fundContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderPitchDeckContent(pitchDeck, generatedAt) {
+  const contentEl = document.getElementById('pitchDeckContent');
+  if (!pitchDeck || !Array.isArray(pitchDeck.slides) || !pitchDeck.slides.length) {
+    contentEl.innerHTML = `
+      <div style="text-align:center;padding:16px">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:12px" data-i18n="fund.no_deck_yet">Get a structured, slide-by-slide pitch deck outline for this business.</div>
+        <button class="btn-primary" onclick="generatePitchDeck()" id="pitchDeckGenerateBtn">🎤 <span data-i18n="fund.generate_deck">Generate Pitch Deck Outline</span></button>
+      </div>`;
+    return;
+  }
+
+  const dateStr = generatedAt ? new Date(generatedAt).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+  const slidesHtml = pitchDeck.slides.map(slide => `
+    <div style="background:var(--bg3);border-radius:8px;padding:12px 14px;margin-bottom:8px">
+      <div style="font-size:10px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:4px">${slide.slide_number ? slide.slide_number + '. ' : ''}${escapeHtml(slide.title || '')}</div>
+      <ul style="margin:0;padding-left:16px;font-size:12.5px;color:var(--text2);line-height:1.6">${(slide.content || []).map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
+    </div>`).join('');
+
+  contentEl.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
+      ${dateStr ? `<span style="font-size:11px;color:var(--muted)">${t('bi.as_of')} ${dateStr}</span>` : ''}
+      <a href="/api/business/${currentFundBusinessId}/pitch-deck/download" style="margin-left:auto;color:var(--purple-light);text-decoration:none;font-size:11px" data-i18n="mkt.download_word">⬇ Download as Word</a>
+      <button onclick="generatePitchDeck()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px" data-i18n="bi.regenerate">↻ Regenerate</button>
+    </div>
+    ${pitchDeck.confidence_note ? `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:12px">${escapeHtml(pitchDeck.confidence_note)}</div>` : ''}
+    ${slidesHtml}`;
+}
+
+async function generatePitchDeck() {
+  const btn = document.getElementById('pitchDeckGenerateBtn');
+  if (btn) { btn.disabled = true; btn.textContent = t('growth.generating'); }
+  document.getElementById('pitchDeckContent').innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${t('growth.generating')}</div>`;
+
+  try {
+    const res = await fetch(`/api/business/${currentFundBusinessId}/pitch-deck`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: window.currentLang || 'en' })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('pitchDeckContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('growth.generate_failed')}</div>`;
+      return;
+    }
+    renderPitchDeckContent(data.pitchDeck, data.generatedAt);
+  } catch (e) {
+    document.getElementById('pitchDeckContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${t('board.connection_error')}</div>`;
   }
 }
 
