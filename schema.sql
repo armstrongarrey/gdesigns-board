@@ -923,5 +923,45 @@ CREATE TABLE IF NOT EXISTS search_console_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_search_console_snapshots_connection ON search_console_snapshots(connection_id, snapshot_date DESC);
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 10 — INTEGRATIONS (Step 2: HubSpot CRM)
+-- One connection per account, owned and managed by the account owner only,
+-- same model as the Google integrations. A separate OAuth client from the
+-- Google ones — HubSpot's own client ID/secret, obtained via HubSpot's
+-- CLI-based app creation (their web-form app creation was discontinued),
+-- but the runtime OAuth flow itself is the standard authorization-code
+-- flow this server already implements the same way for Google.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS hubspot_connections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  token_expires_at TIMESTAMPTZ NOT NULL,
+  hub_id VARCHAR(50),
+  hub_domain VARCHAR(255),
+  business_id UUID REFERENCES businesses(id) ON DELETE SET NULL,
+  connected_at TIMESTAMPTZ DEFAULT NOW(),
+  last_synced_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_hubspot_connections_owner ON hubspot_connections(owner_id);
+
+-- Same reasoning as the Google snapshot tables — daily figures kept for
+-- trend display and as a baseline the monitoring system could compare
+-- against later.
+CREATE TABLE IF NOT EXISTS hubspot_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  connection_id UUID REFERENCES hubspot_connections(id) ON DELETE CASCADE,
+  snapshot_date DATE NOT NULL,
+  contacts_count INTEGER,
+  deals_count INTEGER,
+  open_deals_value NUMERIC(14,2),
+  deals_won_count INTEGER,
+  raw_data JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(connection_id, snapshot_date)
+);
+CREATE INDEX IF NOT EXISTS idx_hubspot_snapshots_connection ON hubspot_snapshots(connection_id, snapshot_date DESC);
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
