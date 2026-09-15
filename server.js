@@ -4250,50 +4250,52 @@ ${financialInstruction}
 ${isOpp ? `PRIOR OPPORTUNITY ANALYSIS:\n${JSON.stringify((session.structured_output.opportunities || []).find(o => o.name === chosenOpportunityName))}` : `PRIOR IDEA VALIDATION:\n${JSON.stringify(session.structured_output)}`}
 
 YOUR TASK:
-Produce a complete, realistic business plan grounded in the founder's actual stated capital and time — not a generic template. Be specific with numbers where the founder's capital/time context allows it. Marketing must be a genuinely separate, detailed section — not a single throwaway line.
+Produce a complete, detailed, professional business plan grounded in the founder's actual stated capital and time — not a generic template, and not a thin summary. Write this as if it will be read by a real investor: specific, substantive, and well-reasoned in every section. Marketing must be a genuinely separate, detailed section — not a single throwaway line.
 
-CRITICAL LENGTH RULE: Every field below must be ONE sentence, maximum 25 words. Do not write paragraph-length financial justifications or multi-clause reasoning chains — state the number or conclusion plainly. If you need to show your reasoning, that reasoning must fit within the same 25-word limit as the answer itself, not as an additional explanation appended after it.
+DEPTH: Business Model, Strategy, Marketing Plan, and Execution Plan should each be written in full, professional detail — multiple sentences per field where the topic warrants it, with concrete specifics (real numbers, named channels, named competitors or comparable businesses where relevant) rather than vague generalities. This should read like a document worth submitting to an investor, not a bullet-point outline.
+
+FINANCIAL SNAPSHOT EXCEPTION: the four fields under financial_snapshot are the one place to stay concise — a single figure or narrow range, one sentence, no reasoning chain. Founders and investors want a plain number there, not a paragraph of justification.
 
 Return ONLY valid JSON, no markdown, in exactly this structure:
 {
   "business_model": {
-    "value_proposition": "the core value delivered, one sentence",
-    "customer_segments": "who specifically this serves",
-    "revenue_streams": ["stream 1", "stream 2"],
-    "cost_structure": ["major cost 1", "major cost 2"],
-    "key_resources": ["what's needed to operate"],
-    "key_activities": ["what must be done regularly"],
-    "key_partners": ["who to partner with, if relevant"],
-    "channels": ["how customers are reached"]
+    "value_proposition": "the core value delivered — 2-3 sentences with real specificity, not a slogan",
+    "customer_segments": "who specifically this serves, described in real detail — demographics, behavior, why they need this",
+    "revenue_streams": ["stream 1 with a brief explanation of how it works", "stream 2"],
+    "cost_structure": ["major cost 1 with rough scale", "major cost 2"],
+    "key_resources": ["what's needed to operate, specifically"],
+    "key_activities": ["what must be done regularly, specifically"],
+    "key_partners": ["who to partner with, if relevant, and why"],
+    "channels": ["how customers are reached, specifically"]
   },
   "strategy": {
-    "positioning": "how this should be positioned in the market",
-    "competitive_advantage": "the specific edge this has or must build",
-    "differentiation": "what makes this different from alternatives"
+    "positioning": "how this should be positioned in the market — 2-3 sentences with real reasoning",
+    "competitive_advantage": "the specific edge this has or must build, explained substantively",
+    "differentiation": "what makes this different from alternatives, named specifically where possible"
   },
   "marketing_plan": {
-    "target_audience": "the specific customer profile marketing should focus on",
-    "key_messaging": "the core message/hook that should appear in all marketing",
-    "marketing_channels": ["specific channel 1 (e.g. WhatsApp groups, Instagram)", "specific channel 2"],
-    "content_strategy": "what kind of content to post and how often, concretely",
-    "promotional_tactics": ["specific tactic 1 (e.g. referral discount, launch offer)", "specific tactic 2"],
-    "customer_acquisition_funnel": "the step-by-step path from stranger to paying customer, specific to this business",
-    "marketing_budget_estimate": "realistic monthly marketing spend given their stated capital"
+    "target_audience": "the specific customer profile marketing should focus on, in real detail",
+    "key_messaging": "the core message/hook that should appear in all marketing, with reasoning for why it will resonate",
+    "marketing_channels": ["specific channel 1 (e.g. WhatsApp groups, Instagram), with why it fits this audience", "specific channel 2"],
+    "content_strategy": "what kind of content to post and how often, concretely, with reasoning",
+    "promotional_tactics": ["specific tactic 1 (e.g. referral discount, launch offer), explained", "specific tactic 2"],
+    "customer_acquisition_funnel": "the step-by-step path from stranger to paying customer, specific to this business, described in full",
+    "marketing_budget_estimate": "realistic monthly marketing spend given their stated capital, with brief reasoning"
   },
   "execution_plan": {
-    "phase_30_days": ["specific task 1", "specific task 2", "specific task 3"],
+    "phase_30_days": ["specific task 1 with brief context on why it's first", "specific task 2", "specific task 3"],
     "phase_60_days": ["specific task 1", "specific task 2"],
     "phase_90_days": ["specific task 1", "specific task 2"]
   },
   "financial_snapshot": {
-    "estimated_startup_cost": "a single figure or narrow range, max 25 words, no reasoning chain",
-    "monthly_operating_cost": "a single figure or narrow range, max 25 words, no reasoning chain",
-    "breakeven_estimate": "a single timeframe, max 25 words, no reasoning chain",
-    "key_assumption": "the single biggest assumption, stated plainly in max 25 words"
+    "estimated_startup_cost": "a single figure or narrow range, one sentence, no reasoning chain",
+    "monthly_operating_cost": "a single figure or narrow range, one sentence, no reasoning chain",
+    "breakeven_estimate": "a single timeframe, one sentence, no reasoning chain",
+    "key_assumption": "the single biggest assumption, stated plainly in one sentence"
   }
 }`;
 
-    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Build the business plan now, as JSON only. Keep every field to one short sentence as instructed.' }], complexity: 'complex', context: { feature: 'entrepreneur_mode', userId: req.userId }, maxTokens: 6500 });
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Build the complete, detailed business plan now, as JSON only.' }], complexity: 'complex', context: { feature: 'entrepreneur_mode', userId: req.userId }, maxTokens: 9000 });
     let plan;
     try {
       plan = extractJSON(raw);
@@ -4332,39 +4334,39 @@ const BUSINESS_PLAN_SECTION_ARRAY_FIELDS = {
 };
 const BUSINESS_PLAN_SECTION_SHAPES = {
   business_model: `{
-  "value_proposition": "the core value delivered, one sentence",
-  "customer_segments": "who specifically this serves",
-  "revenue_streams": ["stream 1", "stream 2"],
-  "cost_structure": ["major cost 1", "major cost 2"],
-  "key_resources": ["what's needed to operate"],
-  "key_activities": ["what must be done regularly"],
-  "key_partners": ["who to partner with, if relevant"],
-  "channels": ["how customers are reached"]
+  "value_proposition": "the core value delivered — 2-3 sentences with real specificity, not a slogan",
+  "customer_segments": "who specifically this serves, described in real detail — demographics, behavior, why they need this",
+  "revenue_streams": ["stream 1 with a brief explanation of how it works", "stream 2"],
+  "cost_structure": ["major cost 1 with rough scale", "major cost 2"],
+  "key_resources": ["what's needed to operate, specifically"],
+  "key_activities": ["what must be done regularly, specifically"],
+  "key_partners": ["who to partner with, if relevant, and why"],
+  "channels": ["how customers are reached, specifically"]
 }`,
   strategy: `{
-  "positioning": "how this should be positioned in the market",
-  "competitive_advantage": "the specific edge this has or must build",
-  "differentiation": "what makes this different from alternatives"
+  "positioning": "how this should be positioned in the market — 2-3 sentences with real reasoning",
+  "competitive_advantage": "the specific edge this has or must build, explained substantively",
+  "differentiation": "what makes this different from alternatives, named specifically where possible"
 }`,
   marketing_plan: `{
-  "target_audience": "the specific customer profile marketing should focus on",
-  "key_messaging": "the core message/hook that should appear in all marketing",
-  "marketing_channels": ["specific channel 1 (e.g. WhatsApp groups, Instagram)", "specific channel 2"],
-  "content_strategy": "what kind of content to post and how often, concretely",
-  "promotional_tactics": ["specific tactic 1 (e.g. referral discount, launch offer)", "specific tactic 2"],
-  "customer_acquisition_funnel": "the step-by-step path from stranger to paying customer, specific to this business",
-  "marketing_budget_estimate": "realistic monthly marketing spend given their stated capital"
+  "target_audience": "the specific customer profile marketing should focus on, in real detail",
+  "key_messaging": "the core message/hook that should appear in all marketing, with reasoning for why it will resonate",
+  "marketing_channels": ["specific channel 1 (e.g. WhatsApp groups, Instagram), with why it fits this audience", "specific channel 2"],
+  "content_strategy": "what kind of content to post and how often, concretely, with reasoning",
+  "promotional_tactics": ["specific tactic 1 (e.g. referral discount, launch offer), explained", "specific tactic 2"],
+  "customer_acquisition_funnel": "the step-by-step path from stranger to paying customer, specific to this business, described in full",
+  "marketing_budget_estimate": "realistic monthly marketing spend given their stated capital, with brief reasoning"
 }`,
   execution_plan: `{
-  "phase_30_days": ["specific task 1", "specific task 2", "specific task 3"],
+  "phase_30_days": ["specific task 1 with brief context on why it's first", "specific task 2", "specific task 3"],
   "phase_60_days": ["specific task 1", "specific task 2"],
   "phase_90_days": ["specific task 1", "specific task 2"]
 }`,
   financial_snapshot: `{
-  "estimated_startup_cost": "a single figure or narrow range, max 25 words, no reasoning chain",
-  "monthly_operating_cost": "a single figure or narrow range, max 25 words, no reasoning chain",
-  "breakeven_estimate": "a single timeframe, max 25 words, no reasoning chain",
-  "key_assumption": "the single biggest assumption, stated plainly in max 25 words"
+  "estimated_startup_cost": "a single figure or narrow range, one sentence, no reasoning chain",
+  "monthly_operating_cost": "a single figure or narrow range, one sentence, no reasoning chain",
+  "breakeven_estimate": "a single timeframe, one sentence, no reasoning chain",
+  "key_assumption": "the single biggest assumption, stated plainly in one sentence"
 }`
 };
 
@@ -4415,6 +4417,10 @@ Reformulez ces chiffres exacts calculés en langage clair — ne les remplacez p
 Restate these exact computed figures in plain language — do not substitute your own estimate.`;
     }
 
+    const lengthGuidance = section === 'financial_snapshot'
+      ? 'CRITICAL LENGTH RULE: Every field must be ONE sentence, no reasoning chain. State the number or conclusion plainly.'
+      : 'DEPTH: Write this section in full, professional detail — multiple sentences per field where the topic warrants it, with concrete specifics rather than vague generalities, consistent in depth with the rest of the plan shown above. This should read like part of a document worth submitting to an investor.';
+
     const prompt = `You are a business planning consultant at Arreyon Consult. This founder already has a complete business plan — regenerate ONLY the "${section}" section, keeping it consistent with the rest of the plan shown below. Do not contradict the other sections.
 
 BUSINESS: ${businessDescription}
@@ -4426,12 +4432,12 @@ ${financialInstruction}
 THE REST OF THE EXISTING PLAN (for consistency — do not regenerate these, only use them as context):
 ${JSON.stringify(otherSections)}
 
-CRITICAL LENGTH RULE: Every field must be ONE sentence, maximum 25 words. State the number or conclusion plainly, no reasoning chains.
+${lengthGuidance}
 
 Return ONLY valid JSON for the "${section}" section, no markdown, in exactly this structure:
 ${BUSINESS_PLAN_SECTION_SHAPES[section]}`;
 
-    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: `Regenerate the ${section} section now, as JSON only.` }], complexity: 'complex', context: { feature: 'entrepreneur_mode_section', userId: req.userId }, maxTokens: 2000 });
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: `Regenerate the ${section} section now, as JSON only.` }], complexity: 'complex', context: { feature: 'entrepreneur_mode_section', userId: req.userId }, maxTokens: 3000 });
 
     let newSection;
     try {
@@ -4457,6 +4463,53 @@ ${BUSINESS_PLAN_SECTION_SHAPES[section]}`;
   } catch (err) {
     console.error('Business plan section regeneration error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to regenerate this section. Please try again.' });
+  }
+});
+
+// Explicit "start tracking this business" — creates a real businesses row
+// from an Entrepreneur Mode session and links the two together, so this
+// idea becomes visible across every business-scoped feature (Funding
+// Readiness, Market Intelligence, Growth Center, etc.) from this point on.
+// Deliberately opt-in rather than automatic: someone exploring several
+// ideas before picking one shouldn't have every exploration clutter their
+// business list.
+app.post('/api/entrepreneur/:sessionId/track', authRequired, async (req, res) => {
+  try {
+    const sessionResult = await pool.query(
+      'SELECT * FROM entrepreneur_sessions WHERE id = $1 AND user_id = $2',
+      [req.params.sessionId, req.userId]
+    );
+    if (!sessionResult.rows.length) return res.status(404).json({ error: 'Session not found' });
+    const session = sessionResult.rows[0];
+
+    if (session.business_id) {
+      const existing = await pool.query('SELECT id, name FROM businesses WHERE id = $1', [session.business_id]);
+      return res.json({ success: true, alreadyTracked: true, businessId: session.business_id, businessName: existing.rows[0]?.name });
+    }
+
+    const isOpp = session.mode === 'opportunity_finder';
+    let defaultName;
+    if (req.body?.name && req.body.name.trim()) {
+      defaultName = req.body.name.trim();
+    } else if (isOpp) {
+      const chosen = (session.structured_output?.opportunities || [])[0];
+      defaultName = chosen?.name || 'Untitled Business';
+    } else {
+      defaultName = (session.input_data?.idea || 'Untitled Business').slice(0, 100);
+    }
+
+    const inserted = await pool.query(
+      'INSERT INTO businesses (user_id, name, country, city) VALUES ($1, $2, $3, $4) RETURNING id, name',
+      [req.userId, defaultName, session.input_data?.country || null, session.input_data?.city || null]
+    );
+    const newBusiness = inserted.rows[0];
+
+    await pool.query('UPDATE entrepreneur_sessions SET business_id = $1 WHERE id = $2', [newBusiness.id, req.params.sessionId]);
+
+    res.json({ success: true, alreadyTracked: false, businessId: newBusiness.id, businessName: newBusiness.name });
+  } catch (err) {
+    console.error('Start tracking business error:', err.message);
+    res.status(500).json({ error: 'Failed to start tracking this business. Please try again.' });
   }
 });
 
