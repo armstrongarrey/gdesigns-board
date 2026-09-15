@@ -2281,6 +2281,61 @@ app.get('/api/share/:token', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PHASE 9 — REPORTS + ALERTS + OPPORTUNITY RADAR (Step 3: Reports Center)
+// Pulls together what already exists across the platform for one business
+// into a single view — this endpoint generates nothing itself, it only
+// reports on what's already been generated elsewhere, so a business with
+// nothing built out yet correctly shows everything as "not yet generated."
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/api/business/:id/reports-center', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query(
+      `SELECT id, name, intelligence_generated_at, market_context_generated_at,
+         marketing_strategy_generated_at, content_calendar_generated_at,
+         funding_readiness_generated_at, pitch_deck_generated_at
+       FROM businesses WHERE id = $1 AND user_id = $2`,
+      [req.params.id, account.id]
+    );
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    const business = biz.rows[0];
+
+    const factsCountRow = await pool.query(
+      'SELECT COUNT(*), MAX(created_at) AS latest FROM business_facts WHERE business_id = $1',
+      [req.params.id]
+    );
+    const hasFacts = parseInt(factsCountRow.rows[0].count, 10) > 0;
+
+    const latestResearchRow = await pool.query(
+      'SELECT created_at FROM research_sessions WHERE business_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [req.params.id]
+    );
+
+    const latestPlanRow = await pool.query(
+      `SELECT created_at FROM entrepreneur_sessions WHERE business_id = $1 AND business_plan IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+      [req.params.id]
+    );
+
+    const reports = [
+      { key: 'business_report', generatedAt: hasFacts ? factsCountRow.rows[0].latest : null },
+      { key: 'business_intelligence', generatedAt: business.intelligence_generated_at },
+      { key: 'market_context', generatedAt: business.market_context_generated_at },
+      { key: 'market_research', generatedAt: latestResearchRow.rows[0]?.created_at || null },
+      { key: 'marketing_strategy', generatedAt: business.marketing_strategy_generated_at },
+      { key: 'content_calendar', generatedAt: business.content_calendar_generated_at },
+      { key: 'business_plan', generatedAt: latestPlanRow.rows[0]?.created_at || null },
+      { key: 'funding_readiness', generatedAt: business.funding_readiness_generated_at },
+      { key: 'pitch_deck', generatedAt: business.pitch_deck_generated_at }
+    ];
+
+    res.json({ businessName: business.name, reports });
+  } catch (err) {
+    console.error('Reports Center error:', err.message);
+    res.status(500).json({ error: 'Failed to load Reports Center. Please try again.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GOOGLE ANALYTICS INTEGRATION
 // A separate OAuth flow from login — requesting read-only Analytics access
 // for an already-logged-in user, not authenticating them. Reuses the same
