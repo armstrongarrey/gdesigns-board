@@ -1486,16 +1486,38 @@ app.post('/api/business/:id/marketing-strategy', authRequired, async (req, res) 
       additionalContext += `\n\nKNOWN MARKET OPPORTUNITIES: ${marketContext.opportunities_from_context.join('; ')}`;
     }
 
-    const prompt = `You are a marketing strategist. Produce a concrete, specific marketing strategy for this business — not generic marketing advice that could apply to any business.
+    // Real, current research into how businesses like this one actually
+    // reach customers — without this, the model has nothing but its own
+    // generic training-data defaults to reason from, and tends to
+    // over-suggest one "safe" platform (LinkedIn) regardless of whether it
+    // actually fits this business's real customers.
+    let researchSummary = '';
+    try {
+      const industryQuery = context.business?.industry
+        ? `how do small businesses in ${context.business.industry} reach and market to customers in ${context.business.country || 'their local market'} — which social platforms and channels actually work`
+        : null;
+      if (industryQuery) {
+        const results = await perplexitySearch(industryQuery, { maxResults: 4 });
+        if (results.length) {
+          researchSummary = '\n\nWEB RESEARCH ON HOW BUSINESSES LIKE THIS ONE ACTUALLY REACH CUSTOMERS:\n' + results.map(r => `- ${r.title}: ${r.snippet}`).join('\n');
+        }
+      }
+    } catch (e) {
+      console.error('Marketing strategy web research failed (non-fatal, proceeding without it):', e.message);
+    }
+
+    const prompt = `You are a senior marketing strategist. Produce an advanced, specific marketing strategy for this business — not generic marketing advice that could apply to any business, and not a default "safe" answer.
 
 THE BUSINESS:
-${contextSummary}${additionalContext}
+${contextSummary}${additionalContext}${researchSummary}
+
+CRITICAL INSTRUCTION ON CHANNELS: Do not default to LinkedIn or any other single "safe" professional platform unless it is genuinely where this specific business's actual customers spend their time. Reason concretely from who the customer actually is: a local, consumer-facing business in a market like Cameroon is far more likely reached through WhatsApp Business, Instagram, Facebook, and TikTok than LinkedIn, which mainly serves B2B and professional-networking audiences. A B2B or professional-services business may genuinely warrant LinkedIn. Justify each channel choice by who it actually reaches for this business, and prefer a mix of channels over repeating the same one.
 
 Return ONLY valid JSON, no markdown, in exactly this structure:
 {
   "target_audience": "the specific customer profile marketing should focus on",
   "key_messaging": "the core message or hook that should appear in all marketing",
-  "marketing_channels": ["specific channel 1 (e.g. WhatsApp groups, Instagram)", "specific channel 2"],
+  "marketing_channels": ["specific channel 1, with a brief reason it fits this business's actual customers", "specific channel 2, with its reason"],
   "content_strategy": "what kind of content to post and how often, concretely",
   "promotional_tactics": ["specific tactic 1 (e.g. referral discount, launch offer)", "specific tactic 2"],
   "customer_acquisition_funnel": "the step-by-step path from stranger to paying customer, specific to this business",
@@ -1616,14 +1638,14 @@ app.post('/api/business/:id/content-calendar', authRequired, async (req, res) =>
     const strategy = bizRow.rows[0]?.marketing_strategy;
     const strategyContext = strategy
       ? `\n\nEXISTING MARKETING STRATEGY (ground content ideas in this — use the actual target audience, channels, and messaging, don't invent different ones):\nTarget audience: ${strategy.target_audience || 'not specified'}\nKey messaging: ${strategy.key_messaging || 'not specified'}\nChannels: ${(strategy.marketing_channels || []).join(', ') || 'not specified'}\nContent strategy: ${strategy.content_strategy || 'not specified'}`
-      : '\n\nNo marketing strategy has been generated for this business yet — use general judgment about likely channels and audience based on the business context above.';
+      : '\n\nNo marketing strategy has been generated for this business yet — reason concretely about who this business\'s actual customers are and where they actually spend time online, rather than defaulting to a generic professional platform like LinkedIn regardless of business type.';
 
-    const prompt = `You are a content marketing planner. Produce a concrete content calendar for this business covering ${calStartStr} to ${calEndStr} (about ${daysInRange} days).
+    const prompt = `You are a senior content marketing planner. Produce an advanced, concrete content calendar for this business covering ${calStartStr} to ${calEndStr} (about ${daysInRange} days).
 
 THE BUSINESS:
 ${contextSummary}${strategyContext}
 
-YOUR TASK: Produce exactly ${suggestedPostCount} post ideas spread sensibly across the date range above (not clustered on one day) — a realistic posting cadence, not one post every single day. Each post needs a real calendar date within the range, a specific platform, a content type, and a concrete topic/idea specific to this business — not generic content marketing filler.
+YOUR TASK: Produce exactly ${suggestedPostCount} post ideas spread sensibly across the date range above (not clustered on one day) — a realistic posting cadence, not one post every single day. Each post needs a real calendar date within the range, a specific platform, a content type, and a concrete topic/idea specific to this business — not generic content marketing filler. Do not repeat the same single platform for every post unless that is genuinely where this specific business's customers are — vary platforms across the calendar the way a real multi-channel plan would, reflecting the actual mix of channels this business's customers use.
 
 Return ONLY valid JSON, no markdown, in exactly this structure:
 {
@@ -1693,6 +1715,23 @@ function buildMonthGrid(year, month) {
   return weeks;
 }
 
+// Matches the frontend's PLATFORM_STYLES exactly (docx colors omit the '#'
+// prefix Web CSS uses) so the downloaded document visually agrees with
+// what's shown on screen.
+const DOCX_PLATFORM_STYLES = [
+  { match: /instagram/i, color: 'E1306C' },
+  { match: /facebook/i, color: '1877F2' },
+  { match: /whatsapp/i, color: '25D366' },
+  { match: /tiktok/i, color: '010101' },
+  { match: /linkedin/i, color: '0A66C2' },
+  { match: /twitter|x\.com|\bx\b/i, color: '1DA1F2' },
+  { match: /youtube/i, color: 'FF0000' },
+  { match: /email|newsletter/i, color: '8b87b8' }
+];
+function getDocxPlatformColor(platformName) {
+  return (DOCX_PLATFORM_STYLES.find(p => p.match.test(platformName || '')) || { color: '6C3Bff' }).color;
+}
+
 function buildContentCalendarDOCX(calendar, businessName, startDate, endDate) {
   const children = [];
   children.push(new Paragraph({ text: `${businessName || 'Content Calendar'}`, heading: HeadingLevel.TITLE }));
@@ -1728,7 +1767,7 @@ function buildContentCalendarDOCX(calendar, businessName, startDate, endDate) {
         const dayPosts = postsByDate[dateStr] || [];
         const cellChildren = [new Paragraph({ children: [new TextRun({ text: String(dayNum), bold: true, size: 18 })] })];
         dayPosts.forEach(p => {
-          cellChildren.push(new Paragraph({ children: [new TextRun({ text: `${p.platform || ''}${p.content_type ? ' · ' + p.content_type : ''}`, size: 14, bold: true, color: '6C3Bff' })] }));
+          cellChildren.push(new Paragraph({ children: [new TextRun({ text: `${p.platform || ''}${p.content_type ? ' · ' + p.content_type : ''}`, size: 14, bold: true, color: getDocxPlatformColor(p.platform) })] }));
           cellChildren.push(new Paragraph({ children: [new TextRun({ text: p.topic || '', size: 14 })] }));
         });
         return new TableCell({ children: cellChildren, width: { size: 14, type: WidthType.PERCENTAGE } });
