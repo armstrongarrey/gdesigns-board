@@ -2846,6 +2846,186 @@ app.get('/api/integrations/google-search-console/metrics', authRequired, async (
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// HUBSPOT CRM — a separate OAuth client from the Google integrations
+// (HUBSPOT_CLIENT_ID/SECRET), obtained by creating an app through HubSpot's
+// CLI-based developer platform (their web-form public app creation was
+// discontinued in mid-2026). The runtime OAuth flow itself is the standard
+// authorization-code flow, same shape as the Google integrations, just
+// against HubSpot's endpoints — including their current versioned token
+// endpoint, which requires all parameters in the request body.
+// One connection per Arreyon account, owned and managed by the account
+// owner only, shared by the whole team — same model as the Google
+// integrations, deliberately not per-team-member.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const HUBSPOT_SCOPE = 'crm.objects.contacts.read crm.objects.deals.read';
+const HUBSPOT_CALLBACK_URL = `${BASE_URL}/api/integrations/hubspot/callback`;
+const HUBSPOT_TOKEN_URL = 'https://api.hubapi.com/oauth/2026-03/token';
+
+app.get('/api/integrations/hubspot/connect', authRequired, async (req, res) => {
+  const account = await resolveAccount(req.userId);
+  if (!account) return res.status(404).json({ error: 'Account not found' });
+  if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can connect integrations' });
+
+  const state = jwt.sign({ ownerId: req.userId }, JWT_SECRET, { expiresIn: '10m' });
+  const params = new URLSearchParams({
+    client_id: process.env.HUBSPOT_CLIENT_ID,
+    redirect_uri: HUBSPOT_CALLBACK_URL,
+    scope: HUBSPOT_SCOPE,
+    state
+  });
+  res.redirect(`https://app.hubspot.com/oauth/authorize?${params.toString()}`);
+});
+
+app.get('/api/integrations/hubspot/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  if (error || !code) return res.redirect('/dashboard?section=integrations&error=hubspot_connect_failed');
+
+  let ownerId;
+  try {
+    ownerId = jwt.verify(state, JWT_SECRET).ownerId;
+  } catch (e) {
+    return res.redirect('/dashboard?section=integrations&error=hubspot_connect_failed');
+  }
+
+  try {
+    const tokenRes = await fetch(HUBSPOT_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: process.env.HUBSPOT_CLIENT_ID,
+        client_secret: process.env.HUBSPOT_CLIENT_SECRET,
+        redirect_uri: HUBSPOT_CALLBACK_URL,
+        code
+      })
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok || !tokenData.refresh_token) {
+      console.error('HubSpot token exchange failed:', tokenData);
+      return res.redirect('/dashboard?section=integrations&error=hubspot_connect_failed');
+    }
+
+    const expiresAt = new Date(Date.now() + (tokenData.expires_in || 1800) * 1000);
+    await pool.query(
+      `INSERT INTO hubspot_connections (owner_id, access_token, refresh_token, token_expires_at, hub_id)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (owner_id) DO UPDATE SET access_token = $2, refresh_token = $3, token_expires_at = $4, hub_id = $5, connected_at = NOW()`,
+      [ownerId, tokenData.access_token, tokenData.refresh_token, expiresAt, tokenData.hub_id ? String(tokenData.hub_id) : null]
+    );
+
+    res.redirect('/dashboard?section=integrations&connected=hubspot');
+  } catch (e) {
+    console.error('HubSpot callback error:', e.message);
+    res.redirect('/dashboard?section=integrations&error=hubspot_connect_failed');
+  }
+});
+
+async function getValidHubSpotAccessToken(connection) {
+  const expiresAt = new Date(connection.token_expires_at);
+  const now = new Date();
+  if (expiresAt.getTime() - now.getTime() > 5 * 60 * 1000) return connection.access_token;
+
+  const tokenRes = await fetch(HUBSPOT_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: process.env.HUBSPOT_CLIENT_ID,
+      client_secret: process.env.HUBSPOT_CLIENT_SECRET,
+      refresh_token: connection.refresh_token
+    })
+  });
+  const tokenData = await tokenRes.json();
+  if (!tokenRes.ok) throw new Error('Failed to refresh HubSpot access token: ' + (tokenData.message || tokenRes.status));
+
+  const newExpiresAt = new Date(Date.now() + (tokenData.expires_in || 1800) * 1000);
+  await pool.query('UPDATE hubspot_connections SET access_token = $1, token_expires_at = $2 WHERE id = $3',
+    [tokenData.access_token, newExpiresAt, connection.id]);
+
+  return tokenData.access_token;
+}
+
+app.get('/api/integrations/hubspot/status', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query('SELECT id, hub_id, hub_domain, connected_at, last_synced_at FROM hubspot_connections WHERE owner_id = $1', [account.id]);
+    if (!result.rows.length) return res.json({ connected: false });
+    res.json({ connected: true, ...result.rows[0] });
+  } catch (e) { res.status(500).json({ error: 'Failed to load integration status' }); }
+});
+
+app.delete('/api/integrations/hubspot', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can manage integrations' });
+    await pool.query('DELETE FROM hubspot_connections WHERE owner_id = $1', [account.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to disconnect' }); }
+});
+
+// Uses the Search API rather than the plain list endpoint specifically
+// because it returns an accurate "total" count directly in the response,
+// rather than requiring every record to be paginated through and counted
+// client-side just to know how many there are.
+async function fetchHubSpotMetrics(connection) {
+  const accessToken = await getValidHubSpotAccessToken(connection);
+  const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
+
+  const contactsRes = await fetch('https://api.hubapi.com/crm/v3/objects/contacts/search', {
+    method: 'POST', headers, body: JSON.stringify({ limit: 1, filterGroups: [] })
+  });
+  const contactsData = await contactsRes.json();
+  if (!contactsRes.ok) throw new Error(contactsData.message || 'Failed to fetch HubSpot contacts');
+  const contactsCount = contactsData.total || 0;
+
+  const dealsRes = await fetch('https://api.hubapi.com/crm/v3/objects/deals/search', {
+    method: 'POST', headers, body: JSON.stringify({ limit: 100, filterGroups: [], properties: ['amount', 'hs_is_closed_won'] })
+  });
+  const dealsData = await dealsRes.json();
+  if (!dealsRes.ok) throw new Error(dealsData.message || 'Failed to fetch HubSpot deals');
+  const dealsCount = dealsData.total || 0;
+
+  // hs_is_closed_won is a standard HubSpot property present on every
+  // pipeline regardless of that account's specific stage configuration,
+  // which pipeline-stage IDs are not — using it avoids guessing at
+  // account-specific stage names to determine what counts as "won."
+  let dealsWonCount = 0;
+  let totalPipelineValue = 0;
+  (dealsData.results || []).forEach(d => {
+    const amount = parseFloat(d.properties?.amount);
+    if (!isNaN(amount)) totalPipelineValue += amount;
+    if (d.properties?.hs_is_closed_won === 'true') dealsWonCount++;
+  });
+
+  return { contactsCount, dealsCount, dealsWonCount, totalPipelineValue: round2(totalPipelineValue) };
+}
+
+app.get('/api/integrations/hubspot/metrics', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const connResult = await pool.query('SELECT * FROM hubspot_connections WHERE owner_id = $1', [account.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'HubSpot is not connected' });
+    const connection = connResult.rows[0];
+
+    const metrics = await fetchHubSpotMetrics(connection);
+
+    await pool.query(
+      `INSERT INTO hubspot_snapshots (connection_id, snapshot_date, contacts_count, deals_count, open_deals_value, deals_won_count, raw_data)
+       VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, $6)
+       ON CONFLICT (connection_id, snapshot_date) DO UPDATE SET contacts_count = $2, deals_count = $3, open_deals_value = $4, deals_won_count = $5, raw_data = $6`,
+      [connection.id, metrics.contactsCount, metrics.dealsCount, metrics.totalPipelineValue, metrics.dealsWonCount, JSON.stringify(metrics)]
+    );
+    await pool.query('UPDATE hubspot_connections SET last_synced_at = NOW() WHERE id = $1', [connection.id]);
+
+    res.json({ metrics });
+  } catch (e) {
+    console.error('HubSpot metrics error:', e.message);
+    res.status(500).json({ error: 'Failed to load HubSpot metrics. Try reconnecting HubSpot.' });
+  }
+});
+
 function adminRequired(req, res, next) {
   const token = req.cookies.arreyon_admin_token || req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Admin authentication required' });
