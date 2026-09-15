@@ -541,6 +541,42 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div style="display:flex;justify-content:space-between"><span style="font-size:12px;color:var(--muted)" data-i18n="int.metric_top_query">Top Search Query</span><span style="font-size:12px;color:var(--text2)" id="gscTopQuery">—</span></div>
         </div>
       </div>
+
+      <!-- HUBSPOT — Not connected state -->
+      <div id="hubspotNotConnected" style="max-width:460px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;display:none;margin-top:18px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+          <div style="width:40px;height:40px;border-radius:10px;background:#ff7a5922;display:flex;align-items:center;justify-content:center;font-size:20px">🧡</div>
+          <div>
+            <div style="font-size:14px;font-weight:700;color:var(--text)">HubSpot</div>
+            <div style="font-size:12px;color:var(--muted)" data-i18n="int.hubspot_desc">Real contact and deal pipeline data from your CRM</div>
+          </div>
+        </div>
+        <button class="btn-primary" style="width:100%;padding:11px" onclick="connectHubSpot()" data-i18n="int.connect_hubspot_btn">Connect HubSpot</button>
+      </div>
+
+      <!-- HUBSPOT — Connected — metrics view (no property-selection step, since one connection maps to exactly one HubSpot portal) -->
+      <div id="hubspotMetricsView" style="max-width:600px;display:none;margin-top:18px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:32px;height:32px;border-radius:8px;background:#ff7a5922;display:flex;align-items:center;justify-content:center;font-size:16px">🧡</div>
+            <div>
+              <div style="font-size:13.5px;font-weight:700;color:var(--text)">HubSpot</div>
+              <div style="font-size:11px;color:var(--green)" data-i18n="int.connected_label">Connected</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn-ghost" style="font-size:12px;padding:7px 14px" onclick="loadHubSpotMetrics()" data-i18n="admin.refresh">Refresh</button>
+            <button class="btn-ghost" style="font-size:12px;padding:7px 14px;color:#ef4444" onclick="disconnectHubSpot()" data-i18n="int.disconnect">Disconnect</button>
+          </div>
+        </div>
+
+        <div id="hubspotMetricsLoading" style="text-align:center;padding:30px;color:var(--muted);font-size:13px" data-i18n="int.loading_metrics">Loading metrics...</div>
+        <div id="hubspotMetricsGrid" style="display:none;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div class="stat-card"><div class="stat-label" data-i18n="int.metric_contacts">Contacts</div><div class="stat-val" id="hubspotContacts">—</div></div>
+          <div class="stat-card"><div class="stat-label" data-i18n="int.metric_deals">Deals</div><div class="stat-val" id="hubspotDeals">—</div><div class="stat-sub" id="hubspotDealsWonSub">—</div></div>
+          <div class="stat-card"><div class="stat-label" data-i18n="int.metric_pipeline_value">Pipeline Value</div><div class="stat-val" id="hubspotPipelineValue">—</div></div>
+        </div>
+      </div>
     </div>
 
     <!-- ALERTS SECTION -->
@@ -1485,6 +1521,10 @@ async function init() {
         showIntMsg(t('int.gsc_connected_success'), 'success');
       } else if (urlParams.get('error') === 'gsc_connect_failed') {
         showIntMsg(t('int.gsc_connect_failed'), 'error');
+      } else if (urlParams.get('connected') === 'hubspot') {
+        showIntMsg(t('int.hubspot_connected_success'), 'success');
+      } else if (urlParams.get('error') === 'hubspot_connect_failed') {
+        showIntMsg(t('int.hubspot_connect_failed'), 'error');
       }
       window.history.replaceState({}, '', '/dashboard');
     } else {
@@ -1778,6 +1818,10 @@ function connectGoogleSearchConsole() {
   window.location.href = '/api/integrations/google-search-console/connect';
 }
 
+function connectHubSpot() {
+  window.location.href = '/api/integrations/hubspot/connect';
+}
+
 async function loadIntegrationsSection() {
   try {
     const res = await fetch('/api/integrations/google-analytics/status');
@@ -1821,6 +1865,23 @@ async function loadIntegrationsSection() {
     }
   } catch (e) {
     document.getElementById('gscNotConnected').style.display = 'block';
+  }
+
+  try {
+    const res = await fetch('/api/integrations/hubspot/status');
+    const data = await res.json();
+
+    document.getElementById('hubspotNotConnected').style.display = 'none';
+    document.getElementById('hubspotMetricsView').style.display = 'none';
+
+    if (!data.connected) {
+      document.getElementById('hubspotNotConnected').style.display = 'block';
+    } else {
+      document.getElementById('hubspotMetricsView').style.display = 'block';
+      loadHubSpotMetrics();
+    }
+  } catch (e) {
+    document.getElementById('hubspotNotConnected').style.display = 'block';
   }
 }
 
@@ -1969,6 +2030,38 @@ async function disconnectGoogleSearchConsole() {
   if (!confirm(t('int.confirm_disconnect_gsc'))) return;
   try {
     await fetch('/api/integrations/google-search-console', { method: 'DELETE' });
+    loadIntegrationsSection();
+  } catch (e) {}
+}
+
+async function loadHubSpotMetrics() {
+  document.getElementById('hubspotMetricsLoading').style.display = 'block';
+  document.getElementById('hubspotMetricsGrid').style.display = 'none';
+
+  try {
+    const res = await fetch('/api/integrations/hubspot/metrics');
+    const data = await res.json();
+    document.getElementById('hubspotMetricsLoading').style.display = 'none';
+
+    if (!res.ok) { showIntMsg(data.error || t('int.load_hubspot_metrics_failed'), 'error'); return; }
+
+    const m = data.metrics;
+    document.getElementById('hubspotContacts').textContent = m.contactsCount.toLocaleString();
+    document.getElementById('hubspotDeals').textContent = m.dealsCount.toLocaleString();
+    document.getElementById('hubspotDealsWonSub').textContent = m.dealsWonCount + ' ' + t('int.deals_won_suffix');
+    document.getElementById('hubspotPipelineValue').textContent = '$' + m.totalPipelineValue.toLocaleString();
+
+    document.getElementById('hubspotMetricsGrid').style.display = 'grid';
+  } catch (e) {
+    document.getElementById('hubspotMetricsLoading').style.display = 'none';
+    showIntMsg(t('board.connection_error'), 'error');
+  }
+}
+
+async function disconnectHubSpot() {
+  if (!confirm(t('int.confirm_disconnect_hubspot'))) return;
+  try {
+    await fetch('/api/integrations/hubspot', { method: 'DELETE' });
     loadIntegrationsSection();
   } catch (e) {}
 }
