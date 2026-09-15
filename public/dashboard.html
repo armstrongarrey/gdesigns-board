@@ -4033,6 +4033,20 @@ function addTaskFromMarketingStrategy(index, event) {
 
 let currentCalendarForTasks = null;
 
+const PLATFORM_STYLES = [
+  { match: /instagram/i, icon: '📷', color: '#E1306C' },
+  { match: /facebook/i, icon: '👍', color: '#1877F2' },
+  { match: /whatsapp/i, icon: '💬', color: '#25D366' },
+  { match: /tiktok/i, icon: '🎵', color: '#010101' },
+  { match: /linkedin/i, icon: '💼', color: '#0A66C2' },
+  { match: /twitter|x\.com|\bx\b/i, icon: '🐦', color: '#1DA1F2' },
+  { match: /youtube/i, icon: '▶️', color: '#FF0000' },
+  { match: /email|newsletter/i, icon: '✉️', color: '#8b87b8' }
+];
+function getPlatformStyle(platformName) {
+  return PLATFORM_STYLES.find(p => p.match.test(platformName || '')) || { icon: '📢', color: '#7c3aed' };
+}
+
 function renderContentCalendarContent(calendar, generatedAt) {
   currentCalendarForTasks = calendar;
   const contentEl = document.getElementById('mktCalendarContent');
@@ -4062,20 +4076,25 @@ function renderContentCalendarContent(calendar, generatedAt) {
 
   const gridsHtml = months.map(({ year, month }) => {
     const weeks = buildMonthGridClient(year, month);
-    const headerCells = dayLabels.map(d => `<th style="padding:6px;font-size:10px;color:var(--muted);text-align:center;border-bottom:1px solid var(--border)">${d}</th>`).join('');
+    const headerCells = dayLabels.map(d => `<th style="padding:8px 4px;font-size:11px;font-weight:700;color:var(--muted);text-align:center;border-bottom:2px solid var(--border);text-transform:uppercase;letter-spacing:.04em">${d}</th>`).join('');
+    const todayKey = new Date().toISOString().split('T')[0];
     const bodyRows = weeks.map(week => {
       const cells = week.map(dayNum => {
-        if (dayNum === null) return `<td style="border:1px solid var(--border);vertical-align:top;height:70px;background:var(--bg3)"></td>`;
+        if (dayNum === null) return `<td style="border:1px solid var(--border);vertical-align:top;height:92px;background:var(--bg3);opacity:.4"></td>`;
         const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+        const isToday = dateKey === todayKey;
         const dayPosts = postsByDate[dateKey] || [];
-        const postsMarkup = dayPosts.map(p => `
-          <div style="margin-top:3px;padding:3px 4px;background:var(--bg3);border-radius:4px">
-            <div style="font-size:9px;font-weight:700;color:var(--purple-light)">${escapeHtml(p.platform || '')}${p.content_type ? ' · ' + escapeHtml(p.content_type) : ''}</div>
-            <div style="font-size:10px;color:var(--text2)">${escapeHtml(p.topic || '')}</div>
+        const postsMarkup = dayPosts.map(p => {
+          const style = getPlatformStyle(p.platform);
+          return `
+          <div style="margin-top:4px;padding:5px 6px;background:var(--bg2);border-left:3px solid ${style.color};border-radius:4px">
+            <div style="font-size:10px;font-weight:700;color:${style.color}">${style.icon} ${escapeHtml(p.platform || '')}${p.content_type ? ' · ' + escapeHtml(p.content_type) : ''}</div>
+            <div style="font-size:10.5px;color:var(--text2);margin-top:1px;line-height:1.3">${escapeHtml(p.topic || '')}</div>
             ${addTaskBtn(`addTaskFromCalendarPost(${p.originalIndex}, event)`)}
-          </div>`).join('');
-        return `<td style="border:1px solid var(--border);vertical-align:top;padding:4px;height:70px;max-width:110px">
-          <div style="font-size:11px;color:var(--muted);font-weight:600">${dayNum}</div>
+          </div>`;
+        }).join('');
+        return `<td style="border:1px solid var(--border);vertical-align:top;padding:6px;height:92px;max-width:130px;${isToday ? 'background:rgba(124,58,237,.08);box-shadow:inset 0 0 0 2px var(--purple)' : ''}">
+          <div style="font-size:12px;color:${isToday ? 'var(--purple-light)' : 'var(--muted)'};font-weight:700">${dayNum}${isToday ? ' •' : ''}</div>
           ${postsMarkup}
         </td>`;
       }).join('');
@@ -4083,9 +4102,11 @@ function renderContentCalendarContent(calendar, generatedAt) {
     }).join('');
 
     return `
-      <div style="margin-bottom:20px">
-        <div style="font-size:12px;font-weight:700;color:var(--text);text-transform:capitalize;margin-bottom:8px">${monthNames[month]} ${year}</div>
-        <table style="width:100%;border-collapse:collapse;table-layout:fixed"><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>
+      <div style="margin-bottom:24px">
+        <div style="font-size:15px;font-weight:700;color:var(--text);text-transform:capitalize;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid var(--purple)">${monthNames[month]} ${year}</div>
+        <div style="border-radius:10px;overflow:hidden;border:1px solid var(--border)">
+          <table style="width:100%;border-collapse:collapse;table-layout:fixed"><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>
+        </div>
       </div>`;
   }).join('');
 
