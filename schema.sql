@@ -963,5 +963,49 @@ CREATE TABLE IF NOT EXISTS hubspot_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_hubspot_snapshots_connection ON hubspot_snapshots(connection_id, snapshot_date DESC);
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 10 — INTEGRATIONS (Step 3: Zoho Books)
+-- One connection per account, owned and managed by the account owner only,
+-- same model as the other integrations. Zoho hosts accounts across separate
+-- regional data centers, so accounts_server (for token refresh) and
+-- api_domain (for data calls) are stored per-connection rather than
+-- hardcoded, since a wrong region here produces silent authentication
+-- failures rather than an obvious error. Also requires an organization
+-- selection step, like Google Analytics' property step, since one Zoho
+-- login can have multiple separate organizations/businesses under it.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS zoho_books_connections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  token_expires_at TIMESTAMPTZ NOT NULL,
+  accounts_server VARCHAR(255) NOT NULL,
+  api_domain VARCHAR(255) NOT NULL,
+  organization_id VARCHAR(50),
+  organization_name VARCHAR(255),
+  business_id UUID REFERENCES businesses(id) ON DELETE SET NULL,
+  connected_at TIMESTAMPTZ DEFAULT NOW(),
+  last_synced_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_zoho_books_connections_owner ON zoho_books_connections(owner_id);
+
+-- Same reasoning as the other integrations' snapshot tables — daily figures
+-- kept for trend display and as a baseline the monitoring system could
+-- compare against later.
+CREATE TABLE IF NOT EXISTS zoho_books_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  connection_id UUID REFERENCES zoho_books_connections(id) ON DELETE CASCADE,
+  snapshot_date DATE NOT NULL,
+  total_receivables NUMERIC(14,2),
+  total_payables NUMERIC(14,2),
+  open_invoices_count INTEGER,
+  overdue_invoices_count INTEGER,
+  raw_data JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(connection_id, snapshot_date)
+);
+CREATE INDEX IF NOT EXISTS idx_zoho_books_snapshots_connection ON zoho_books_snapshots(connection_id, snapshot_date DESC);
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
