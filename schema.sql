@@ -1007,5 +1007,27 @@ CREATE TABLE IF NOT EXISTS zoho_books_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_zoho_books_snapshots_connection ON zoho_books_snapshots(connection_id, snapshot_date DESC);
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- DASH-04 — Boardroom Insight synthesis on Dashboard
+-- Chairman Synthesis (/api/board/synthesize) was previously generated and
+-- returned live with nothing saved — there was nothing to surface on the
+-- Dashboard because no record of it existed. This persists each one so the
+-- most recent can be shown. Boardroom sessions aren't linked to a specific
+-- tracked business (confirmed — the synthesize endpoint receives no
+-- business_id), so this is scoped to the account (owner_id) only, matching
+-- how the Home dashboard itself is account-level rather than business-specific.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS chairman_syntheses (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  core_problem TEXT,
+  chairman_verdict TEXT,
+  confidence VARCHAR(10),
+  director_count INTEGER,
+  full_synthesis JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_chairman_syntheses_owner ON chairman_syntheses(owner_id, created_at DESC);
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
