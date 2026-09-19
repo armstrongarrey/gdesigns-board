@@ -3026,6 +3026,246 @@ app.get('/api/integrations/hubspot/metrics', authRequired, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ZOHO BOOKS — a separate OAuth client from Google and HubSpot
+// (ZOHO_CLIENT_ID/SECRET). Zoho hosts different customers on entirely
+// separate regional data centers (US, EU, India, and others) with distinct
+// API domains — getting this wrong produces authentication failures that
+// look like token problems, not an obviously region-related error. The
+// authorization callback directly provides both the region code and the
+// exact accounts-server URL to use, so that's read and stored per
+// connection rather than guessed from a hardcoded table; only the
+// corresponding data-API domain (which isn't returned directly) needs a
+// small lookup, with Canada's URL pattern as the one real exception.
+// One connection per Arreyon account, owned and managed by the account
+// owner only, shared by the whole team — same model as the other
+// integrations, deliberately not per-team-member.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ZOHO_SCOPE = 'ZohoBooks.invoices.READ,ZohoBooks.bills.READ';
+const ZOHO_CALLBACK_URL = `${BASE_URL}/api/integrations/zoho-books/callback`;
+
+// Confirmed from Zoho's own multi-DC documentation (consistent across
+// their Bigin, SalesIQ and Mail API docs) — the API domain isn't returned
+// by the callback itself, only the region code and the accounts-server,
+// so this maps the region code to the corresponding data-API domain.
+// Falls back to the US domain for any future/unrecognized region code
+// rather than failing outright.
+const ZOHO_API_DOMAINS = {
+  us: 'https://www.zohoapis.com',
+  eu: 'https://www.zohoapis.eu',
+  in: 'https://www.zohoapis.in',
+  au: 'https://www.zohoapis.com.au',
+  jp: 'https://www.zohoapis.jp',
+  cn: 'https://www.zohoapis.com.cn',
+  sa: 'https://www.zohoapis.sa',
+  ca: 'https://www.zohoapis.ca', // accounts-server for Canada is accounts.zohocloud.ca, but the API domain itself is zohoapis.ca — a genuine, confirmed inconsistency, not a typo
+  uk: 'https://www.zohoapis.uk'
+};
+function resolveZohoApiDomain(location) {
+  return ZOHO_API_DOMAINS[location] || ZOHO_API_DOMAINS.us;
+}
+
+app.get('/api/integrations/zoho-books/connect', authRequired, async (req, res) => {
+  const account = await resolveAccount(req.userId);
+  if (!account) return res.status(404).json({ error: 'Account not found' });
+  if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can connect integrations' });
+
+  const state = jwt.sign({ ownerId: req.userId }, JWT_SECRET, { expiresIn: '10m' });
+  const params = new URLSearchParams({
+    client_id: process.env.ZOHO_CLIENT_ID,
+    redirect_uri: ZOHO_CALLBACK_URL,
+    response_type: 'code',
+    scope: ZOHO_SCOPE,
+    access_type: 'offline',
+    prompt: 'consent',
+    state
+  });
+  // Always initiate from the US (.com) accounts domain, regardless of the
+  // connecting user's actual region — Zoho automatically redirects to
+  // their correct home data center behind the scenes and reports it back
+  // in the callback, rather than requiring the initiating request to
+  // already know which region to use.
+  res.redirect(`https://accounts.zoho.com/oauth/v2/auth?${params.toString()}`);
+});
+
+app.get('/api/integrations/zoho-books/callback', async (req, res) => {
+  const { code, state, error, location, 'accounts-server': accountsServer } = req.query;
+  if (error || !code || !accountsServer) return res.redirect('/dashboard?section=integrations&error=zoho_connect_failed');
+
+  let ownerId;
+  try {
+    ownerId = jwt.verify(state, JWT_SECRET).ownerId;
+  } catch (e) {
+    return res.redirect('/dashboard?section=integrations&error=zoho_connect_failed');
+  }
+
+  try {
+    const tokenRes = await fetch(`${accountsServer}/oauth/v2/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: process.env.ZOHO_CLIENT_ID,
+        client_secret: process.env.ZOHO_CLIENT_SECRET,
+        redirect_uri: ZOHO_CALLBACK_URL,
+        code
+      })
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok || !tokenData.refresh_token) {
+      console.error('Zoho token exchange failed:', tokenData);
+      return res.redirect('/dashboard?section=integrations&error=zoho_connect_failed');
+    }
+
+    const expiresAt = new Date(Date.now() + (tokenData.expires_in || 3600) * 1000);
+    const apiDomain = resolveZohoApiDomain(location);
+    await pool.query(
+      `INSERT INTO zoho_books_connections (owner_id, access_token, refresh_token, token_expires_at, accounts_server, api_domain)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (owner_id) DO UPDATE SET access_token = $2, refresh_token = $3, token_expires_at = $4, accounts_server = $5, api_domain = $6, organization_id = NULL, organization_name = NULL, connected_at = NOW()`,
+      [ownerId, tokenData.access_token, tokenData.refresh_token, expiresAt, accountsServer, apiDomain]
+    );
+
+    res.redirect('/dashboard?section=integrations&connected=zoho-books');
+  } catch (e) {
+    console.error('Zoho callback error:', e.message);
+    res.redirect('/dashboard?section=integrations&error=zoho_connect_failed');
+  }
+});
+
+async function getValidZohoAccessToken(connection) {
+  const expiresAt = new Date(connection.token_expires_at);
+  const now = new Date();
+  if (expiresAt.getTime() - now.getTime() > 5 * 60 * 1000) return connection.access_token;
+
+  // Token refresh must go to the SAME regional accounts-server the
+  // connection was originally issued from — Zoho's other data centers
+  // will reject a refresh token they didn't issue.
+  const tokenRes = await fetch(`${connection.accounts_server}/oauth/v2/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: process.env.ZOHO_CLIENT_ID,
+      client_secret: process.env.ZOHO_CLIENT_SECRET,
+      refresh_token: connection.refresh_token
+    })
+  });
+  const tokenData = await tokenRes.json();
+  if (!tokenRes.ok) throw new Error('Failed to refresh Zoho access token: ' + (tokenData.message || tokenRes.status));
+
+  const newExpiresAt = new Date(Date.now() + (tokenData.expires_in || 3600) * 1000);
+  await pool.query('UPDATE zoho_books_connections SET access_token = $1, token_expires_at = $2 WHERE id = $3',
+    [tokenData.access_token, newExpiresAt, connection.id]);
+
+  return tokenData.access_token;
+}
+
+app.get('/api/integrations/zoho-books/status', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query('SELECT id, organization_id, organization_name, connected_at, last_synced_at FROM zoho_books_connections WHERE owner_id = $1', [account.id]);
+    if (!result.rows.length) return res.json({ connected: false });
+    res.json({ connected: true, ...result.rows[0] });
+  } catch (e) { res.status(500).json({ error: 'Failed to load integration status' }); }
+});
+
+app.get('/api/integrations/zoho-books/organizations', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const connResult = await pool.query('SELECT * FROM zoho_books_connections WHERE owner_id = $1', [account.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'Zoho Books is not connected' });
+    const connection = connResult.rows[0];
+
+    const accessToken = await getValidZohoAccessToken(connection);
+    const orgsRes = await fetch(`${connection.api_domain}/books/v3/organizations`, {
+      headers: { Authorization: `Zoho-oauthtoken ${accessToken}` }
+    });
+    const data = await orgsRes.json();
+    if (!orgsRes.ok) throw new Error(data.message || 'Failed to list Zoho Books organizations');
+
+    const organizations = (data.organizations || []).map(o => ({ organizationId: o.organization_id, name: o.name }));
+    res.json({ organizations });
+  } catch (e) {
+    console.error('Zoho organizations error:', e.message);
+    res.status(500).json({ error: 'Failed to load Zoho Books organizations. Try reconnecting Zoho Books.' });
+  }
+});
+
+app.put('/api/integrations/zoho-books/organization', authRequired, async (req, res) => {
+  const { organizationId, organizationName } = req.body;
+  if (!organizationId) return res.status(400).json({ error: 'Organization ID is required' });
+  try {
+    const account = await resolveAccount(req.userId);
+    if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can manage integrations' });
+    const result = await pool.query(
+      'UPDATE zoho_books_connections SET organization_id = $1, organization_name = $2 WHERE owner_id = $3 RETURNING id',
+      [organizationId, organizationName || null, account.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Zoho Books is not connected' });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to save selected organization' }); }
+});
+
+app.delete('/api/integrations/zoho-books', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can manage integrations' });
+    await pool.query('DELETE FROM zoho_books_connections WHERE owner_id = $1', [account.id]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to disconnect' }); }
+});
+
+async function fetchZohoBooksMetrics(connection) {
+  const accessToken = await getValidZohoAccessToken(connection);
+  const headers = { Authorization: `Zoho-oauthtoken ${accessToken}` };
+  const orgParam = `organization_id=${connection.organization_id}`;
+
+  // "unpaid" covers sent, partially-paid and overdue invoices together —
+  // their total balance is the business's total receivables.
+  const invoicesRes = await fetch(`${connection.api_domain}/books/v3/invoices?${orgParam}&status=unpaid&per_page=200`, { headers });
+  const invoicesData = await invoicesRes.json();
+  if (invoicesData.code !== 0) throw new Error(invoicesData.message || 'Failed to fetch Zoho Books invoices');
+  const totalReceivables = round2((invoicesData.invoices || []).reduce((sum, inv) => sum + (parseFloat(inv.balance) || 0), 0));
+  const openInvoicesCount = invoicesData.page_context?.total || (invoicesData.invoices || []).length;
+
+  const overdueRes = await fetch(`${connection.api_domain}/books/v3/invoices?${orgParam}&status=overdue&per_page=1`, { headers });
+  const overdueData = await overdueRes.json();
+  const overdueInvoicesCount = overdueData.code === 0 ? (overdueData.page_context?.total || 0) : 0;
+
+  const billsRes = await fetch(`${connection.api_domain}/books/v3/bills?${orgParam}&status=unpaid&per_page=200`, { headers });
+  const billsData = await billsRes.json();
+  const totalPayables = billsData.code === 0 ? round2((billsData.bills || []).reduce((sum, b) => sum + (parseFloat(b.balance) || 0), 0)) : 0;
+
+  return { totalReceivables, totalPayables, openInvoicesCount, overdueInvoicesCount };
+}
+
+app.get('/api/integrations/zoho-books/metrics', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const connResult = await pool.query('SELECT * FROM zoho_books_connections WHERE owner_id = $1', [account.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'Zoho Books is not connected' });
+    const connection = connResult.rows[0];
+    if (!connection.organization_id) return res.status(400).json({ error: 'No Zoho Books organization selected yet' });
+
+    const metrics = await fetchZohoBooksMetrics(connection);
+
+    await pool.query(
+      `INSERT INTO zoho_books_snapshots (connection_id, snapshot_date, total_receivables, total_payables, open_invoices_count, overdue_invoices_count, raw_data)
+       VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, $6)
+       ON CONFLICT (connection_id, snapshot_date) DO UPDATE SET total_receivables = $2, total_payables = $3, open_invoices_count = $4, overdue_invoices_count = $5, raw_data = $6`,
+      [connection.id, metrics.totalReceivables, metrics.totalPayables, metrics.openInvoicesCount, metrics.overdueInvoicesCount, JSON.stringify(metrics)]
+    );
+    await pool.query('UPDATE zoho_books_connections SET last_synced_at = NOW() WHERE id = $1', [connection.id]);
+
+    res.json({ metrics, organizationName: connection.organization_name });
+  } catch (e) {
+    console.error('Zoho Books metrics error:', e.message);
+    res.status(500).json({ error: 'Failed to load Zoho Books metrics. Try reconnecting Zoho Books.' });
+  }
+});
+
 function adminRequired(req, res, next) {
   const token = req.cookies.arreyon_admin_token || req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Admin authentication required' });
