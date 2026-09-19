@@ -254,6 +254,21 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
       </div>
 
+      <!-- BOARD VERDICT — DASH-04. Surfaces the most recently persisted
+           Chairman Synthesis (previously generated live with nothing
+           saved). Account-level, not business-specific, since Boardroom
+           sessions aren't linked to a tracked business. Hidden until the
+           founder has actually asked for a verdict at least once. -->
+      <div id="dashVerdictCard" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:24px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div class="section-title" style="margin:0;font-size:15px" data-i18n="dash.latest_verdict">Latest Board Verdict</div>
+          <span id="dashVerdictDate" style="font-size:11px;color:var(--muted)"></span>
+        </div>
+        <div id="dashVerdictProblem" style="font-size:12.5px;color:var(--muted);margin-bottom:8px;font-style:italic"></div>
+        <div id="dashVerdictText" style="font-size:13.5px;color:var(--text);line-height:1.5;margin-bottom:10px"></div>
+        <a href="/boardroom" style="font-size:12px;color:var(--purple-light);text-decoration:none" data-i18n="dash.ask_new_question">Ask the board a new question →</a>
+      </div>
+
       <!-- BUSINESS HEALTH SUMMARY — Phase 2, Step 4. Reuses the completeness
            score (Step 1) and the existing Alerts data — no new detection
            logic here, just surfacing what already exists. -->
@@ -1571,6 +1586,7 @@ async function init() {
 
     loadUnreadAlertsBadge();
     loadDashboardBusinessHealth();
+    loadDashboardVerdict();
 
     // The Google Analytics OAuth flow redirects back here with query params
     // indicating success/failure — jump to the Integrations section and show
@@ -1689,6 +1705,27 @@ function timeAgo(date) {
   const days = Math.floor(hrs/24);
   if (days < 7) return days + t('time.ago_days');
   return new Date(date).toLocaleDateString('en-GB',{day:'numeric',month:'short'});
+}
+
+// Board Verdict card — DASH-04. Surfaces the most recently persisted
+// Chairman Synthesis. Stays hidden until the founder has actually
+// generated at least one verdict — an empty/placeholder verdict card
+// would be worse than no card at all on a first-time dashboard.
+async function loadDashboardVerdict() {
+  try {
+    const res = await fetch('/api/dashboard/latest-verdict');
+    const data = await res.json();
+    if (!data.verdict) {
+      document.getElementById('dashVerdictCard').style.display = 'none';
+      return;
+    }
+    document.getElementById('dashVerdictCard').style.display = 'block';
+    document.getElementById('dashVerdictDate').textContent = timeAgo(data.verdict.created_at);
+    document.getElementById('dashVerdictProblem').textContent = data.verdict.core_problem || '';
+    document.getElementById('dashVerdictText').textContent = data.verdict.chairman_verdict || '';
+  } catch (e) {
+    document.getElementById('dashVerdictCard').style.display = 'none';
+  }
 }
 
 async function loadProfile() {
