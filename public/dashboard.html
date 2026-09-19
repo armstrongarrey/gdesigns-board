@@ -269,6 +269,16 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <a href="/boardroom" style="font-size:12px;color:var(--purple-light);text-decoration:none" data-i18n="dash.ask_new_question">Ask the board a new question →</a>
       </div>
 
+      <!-- RECENT ACTIVITY — DASH-06. Unifies 5 existing data sources
+           (research, entrepreneur sessions, completed tasks, leads, board
+           verdicts) that were never before combined into one feed. Hidden
+           entirely when there's nothing yet, rather than showing an empty
+           list on a brand-new account. -->
+      <div id="dashActivityCard" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:24px">
+        <div class="section-title" style="margin:0 0 12px;font-size:15px" data-i18n="dash.recent_activity">Recent Activity</div>
+        <div id="dashActivityList"></div>
+      </div>
+
       <!-- BUSINESS HEALTH SUMMARY — Phase 2, Step 4. Reuses the completeness
            score (Step 1) and the existing Alerts data — no new detection
            logic here, just surfacing what already exists. -->
@@ -1587,6 +1597,7 @@ async function init() {
     loadUnreadAlertsBadge();
     loadDashboardBusinessHealth();
     loadDashboardVerdict();
+    loadDashboardActivity();
 
     // The Google Analytics OAuth flow redirects back here with query params
     // indicating success/failure — jump to the Integrations section and show
@@ -1725,6 +1736,59 @@ async function loadDashboardVerdict() {
     document.getElementById('dashVerdictText').textContent = data.verdict.chairman_verdict || '';
   } catch (e) {
     document.getElementById('dashVerdictCard').style.display = 'none';
+  }
+}
+
+// Recent Activity feed — DASH-06. Each activity type gets an icon and a
+// short prefix so the feed reads naturally regardless of which of the 5
+// source tables an item came from. "entrepreneur" is a special case: its
+// message is a single fully-translated sentence based on the session mode
+// (idea_validation/opportunity_finder), not a prefix + label like the rest —
+// the backend deliberately sends the raw mode value rather than a baked-in
+// English sentence, so it translates correctly when the user is in French.
+const ACTIVITY_TYPE_DISPLAY = {
+  research: { icon: '🔍', prefix: 'dash.activity_research' },
+  business_plan: { icon: '📋', prefix: 'dash.activity_business_plan' },
+  task_completed: { icon: '✅', prefix: 'dash.activity_task_completed' },
+  lead_added: { icon: '👤', prefix: 'dash.activity_lead_added' },
+  verdict: { icon: '⚖️', prefix: 'dash.activity_verdict' }
+};
+const ENTREPRENEUR_MODE_LABELS = {
+  idea_validation: 'dash.activity_idea_validation',
+  opportunity_finder: 'dash.activity_opportunity_finder'
+};
+
+async function loadDashboardActivity() {
+  try {
+    const res = await fetch('/api/dashboard/recent-activity');
+    const data = await res.json();
+    const list = document.getElementById('dashActivityList');
+    const card = document.getElementById('dashActivityCard');
+
+    if (!data.activity || !data.activity.length) {
+      card.style.display = 'none';
+      return;
+    }
+
+    card.style.display = 'block';
+    list.innerHTML = data.activity.map(item => {
+      let icon, text;
+      if (item.type === 'entrepreneur') {
+        icon = '💡';
+        text = t(ENTREPRENEUR_MODE_LABELS[item.label] || 'dash.activity_opportunity_finder');
+      } else {
+        const display = ACTIVITY_TYPE_DISPLAY[item.type] || { icon: '•', prefix: '' };
+        icon = display.icon;
+        text = (display.prefix ? t(display.prefix) + ' ' : '') + escapeHtml(item.label || '');
+      }
+      return `<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <span style="font-size:14px;flex-shrink:0">${icon}</span>
+        <span style="font-size:12.5px;color:var(--text2);flex:1;min-width:0">${text}</span>
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap;flex-shrink:0">${timeAgo(item.timestamp)}</span>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    document.getElementById('dashActivityCard').style.display = 'none';
   }
 }
 
