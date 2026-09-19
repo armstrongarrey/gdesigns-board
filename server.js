@@ -4538,6 +4538,43 @@ app.get('/api/dashboard/latest-verdict', authRequired, async (req, res) => {
   }
 });
 
+// DASH-06 — Recent Activity feed. Pulls from 5 existing tables that were
+// never before combined into one view. Two different scoping conventions
+// are already established elsewhere in this codebase and are respected
+// here rather than unified into one for convenience: research_sessions
+// and entrepreneur_sessions are scoped per logged-in user (matching their
+// own existing list endpoints), while action_tasks, leads, and
+// chairman_syntheses are scoped to the shared account owner (matching how
+// team members already see the same tasks/leads/verdicts elsewhere).
+app.get('/api/dashboard/recent-activity', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+
+    const [research, entrepreneur, tasks, leadsAdded, verdicts] = await Promise.all([
+      pool.query('SELECT id, query, created_at FROM research_sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5', [req.userId]),
+      pool.query(`SELECT id, mode, business_plan IS NOT NULL AS has_plan, created_at FROM entrepreneur_sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5`, [req.userId]),
+      pool.query(`SELECT id, title, completed_at FROM action_tasks WHERE owner_id = $1 AND status = 'done' AND completed_at IS NOT NULL ORDER BY completed_at DESC LIMIT 5`, [account.id]),
+      pool.query('SELECT id, name, created_at FROM leads WHERE owner_id = $1 ORDER BY created_at DESC LIMIT 5', [account.id]),
+      pool.query('SELECT id, core_problem, created_at FROM chairman_syntheses WHERE owner_id = $1 ORDER BY created_at DESC LIMIT 5', [account.id])
+    ]);
+
+    const activity = [
+      ...research.rows.map(r => ({ type: 'research', label: r.query, timestamp: r.created_at })),
+      ...entrepreneur.rows.map(r => ({ type: r.has_plan ? 'business_plan' : 'entrepreneur', label: r.has_plan ? null : r.mode, timestamp: r.created_at })),
+      ...tasks.rows.map(r => ({ type: 'task_completed', label: r.title, timestamp: r.completed_at })),
+      ...leadsAdded.rows.map(r => ({ type: 'lead_added', label: r.name, timestamp: r.created_at })),
+      ...verdicts.rows.map(r => ({ type: 'verdict', label: r.core_problem, timestamp: r.created_at }))
+    ]
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, 8);
+
+    res.json({ activity });
+  } catch (e) {
+    console.error('Recent activity fetch error:', e.message);
+    res.status(500).json({ error: 'Failed to load recent activity' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ENTREPRENEUR MODE — Increment 5
 // For users who don't have a business yet. Two paths:
