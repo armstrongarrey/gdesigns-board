@@ -3042,7 +3042,11 @@ app.get('/api/integrations/hubspot/metrics', authRequired, async (req, res) => {
 // integrations, deliberately not per-team-member.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const ZOHO_SCOPE = 'ZohoBooks.invoices.READ,ZohoBooks.bills.READ';
+// settings.READ is required specifically for the organizations list
+// endpoint (confirmed from Zoho's own API documentation) — without it,
+// the connection succeeds but listing organizations fails, since scopes
+// are granted per-endpoint, not implied by the others.
+const ZOHO_SCOPE = 'ZohoBooks.invoices.READ,ZohoBooks.bills.READ,ZohoBooks.settings.READ';
 const ZOHO_CALLBACK_URL = `${BASE_URL}/api/integrations/zoho-books/callback`;
 
 // Confirmed from Zoho's own multi-DC documentation (consistent across
