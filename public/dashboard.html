@@ -478,7 +478,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div style="display:flex;align-items:center;gap:10px">
             <div style="width:32px;height:32px;border-radius:8px;background:#e8710a22;display:flex;align-items:center;justify-content:center;font-size:16px">📊</div>
             <div>
-              <div style="font-size:13.5px;font-weight:700;color:var(--text)" id="gaPropertyNameDisplay">Google Analytics</div>
+              <div style="font-size:13.5px;font-weight:700;color:var(--text)">Google Analytics</div>
+              <div style="font-size:12px;color:var(--text2)" id="gaPropertyNameDisplay"></div>
               <div style="font-size:11px;color:var(--green)" data-i18n="int.connected_label">Connected</div>
             </div>
           </div>
@@ -533,7 +534,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div style="display:flex;align-items:center;gap:10px">
             <div style="width:32px;height:32px;border-radius:8px;background:#4285f422;display:flex;align-items:center;justify-content:center;font-size:16px">🔍</div>
             <div>
-              <div style="font-size:13.5px;font-weight:700;color:var(--text)" id="gscSiteNameDisplay">Google Search Console</div>
+              <div style="font-size:13.5px;font-weight:700;color:var(--text)">Google Search Console</div>
+              <div style="font-size:12px;color:var(--text2)" id="gscSiteNameDisplay"></div>
               <div style="font-size:11px;color:var(--green)" data-i18n="int.connected_label">Connected</div>
             </div>
           </div>
@@ -622,7 +624,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div style="display:flex;align-items:center;gap:10px">
             <div style="width:32px;height:32px;border-radius:8px;background:#e6242422;display:flex;align-items:center;justify-content:center;font-size:16px">📕</div>
             <div>
-              <div style="font-size:13.5px;font-weight:700;color:var(--text)" id="zohoOrgNameDisplay">Zoho Books</div>
+              <div style="font-size:13.5px;font-weight:700;color:var(--text)">Zoho Books</div>
+              <div style="font-size:12px;color:var(--text2)" id="zohoOrgNameDisplay"></div>
               <div style="font-size:11px;color:var(--green)" data-i18n="int.connected_label">Connected</div>
             </div>
           </div>
@@ -1909,7 +1912,7 @@ async function loadIntegrationsSection() {
       loadGAProperties();
     } else {
       document.getElementById('gaMetricsView').style.display = 'block';
-      document.getElementById('gaPropertyNameDisplay').textContent = data.property_name || 'Google Analytics';
+      document.getElementById('gaPropertyNameDisplay').textContent = data.property_name || '';
       loadGAMetrics();
     }
   } catch (e) {
@@ -1931,7 +1934,7 @@ async function loadIntegrationsSection() {
       loadGSCSites();
     } else {
       document.getElementById('gscMetricsView').style.display = 'block';
-      document.getElementById('gscSiteNameDisplay').textContent = data.site_url || 'Google Search Console';
+      document.getElementById('gscSiteNameDisplay').textContent = data.site_url || '';
       loadGSCMetrics();
     }
   } catch (e) {
@@ -1970,7 +1973,7 @@ async function loadIntegrationsSection() {
       loadZohoOrganizations();
     } else {
       document.getElementById('zohoMetricsView').style.display = 'block';
-      document.getElementById('zohoOrgNameDisplay').textContent = data.organization_name || 'Zoho Books';
+      document.getElementById('zohoOrgNameDisplay').textContent = data.organization_name || '';
       loadZohoMetrics();
     }
   } catch (e) {
