@@ -4497,10 +4497,44 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 
     }
 
+    // Persisted so the Home dashboard can surface the most recent verdict
+    // (DASH-04) — previously this result was generated and returned live
+    // with nothing saved, so there was nothing for the dashboard to show.
+    // Saved to the account owner, not req.userId directly, matching the
+    // "team members share the owner's plan" pattern already used above —
+    // a team member's verdict should surface for the whole account, not
+    // be invisible to the owner viewing their own dashboard.
+    try {
+      await pool.query(
+        `INSERT INTO chairman_syntheses (owner_id, core_problem, chairman_verdict, confidence, director_count, full_synthesis)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [account.id, synthesis.core_problem || null, synthesis.chairman_verdict || null, synthesis.confidence || null, conversations.length, JSON.stringify(synthesis)]
+      );
+    } catch (e) {
+      // Non-fatal — the founder still gets their verdict even if saving
+      // it for the dashboard fails for some reason.
+      console.error('Chairman synthesis persistence failed (non-fatal):', e.message);
+    }
+
     res.json({ success: true, synthesis });
   } catch (err) {
     console.error('Chairman synthesis error:', err.message);
     res.status(500).json({ error: err.message || 'Synthesis failed. Please try again.' });
+  }
+});
+
+// DASH-04 — most recent Chairman Synthesis for the Home dashboard.
+app.get('/api/dashboard/latest-verdict', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(
+      'SELECT core_problem, chairman_verdict, confidence, director_count, created_at FROM chairman_syntheses WHERE owner_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [account.id]
+    );
+    res.json({ verdict: result.rows[0] || null });
+  } catch (e) {
+    console.error('Latest verdict fetch error:', e.message);
+    res.status(500).json({ error: 'Failed to load latest board verdict' });
   }
 });
 
