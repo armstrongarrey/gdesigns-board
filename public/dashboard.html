@@ -577,6 +577,51 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div class="stat-card"><div class="stat-label" data-i18n="int.metric_pipeline_value">Pipeline Value</div><div class="stat-val" id="hubspotPipelineValue">—</div></div>
         </div>
       </div>
+
+      <!-- ZOHO BOOKS — Not connected state -->
+      <div id="zohoNotConnected" style="max-width:460px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;display:none;margin-top:18px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+          <div style="width:40px;height:40px;border-radius:10px;background:#e6242422;display:flex;align-items:center;justify-content:center;font-size:20px">📕</div>
+          <div>
+            <div style="font-size:14px;font-weight:700;color:var(--text)">Zoho Books</div>
+            <div style="font-size:12px;color:var(--muted)" data-i18n="int.zoho_desc">Real receivables, payables, and invoice data from your accounting</div>
+          </div>
+        </div>
+        <button class="btn-primary" style="width:100%;padding:11px" onclick="connectZohoBooks()" data-i18n="int.connect_zoho_btn">Connect Zoho Books</button>
+      </div>
+
+      <!-- ZOHO BOOKS — Connected, no organization selected yet -->
+      <div id="zohoSelectOrg" style="max-width:460px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;display:none;margin-top:18px">
+        <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px" data-i18n="int.select_org">Select which organization to use</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:14px" data-i18n="int.select_org_desc">Your Zoho account has access to more than one organization — choose the one for this business.</div>
+        <select class="form-input" id="zohoOrgSelect" style="margin-bottom:12px"></select>
+        <button class="btn-primary" style="width:100%;padding:11px" onclick="saveZohoOrg()" data-i18n="int.save_org">Use This Organization</button>
+      </div>
+
+      <!-- ZOHO BOOKS — Connected with organization selected — metrics view -->
+      <div id="zohoMetricsView" style="max-width:600px;display:none;margin-top:18px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:32px;height:32px;border-radius:8px;background:#e6242422;display:flex;align-items:center;justify-content:center;font-size:16px">📕</div>
+            <div>
+              <div style="font-size:13.5px;font-weight:700;color:var(--text)" id="zohoOrgNameDisplay">Zoho Books</div>
+              <div style="font-size:11px;color:var(--green)" data-i18n="int.connected_label">Connected</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn-ghost" style="font-size:12px;padding:7px 14px" onclick="loadZohoMetrics()" data-i18n="admin.refresh">Refresh</button>
+            <button class="btn-ghost" style="font-size:12px;padding:7px 14px;color:#ef4444" onclick="disconnectZohoBooks()" data-i18n="int.disconnect">Disconnect</button>
+          </div>
+        </div>
+
+        <div id="zohoMetricsLoading" style="text-align:center;padding:30px;color:var(--muted);font-size:13px" data-i18n="int.loading_metrics">Loading metrics...</div>
+        <div id="zohoMetricsGrid" style="display:none;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">
+          <div class="stat-card"><div class="stat-label" data-i18n="int.metric_receivables">Receivables</div><div class="stat-val" id="zohoReceivables">—</div></div>
+          <div class="stat-card"><div class="stat-label" data-i18n="int.metric_payables">Payables</div><div class="stat-val" id="zohoPayables">—</div></div>
+          <div class="stat-card"><div class="stat-label" data-i18n="int.metric_open_invoices">Open Invoices</div><div class="stat-val" id="zohoOpenInvoices">—</div></div>
+          <div class="stat-card"><div class="stat-label" data-i18n="int.metric_overdue_invoices">Overdue</div><div class="stat-val" id="zohoOverdueInvoices">—</div></div>
+        </div>
+      </div>
     </div>
 
     <!-- ALERTS SECTION -->
@@ -1525,6 +1570,10 @@ async function init() {
         showIntMsg(t('int.hubspot_connected_success'), 'success');
       } else if (urlParams.get('error') === 'hubspot_connect_failed') {
         showIntMsg(t('int.hubspot_connect_failed'), 'error');
+      } else if (urlParams.get('connected') === 'zoho-books') {
+        showIntMsg(t('int.zoho_connected_success'), 'success');
+      } else if (urlParams.get('error') === 'zoho_connect_failed') {
+        showIntMsg(t('int.zoho_connect_failed'), 'error');
       }
       window.history.replaceState({}, '', '/dashboard');
     } else {
@@ -1822,6 +1871,10 @@ function connectHubSpot() {
   window.location.href = '/api/integrations/hubspot/connect';
 }
 
+function connectZohoBooks() {
+  window.location.href = '/api/integrations/zoho-books/connect';
+}
+
 async function loadIntegrationsSection() {
   try {
     const res = await fetch('/api/integrations/google-analytics/status');
@@ -1882,6 +1935,28 @@ async function loadIntegrationsSection() {
     }
   } catch (e) {
     document.getElementById('hubspotNotConnected').style.display = 'block';
+  }
+
+  try {
+    const res = await fetch('/api/integrations/zoho-books/status');
+    const data = await res.json();
+
+    document.getElementById('zohoNotConnected').style.display = 'none';
+    document.getElementById('zohoSelectOrg').style.display = 'none';
+    document.getElementById('zohoMetricsView').style.display = 'none';
+
+    if (!data.connected) {
+      document.getElementById('zohoNotConnected').style.display = 'block';
+    } else if (!data.organization_id) {
+      document.getElementById('zohoSelectOrg').style.display = 'block';
+      loadZohoOrganizations();
+    } else {
+      document.getElementById('zohoMetricsView').style.display = 'block';
+      document.getElementById('zohoOrgNameDisplay').textContent = data.organization_name || 'Zoho Books';
+      loadZohoMetrics();
+    }
+  } catch (e) {
+    document.getElementById('zohoNotConnected').style.display = 'block';
   }
 }
 
@@ -2062,6 +2137,75 @@ async function disconnectHubSpot() {
   if (!confirm(t('int.confirm_disconnect_hubspot'))) return;
   try {
     await fetch('/api/integrations/hubspot', { method: 'DELETE' });
+    loadIntegrationsSection();
+  } catch (e) {}
+}
+
+async function loadZohoOrganizations() {
+  const select = document.getElementById('zohoOrgSelect');
+  select.innerHTML = `<option>${t('int.loading_orgs')}</option>`;
+  try {
+    const res = await fetch('/api/integrations/zoho-books/organizations');
+    const data = await res.json();
+    if (!res.ok) {
+      select.innerHTML = `<option value="">${t('int.failed_load_orgs')}</option>`;
+      showIntMsg(data.error || t('int.failed_load_orgs'), 'error');
+      return;
+    }
+    if (!data.organizations || !data.organizations.length) {
+      select.innerHTML = `<option value="">${t('int.no_orgs_found')}</option>`;
+      return;
+    }
+    select.innerHTML = data.organizations.map(o => `<option value="${o.organizationId}" data-name="${escapeHtml(o.name)}">${escapeHtml(o.name)}</option>`).join('');
+  } catch (e) {
+    select.innerHTML = `<option value="">${t('int.failed_load_orgs')}</option>`;
+  }
+}
+
+async function saveZohoOrg() {
+  const select = document.getElementById('zohoOrgSelect');
+  const opt = select.options[select.selectedIndex];
+  if (!opt || !opt.value) return;
+
+  try {
+    const res = await fetch('/api/integrations/zoho-books/organization', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ organizationId: opt.value, organizationName: opt.dataset.name })
+    });
+    const data = await res.json();
+    if (!res.ok) { showIntMsg(data.error || t('int.save_org_failed'), 'error'); return; }
+    loadIntegrationsSection();
+  } catch (e) { showIntMsg(t('board.connection_error'), 'error'); }
+}
+
+async function loadZohoMetrics() {
+  document.getElementById('zohoMetricsLoading').style.display = 'block';
+  document.getElementById('zohoMetricsGrid').style.display = 'none';
+
+  try {
+    const res = await fetch('/api/integrations/zoho-books/metrics');
+    const data = await res.json();
+    document.getElementById('zohoMetricsLoading').style.display = 'none';
+
+    if (!res.ok) { showIntMsg(data.error || t('int.load_zoho_metrics_failed'), 'error'); return; }
+
+    const m = data.metrics;
+    document.getElementById('zohoReceivables').textContent = '$' + m.totalReceivables.toLocaleString();
+    document.getElementById('zohoPayables').textContent = '$' + m.totalPayables.toLocaleString();
+    document.getElementById('zohoOpenInvoices').textContent = m.openInvoicesCount.toLocaleString();
+    document.getElementById('zohoOverdueInvoices').textContent = m.overdueInvoicesCount.toLocaleString();
+
+    document.getElementById('zohoMetricsGrid').style.display = 'grid';
+  } catch (e) {
+    document.getElementById('zohoMetricsLoading').style.display = 'none';
+    showIntMsg(t('board.connection_error'), 'error');
+  }
+}
+
+async function disconnectZohoBooks() {
+  if (!confirm(t('int.confirm_disconnect_zoho'))) return;
+  try {
+    await fetch('/api/integrations/zoho-books', { method: 'DELETE' });
     loadIntegrationsSection();
   } catch (e) {}
 }
