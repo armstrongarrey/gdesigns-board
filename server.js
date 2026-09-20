@@ -574,6 +574,108 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// BUSINESS X-RAY — Phase 2 completion (consolidates BI-01, BI-04, BX-01, BX-02)
+// Same pattern as Business Intelligence above: qualitative-turned-numeric,
+// AI-ASSESSED per axis (never presented as verified fact), grounded in the
+// same getBusinessContext(). The overall health score is NOT asked of the
+// AI — it's computed deterministically as the average of the 8 AI-assessed
+// axes, so it can never disagree with the breakdown it's summarizing.
+// ═══════════════════════════════════════════════════════════════════════════
+const XRAY_AXES = ['strategy', 'marketing', 'sales', 'finance', 'operations', 'customer_experience', 'brand', 'digital'];
+
+function computeXRayOverall(scores) {
+  const values = XRAY_AXES.map(axis => {
+    const v = Number(scores?.[axis]);
+    return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : null;
+  }).filter(v => v !== null);
+  if (!values.length) return null;
+  return Math.round(values.reduce((sum, v) => sum + v, 0) / values.length);
+}
+
+app.post('/api/business/:id/business-xray', authRequired, async (req, res) => {
+  const language = req.body?.language === 'fr' ? 'fr' : 'en';
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const completeness = computeBusinessCompletenessScore(context);
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+
+    const prompt = `You are a business diagnostics analyst. Based on everything actually known about this business, score it across 8 specific dimensions and identify the single biggest bottleneck holding it back.
+${contextSummary}
+
+DATA COMPLETENESS: ${completeness.score}/100. ${completeness.score < 40 ? 'This is LOW — be explicitly conservative with scores rather than inventing confidence the data does not support. Scores in the 40-60 range reflect genuine uncertainty, not necessarily mediocre performance.' : 'Use this as a general sense of how much is actually known.'}
+
+Score each dimension 0-100, where 0 is critically weak/nonexistent and 100 is excellent and fully optimized. Base every score on what is actually known — do not default to a "safe middle" score out of caution; a genuinely strong or weak area should be scored accordingly.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "scores": {
+    "strategy": 0-100,
+    "marketing": 0-100,
+    "sales": 0-100,
+    "finance": 0-100,
+    "operations": 0-100,
+    "customer_experience": 0-100,
+    "brand": 0-100,
+    "digital": 0-100
+  },
+  "axis_notes": {
+    "strategy": "one sentence justifying this score",
+    "marketing": "...",
+    "sales": "...",
+    "finance": "...",
+    "operations": "...",
+    "customer_experience": "...",
+    "brand": "...",
+    "digital": "..."
+  },
+  "bottleneck_axis": "the single axis name above that is most limiting the business right now",
+  "bottleneck_reasoning": "2-3 sentences on why this is the primary bottleneck and what fixing it would unlock",
+  "confidence_note": "one honest sentence about how much this assessment can be trusted given the data actually available"
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the Business X-Ray now, as JSON only.' }], complexity: 'complex', context: { feature: 'business_xray', userId: req.userId }, maxTokens: 2200 });
+
+    let xray;
+    try {
+      xray = extractJSON(raw);
+    } catch (e) {
+      console.error('Business X-Ray JSON parse failed. Length:', e.message, '| Response length:', raw.length, '| Last 300 chars:', raw.slice(-300));
+      throw new Error('Could not generate Business X-Ray — please try again');
+    }
+    if (!xray.scores || typeof xray.scores !== 'object') {
+      console.error('Business X-Ray missing scores object');
+      throw new Error('Could not generate Business X-Ray — please try again');
+    }
+    for (const axis of XRAY_AXES) {
+      if (typeof xray.scores[axis] !== 'number') {
+        console.error(`Business X-Ray axis "${axis}" was not a number:`, typeof xray.scores[axis]);
+        throw new Error('Could not generate Business X-Ray — please try again');
+      }
+    }
+    if (!XRAY_AXES.includes(xray.bottleneck_axis)) {
+      console.error('Business X-Ray bottleneck_axis was not a recognized axis:', xray.bottleneck_axis);
+      throw new Error('Could not generate Business X-Ray — please try again');
+    }
+
+    const overallHealthScore = computeXRayOverall(xray.scores);
+    const businessXray = { ...xray, overall_health_score: overallHealthScore };
+
+    await pool.query(
+      'UPDATE businesses SET business_xray = $1, business_xray_fr = NULL, business_xray_generated_at = NOW() WHERE id = $2',
+      [JSON.stringify(businessXray), req.params.id]
+    );
+
+    res.json({ businessXray, completeness, generatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('Business X-Ray error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate Business X-Ray. Please try again.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GROWTH CENTER — Phase 3, Step 1
 // Deterministic progress tracking, same trust principle as the Financial
 // Tools and Business Intelligence completeness score — this number is never
@@ -8293,6 +8395,18 @@ app.get('/api/business/:id', authRequired, async (req, res) => {
         }
       }
       if (business.intelligence_snapshot_fr) business.intelligence_snapshot = business.intelligence_snapshot_fr;
+
+      // Same discipline for Business X-Ray (Phase 2 completion).
+      if (business.business_xray && !business.business_xray_fr) {
+        try {
+          const translatedXray = await translateStructuredContent(business.business_xray, 'Business X-Ray diagnostic');
+          await pool.query('UPDATE businesses SET business_xray_fr = $1 WHERE id = $2', [JSON.stringify(translatedXray), business.id]);
+          business.business_xray_fr = translatedXray;
+        } catch (e) {
+          console.error('Business X-Ray auto-translate failed (non-fatal, falling back to English):', e.message);
+        }
+      }
+      if (business.business_xray_fr) business.business_xray = business.business_xray_fr;
 
       // Same discipline for Market Context (Phase 5, Step 2).
       if (business.market_context && !business.market_context_fr) {
