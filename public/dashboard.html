@@ -1860,11 +1860,17 @@ async function loadProfile() {
   document.getElementById('profileLast').value = user.last_name || '';
   document.getElementById('profileEmail').value = user.email || '';
 
-  const res = await fetch('/api/user/profile');
-  const data = await res.json();
-  if (data.user) {
-    document.getElementById('profilePhone').value = data.user.phone || '';
-    document.getElementById('profileCountry').value = data.user.country || '';
+  try {
+    const res = await fetch('/api/user/profile');
+    const data = await res.json();
+    if (data.user) {
+      document.getElementById('profilePhone').value = data.user.phone || '';
+      document.getElementById('profileCountry').value = data.user.country || '';
+    }
+  } catch (e) {
+    // Non-fatal — the fields already populated above (name, email) still
+    // show correctly; only phone/country stay blank rather than the whole
+    // form failing silently with an unhandled rejection.
   }
 }
 
@@ -2757,7 +2763,13 @@ async function submitPayment() {
 }
 
 async function doLogout() {
-  await fetch('/api/auth/logout', { method:'POST' });
+  try {
+    await fetch('/api/auth/logout', { method:'POST' });
+  } catch (e) {
+    // Redirect regardless — the user's intent is to leave the app, and
+    // getting stuck on an unresponsive page after clicking Logout would be
+    // a worse outcome than proceeding even if the server call failed.
+  }
   window.location.href = '/';
 }
 
@@ -2866,6 +2878,8 @@ async function loadBusinessIntoView(businessId) {
   // this can trigger server-side takes noticeably longer than an English
   // fetch, so requests don't necessarily resolve in the order they started.
   const myToken = ++businessViewRequestToken;
+  const errEl0 = document.getElementById('analyzerError');
+  if (errEl0) errEl0.style.display = 'none';
 
   // Both fetches run in parallel rather than one-after-another — the research
   // fetch alone can take several seconds on a first French view (it may
@@ -2899,6 +2913,11 @@ async function loadBusinessIntoView(businessId) {
     document.getElementById('analyzerResults').style.display = 'block';
   } else {
     console.error('Failed to load business facts:', bizResult.reason?.message);
+    const errEl = document.getElementById('analyzerError');
+    if (errEl) {
+      errEl.textContent = t('analyzer.load_business_failed');
+      errEl.style.display = 'block';
+    }
   }
 
   if (researchResult.status === 'fulfilled') {
@@ -3851,8 +3870,9 @@ function renderBusinessPlan(container, plan) {
 
   container.innerHTML = `
     <div style="margin-top:20px;background:var(--bg2);border:1px solid var(--purple);border-radius:12px;padding:20px">
-      <div style="display:flex;align-items:center;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
         <div style="font-size:15px;font-weight:700;color:var(--text)">📋 ${t('plan.title')}</div>
+        <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
         <a href="/api/entrepreneur/${currentEntrepreneurSessionId}/report?format=docx&lang=${window.currentLang || 'en'}" style="margin-left:auto;color:var(--purple-light);text-decoration:none;font-size:12px" data-i18n="mkt.download_word">⬇ Download as Word</a>
       </div>
 
@@ -6228,12 +6248,18 @@ function renderScenarioResults(optionsWithFinancials, analysis) {
         <div style="font-size:15px;font-weight:700;color:var(--text)">${a.option_name}</div>
         <div style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:5px;background:${riskColor[a.risk_level]||'var(--muted)'}22;color:${riskColor[a.risk_level]||'var(--muted)'};text-transform:uppercase">${a.risk_level} ${t('scen.risk')}</div>
       </div>
-      ${fin ? `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px;font-size:12px">
+      ${fin ? `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+        <span style="font-size:9px;font-weight:700;color:var(--green);background:rgba(16,185,129,.15);padding:2px 7px;border-radius:4px" data-i18n="plan.computed_badge">Computed</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px;font-size:12px">
         <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.net_monthly_gain')}</div><div style="font-weight:700;color:${fin.netMonthlyGain>=0?'var(--green)':'#ef4444'}">${formatScenarioMoney(fin.netMonthlyGain)}</div></div>
         <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.payback')}</div><div style="font-weight:700;color:var(--text)">${fin.paybackMonths !== null ? fin.paybackMonths + ' ' + t('scen.months_word') : (fin.investment ? t('scen.never') : '—')}</div></div>
         <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.roi')}</div><div style="font-weight:700;color:var(--text)">${fin.roiPct !== null ? fin.roiPct + '%' : '—'}</div></div>
         <div style="background:var(--bg3);border-radius:6px;padding:8px 10px"><div style="color:var(--muted);font-size:10px;text-transform:uppercase">${t('scen.total_gain')}</div><div style="font-weight:700;color:var(--text)">${formatScenarioMoney(fin.totalGainOverTimeframe)}</div></div>
       </div>` : `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:12px">${t('scen.no_financials')}</div>`}
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+        <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div><div style="font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase;margin-bottom:4px">${t('scen.pros')}</div>${a.pros.map(p=>`<div style="font-size:12px;color:var(--text2);margin-bottom:3px">• ${p}</div>`).join('')}</div>
         <div><div style="font-size:10px;font-weight:700;color:#ef4444;text-transform:uppercase;margin-bottom:4px">${t('scen.cons')}</div>${a.cons.map(c=>`<div style="font-size:12px;color:var(--text2);margin-bottom:3px">• ${c}</div>`).join('')}</div>
@@ -6244,11 +6270,17 @@ function renderScenarioResults(optionsWithFinancials, analysis) {
   document.getElementById('scenarioResults').innerHTML = `
     ${cardsHtml}
     <div style="background:var(--bg3);border-radius:10px;padding:14px 16px;margin-bottom:14px">
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:6px">${t('scen.comparison_summary')}</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase">${t('scen.comparison_summary')}</span>
+        <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
+      </div>
       <div style="font-size:13px;color:var(--text2);line-height:1.6">${analysis.comparison_summary}</div>
     </div>
     <div style="background:linear-gradient(135deg,var(--bg3),var(--bg2));border:1px solid var(--purple);border-radius:12px;padding:18px">
-      <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin-bottom:8px">${t('scen.recommendation')}: ${analysis.recommended_option}</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase">${t('scen.recommendation')}: ${analysis.recommended_option}</span>
+        <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
+      </div>
       <div style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:10px">${analysis.recommendation_reasoning}</div>
       <div style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;display:inline-block;background:${confColor[analysis.confidence]||'var(--muted)'}22;color:${confColor[analysis.confidence]||'var(--muted)'}">${analysis.confidence.toUpperCase()} ${t('scen.confidence')}</div>
     </div>`;
