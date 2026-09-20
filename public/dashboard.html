@@ -789,6 +789,20 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           </div>
         </div>
 
+        <!-- BUSINESS X-RAY PANEL — Phase 2 completion. Consolidates the
+             overall Business Health score, Digital Presence, and the
+             primary-bottleneck axis into one numeric scorecard, rather
+             than duplicating the Business Intelligence panel's qualitative
+             SWOT above with a second, overlapping scoring system. -->
+        <div id="xrayPanel" style="margin-top:20px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+            <div class="section-title" style="margin:0;font-size:15px" data-i18n="xray.title">Business X-Ray</div>
+          </div>
+          <div id="xrayContent">
+            <div style="text-align:center;padding:24px;color:var(--muted);font-size:13px" data-i18n="bi.loading">Loading...</div>
+          </div>
+        </div>
+
         <div style="margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
           <div style="min-width:220px">
             <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px" data-i18n="analyzer.research_scope">Research Scope</label>
@@ -2833,6 +2847,7 @@ async function loadBusinessIntoView(businessId) {
       facts: factsMap
     });
     loadBusinessIntelligence(bizData.business.id, bizData.business.intelligence_snapshot, bizData.business.intelligence_generated_at);
+    loadBusinessXray(bizData.business.id, bizData.business.business_xray, bizData.business.business_xray_generated_at);
     document.getElementById('analyzerResults').style.display = 'block';
   } else {
     console.error('Failed to load business facts:', bizResult.reason?.message);
@@ -3098,6 +3113,105 @@ function addTaskFromPriorityProblem(businessId, index, event) {
   const text = currentBiIntelligenceForTasks?.priority_problems?.[index];
   if (!text) return;
   addTaskFromSuggestion(businessId, text, 'business_intelligence', 'priority_problem', event?.target);
+}
+
+// Business X-Ray — Phase 2 completion. Mirrors the Business Intelligence
+// load/generate/render pattern above exactly.
+let currentXrayForTasks = null;
+const XRAY_AXIS_LABELS = {
+  strategy: 'xray.axis_strategy', marketing: 'xray.axis_marketing', sales: 'xray.axis_sales',
+  finance: 'xray.axis_finance', operations: 'xray.axis_operations', customer_experience: 'xray.axis_customer_experience',
+  brand: 'xray.axis_brand', digital: 'xray.axis_digital'
+};
+const XRAY_AXIS_ORDER = ['strategy', 'marketing', 'sales', 'finance', 'operations', 'customer_experience', 'brand', 'digital'];
+
+function xrayScoreColor(score) {
+  if (score >= 70) return 'var(--green)';
+  if (score >= 40) return 'var(--gold)';
+  return '#ef4444';
+}
+
+function loadBusinessXray(businessId, existingXray, existingGeneratedAt) {
+  const content = document.getElementById('xrayContent');
+  if (existingXray) {
+    renderBusinessXrayContent(businessId, existingXray, existingGeneratedAt);
+  } else {
+    content.innerHTML = `
+      <div style="text-align:center;padding:20px">
+        <div style="font-size:13px;color:var(--muted);margin-bottom:14px" data-i18n="xray.not_generated_yet">Get an 8-dimension numeric scorecard — Strategy, Marketing, Sales, Finance, Operations, Customer Experience, Brand, and Digital — plus the single biggest bottleneck to fix first.</div>
+        <button class="btn-primary" onclick="generateBusinessXray('${businessId}')" id="xrayGenerateBtn">📊 <span data-i18n="xray.generate">Generate Business X-Ray</span></button>
+      </div>`;
+  }
+}
+
+async function generateBusinessXray(businessId) {
+  const btn = document.getElementById('xrayGenerateBtn');
+  if (btn) { btn.disabled = true; btn.textContent = t('bi.generating'); }
+  document.getElementById('xrayContent').innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">${t('bi.generating')}</div>`;
+
+  try {
+    const res = await fetch(`/api/business/${businessId}/business-xray`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ language: window.currentLang || 'en' })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('xrayContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('xray.generate_failed')}</div>`;
+      return;
+    }
+    renderBusinessXrayContent(businessId, data.businessXray, data.generatedAt);
+  } catch (e) {
+    document.getElementById('xrayContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderBusinessXrayContent(businessId, xray, generatedAt) {
+  currentXrayForTasks = xray;
+  const dateStr = generatedAt ? new Date(generatedAt).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+
+  const axisBar = (axis) => {
+    const score = xray.scores?.[axis];
+    if (typeof score !== 'number') return '';
+    const note = xray.axis_notes?.[axis];
+    return `<div style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px">
+        <span style="color:var(--text2)">${escapeHtml(t(XRAY_AXIS_LABELS[axis]))}</span>
+        <span style="font-weight:700;color:${xrayScoreColor(score)}">${score}</span>
+      </div>
+      <div style="height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-bottom:${note ? '3px' : '0'}">
+        <div style="height:100%;width:${score}%;background:${xrayScoreColor(score)}"></div>
+      </div>
+      ${note ? `<div style="font-size:11px;color:var(--muted)">${escapeHtml(note)}</div>` : ''}
+    </div>`;
+  };
+
+  document.getElementById('xrayContent').innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+      <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
+      ${dateStr ? `<span style="font-size:11px;color:var(--muted)">${t('bi.as_of')} ${escapeHtml(dateStr)}</span>` : ''}
+      <button onclick="generateBusinessXray('${businessId}')" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px" data-i18n="bi.regenerate">↻ Regenerate</button>
+    </div>
+    ${typeof xray.overall_health_score === 'number' ? `
+    <div style="display:flex;align-items:center;gap:14px;background:var(--bg3);border-radius:10px;padding:14px 16px;margin-bottom:16px">
+      <div style="font-size:28px;font-weight:800;color:${xrayScoreColor(xray.overall_health_score)}">${xray.overall_health_score}</div>
+      <div>
+        <div style="font-size:12.5px;font-weight:700;color:var(--text)" data-i18n="xray.overall_health">Overall Business Health</div>
+        <div style="font-size:10.5px;color:var(--muted)" data-i18n="xray.overall_health_note">Computed as the average of the 8 scores below</div>
+      </div>
+    </div>` : ''}
+    ${xray.confidence_note ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-bottom:14px">${escapeHtml(xray.confidence_note)}</div>` : ''}
+    <div style="margin-bottom:16px">${XRAY_AXIS_ORDER.map(axisBar).join('')}</div>
+    ${xray.bottleneck_reasoning ? `<div style="background:rgba(239,68,68,.1);border:1px solid #ef4444;border-radius:8px;padding:12px 14px">
+      <div style="display:flex;align-items:center;font-size:11px;font-weight:700;color:#ef4444;text-transform:uppercase;margin-bottom:4px">
+        <span data-i18n="xray.primary_bottleneck">Primary Bottleneck</span>${xray.bottleneck_axis && XRAY_AXIS_LABELS[xray.bottleneck_axis] ? ` — <span style="text-transform:capitalize;margin-left:3px">${escapeHtml(t(XRAY_AXIS_LABELS[xray.bottleneck_axis]))}</span>` : ''}
+        <button onclick="addTaskFromXrayBottleneck('${businessId}', event)" style="background:none;border:1px solid var(--purple);color:var(--purple-light);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;white-space:nowrap;margin-left:8px" data-i18n="growth.add_to_action_plan">+ Add to Action Plan</button>
+      </div>
+      <div style="font-size:13px;color:var(--text2)">${escapeHtml(xray.bottleneck_reasoning)}</div>
+    </div>` : ''}`;
+}
+
+function addTaskFromXrayBottleneck(businessId, event) {
+  if (!currentXrayForTasks?.bottleneck_reasoning) return;
+  addTaskFromSuggestion(businessId, currentXrayForTasks.bottleneck_reasoning, 'business_intelligence', 'xray_bottleneck', event?.target);
 }
 
 function startEditFact(key) {
