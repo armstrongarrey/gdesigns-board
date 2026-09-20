@@ -1029,5 +1029,18 @@ CREATE TABLE IF NOT EXISTS chairman_syntheses (
 );
 CREATE INDEX IF NOT EXISTS idx_chairman_syntheses_owner ON chairman_syntheses(owner_id, created_at DESC);
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- BUSINESS X-RAY (Phase 2 completion — consolidates BI-01, BI-04, BX-01, BX-02)
+-- Rather than 4 separate, overlapping numeric-score features, this single
+-- feature covers all of them: 8 axis scores (AI-assessed) plus one overall
+-- health score computed deterministically as their average, not asked of
+-- the AI separately — this guarantees the overall number always agrees
+-- with the axes it's supposedly summarizing, rather than risking a
+-- confusing mismatch between two independently-generated numbers.
+-- ═══════════════════════════════════════════════════════════════════════════
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS business_xray JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS business_xray_fr JSONB;
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS business_xray_generated_at TIMESTAMPTZ;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
