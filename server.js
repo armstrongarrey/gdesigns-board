@@ -74,15 +74,17 @@ const BASE_URL = process.env.BASE_URL || 'https://consult.gdesignsme.com';
 const PLAN_LIMITS = {
   starter:  { consultations: 3,  directors: 5,   download: false, video: false, history: false, team: 1 },
   pro:      { consultations: 10, directors: 29,  download: true,  video: false, history: true,  team: 2 },
-  business: { consultations: -1, directors: 29,  download: true,  video: true,  history: true,  team: 5 }
+  business: { consultations: -1, directors: 29,  download: true,  video: true,  history: true,  team: 5 },
+  expired:  { consultations: 0,  directors: 0,   download: false, video: false, history: false, team: 0 }
 };
 
 // Financial Tools: which calculators each plan can access. Starter gets the
 // three most fundamental ones; Pro and Business get the full engine.
 const FINANCIAL_TOOLS_ACCESS = {
   starter:  ['roi', 'breakeven', 'growth_projection'],
-  pro:      ['revenue', 'profit_margin', 'breakeven', 'roi', 'cac', 'ltv', 'ltv_cac_ratio', 'roas', 'growth_projection', 'cashflow_projection', 'pricing', 'markup', 'runway', 'budget_variance', 'valuation'],
-  business: ['revenue', 'profit_margin', 'breakeven', 'roi', 'cac', 'ltv', 'ltv_cac_ratio', 'roas', 'growth_projection', 'cashflow_projection', 'pricing', 'markup', 'runway', 'budget_variance', 'valuation']
+  pro:      ['revenue', 'profit_margin', 'breakeven', 'roi', 'cac', 'ltv', 'ltv_cac_ratio', 'roas', 'growth_projection', 'cashflow_projection', 'pricing', 'markup', 'runway', 'budget_variance', 'valuation', 'loan_payment', 'cost_of_hire', 'discount_impact'],
+  business: ['revenue', 'profit_margin', 'breakeven', 'roi', 'cac', 'ltv', 'ltv_cac_ratio', 'roas', 'growth_projection', 'cashflow_projection', 'pricing', 'markup', 'runway', 'budget_variance', 'valuation', 'loan_payment', 'cost_of_hire', 'discount_impact'],
+  expired:  []
 };
 
 const STARTER_DIRECTORS = ['rockefeller', 'ogilvy', 'buffett', 'dangote', 'kotler'];
@@ -326,11 +328,30 @@ async function resolveAccount(userId) {
   const result = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
   const user = result.rows[0];
   if (!user) return null;
+
+  let account = user;
   if (user.team_owner_id) {
     const ownerResult = await pool.query('SELECT * FROM users WHERE id = $1', [user.team_owner_id]);
-    if (ownerResult.rows[0]) return ownerResult.rows[0];
+    if (ownerResult.rows[0]) account = ownerResult.rows[0];
   }
-  return user;
+
+  // Subscription lifecycle enforcement — checked on the RESOLVED account
+  // (the owner, for team members), since a team member inherits the
+  // owner's plan entirely and should see the same locked state if the
+  // owner's subscription lapses, not their own separate (nonexistent)
+  // expiry. A lapsed free trial or paid subscription moves to an explicit
+  // 'expired' state rather than silently reverting to starter, so the
+  // frontend can show a real "subscribe to continue" lockout instead of
+  // quietly treating expiration as equivalent to the free tier.
+  if (account.plan !== 'expired' && account.plan_expires_at && new Date(account.plan_expires_at) < new Date()) {
+    const updated = await pool.query(
+      `UPDATE users SET plan = 'expired', updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [account.id]
+    );
+    account = updated.rows[0];
+  }
+
+  return account;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3433,12 +3454,15 @@ app.post('/api/auth/register', async (req, res) => {
     const token = uuidv4();
     const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const preferredLang = language === 'fr' ? 'fr' : 'en';
+    const planStartedAt = new Date();
+    const planExpiresAt = new Date();
+    planExpiresAt.setMonth(planExpiresAt.getMonth() + 1);
 
     const result = await pool.query(
       `INSERT INTO users (email, password_hash, first_name, last_name, phone, country,
-       verification_token, verification_expires, plan, preferred_language)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'starter', $9) RETURNING *`,
-      [email, hash, firstName, lastName, phone, country, token, expires, preferredLang]
+       verification_token, verification_expires, plan, preferred_language, plan_started_at, plan_expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'starter', $9, $10, $11) RETURNING *`,
+      [email, hash, firstName, lastName, phone, country, token, expires, preferredLang, planStartedAt, planExpiresAt]
     );
     const user = result.rows[0];
 
@@ -3569,22 +3593,25 @@ app.get('/api/auth/me', authRequired, async (req, res) => {
     const user = result.rows[0];
     if (!user) return res.status(404).json({ error: 'User not found' });
 
+    // resolveAccount() resolves team members to their owner AND enforces
+    // subscription expiry (auto-transitioning a lapsed plan to 'expired') —
+    // reused here rather than duplicated, since this endpoint is the
+    // primary source of user.plan for the whole frontend and needs to
+    // reflect the same, single source of truth on expiry.
+    const account = await resolveAccount(req.userId);
+
     if (user.team_owner_id) {
-      // Team member: plan/consultations/history/etc. all reflect the OWNER's
-      // account (shared pool), plus this member's own granted permissions.
-      const ownerResult = await pool.query('SELECT id, first_name, last_name, plan, consultations_used FROM users WHERE id = $1', [user.team_owner_id]);
-      const owner = ownerResult.rows[0];
       const memberResult = await pool.query('SELECT permissions FROM team_members WHERE owner_id = $1 AND member_id = $2 AND status = $3', [user.team_owner_id, req.userId, 'active']);
       const permissions = memberResult.rows[0]?.permissions || {};
       return res.json({
-        user: { ...user, plan: owner?.plan || 'starter', consultations_used: owner?.consultations_used || 0 },
+        user: { ...user, plan: account?.plan || 'starter', consultations_used: account?.consultations_used || 0, plan_expires_at: account?.plan_expires_at || null },
         isTeamMember: true,
-        teamOwnerName: owner ? [owner.first_name, owner.last_name].filter(Boolean).join(' ') : null,
+        teamOwnerName: account ? [account.first_name, account.last_name].filter(Boolean).join(' ') : null,
         permissions
       });
     }
 
-    res.json({ user, isTeamMember: false });
+    res.json({ user: { ...user, plan: account?.plan || user.plan, plan_started_at: account?.plan_started_at || null, plan_expires_at: account?.plan_expires_at || null }, isTeamMember: false });
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
 
@@ -4062,7 +4089,8 @@ app.post('/api/admin/payments/:id/approve', adminRequired, async (req, res) => {
       `UPDATE payments SET status = 'approved', approved_at = NOW() WHERE id = $1`, [id]
     );
     await pool.query(
-      `UPDATE users SET plan = $1, updated_at = NOW() WHERE id = $2`, [p.plan, p.user_id]
+      `UPDATE users SET plan = $1, plan_started_at = NOW(), plan_expires_at = $2, plan_expiry_notified_at = NULL, updated_at = NOW() WHERE id = $3`,
+      [p.plan, expiresAt, p.user_id]
     );
     await pool.query(
       `INSERT INTO subscriptions (user_id, plan, billing_cycle, amount_usd, amount_cfa, payment_method, status, expires_at)
@@ -5891,6 +5919,58 @@ function calcValuation({ sde, multiple }) {
   return { estimatedValuation: round2(sde * multiple) };
 }
 
+// FIN-02 additions — 3 genuinely new needs not covered by the existing 15,
+// beyond what the original audit's named examples (Pricing, Markup,
+// Runway, Budget, Valuation) already covered.
+
+// Standard amortization formula. Guards the 0%-interest case separately,
+// since the amortization formula itself divides by zero when the rate is 0.
+function calcLoanPayment({ principal, annualRatePct, termMonths }) {
+  if (principal <= 0 || termMonths <= 0) return { error: 'Principal and term must be positive.' };
+  const monthlyRate = (annualRatePct / 100) / 12;
+  let monthlyPayment;
+  if (monthlyRate === 0) {
+    monthlyPayment = principal / termMonths;
+  } else {
+    monthlyPayment = principal * (monthlyRate * Math.pow(1 + monthlyRate, termMonths)) / (Math.pow(1 + monthlyRate, termMonths) - 1);
+  }
+  const totalPaid = monthlyPayment * termMonths;
+  return { monthlyPayment: round2(monthlyPayment), totalPaid: round2(totalPaid), totalInterest: round2(totalPaid - principal) };
+}
+
+// The "burden rate" (taxes, benefits, etc. as a % of salary) is a
+// user-supplied input rather than a fixed assumption, since it varies too
+// much by country and business to responsibly hardcode — same reasoning
+// as calcValuation's multiple above.
+function calcCostOfHire({ annualSalary, burdenRatePct }) {
+  if (annualSalary <= 0) return { error: 'Annual salary must be positive.' };
+  const burden = annualSalary * (burdenRatePct / 100);
+  const totalAnnualCost = annualSalary + burden;
+  return { burden: round2(burden), totalAnnualCost: round2(totalAnnualCost), totalMonthlyCost: round2(totalAnnualCost / 12) };
+}
+
+// Answers a question small business owners often discount without asking:
+// how much MORE would I need to sell, just to make the same total profit
+// as before the discount? A discount that would sell below unit cost is
+// flagged as unrecoverable by any volume, rather than returning a
+// technically-correct but meaningless (negative) required-units figure.
+function calcDiscountImpact({ currentPrice, currentUnitCost, discountPct, currentUnitsSold }) {
+  if (currentPrice <= currentUnitCost) return { error: 'Price must be greater than unit cost.' };
+  const currentMarginPerUnit = currentPrice - currentUnitCost;
+  const currentTotalProfit = currentMarginPerUnit * currentUnitsSold;
+  const discountedPrice = currentPrice * (1 - discountPct / 100);
+  const newMarginPerUnit = discountedPrice - currentUnitCost;
+  if (newMarginPerUnit <= 0) return { error: 'This discount would sell below cost — no volume of sales would recover profit.' };
+  const requiredUnitsForSameProfit = currentTotalProfit / newMarginPerUnit;
+  const extraUnitsNeeded = requiredUnitsForSameProfit - currentUnitsSold;
+  return {
+    discountedPrice: round2(discountedPrice),
+    requiredUnitsForSameProfit: Math.ceil(requiredUnitsForSameProfit),
+    extraUnitsNeeded: Math.ceil(extraUnitsNeeded),
+    extraVolumePctNeeded: round2((extraUnitsNeeded / currentUnitsSold) * 100)
+  };
+}
+
 const FINANCIAL_CALCULATORS = {
   revenue: { fn: calcRevenue, requiredInputs: ['unitsSold', 'pricePerUnit'] },
   profit_margin: { fn: calcProfitMargin, requiredInputs: ['revenue', 'cogs'] },
@@ -5906,7 +5986,10 @@ const FINANCIAL_CALCULATORS = {
   markup: { fn: calcMarkup, requiredInputs: ['unitCost', 'markupPct'] },
   runway: { fn: calcRunway, requiredInputs: ['cashOnHand', 'monthlyBurnRate'] },
   budget_variance: { fn: calcBudgetVariance, requiredInputs: ['budgetedAmount', 'actualAmount'] },
-  valuation: { fn: calcValuation, requiredInputs: ['sde', 'multiple'] }
+  valuation: { fn: calcValuation, requiredInputs: ['sde', 'multiple'] },
+  loan_payment: { fn: calcLoanPayment, requiredInputs: ['principal', 'annualRatePct', 'termMonths'] },
+  cost_of_hire: { fn: calcCostOfHire, requiredInputs: ['annualSalary', 'burdenRatePct'] },
+  discount_impact: { fn: calcDiscountImpact, requiredInputs: ['currentPrice', 'currentUnitCost', 'discountPct', 'currentUnitsSold'] }
 };
 
 // ── Financial Calculator endpoint — pure math, no AI call, available to all plans ──
@@ -8678,6 +8761,20 @@ const ALERT_MESSAGES = {
   marketOpportunityIdentified: {
     en: (businessName, opportunity) => ({ title: `Market opportunity for ${businessName}`, message: opportunity }),
     fr: (businessName, opportunity) => ({ title: `Opportunité de marché pour ${businessName}`, message: opportunity })
+  },
+  subscriptionExpiringSoon: {
+    en: (plan, daysLeft) => ({
+      title: `Your ${plan === 'starter' ? 'free trial' : plan} plan expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`,
+      message: plan === 'starter'
+        ? `Your 1-month free trial ends in ${daysLeft} day${daysLeft === 1 ? '' : 's'}. Subscribe to a paid plan to keep full access — after it expires, features will be locked until you upgrade.`
+        : `Your ${plan} subscription expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}. Renew to avoid losing access — after it expires, features will be locked until you renew.`
+    }),
+    fr: (plan, daysLeft) => ({
+      title: `Votre ${plan === 'starter' ? 'essai gratuit' : 'forfait ' + plan} expire dans ${daysLeft} jour${daysLeft === 1 ? '' : 's'}`,
+      message: plan === 'starter'
+        ? `Votre essai gratuit d'un mois se termine dans ${daysLeft} jour${daysLeft === 1 ? '' : 's'}. Abonnez-vous à un forfait payant pour conserver un accès complet — une fois expiré, les fonctionnalités seront verrouillées jusqu'à votre mise à niveau.`
+        : `Votre abonnement ${plan} expire dans ${daysLeft} jour${daysLeft === 1 ? '' : 's'}. Renouvelez pour éviter de perdre l'accès — une fois expiré, les fonctionnalités seront verrouillées jusqu'à votre renouvellement.`
+    })
   }
 };
 function alertText(templateKey, language, ...args) {
@@ -8808,6 +8905,29 @@ async function checkTeamActivity(ownerId, ownerPlan, prefs, language) {
 // once and never again (easy to forget) or every single day (noisy) — the
 // same middle ground already accepted elsewhere in this sweep for
 // conditions that can persist across multiple runs.
+// ── Subscription expiry warning ─────────────────────────────────────────────
+// Fires once per billing cycle (plan_expiry_notified_at is reset to NULL on
+// each renewal in the payment-approval endpoint), not repeatedly like the
+// other checks — a subscription only needs one heads-up before it lapses,
+// not a recurring nag. Applies to free-trial starters and paid plans alike,
+// since both now carry a real expiry date.
+async function checkSubscriptionExpiry(ownerId, prefs, language) {
+  const result = await pool.query(
+    `SELECT plan, plan_expires_at, first_name FROM users
+     WHERE id = $1 AND plan != 'expired' AND plan_expires_at IS NOT NULL
+       AND plan_expires_at > NOW() AND plan_expires_at < NOW() + INTERVAL '5 days'
+       AND plan_expiry_notified_at IS NULL`,
+    [ownerId]
+  );
+  if (!result.rows.length) return;
+
+  const user = result.rows[0];
+  const daysLeft = Math.max(1, Math.ceil((new Date(user.plan_expires_at) - Date.now()) / (1000 * 60 * 60 * 24)));
+  const { title, message } = alertText('subscriptionExpiringSoon', language, user.plan, daysLeft);
+  await createAlert(ownerId, null, 'subscription_expiring', 'warning', title, message, { plan: user.plan, daysLeft });
+  await pool.query('UPDATE users SET plan_expiry_notified_at = NOW() WHERE id = $1', [ownerId]);
+}
+
 async function checkOverdueLeadFollowUps(ownerId, prefs, language) {
   if (prefs && prefs.lead_alerts_enabled === false) return;
 
@@ -8992,6 +9112,7 @@ async function runMonitoringSweep() {
         await checkMarketingAlerts(owner.id, prefs, owner.preferred_language);
         await checkGrowthAlerts(owner.id, prefs, owner.preferred_language);
         await checkOpportunityRadar(owner.id, prefs, owner.preferred_language);
+        await checkSubscriptionExpiry(owner.id, prefs, owner.preferred_language);
         ownersChecked++;
 
         // Digest email for anything created just now and not yet emailed
