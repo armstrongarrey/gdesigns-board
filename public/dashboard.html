@@ -1128,6 +1128,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <option value="runway" data-i18n="fin.calc_runway">Cash Runway</option>
               <option value="budget_variance" data-i18n="fin.calc_budget_variance">Budget Variance</option>
               <option value="valuation" data-i18n="fin.calc_valuation">Business Valuation</option>
+              <option value="loan_payment" data-i18n="fin.calc_loan_payment">Loan Payment</option>
+              <option value="cost_of_hire" data-i18n="fin.calc_cost_of_hire">True Cost of Hire</option>
+              <option value="discount_impact" data-i18n="fin.calc_discount_impact">Discount Impact</option>
             </select>
           </div>
           <div class="form-group" style="margin-bottom:0;max-width:170px">
@@ -3539,7 +3542,7 @@ function renderResearchResults(structured, sources) {
       };
       return `
       <tr style="border-bottom:1px solid var(--border2)">
-        <td style="padding:9px 10px;color:var(--text);font-weight:600">${c.name || '—'}${c.source_ref ? ` <span style="color:var(--purple-light);font-weight:400;font-size:11px">[${c.source_ref}]</span>` : ''}</td>
+        <td style="padding:9px 10px;color:var(--text);font-weight:600">${c.name || '—'}${c.source_ref ? ` <span style="color:var(--green);font-weight:700;font-size:9.5px;background:rgba(16,163,127,.15);padding:1px 6px;border-radius:4px;white-space:nowrap" title="${t('market.source_cited_title')}">${t('market.source_cited')} [${escapeHtml(String(c.source_ref))}]</span>` : ` <span style="color:var(--gold);font-weight:700;font-size:9.5px;background:rgba(230,170,0,.15);padding:1px 6px;border-radius:4px;white-space:nowrap" title="${t('market.not_sourced_title')}">${t('market.not_sourced')}</span>`}</td>
         <td style="padding:9px 10px;color:var(--text2)">${c.description || '—'}</td>
         <td style="padding:9px 10px;color:var(--text2)">${c.differentiator || '—'}</td>
         <td style="padding:9px 10px">${scopeMap[c.scope] || scopeMap.unknown}</td>
@@ -5790,6 +5793,21 @@ const CALC_FIELD_DEFS = {
   valuation: [
     { key: 'sde', labelKey: 'fin.field_sde', placeholder: 'e.g. 60000' },
     { key: 'multiple', labelKey: 'fin.field_multiple', placeholder: 'e.g. 2.5' }
+  ],
+  loan_payment: [
+    { key: 'principal', labelKey: 'fin.field_principal', placeholder: 'e.g. 10000' },
+    { key: 'annualRatePct', labelKey: 'fin.field_annual_rate', placeholder: 'e.g. 8' },
+    { key: 'termMonths', labelKey: 'fin.field_term_months', placeholder: 'e.g. 24' }
+  ],
+  cost_of_hire: [
+    { key: 'annualSalary', labelKey: 'fin.field_annual_salary', placeholder: 'e.g. 50000' },
+    { key: 'burdenRatePct', labelKey: 'fin.field_burden_rate', placeholder: 'e.g. 20' }
+  ],
+  discount_impact: [
+    { key: 'currentPrice', labelKey: 'fin.field_current_price', placeholder: 'e.g. 50' },
+    { key: 'currentUnitCost', labelKey: 'fin.field_unit_cost', placeholder: 'e.g. 30' },
+    { key: 'discountPct', labelKey: 'fin.field_discount_pct', placeholder: 'e.g. 10' },
+    { key: 'currentUnitsSold', labelKey: 'fin.field_current_units_sold', placeholder: 'e.g. 100' }
   ]
 };
 
@@ -6047,6 +6065,13 @@ function renderCalculatorResult(type, r) {
     html += `<div style="margin-top:12px;font-size:12.5px;font-weight:700;color:${statusColor};background:var(--bg3);border-radius:8px;padding:10px 12px">${statusLabel}</div>`;
   } else if (type === 'valuation') {
     html += calcResultRow(t('fin.result_estimated_valuation'), formatMoney(r.estimatedValuation));
+  } else if (type === 'loan_payment') {
+    html += calcResultRow(t('fin.result_monthly_payment'), formatMoney(r.monthlyPayment)) + calcResultRow(t('fin.result_total_interest'), formatMoney(r.totalInterest)) + calcResultRow(t('fin.result_total_paid'), formatMoney(r.totalPaid));
+  } else if (type === 'cost_of_hire') {
+    html += calcResultRow(t('fin.result_annual_burden'), formatMoney(r.burden)) + calcResultRow(t('fin.result_total_annual_cost'), formatMoney(r.totalAnnualCost)) + calcResultRow(t('fin.result_total_monthly_cost'), formatMoney(r.totalMonthlyCost));
+  } else if (type === 'discount_impact') {
+    html += calcResultRow(t('fin.result_discounted_price'), formatMoney(r.discountedPrice)) + calcResultRow(t('fin.result_required_units'), r.requiredUnitsForSameProfit.toLocaleString()) + calcResultRow(t('fin.result_extra_units_needed'), r.extraUnitsNeeded.toLocaleString());
+    html += `<div style="margin-top:12px;font-size:12.5px;color:var(--text2);background:var(--bg3);border-radius:8px;padding:10px 12px">${tf('fin.discount_impact_note', { pct: r.extraVolumePctNeeded })}</div>`;
   }
 
   box.innerHTML = html;
