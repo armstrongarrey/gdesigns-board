@@ -143,6 +143,21 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
      anywhere in the app rather than each section needing its own. -->
 <div id="globalToast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;padding:12px 20px;border-radius:8px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.3);max-width:90vw;text-align:center"></div>
 
+<!-- SUBSCRIPTION EXPIRED LOCKOUT — shown once per session on login when the
+     account's plan has lapsed (free trial or paid). The backend already
+     enforces the real restriction (0 consultations/directors/tools via
+     PLAN_LIMITS.expired) on every request regardless of this overlay — this
+     exists purely so the person understands WHY nothing works, rather than
+     silently hitting locked features one at a time with no explanation. -->
+<div id="expiredLockoutOverlay" style="display:none;position:fixed;inset:0;z-index:9998;background:rgba(10,10,15,.92);align-items:center;justify-content:center;padding:20px">
+  <div style="max-width:420px;background:var(--bg2);border:1px solid #ef4444;border-radius:16px;padding:32px;text-align:center">
+    <div style="font-size:32px;margin-bottom:12px">🔒</div>
+    <div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:10px" data-i18n="billing.lockout_title">Your access has expired</div>
+    <div style="font-size:13.5px;color:var(--text2);line-height:1.6;margin-bottom:22px" data-i18n="billing.lockout_desc">Your subscription has ended. Subscribe to a plan to restore full access to your dashboard.</div>
+    <button class="btn-primary" style="width:100%;padding:12px" onclick="dismissExpiredLockout()" data-i18n="billing.lockout_cta">View Plans</button>
+  </div>
+</div>
+
 <!-- SIDEBAR -->
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-logo">
@@ -435,6 +450,23 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <div class="section-view" id="section-billing">
       <div class="section-title" data-i18n="billing.title">Billing &amp; Plan</div>
       <div class="section-sub" data-i18n="billing.subtitle">Manage your subscription and upgrade for more access.</div>
+
+      <!-- SUBSCRIPTION PERIOD — shows when the current plan started and
+           when it renews/expires, previously not surfaced anywhere even
+           though the underlying dates were being recorded. -->
+      <div id="subscriptionPeriodCard" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:20px;max-width:460px">
+        <div style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap">
+          <div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase" data-i18n="billing.plan_started">Started</div>
+            <div id="subscriptionStartedText" style="font-size:13.5px;color:var(--text);font-weight:600">—</div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase" id="subscriptionEndLabel" data-i18n="billing.plan_renews">Renews</div>
+            <div id="subscriptionEndsText" style="font-size:13.5px;font-weight:600">—</div>
+          </div>
+        </div>
+      </div>
+
       <div class="plan-cards" id="planCards"></div>
 
       <div style="margin-top:32px">
@@ -1600,7 +1632,8 @@ const planPrices = {
 const planLimits = {
   starter:  { consultations:3, dirs:5 },
   pro:      { consultations:10, dirs:29 },
-  business: { consultations:-1, dirs:29 }
+  business: { consultations:-1, dirs:29 },
+  expired:  { consultations:0, dirs:0 }
 };
 
 async function init() {
@@ -1609,6 +1642,10 @@ async function init() {
     if (!res.ok) { window.location.href = '/auth'; return; }
     const data = await res.json();
     user = data.user;
+    if (user.plan === 'expired') {
+      const overlay = document.getElementById('expiredLockoutOverlay');
+      if (overlay) overlay.style.display = 'flex';
+    }
     renderUser();
     loadHistory();
     renderBilling();
@@ -2453,6 +2490,12 @@ function showToast(message, type) {
   toastDismissTimer = setTimeout(() => { el.style.display = 'none'; }, 4000);
 }
 
+function dismissExpiredLockout() {
+  const overlay = document.getElementById('expiredLockoutOverlay');
+  if (overlay) overlay.style.display = 'none';
+  showSection('billing');
+}
+
 // ── ALERTS (Autonomous Monitoring) ──────────────────────────────────────────
 const ALERT_SEVERITY_COLORS = { info: 'var(--purple-light)', warning: '#e6aa00', critical: '#ef4444', opportunity: 'var(--green)' };
 
@@ -2674,15 +2717,49 @@ function renderBilling() {
   const used = user.consultations_used || 0;
   const limit = planLimits[plan]?.consultations;
 
-  const pct = limit === -1 ? 20 : Math.min((used/limit)*100, 100);
+  const pct = limit === -1 ? 20 : Math.min((used/(limit || 1))*100, 100);
   const fill = document.getElementById('usageFill');
   if (fill) { fill.style.width = pct + '%'; if (pct > 80) fill.classList.add('danger'); }
   const utxt = document.getElementById('usageText');
-  if (utxt) utxt.textContent = used + ' ' + t('billing.used_of') + ' ' + (limit === -1 ? t('billing.unlimited') : limit) + ' ' + t('billing.used_suffix');
+  if (utxt) utxt.textContent = used + ' ' + t('billing.used_of') + ' ' + (limit === -1 ? t('billing.unlimited') : (limit || 0)) + ' ' + t('billing.used_suffix');
+
+  // Subscription period card — previously nothing on screen showed when a
+  // plan started or when it would end, even though the dates existed.
+  const periodCard = document.getElementById('subscriptionPeriodCard');
+  if (periodCard) {
+    if (user.plan_started_at || user.plan_expires_at) {
+      periodCard.style.display = 'block';
+      const fmt = d => new Date(d).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      document.getElementById('subscriptionStartedText').textContent = user.plan_started_at ? fmt(user.plan_started_at) : '—';
+      const endsEl = document.getElementById('subscriptionEndsText');
+      const endLabelEl = document.getElementById('subscriptionEndLabel');
+      if (plan === 'expired') {
+        endLabelEl.textContent = t('billing.plan_expired_label');
+        endsEl.textContent = user.plan_expires_at ? fmt(user.plan_expires_at) : '—';
+        endsEl.style.color = '#ef4444';
+      } else {
+        endLabelEl.textContent = plan === 'starter' ? t('billing.trial_ends') : t('billing.plan_renews');
+        endsEl.textContent = user.plan_expires_at ? fmt(user.plan_expires_at) : '—';
+        endsEl.style.color = 'var(--text)';
+      }
+    } else {
+      periodCard.style.display = 'none';
+    }
+  }
 
   const cards = document.getElementById('planCards');
   if (!cards) return;
-  cards.innerHTML = [
+
+  // An expired account isn't currently "on" any of the 3 displayed tiers —
+  // show an explicit banner rather than leaving all 3 cards looking
+  // equally available with no indication why nothing works right now.
+  const expiredBanner = plan === 'expired' ? `
+    <div style="background:rgba(239,68,68,.1);border:1px solid #ef4444;border-radius:10px;padding:14px 16px;margin-bottom:16px;max-width:600px">
+      <div style="font-size:13.5px;font-weight:700;color:#ef4444;margin-bottom:4px" data-i18n="billing.expired_title">Your access has expired</div>
+      <div style="font-size:12.5px;color:var(--text2)" data-i18n="billing.expired_desc">Subscribe to a plan below to restore full access to your account.</div>
+    </div>` : '';
+
+  cards.innerHTML = expiredBanner + [
     { id:'starter', name:t('plan.starter_name'), price:t('plan.free'), cfa:t('plan.free'), desc:t('plan.starter_desc') },
     { id:'pro', name:t('plan.pro_name'), price:'$35/mo', cfa:'20,125 FCFA/mo', desc:t('plan.pro_desc') },
     { id:'business', name:t('plan.business_name'), price:'$150/mo', cfa:'86,250 FCFA/mo', desc:t('plan.business_desc') }
@@ -2694,7 +2771,7 @@ function renderBilling() {
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px">${p.cfa}</div>
       <div style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.5">${p.desc}</div>
       ${p.id === plan ? `<div style="font-size:13px;color:var(--green);font-weight:600">${t('billing.active_plan')}</div>` :
-        p.id === 'starter' ? `<div style="font-size:13px;color:var(--muted)">${t('billing.free_forever')}</div>` :
+        p.id === 'starter' ? `<div style="font-size:13px;color:var(--muted)">${t('billing.free_trial_period')}</div>` :
         `<button class="btn-primary" style="width:100%" onclick="openPayment('${p.id}')">${t('billing.upgrade_to')} ${p.name}</button>`}
     </div>`).join('');
 }
