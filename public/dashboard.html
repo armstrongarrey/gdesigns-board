@@ -269,6 +269,16 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <a href="/boardroom" style="font-size:12px;color:var(--purple-light);text-decoration:none" data-i18n="dash.ask_new_question">Ask the board a new question →</a>
       </div>
 
+      <!-- TOP PRIORITIES — DASH-03. Curated from 3 existing sources
+           (Business X-Ray's bottleneck, Business Intelligence's priority
+           problems, high-priority open tasks) rather than a 4th,
+           separately-maintained list. Capped at 5 — curated, not
+           overwhelming. Hidden entirely when there's nothing yet. -->
+      <div id="dashPrioritiesCard" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:24px">
+        <div class="section-title" style="margin:0 0 12px;font-size:15px" data-i18n="dash.top_priorities">Top Priorities</div>
+        <div id="dashPrioritiesList"></div>
+      </div>
+
       <!-- RECENT ACTIVITY — DASH-06. Unifies 5 existing data sources
            (research, entrepreneur sessions, completed tasks, leads, board
            verdicts) that were never before combined into one feed. Hidden
@@ -1611,6 +1621,7 @@ async function init() {
     loadUnreadAlertsBadge();
     loadDashboardBusinessHealth();
     loadDashboardVerdict();
+    loadDashboardPriorities();
     loadDashboardActivity();
 
     // The Google Analytics OAuth flow redirects back here with query params
@@ -1803,6 +1814,40 @@ async function loadDashboardActivity() {
     }).join('');
   } catch (e) {
     document.getElementById('dashActivityCard').style.display = 'none';
+  }
+}
+
+// Top Priorities — DASH-03. Each item is clickable, navigating to wherever
+// it can actually be acted on (Analyzer for X-Ray/intelligence items,
+// Action Center for tasks) rather than just being a read-only list.
+const PRIORITY_TYPE_DISPLAY = {
+  xray_bottleneck: { icon: '⚡', section: 'analyzer' },
+  priority_problem: { icon: '⚠️', section: 'analyzer' },
+  high_priority_task: { icon: '📌', section: 'action' }
+};
+
+async function loadDashboardPriorities() {
+  try {
+    const res = await fetch('/api/dashboard/top-priorities');
+    const data = await res.json();
+    const list = document.getElementById('dashPrioritiesList');
+    const card = document.getElementById('dashPrioritiesCard');
+
+    if (!data.priorities || !data.priorities.length) {
+      card.style.display = 'none';
+      return;
+    }
+
+    card.style.display = 'block';
+    list.innerHTML = data.priorities.map(item => {
+      const display = PRIORITY_TYPE_DISPLAY[item.type] || { icon: '•', section: 'home' };
+      return `<div onclick="showSection('${display.section}')" style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer">
+        <span style="font-size:14px;flex-shrink:0">${display.icon}</span>
+        <span style="font-size:12.5px;color:var(--text2);flex:1;min-width:0">${escapeHtml(item.text || '')}</span>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    document.getElementById('dashPrioritiesCard').style.display = 'none';
   }
 }
 
