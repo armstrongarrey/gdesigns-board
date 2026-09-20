@@ -1922,7 +1922,11 @@ function renderTeamPermissionCheckboxes() {
 async function loadTeamSection() {
   try {
     const res = await fetch('/api/team');
-    if (!res.ok) return; // 403 for team members — nav item stays hidden for them anyway
+    if (res.status === 403) return; // team members — nav item stays hidden for them anyway, this is expected
+    if (!res.ok) {
+      showToast(t('board.connection_error'), 'error');
+      return;
+    }
     const data = await res.json();
 
     document.getElementById('teamSeatsCount').textContent = `${data.seatsUsed} ${t('team.of')} ${data.seatLimit}`;
@@ -1937,7 +1941,9 @@ async function loadTeamSection() {
     const seatsFull = data.seatsUsed >= data.seatLimit;
     document.getElementById('teamInviteBtn').disabled = seatsFull;
     document.getElementById('teamInviteBtn').style.opacity = seatsFull ? '0.5' : '1';
-  } catch (e) {}
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 function renderTeamMemberCard(m) {
@@ -2635,7 +2641,9 @@ async function loadAlertPreferences() {
     document.getElementById('prefOpportunity').checked = p.opportunity_radar_enabled !== false;
     document.getElementById('prefEmail').checked = p.email_alerts_enabled !== false;
     alertPrefsLoaded = true;
-  } catch (e) {}
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function saveAlertPreferences() {
@@ -3394,7 +3402,10 @@ async function loadAnalyzedBusinesses() {
     if (!currentBusinessId && data.businesses.length) {
       loadBusinessIntoView(data.businesses[0].id);
     }
-  } catch (e) {}
+  } catch (e) {
+    const list = document.getElementById('analyzedBusinessList');
+    if (list) list.innerHTML = `<div style="text-align:center;padding:24px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  }
 }
 
 let currentResearchData = null;
@@ -4183,7 +4194,9 @@ async function loadGrowthGoalsList() {
           <div style="background:var(--bg3);border-radius:6px;height:6px;overflow:hidden"><div style="height:100%;background:var(--purple);width:${pct}%"></div></div>
         </div>`;
     }).join('');
-  } catch (e) {}
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 function openGrowthGoal(objectiveId) {
@@ -4282,7 +4295,9 @@ async function loadGrowthProgressChart() {
     }
     document.getElementById('growthChartWrap').style.display = 'block';
     document.getElementById('growthChartContent').innerHTML = buildLineChartSVG(data.history, data.targetValue, data.unit);
-  } catch (e) {}
+  } catch (e) {
+    document.getElementById('growthChartWrap').style.display = 'none';
+  }
 }
 
 const GROWTH_ACTIVITY_LABELS = {
@@ -4296,10 +4311,10 @@ const GROWTH_ACTIVITY_LABELS = {
 
 async function loadGrowthActivity() {
   if (!currentGrowthBusinessId || !currentGrowthObjectiveId) return;
+  const listEl = document.getElementById('growthActivityList');
   try {
     const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${currentGrowthObjectiveId}/activity`);
     const data = await res.json();
-    const listEl = document.getElementById('growthActivityList');
     if (!res.ok || !data.activity || !data.activity.length) {
       listEl.innerHTML = `<div style="color:var(--muted)" data-i18n="growth.no_activity_yet">Nothing recorded yet.</div>`;
       return;
@@ -4310,7 +4325,9 @@ async function loadGrowthActivity() {
       const label = labelFn ? labelFn(ev.detail || {}) : ev.type;
       return `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><span>${label}</span><span style="color:var(--muted);white-space:nowrap">${dateStr}</span></div>`;
     }).join('');
-  } catch (e) {}
+  } catch (e) {
+    listEl.innerHTML = `<div style="color:#ff8080">${t('board.connection_error')}</div>`;
+  }
 }
 
 function renderMilestones(milestones) {
@@ -4504,7 +4521,9 @@ async function loadActionBusinesses() {
     } catch (e) { currentAssignableMembers = []; }
 
     loadActionTasks();
-  } catch (e) {}
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function loadActionTasks() {
@@ -4520,11 +4539,13 @@ async function loadActionTasks() {
   if (priority) params.set('priority', priority);
   params.set('lang', window.currentLang || 'en');
 
+  const listEl = document.getElementById('actionTasksList');
+  listEl.innerHTML = `<div style="text-align:center;padding:30px;color:var(--muted);font-size:13px">${t('bi.loading')}</div>`;
+
   try {
     const res = await fetch(`/api/business/${currentActionBusinessId}/tasks?${params.toString()}`);
     const data = await res.json();
     const tasks = data.tasks || [];
-    const listEl = document.getElementById('actionTasksList');
 
     if (!tasks.length) {
       listEl.innerHTML = `<div style="text-align:center;padding:30px;color:var(--muted);font-size:13px" data-i18n="action.no_tasks">No tasks match these filters.</div>`;
@@ -4562,7 +4583,9 @@ async function loadActionTasks() {
           <button onclick="deleteTask('${task.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:0 4px">×</button>
         </div>`;
     }).join('');
-  } catch (e) {}
+  } catch (e) {
+    listEl.innerHTML = `<div style="text-align:center;padding:30px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  }
 }
 
 async function createTask() {
@@ -4676,7 +4699,9 @@ async function loadCompetitorBusinesses() {
     select.value = currentMarketBusinessId;
 
     loadCompetitors();
-  } catch (e) {}
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function loadCompetitors() {
@@ -4709,11 +4734,16 @@ async function loadCompetitors() {
 
 async function loadMarketContext() {
   if (!currentMarketBusinessId) return;
+  const contentEl = document.getElementById('marketContextContent');
+  contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('bi.loading')}</div>`;
+
   try {
     const res = await fetch(`/api/business/${currentMarketBusinessId}?lang=${window.currentLang || 'en'}`);
     const data = await res.json();
     renderMarketContextContent(data.business?.market_context, data.business?.market_context_generated_at);
-  } catch (e) {}
+  } catch (e) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  }
 }
 
 function renderMarketContextContent(mc, generatedAt) {
@@ -4902,7 +4932,9 @@ async function loadMarketingBusinesses() {
     select.value = currentMktBusinessId;
 
     loadMarketingStrategy();
-  } catch (e) {}
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function loadMarketingStrategy() {
@@ -4910,6 +4942,11 @@ async function loadMarketingStrategy() {
   currentMktBusinessId = select.value || currentMktBusinessId;
   if (!currentMktBusinessId) return;
   try { localStorage.setItem('arreyon_mkt_business_id', currentMktBusinessId); } catch (e) {}
+
+  const strategyEl = document.getElementById('mktStrategyContent');
+  const calendarEl = document.getElementById('mktCalendarContent');
+  strategyEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('bi.loading')}</div>`;
+  calendarEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('bi.loading')}</div>`;
 
   try {
     const res = await fetch(`/api/business/${currentMktBusinessId}?lang=${window.currentLang || 'en'}`);
@@ -4924,7 +4961,10 @@ async function loadMarketingStrategy() {
     if (data.business?.content_calendar_end_date) document.getElementById('calEndDate').value = data.business.content_calendar_end_date.split('T')[0];
     renderContentCalendarContent(data.business?.content_calendar, data.business?.content_calendar_generated_at);
     loadLeads();
-  } catch (e) {}
+  } catch (e) {
+    strategyEl.innerHTML = `<div style="text-align:center;padding:16px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+    calendarEl.innerHTML = '';
+  }
 }
 
 function renderMarketingStrategyContent(strategy, generatedAt) {
@@ -5284,7 +5324,9 @@ async function loadFundingBusinesses() {
     select.value = currentFundBusinessId;
 
     loadFundingReadiness();
-  } catch (e) {}
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function loadFundingReadiness() {
@@ -5293,13 +5335,21 @@ async function loadFundingReadiness() {
   if (!currentFundBusinessId) return;
   try { localStorage.setItem('arreyon_fund_business_id', currentFundBusinessId); } catch (e) {}
 
+  const fundEl = document.getElementById('fundContent');
+  const pitchEl = document.getElementById('pitchDeckContent');
+  fundEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('bi.loading')}</div>`;
+  pitchEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('bi.loading')}</div>`;
+
   try {
     const res = await fetch(`/api/business/${currentFundBusinessId}?lang=${window.currentLang || 'en'}`);
     const data = await res.json();
     renderFundingReadinessContent(data.business?.funding_readiness, data.business?.funding_readiness_generated_at);
     renderPitchDeckContent(data.business?.pitch_deck, data.business?.pitch_deck_generated_at);
     renderShareContent(data.business?.share_token);
-  } catch (e) {}
+  } catch (e) {
+    fundEl.innerHTML = `<div style="text-align:center;padding:16px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+    pitchEl.innerHTML = '';
+  }
 }
 
 function renderFundingReadinessContent(readiness, generatedAt) {
@@ -5528,7 +5578,9 @@ async function loadReportsCenterBusinesses() {
     select.value = currentReportsBusinessId;
 
     loadReportsCenter();
-  } catch (e) {}
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function loadReportsCenter() {
@@ -5537,12 +5589,20 @@ async function loadReportsCenter() {
   if (!currentReportsBusinessId) return;
   try { localStorage.setItem('arreyon_reports_business_id', currentReportsBusinessId); } catch (e) {}
 
+  const grid = document.getElementById('reportsGrid');
+  grid.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px;grid-column:1/-1">${t('bi.loading')}</div>`;
+
   try {
     const res = await fetch(`/api/business/${currentReportsBusinessId}/reports-center`);
     const data = await res.json();
-    if (!res.ok) return;
+    if (!res.ok) {
+      grid.innerHTML = `<div style="text-align:center;padding:24px;color:#ff8080;font-size:13px;grid-column:1/-1">${t('board.connection_error')}</div>`;
+      return;
+    }
     renderReportsGrid(data.reports || []);
-  } catch (e) {}
+  } catch (e) {
+    grid.innerHTML = `<div style="text-align:center;padding:24px;color:#ff8080;font-size:13px;grid-column:1/-1">${t('board.connection_error')}</div>`;
+  }
 }
 
 function renderReportsGrid(reports) {
@@ -5802,11 +5862,13 @@ function renderValidation(s, researchBacked) {
 let entrepreneurSessionsCache = [];
 
 async function loadEntrepreneurHistory() {
+  const list = document.getElementById('entrepreneurHistoryList');
+  list.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">${t('bi.loading')}</div>`;
+
   try {
     const res = await fetch('/api/entrepreneur/sessions?lang=' + (window.currentLang || 'en'));
     const data = await res.json();
     entrepreneurSessionsCache = data.sessions || [];
-    const list = document.getElementById('entrepreneurHistoryList');
     if (!entrepreneurSessionsCache.length) {
       list.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">${t('ent.no_sessions')}</div>`;
       return;
@@ -5821,7 +5883,9 @@ async function loadEntrepreneurHistory() {
         <div class="history-time">${timeAgo(s.created_at)}</div>
       </div>`;
     }).join('');
-  } catch (e) {}
+  } catch (e) {
+    list.innerHTML = `<div style="text-align:center;padding:24px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  }
 }
 
 function loadEntrepreneurSession(index) {
