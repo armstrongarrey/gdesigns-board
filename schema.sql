@@ -1042,5 +1042,30 @@ ALTER TABLE businesses ADD COLUMN IF NOT EXISTS business_xray JSONB;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS business_xray_fr JSONB;
 ALTER TABLE businesses ADD COLUMN IF NOT EXISTS business_xray_generated_at TIMESTAMPTZ;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SUBSCRIPTION LIFECYCLE — start/end dates, expiry notifications, and a
+-- 1-month free trial for starter accounts. Stored directly on users
+-- (rather than only in the existing subscriptions table, which is written
+-- once at payment approval but never read back anywhere) so the most
+-- common check — "has this plan expired?" — needs no join.
+--
+-- 'expired' is a new, explicit plan value, distinct from 'starter'. A
+-- lapsed free trial or a lapsed paid subscription both land here rather
+-- than silently reverting to starter — an honest locked state that
+-- prompts the user to subscribe, rather than quietly downgrading them to
+-- limited free access as if that were the normal outcome.
+-- ═══════════════════════════════════════════════════════════════════════════
+ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_started_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expires_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expiry_notified_at TIMESTAMPTZ;
+
+-- Backfill for accounts that existed before this feature: a fresh 1-month
+-- grace period starting now, not retroactively computed from their
+-- original signup date — the latter would instantly lock out long-time
+-- free users the moment this ships, which is a real, avoidable disruption
+-- rather than a deliberate policy choice.
+UPDATE users SET plan_started_at = NOW(), plan_expires_at = NOW() + INTERVAL '1 month'
+WHERE plan = 'starter' AND plan_expires_at IS NULL;
+
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
