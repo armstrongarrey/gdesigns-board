@@ -4677,6 +4677,55 @@ app.get('/api/dashboard/recent-activity', authRequired, async (req, res) => {
   }
 });
 
+// DASH-03 — Top Priorities. Curated, not overwhelming: pulls from 3 sources
+// that already exist (Business X-Ray's bottleneck, Business Intelligence's
+// priority problems, and high-priority open tasks) rather than a fourth,
+// separately-maintained priorities list. Self-contained — determines the
+// "primary" business itself using the exact same ordering /api/business
+// uses (most recently updated active business), rather than requiring the
+// frontend to pass one and risking a race against its own separate fetch.
+app.get('/api/dashboard/top-priorities', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+
+    const bizResult = await pool.query(
+      'SELECT id, name, business_xray, intelligence_snapshot FROM businesses WHERE user_id = $1 AND is_active = true ORDER BY updated_at DESC LIMIT 1',
+      [account.id]
+    );
+    const business = bizResult.rows[0];
+
+    const priorities = [];
+
+    if (business?.business_xray?.bottleneck_reasoning) {
+      priorities.push({
+        type: 'xray_bottleneck',
+        text: business.business_xray.bottleneck_reasoning,
+        businessId: business.id
+      });
+    }
+
+    if (business?.intelligence_snapshot?.priority_problems?.length) {
+      business.intelligence_snapshot.priority_problems.slice(0, 2).forEach(p => {
+        priorities.push({ type: 'priority_problem', text: p, businessId: business.id });
+      });
+    }
+
+    const tasksResult = await pool.query(
+      `SELECT id, title, business_id FROM action_tasks WHERE owner_id = $1 AND priority = 'high' AND status != 'done'
+       ORDER BY due_date ASC NULLS LAST, created_at DESC LIMIT 3`,
+      [account.id]
+    );
+    tasksResult.rows.forEach(task => {
+      priorities.push({ type: 'high_priority_task', text: task.title, businessId: task.business_id, taskId: task.id });
+    });
+
+    res.json({ priorities: priorities.slice(0, 5), businessName: business?.name || null });
+  } catch (e) {
+    console.error('Top priorities fetch error:', e.message);
+    res.status(500).json({ error: 'Failed to load top priorities' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ENTREPRENEUR MODE — Increment 5
 // For users who don't have a business yet. Two paths:
