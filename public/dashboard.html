@@ -137,6 +137,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 </head>
 <body>
 
+<!-- GLOBAL TOAST — UX-01. A reusable, app-wide confirmation/error mechanism,
+     independent of any single section's DOM (unlike the older Integrations-
+     only #intMsg pattern), so it can be used consistently for actions
+     anywhere in the app rather than each section needing its own. -->
+<div id="globalToast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;padding:12px 20px;border-radius:8px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.3);max-width:90vw;text-align:center"></div>
+
 <!-- SIDEBAR -->
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-logo">
@@ -2034,7 +2040,10 @@ async function removeTeamMember(memberId) {
   try {
     const res = await fetch(`/api/team/${memberId}`, { method: 'DELETE' });
     if (res.ok) loadTeamSection();
-  } catch (e) {}
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 // Hide dashboard sections the current user's team permissions don't grant —
@@ -2222,9 +2231,12 @@ async function loadGAMetrics() {
 async function disconnectGoogleAnalytics() {
   if (!confirm(t('int.confirm_disconnect'))) return;
   try {
-    await fetch('/api/integrations/google-analytics', { method: 'DELETE' });
-    loadIntegrationsSection();
-  } catch (e) {}
+    const res = await fetch('/api/integrations/google-analytics', { method: 'DELETE' });
+    if (res.ok) loadIntegrationsSection();
+    else showIntMsg(t('board.connection_error'), 'error');
+  } catch (e) {
+    showIntMsg(t('board.connection_error'), 'error');
+  }
 }
 
 async function loadGSCSites() {
@@ -2294,9 +2306,12 @@ async function loadGSCMetrics() {
 async function disconnectGoogleSearchConsole() {
   if (!confirm(t('int.confirm_disconnect_gsc'))) return;
   try {
-    await fetch('/api/integrations/google-search-console', { method: 'DELETE' });
-    loadIntegrationsSection();
-  } catch (e) {}
+    const res = await fetch('/api/integrations/google-search-console', { method: 'DELETE' });
+    if (res.ok) loadIntegrationsSection();
+    else showIntMsg(t('board.connection_error'), 'error');
+  } catch (e) {
+    showIntMsg(t('board.connection_error'), 'error');
+  }
 }
 
 async function loadHubSpotMetrics() {
@@ -2326,9 +2341,12 @@ async function loadHubSpotMetrics() {
 async function disconnectHubSpot() {
   if (!confirm(t('int.confirm_disconnect_hubspot'))) return;
   try {
-    await fetch('/api/integrations/hubspot', { method: 'DELETE' });
-    loadIntegrationsSection();
-  } catch (e) {}
+    const res = await fetch('/api/integrations/hubspot', { method: 'DELETE' });
+    if (res.ok) loadIntegrationsSection();
+    else showIntMsg(t('board.connection_error'), 'error');
+  } catch (e) {
+    showIntMsg(t('board.connection_error'), 'error');
+  }
 }
 
 async function loadZohoOrganizations() {
@@ -2395,9 +2413,12 @@ async function loadZohoMetrics() {
 async function disconnectZohoBooks() {
   if (!confirm(t('int.confirm_disconnect_zoho'))) return;
   try {
-    await fetch('/api/integrations/zoho-books', { method: 'DELETE' });
-    loadIntegrationsSection();
-  } catch (e) {}
+    const res = await fetch('/api/integrations/zoho-books', { method: 'DELETE' });
+    if (res.ok) loadIntegrationsSection();
+    else showIntMsg(t('board.connection_error'), 'error');
+  } catch (e) {
+    showIntMsg(t('board.connection_error'), 'error');
+  }
 }
 
 function showIntMsg(text, type) {
@@ -2406,6 +2427,24 @@ function showIntMsg(text, type) {
   el.style.color = type === 'error' ? '#ff8080' : 'var(--green)';
   el.style.display = 'block';
   setTimeout(() => { el.style.display = 'none'; }, 6000);
+}
+
+// UX-01 — a reusable, app-wide confirmation/error mechanism. Text is always
+// escaped since callers pass server error messages and other text that
+// isn't guaranteed safe to insert directly. A fresh call clears any
+// pending dismiss timer from a previous toast, so two toasts shown close
+// together don't fight over when to disappear.
+let toastDismissTimer = null;
+function showToast(message, type) {
+  const el = document.getElementById('globalToast');
+  if (!el) return;
+  el.textContent = message;
+  el.style.background = type === 'error' ? '#3a1010' : '#0a2a20';
+  el.style.color = type === 'error' ? '#ff8080' : 'var(--green)';
+  el.style.border = `1px solid ${type === 'error' ? '#5a1818' : '#0f4a38'}`;
+  el.style.display = 'block';
+  if (toastDismissTimer) clearTimeout(toastDismissTimer);
+  toastDismissTimer = setTimeout(() => { el.style.display = 'none'; }, 4000);
 }
 
 // ── ALERTS (Autonomous Monitoring) ──────────────────────────────────────────
@@ -2457,16 +2496,22 @@ async function loadAlertsSection() {
 
 async function markAlertRead(id) {
   try {
-    await fetch(`/api/alerts/${id}/read`, { method: 'PUT' });
-    loadAlertsSection();
-  } catch (e) {}
+    const res = await fetch(`/api/alerts/${id}/read`, { method: 'PUT' });
+    if (res.ok) loadAlertsSection();
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function markAllAlertsRead() {
   try {
-    await fetch('/api/alerts/read-all', { method: 'PUT' });
-    loadAlertsSection();
-  } catch (e) {}
+    const res = await fetch('/api/alerts/read-all', { method: 'PUT' });
+    if (res.ok) loadAlertsSection();
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function loadUnreadAlertsBadge() {
@@ -2595,7 +2640,7 @@ async function loadAlertPreferences() {
 
 async function saveAlertPreferences() {
   try {
-    await fetch('/api/alerts/preferences', {
+    const res = await fetch('/api/alerts/preferences', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         metricsAlertsEnabled: document.getElementById('prefMetrics').checked,
@@ -2608,7 +2653,11 @@ async function saveAlertPreferences() {
         emailAlertsEnabled: document.getElementById('prefEmail').checked
       })
     });
-  } catch (e) {}
+    if (res.ok) showToast(t('toast.saved'), 'success');
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 function renderBilling() {
@@ -4211,8 +4260,12 @@ async function updateGrowthProgress() {
       // reliable than trying to patch each piece separately client-side,
       // especially now that a progress update can auto-achieve milestones.
       loadGrowthObjective();
+    } else {
+      showToast(t('board.connection_error'), 'error');
     }
-  } catch (e) {}
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function loadGrowthProgressChart() {
@@ -4300,22 +4353,32 @@ async function addMilestone() {
       document.getElementById('newMilestoneValue').value = '';
       document.getElementById('newMilestoneDate').value = '';
       loadGrowthObjective();
+    } else {
+      showToast(t('board.connection_error'), 'error');
     }
-  } catch (e) {}
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function markMilestoneAchieved(milestoneId) {
   try {
     const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${currentGrowthObjectiveId}/milestones/${milestoneId}/achieve`, { method: 'PUT' });
     if (res.ok) loadGrowthObjective();
-  } catch (e) {}
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function deleteMilestone(milestoneId) {
   try {
     const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${currentGrowthObjectiveId}/milestones/${milestoneId}`, { method: 'DELETE' });
     if (res.ok) loadGrowthObjective();
-  } catch (e) {}
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function generateGrowthPlan() {
@@ -4521,8 +4584,12 @@ async function createTask() {
       document.getElementById('newTaskDueDate').value = '';
       document.getElementById('newTaskAssignee').value = '';
       loadActionTasks();
+    } else {
+      showToast(t('board.connection_error'), 'error');
     }
-  } catch (e) {}
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function updateTaskStatus(taskId, status) {
@@ -4531,7 +4598,10 @@ async function updateTaskStatus(taskId, status) {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status })
     });
     if (res.ok) loadActionTasks();
-  } catch (e) {}
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function updateTaskAssignee(taskId, assignedTo) {
@@ -4540,7 +4610,10 @@ async function updateTaskAssignee(taskId, assignedTo) {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assignedTo: assignedTo || null })
     });
     if (res.ok) loadActionTasks();
-  } catch (e) {}
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 function toggleTaskDescriptionEdit(taskId) {
@@ -4555,14 +4628,20 @@ async function saveTaskDescription(taskId) {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description })
     });
     if (res.ok) loadActionTasks();
-  } catch (e) {}
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function deleteTask(taskId) {
   try {
     const res = await fetch(`/api/business/${currentActionBusinessId}/tasks/${taskId}`, { method: 'DELETE' });
     if (res.ok) loadActionTasks();
-  } catch (e) {}
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 // ── MARKET INTELLIGENCE ──────────────────────────────────────────────────
@@ -4608,12 +4687,14 @@ async function loadCompetitors() {
 
   loadMarketContext();
 
+  const listEl = document.getElementById('competitorsList');
+  listEl.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">${t('bi.loading')}</div>`;
+
   try {
     const res = await fetch(`/api/business/${currentMarketBusinessId}/competitors?lang=${window.currentLang || 'en'}`);
     const data = await res.json();
     const competitors = data.competitors || [];
     currentCompetitorsForTasks = competitors;
-    const listEl = document.getElementById('competitorsList');
 
     if (!competitors.length) {
       listEl.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px" data-i18n="market.no_competitors">No competitors tracked yet — add one above.</div>`;
@@ -4621,7 +4702,9 @@ async function loadCompetitors() {
     }
 
     listEl.innerHTML = competitors.map(c => renderCompetitorCard(c)).join('');
-  } catch (e) {}
+  } catch (e) {
+    listEl.innerHTML = `<div style="text-align:center;padding:24px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  }
 }
 
 async function loadMarketContext() {
@@ -4744,15 +4827,22 @@ async function addCompetitor() {
       document.getElementById('newCompetitorWebsite').value = '';
       document.getElementById('newCompetitorNotes').value = '';
       loadCompetitors();
+    } else {
+      showToast(t('board.connection_error'), 'error');
     }
-  } catch (e) {}
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function deleteCompetitor(competitorId) {
   try {
     const res = await fetch(`/api/business/${currentMarketBusinessId}/competitors/${competitorId}`, { method: 'DELETE' });
     if (res.ok) loadCompetitors();
-  } catch (e) {}
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function analyzeCompetitor(competitorId, event) {
@@ -5062,11 +5152,13 @@ const LEAD_STATUS_COLORS = { new: 'var(--muted)', contacted: 'var(--purple-light
 
 async function loadLeads() {
   if (!currentMktBusinessId) return;
+  const listEl = document.getElementById('leadsList');
+  listEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('bi.loading')}</div>`;
+
   try {
     const res = await fetch(`/api/business/${currentMktBusinessId}/leads`);
     const data = await res.json();
     const leads = data.leads || [];
-    const listEl = document.getElementById('leadsList');
 
     if (!leads.length) {
       listEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px" data-i18n="mkt.no_leads">No leads yet — add one above.</div>`;
@@ -5096,7 +5188,9 @@ async function loadLeads() {
           <button onclick="deleteLead('${lead.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:0 4px">×</button>
         </div>`;
     }).join('');
-  } catch (e) {}
+  } catch (e) {
+    listEl.innerHTML = `<div style="text-align:center;padding:16px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  }
 }
 
 async function addLead() {
@@ -5117,8 +5211,12 @@ async function addLead() {
       document.getElementById('newLeadPhone').value = '';
       document.getElementById('newLeadFollowUp').value = '';
       loadLeads();
+    } else {
+      showToast(t('board.connection_error'), 'error');
     }
-  } catch (e) {}
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function updateLead(leadId, changes) {
@@ -5127,14 +5225,20 @@ async function updateLead(leadId, changes) {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes)
     });
     if (res.ok) loadLeads();
-  } catch (e) {}
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function deleteLead(leadId) {
   try {
     const res = await fetch(`/api/business/${currentMktBusinessId}/leads/${leadId}`, { method: 'DELETE' });
     if (res.ok) loadLeads();
-  } catch (e) {}
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 // ── FUNDING READINESS (Phase 8, Step 2) ─────────────────────────────────────
@@ -5357,7 +5461,10 @@ async function revokeShareLink() {
   try {
     const res = await fetch(`/api/business/${currentFundBusinessId}/share`, { method: 'DELETE' });
     if (res.ok) loadFundingReadiness();
-  } catch (e) {}
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 function copyShareLink() {
