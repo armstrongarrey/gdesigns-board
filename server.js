@@ -2700,6 +2700,109 @@ app.get('/api/website-tools/seo-rest-bridge-plugin', (req, res) => {
   res.send(ARREYON_SEO_REST_BRIDGE_PLUGIN);
 });
 
+// Shared by both the connect endpoint (existing business) and
+// connect-new (a business created on the fly) — the actual WordPress
+// verification and website_connections storage logic is identical either
+// way, only how the business itself is resolved differs.
+async function connectWordPressSite(businessId, siteUrl, username, appPassword, userId) {
+  const trimmedUrl = siteUrl.trim();
+  const trimmedUser = username.trim();
+  const trimmedPass = appPassword.trim();
+
+  let siteName = null, wpVersion = null;
+  try {
+    const rootRes = await wpApiRequest(trimmedUrl, '', '', '/', { timeoutMs: 8000 });
+    if (rootRes.ok) {
+      const rootData = await rootRes.json();
+      siteName = rootData.name || null;
+      wpVersion = null; // modern WordPress omits its version here by design; honestly always unavailable, not a real check
+    }
+  } catch (e) {
+    return { ok: false, statusCode: 400, error: 'Could not reach a WordPress site at that URL. Please check the address and that the site is online.' };
+  }
+
+  let verifyRes;
+  try {
+    verifyRes = await wpApiRequest(trimmedUrl, trimmedUser, trimmedPass, '/wp/v2/pages?per_page=1&status=any&context=edit', { timeoutMs: 10000 });
+  } catch (e) {
+    return { ok: false, statusCode: 400, error: e.message || 'Could not connect to WordPress. Please check your website URL.' };
+  }
+
+  if (verifyRes.status === 401) {
+    return { ok: false, statusCode: 400, error: 'WordPress rejected these credentials. Please check your username and Application Password.' };
+  }
+  if (verifyRes.status === 403) {
+    return { ok: false, statusCode: 400, error: 'WordPress accepted the connection attempt but blocked it (403 Forbidden). This is usually a security plugin (like Wordfence or Solid Security) or your hosting provider\'s firewall restricting REST API access — check its settings for a REST API or "Application Passwords" restriction, or contact your host if you\'re not sure.' };
+  }
+  if (!verifyRes.ok) {
+    return { ok: false, statusCode: 400, error: `WordPress returned an unexpected error (status ${verifyRes.status}). Please verify your site supports the REST API.` };
+  }
+
+  const encryptedPassword = encryptSecret(trimmedPass);
+
+  const existing = await pool.query('SELECT id FROM website_connections WHERE business_id = $1', [businessId]);
+  let connection;
+  if (existing.rows.length) {
+    const updated = await pool.query(
+      `UPDATE website_connections SET site_url = $1, site_name = $2, wp_version = $3, wp_username = $4,
+       wp_app_password_encrypted = $5, connection_status = 'connected', last_verified_at = NOW(),
+       last_error = NULL, connected_at = NOW(), disconnected_at = NULL
+       WHERE id = $6 RETURNING id, site_url, site_name, connection_status, permission_level, automation_mode, connected_at`,
+      [trimmedUrl, siteName, wpVersion, trimmedUser, encryptedPassword, existing.rows[0].id]
+    );
+    connection = updated.rows[0];
+  } else {
+    const inserted = await pool.query(
+      `INSERT INTO website_connections (business_id, site_url, site_name, wp_version, wp_username, wp_app_password_encrypted, connection_status, last_verified_at, connected_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'connected', NOW(), NOW())
+       RETURNING id, site_url, site_name, connection_status, permission_level, automation_mode, connected_at`,
+      [businessId, trimmedUrl, siteName, wpVersion, trimmedUser, encryptedPassword]
+    );
+    connection = inserted.rows[0];
+  }
+
+  await logWebsiteAudit(connection.id, 'user', userId, 'connected', `Connected WordPress site: ${trimmedUrl}`, { siteUrl: trimmedUrl });
+
+  return { ok: true, connection };
+}
+
+// Connects a WordPress site to a business that hasn't been analyzed yet —
+// creates a minimal business record first (name only; every other
+// businesses column is nullable, so this is a safe, valid row), so a
+// website can be connected without requiring the full Analyzer flow to
+// run beforehand.
+app.post('/api/business/website/connect-new', authRequired, async (req, res) => {
+  const { businessName, siteUrl, username, appPassword } = req.body;
+  if (!businessName || !businessName.trim()) return res.status(400).json({ error: 'Please enter a business name.' });
+  if (!siteUrl || !siteUrl.trim()) return res.status(400).json({ error: 'Please enter your website URL.' });
+  if (!username || !username.trim()) return res.status(400).json({ error: 'Please enter your WordPress username.' });
+  if (!appPassword || !appPassword.trim()) return res.status(400).json({ error: 'Please enter your Application Password.' });
+
+  try {
+    const account = await resolveAccount(req.userId);
+    const inserted = await pool.query(
+      'INSERT INTO businesses (user_id, name, website) VALUES ($1, $2, $3) RETURNING id',
+      [account.id, businessName.trim(), siteUrl.trim()]
+    );
+    const newBusinessId = inserted.rows[0].id;
+
+    const result = await connectWordPressSite(newBusinessId, siteUrl, username, appPassword, req.userId);
+    if (!result.ok) {
+      // The business now exists even though the connection attempt
+      // failed — that's the right outcome (it's a real, correctly-named
+      // business the person can retry connecting from the normal
+      // dropdown), not something to roll back just because this one step
+      // didn't succeed.
+      return res.status(result.statusCode).json({ error: result.error, businessId: newBusinessId });
+    }
+
+    res.json({ success: true, businessId: newBusinessId, connection: result.connection });
+  } catch (e) {
+    console.error('Website connect-new error:', e.message);
+    res.status(500).json({ error: 'Failed to connect website' });
+  }
+});
+
 app.post('/api/business/:id/website/connect', authRequired, async (req, res) => {
   const { siteUrl, username, appPassword } = req.body;
   if (!siteUrl || !siteUrl.trim()) return res.status(400).json({ error: 'Please enter your website URL.' });
@@ -2711,85 +2814,10 @@ app.post('/api/business/:id/website/connect', authRequired, async (req, res) => 
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
-    const trimmedUrl = siteUrl.trim();
-    const trimmedUser = username.trim();
-    const trimmedPass = appPassword.trim();
+    const result = await connectWordPressSite(req.params.id, siteUrl, username, appPassword, req.userId);
+    if (!result.ok) return res.status(result.statusCode).json({ error: result.error });
 
-    // Unauthenticated root call for site metadata — WordPress serves this
-    // without requiring auth, and it doubles as a first check that the
-    // URL actually points at a real, reachable WordPress REST API before
-    // even attempting authenticated verification.
-    let siteName = null, wpVersion = null;
-    try {
-      const rootRes = await wpApiRequest(trimmedUrl, '', '', '/', { timeoutMs: 8000 });
-      if (rootRes.ok) {
-        const rootData = await rootRes.json();
-        siteName = rootData.name || null;
-        // Modern WordPress deliberately omits its version number from this
-        // unauthenticated response (to avoid version-fingerprinting), so
-        // this is honestly always unavailable here, not a real check.
-        wpVersion = null;
-      }
-    } catch (e) {
-      return res.status(400).json({ error: 'Could not reach a WordPress site at that URL. Please check the address and that the site is online.' });
-    }
-
-    // Authenticated verification — confirms the username/Application
-    // Password combination is actually valid. Deliberately does NOT use
-    // /wp/v2/users/me: that endpoint family is a common, deliberate target
-    // for security-plugin hardening (Wordfence, Solid Security, and
-    // similar tools specifically restrict /wp/v2/users to prevent
-    // username enumeration attacks), so a real, valid Application Password
-    // can still receive a 403 there even though authentication itself
-    // would have succeeded against almost any other endpoint. Using pages
-    // with context=edit and status=any instead genuinely requires valid
-    // authentication (an anonymous request can't use either parameter)
-    // without touching that specifically-hardened namespace.
-    let verifyRes;
-    try {
-      verifyRes = await wpApiRequest(trimmedUrl, trimmedUser, trimmedPass, '/wp/v2/pages?per_page=1&status=any&context=edit', { timeoutMs: 10000 });
-    } catch (e) {
-      return res.status(400).json({ error: e.message || 'Could not connect to WordPress. Please check your website URL.' });
-    }
-
-    if (verifyRes.status === 401) {
-      return res.status(400).json({ error: 'WordPress rejected these credentials. Please check your username and Application Password.' });
-    }
-    if (verifyRes.status === 403) {
-      return res.status(400).json({ error: 'WordPress accepted the connection attempt but blocked it (403 Forbidden). This is usually a security plugin (like Wordfence or Solid Security) or your hosting provider\'s firewall restricting REST API access — check its settings for a REST API or "Application Passwords" restriction, or contact your host if you\'re not sure.' });
-    }
-    if (!verifyRes.ok) {
-      return res.status(400).json({ error: `WordPress returned an unexpected error (status ${verifyRes.status}). Please verify your site supports the REST API.` });
-    }
-
-    const encryptedPassword = encryptSecret(trimmedPass);
-
-    // One connection per business for now — an existing row is replaced
-    // rather than left as a duplicate stale entry alongside the new one.
-    const existing = await pool.query('SELECT id FROM website_connections WHERE business_id = $1', [req.params.id]);
-    let connection;
-    if (existing.rows.length) {
-      const updated = await pool.query(
-        `UPDATE website_connections SET site_url = $1, site_name = $2, wp_version = $3, wp_username = $4,
-         wp_app_password_encrypted = $5, connection_status = 'connected', last_verified_at = NOW(),
-         last_error = NULL, connected_at = NOW(), disconnected_at = NULL
-         WHERE id = $6 RETURNING id, site_url, site_name, connection_status, permission_level, automation_mode, connected_at`,
-        [trimmedUrl, siteName, wpVersion, trimmedUser, encryptedPassword, existing.rows[0].id]
-      );
-      connection = updated.rows[0];
-    } else {
-      const inserted = await pool.query(
-        `INSERT INTO website_connections (business_id, site_url, site_name, wp_version, wp_username, wp_app_password_encrypted, connection_status, last_verified_at, connected_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'connected', NOW(), NOW())
-         RETURNING id, site_url, site_name, connection_status, permission_level, automation_mode, connected_at`,
-        [req.params.id, trimmedUrl, siteName, wpVersion, trimmedUser, encryptedPassword]
-      );
-      connection = inserted.rows[0];
-    }
-
-    await logWebsiteAudit(connection.id, 'user', req.userId, 'connected', `Connected WordPress site: ${trimmedUrl}`, { siteUrl: trimmedUrl });
-
-    res.json({ success: true, connection });
+    res.json({ success: true, connection: result.connection });
   } catch (e) {
     console.error('Website connect error:', e.message);
     res.status(500).json({ error: 'Failed to connect website' });
