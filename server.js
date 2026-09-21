@@ -2925,6 +2925,17 @@ async function buildForbiddenErrorMessage(verifyRes) {
     return 'WordPress rejected this with a permissions error, not a security-plugin block: the WordPress user behind this Application Password does not have sufficient permissions (it needs at least an Editor role, or ideally Administrator). Please check that user\'s role in WordPress, or generate the Application Password using an Administrator account instead.';
   }
 
+  // "Just a moment..." combined with Cloudflare's challenge markers is the
+  // specific signature of Cloudflare's own bot/JS challenge page — this is
+  // fundamentally different from a WAF rule or IP block, and the fix
+  // depends entirely on which Cloudflare plan the site is on (researched:
+  // Bot Fight Mode on the Free plan cannot be bypassed by ANY rule at
+  // all — Cloudflare's own documentation is explicit about this — while
+  // Super Bot Fight Mode on paid plans does support a targeted exception).
+  if (lower.includes('just a moment') && lower.includes('cloudflare')) {
+    return 'Cloudflare (sitting in front of this WordPress site) is showing its bot-challenge page — this happens before the request even reaches WordPress, so no WordPress or Arreyon setting can fix it directly. In the Cloudflare dashboard, check Security → Events to see exactly which feature fired. If it\'s "Bot Fight Mode" (the free-tier version), Cloudflare\'s own documentation confirms this cannot be bypassed by any rule — the only options are turning it off site-wide or upgrading to a paid plan. If it\'s "Super Bot Fight Mode" (Pro or higher) or a WAF rule, a targeted rule can be added so only authenticated REST API requests skip the challenge, e.g.: (http.request.uri.path contains "/wp-json/") and (http.request.headers["authorization"][0] ne "") — Action: Skip. This exempts only API traffic carrying real credentials, not regular visitors to the site.';
+  }
+
   let likelySource = null;
   if (lower.includes('wordfence')) likelySource = 'Wordfence';
   else if (lower.includes('ithemes') || lower.includes('solid security')) likelySource = 'Solid Security / iThemes Security';
