@@ -3399,7 +3399,7 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
       const verifyData = await verifyRes.json();
       const actualDescription = verifyData.yoast_head_json?.description || null;
       if (actualDescription !== change.metaDescription) {
-        return { executed: true, verified: false, error: 'The update was sent and WordPress accepted it, but the meta description on the live page did not change. This WordPress site\'s SEO plugin most likely does not allow meta description updates via the API by default — this requires a small configuration change on the WordPress side (registering the field for REST access) that Arreyon cannot make remotely.' };
+        return { executed: true, verified: false, error: 'The update was sent and WordPress accepted it, but the meta description on the live page did not change. This WordPress site\'s SEO plugin does not allow meta description updates via the API by default — go to the Website page and download the "Arreyon SEO REST Bridge" plugin, then install it on this site to fix this.' };
       }
       return { executed: true, verified: true };
     }
