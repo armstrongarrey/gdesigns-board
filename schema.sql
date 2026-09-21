@@ -1172,3 +1172,22 @@ CREATE TABLE IF NOT EXISTS website_actions (
 );
 CREATE INDEX IF NOT EXISTS idx_website_actions_connection ON website_actions(website_connection_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_website_actions_pending ON website_actions(website_connection_id, approval_status) WHERE approval_status = 'pending';
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Arreyon Connect plugin — connection-code handshake (Option 2). WordPress
+-- initiates here (the reverse of the existing paste-a-credential flow):
+-- Arreyon generates a short-lived code and shows it; the plugin, once the
+-- person enters that code in their WordPress admin, generates its own
+-- Application Password internally and sends it back to Arreyon along with
+-- the code. Codes expire and are single-use so a leaked or guessed code
+-- can't be replayed indefinitely.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS website_connection_codes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  code VARCHAR(30) UNIQUE NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_website_connection_codes_business ON website_connection_codes(business_id);
