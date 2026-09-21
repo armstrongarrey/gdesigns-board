@@ -2908,6 +2908,44 @@ app.get('/api/website-tools/arreyon-connect-plugin', (req, res) => {
 // connect-new (a business created on the fly) — the actual WordPress
 // verification and website_connections storage logic is identical either
 // way, only how the business itself is resolved differs.
+// Rather than guess which of several possible causes produced a 403,
+// this reads WordPress's actual response and looks for real evidence.
+// Distinguishing a genuine WordPress permission problem (a
+// "rest_forbidden" JSON response — this Application Password's user
+// lacks the capability the request needs) from a security plugin or
+// hosting-level block matters a lot: they need completely different
+// fixes, and guessing wrong wastes the person's time checking the wrong
+// setting.
+async function buildForbiddenErrorMessage(verifyRes) {
+  let bodyText = '';
+  try { bodyText = await verifyRes.text(); } catch (e) {}
+  const lower = bodyText.toLowerCase();
+
+  if (lower.includes('rest_forbidden') || lower.includes('rest_cannot')) {
+    return 'WordPress rejected this with a permissions error, not a security-plugin block: the WordPress user behind this Application Password does not have sufficient permissions (it needs at least an Editor role, or ideally Administrator). Please check that user\'s role in WordPress, or generate the Application Password using an Administrator account instead.';
+  }
+
+  let likelySource = null;
+  if (lower.includes('wordfence')) likelySource = 'Wordfence';
+  else if (lower.includes('ithemes') || lower.includes('solid security')) likelySource = 'Solid Security / iThemes Security';
+  else if (lower.includes('sucuri')) likelySource = 'Sucuri';
+  else if (lower.includes('cloudflare')) likelySource = 'Cloudflare';
+  else if (lower.includes('mod_security') || lower.includes('modsecurity')) likelySource = 'ModSecurity (a server-level firewall rule, not a WordPress plugin — your hosting provider would need to adjust this)';
+
+  const excerpt = bodyText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
+
+  let message = 'WordPress accepted the connection attempt but blocked it (403 Forbidden). ';
+  if (likelySource) {
+    message += `The response indicates this was blocked by ${likelySource}. `;
+  } else {
+    message += 'This is usually a security plugin or your hosting provider\'s firewall restricting REST API or Application Password access. ';
+  }
+  if (excerpt) {
+    message += `WordPress's actual response: "${excerpt}"${excerpt.length >= 300 ? '...' : ''}`;
+  }
+  return message;
+}
+
 async function connectWordPressSite(businessId, siteUrl, username, appPassword, userId) {
   const trimmedUrl = siteUrl.trim();
   const trimmedUser = username.trim();
@@ -2936,7 +2974,7 @@ async function connectWordPressSite(businessId, siteUrl, username, appPassword, 
     return { ok: false, statusCode: 400, error: 'WordPress rejected these credentials. Please check your username and Application Password.' };
   }
   if (verifyRes.status === 403) {
-    return { ok: false, statusCode: 400, error: 'WordPress accepted the connection attempt but blocked it (403 Forbidden). This is almost always a security plugin, not a real problem with your credentials. If you use Wordfence: go to Wordfence → All Options → Brute Force Protection → Additional Options, and make sure "Disable WordPress application passwords" is UNCHECKED (this is often turned on by default). If you use Solid Security / iThemes Security or a similar plugin, look for a "REST API" or "Application Passwords" restriction there instead. If neither applies, your hosting provider\'s own firewall may be blocking it — contact them if you\'re not sure.' };
+    return { ok: false, statusCode: 400, error: await buildForbiddenErrorMessage(verifyRes) };
   }
   if (!verifyRes.ok) {
     return { ok: false, statusCode: 400, error: `WordPress returned an unexpected error (status ${verifyRes.status}). Please verify your site supports the REST API.` };
@@ -3204,7 +3242,7 @@ app.post('/api/business/:id/website/verify', authRequired, async (req, res) => {
       return res.json({ connection_status: 'auth_expired', error: 'This Application Password is no longer valid — it may have been revoked in WordPress. Please reconnect.' });
     }
     if (verifyRes.status === 403) {
-      const msg = 'WordPress is blocking this request (403 Forbidden). If you use Wordfence, check Wordfence → All Options → Brute Force Protection → Additional Options for "Disable WordPress application passwords" (often on by default). Otherwise this is likely another security plugin or your host\'s firewall restricting REST API access.';
+      const msg = await buildForbiddenErrorMessage(verifyRes);
       await pool.query(`UPDATE website_connections SET connection_status = 'needs_attention', last_error = $1 WHERE id = $2`, [msg, connection.id]);
       return res.json({ connection_status: 'needs_attention', error: msg });
     }
