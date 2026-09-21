@@ -1069,3 +1069,68 @@ WHERE plan = 'starter' AND plan_expires_at IS NULL;
 
 -- ── DEFAULT ADMIN USER ──────────────────────────────────────────────────────
 -- Password will be set via the server on first run
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 8 / INCREMENT 1 — Website Intelligence & Control: connection + read-only
+--
+-- Scoped to business_id (not account-wide like the Google/HubSpot/Zoho
+-- connections), since a website belongs to a specific Business Workspace,
+-- not the Arreyon account as a whole. Deliberately no UNIQUE(business_id)
+-- constraint — the spec asks for the data model to support multiple
+-- websites per business in the future, and adding that later would need
+-- a migration to drop a constraint that never should have existed; this
+-- increment's own code only ever creates one connection at a time, but
+-- the schema itself doesn't foreclose more.
+--
+-- wp_app_password_encrypted is genuinely encrypted at rest (AES-256-GCM,
+-- see encryptSecret()/decryptSecret() in server.js), not just relying on
+-- database access control — unlike the OAuth tokens for other
+-- integrations, a WordPress Application Password is a long-lived, static
+-- credential with no rotation from Arreyon's side, closer to a raw API
+-- key than a short-lived, provider-revocable OAuth token, so it warrants
+-- that extra layer.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS website_connections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  provider VARCHAR(50) DEFAULT 'wordpress',
+  site_url TEXT NOT NULL,
+  site_name VARCHAR(255),
+  wp_version VARCHAR(20),
+  wp_username VARCHAR(255) NOT NULL,
+  wp_app_password_encrypted TEXT NOT NULL,
+  connection_status VARCHAR(20) DEFAULT 'pending', -- 'connected' | 'needs_attention' | 'auth_expired' | 'disconnected' | 'error'
+  last_verified_at TIMESTAMPTZ,
+  last_error TEXT,
+  -- Permission tier and automation switch — not enforced until Increment 2/3
+  -- (permissions + execution), but included now so the connection UI can
+  -- collect the choice from the start rather than needing a later
+  -- migration to add it once execution features exist.
+  permission_level VARCHAR(20) DEFAULT 'read_only', -- 'read_only' | 'draft' | 'approval_required' | 'managed'
+  automation_mode VARCHAR(20) DEFAULT 'manual', -- 'manual' | 'automatic' — low-risk actions only; destructive actions always require approval regardless of this switch
+  website_intelligence JSONB,
+  website_intelligence_fr JSONB,
+  website_intelligence_generated_at TIMESTAMPTZ,
+  connected_at TIMESTAMPTZ,
+  disconnected_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_website_connections_business ON website_connections(business_id);
+
+-- A genuine audit trail — nothing equivalent existed anywhere in the
+-- platform to reuse ("history" elsewhere means past AI consultation
+-- sessions, not an action-level log with actor/detail). Logs read-only
+-- events from this increment onward (connected, intelligence generated),
+-- not just future write actions, so the log has real content from day
+-- one rather than sitting empty until execution features ship.
+CREATE TABLE IF NOT EXISTS website_audit_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  website_connection_id UUID REFERENCES website_connections(id) ON DELETE CASCADE,
+  actor_type VARCHAR(20) NOT NULL, -- 'user' | 'ai_agent' | 'system'
+  actor_id UUID, -- the user's id when actor_type = 'user'; NULL otherwise
+  action_type VARCHAR(50) NOT NULL,
+  description TEXT NOT NULL,
+  details JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_website_audit_log_connection ON website_audit_log(website_connection_id, created_at DESC);
