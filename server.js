@@ -2802,6 +2802,82 @@ async function fetchWordPressContent(connection, decryptedPassword) {
   return { pages, posts };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 8 / INCREMENT 3 — EXECUTION + VERIFICATION
+//
+// Two genuinely different reliability profiles, confirmed by research
+// before writing this:
+//
+// - Title updates use POST /wp/v2/{pages|posts}/:id with {title} — WordPress's
+//   own documented convention for updating an existing resource, a core
+//   WordPress REST API field. This is reliable on any WordPress site
+//   regardless of plugins.
+//
+// - Meta description updates target _yoast_wpseo_metadesc via the meta
+//   object. Yoast's own REST surface is READ-ONLY BY DESIGN — a write to
+//   this field silently no-ops (the API returns success, but the value is
+//   never actually saved) unless the site has specifically registered
+//   this meta key with show_in_rest (a custom snippet or third-party
+//   plugin, not a default Yoast behavior). Even when a site DOES support
+//   this, Yoast's cached "indexable" record can lag behind a direct meta
+//   write, so the field appearing to save is not proof it actually took
+//   effect on the rendered page.
+//
+// This is exactly why verification here is not a nice-to-have: after
+// every execution, this re-fetches the SAME field used for reading
+// (yoast_head_json.description) and compares it against what was
+// intended — the only way to honestly distinguish "this WordPress site's
+// SEO plugin doesn't support API writes" from "this genuinely worked."
+async function executeWebsiteAction(action, connection, decryptedPassword) {
+  const wpType = action.target_type === 'post' ? 'posts' : 'pages';
+  const change = action.edited_change || action.proposed_change;
+
+  try {
+    if (change.title) {
+      const res = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}`, {
+        method: 'POST', body: { title: change.title }, timeoutMs: 15000
+      });
+      if (!res.ok) {
+        return { executed: false, verified: false, error: `WordPress rejected the update (status ${res.status}).` };
+      }
+      // Verify against a fresh GET, not the PUT response's echoed value —
+      // the echo only confirms what was SENT, not what was actually saved.
+      const verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?_fields=title`, { timeoutMs: 10000 });
+      if (!verifyRes.ok) return { executed: true, verified: false, error: 'The update was sent, but verification could not confirm it — please check the page manually.' };
+      const verifyData = await verifyRes.json();
+      const actualTitle = decodeHtmlEntities(wpStripHtml(verifyData.title?.rendered || ''));
+      if (actualTitle !== change.title) {
+        return { executed: true, verified: false, error: `The update was sent, but the title on the live page still reads "${actualTitle}" — it does not appear to have been saved.` };
+      }
+      return { executed: true, verified: true };
+    }
+
+    if (change.metaDescription) {
+      const res = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}`, {
+        method: 'POST', body: { meta: { _yoast_wpseo_metadesc: change.metaDescription } }, timeoutMs: 15000
+      });
+      if (!res.ok) {
+        return { executed: false, verified: false, error: `WordPress rejected the update (status ${res.status}).` };
+      }
+      const verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?_fields=yoast_head_json`, { timeoutMs: 10000 });
+      if (!verifyRes.ok) return { executed: true, verified: false, error: 'The update was sent, but verification could not confirm it — please check the page manually.' };
+      const verifyData = await verifyRes.json();
+      const actualDescription = verifyData.yoast_head_json?.description || null;
+      if (actualDescription !== change.metaDescription) {
+        return { executed: true, verified: false, error: 'The update was sent and WordPress accepted it, but the meta description on the live page did not change. This WordPress site\'s SEO plugin most likely does not allow meta description updates via the API by default — this requires a small configuration change on the WordPress side (registering the field for REST access) that Arreyon cannot make remotely.' };
+      }
+      return { executed: true, verified: true };
+    }
+
+    return { executed: false, verified: false, error: 'This proposed change has no recognized field to update.' };
+  } catch (e) {
+    if (e.message.includes('401')) {
+      return { executed: false, verified: false, error: 'This Application Password is no longer valid. Please reconnect your website.', authExpired: true };
+    }
+    return { executed: false, verified: false, error: e.message || 'Failed to execute this change.' };
+  }
+}
+
 // Generate read-only Website Intelligence — structure, SEO, and content
 // observations. The AI is explicitly instructed to separate "measured"
 // facts (directly present in the fetched page data — word counts, heading
@@ -2999,6 +3075,16 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     }
     if (!Array.isArray(result.proposals)) throw new Error('Could not generate SEO proposals — please try again');
 
+    // Explicit risk classification, not an assumption — both current
+    // action types are non-destructive text changes. A future action type
+    // (e.g. deleting content, changing settings) must be added here
+    // deliberately as 'high' risk, never inherit 'low' by default, so
+    // Managed + Automatic can never auto-execute something destructive —
+    // that safety rule the spec requires stays true regardless of what
+    // later increments add.
+    const ACTION_RISK = { update_meta_title: 'low', update_meta_description: 'low' };
+    const autoExecuteEligible = connection.permission_level === 'managed' && connection.automation_mode === 'automatic';
+
     const insertedProposals = [];
     for (const p of result.proposals) {
       const candidate = cappedCandidates[p.index];
@@ -3016,10 +3102,37 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
          VALUES ($1, 'seo_agent', $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
         [connection.id, actionType, candidate.isPost ? 'post' : 'page', candidate.id, candidate.url, candidate.title, JSON.stringify(previousState), JSON.stringify(proposedChange), p.reasoning || null]
       );
-      insertedProposals.push(inserted.rows[0]);
+      let action = inserted.rows[0];
+
+      if (autoExecuteEligible && ACTION_RISK[actionType] === 'low') {
+        await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
+        await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: ${actionType} for "${candidate.title}"`, { actionId: action.id });
+
+        const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+        const execResult = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
+        const executionStatus = execResult.executed ? 'executed' : 'execution_failed';
+        const verificationStatus = execResult.executed ? (execResult.verified ? 'verified' : 'verification_failed') : null;
+
+        const updated = await pool.query(
+          `UPDATE website_actions SET approval_status = 'approved', execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
+          [executionStatus, verificationStatus, execResult.error || null, action.id]
+        );
+        action = updated.rows[0];
+
+        await logWebsiteAudit(connection.id, 'system', null,
+          execResult.verified ? 'change_executed_and_verified' : 'change_execution_issue',
+          `Auto-executed ${actionType} for "${candidate.title}": ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
+          { actionId: action.id, executionStatus, verificationStatus, error: execResult.error });
+      }
+
+      insertedProposals.push(action);
     }
 
-    await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated', `SEO Agent generated ${insertedProposals.length} proposal(s) awaiting approval`, { count: insertedProposals.length });
+    const autoExecutedCount = insertedProposals.filter(a => a.execution_status === 'executed').length;
+    const pendingCount = insertedProposals.length - autoExecutedCount;
+    await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
+      `SEO Agent generated ${insertedProposals.length} proposal(s)` + (autoExecutedCount ? ` — ${autoExecutedCount} auto-executed under Managed/Automatic settings, ${pendingCount} awaiting approval` : ' awaiting approval'),
+      { count: insertedProposals.length, autoExecutedCount, pendingCount });
 
     res.json({ proposals: insertedProposals });
   } catch (err) {
@@ -3084,6 +3197,66 @@ app.post('/api/business/:id/website/actions/:actionId/approve', authRequired, as
   } catch (e) {
     console.error('Approve website action error:', e.message);
     res.status(500).json({ error: 'Failed to approve change' });
+  }
+});
+
+// Requires prior approval — the execution layer independently enforces
+// this rather than trusting that an action reaching this endpoint is
+// automatically safe to run. Re-checks the connection's CURRENT
+// permission_level live (not whatever it was at approval time), since
+// the person may have changed it in between.
+app.post('/api/business/:id/website/actions/:actionId/execute', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+    const connection = connResult.rows[0];
+
+    if (connection.permission_level === 'read_only') {
+      return res.status(403).json({ error: 'This website is set to Read Only, which does not allow executing changes.' });
+    }
+    if (connection.connection_status === 'disconnected') {
+      return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
+    }
+
+    const actionResult = await pool.query('SELECT * FROM website_actions WHERE id = $1 AND website_connection_id = $2', [req.params.actionId, connection.id]);
+    if (!actionResult.rows.length) return res.status(404).json({ error: 'Proposed change not found' });
+    const action = actionResult.rows[0];
+
+    if (action.approval_status !== 'approved') {
+      return res.status(400).json({ error: 'This change must be approved before it can be executed.' });
+    }
+    if (action.execution_status === 'executed') {
+      return res.status(400).json({ error: 'This change has already been executed.' });
+    }
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    const result = await executeWebsiteAction(action, connection, decryptedPassword);
+
+    if (result.authExpired) {
+      await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
+    }
+
+    const executionStatus = result.executed ? 'executed' : 'execution_failed';
+    const verificationStatus = result.executed ? (result.verified ? 'verified' : 'verification_failed') : null;
+
+    const updated = await pool.query(
+      `UPDATE website_actions SET execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
+      [executionStatus, verificationStatus, result.error || null, action.id]
+    );
+
+    await logWebsiteAudit(connection.id, 'system', req.userId,
+      result.verified ? 'change_executed_and_verified' : 'change_execution_issue',
+      `${action.action_type} for "${action.target_title}": execution ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
+      { actionId: action.id, executionStatus, verificationStatus, error: result.error });
+
+    res.json({ success: result.executed && result.verified, action: updated.rows[0], error: result.error });
+  } catch (e) {
+    console.error('Execute website action error:', e.message);
+    res.status(500).json({ error: 'Failed to execute change' });
   }
 });
 
