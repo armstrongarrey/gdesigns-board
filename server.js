@@ -2504,6 +2504,202 @@ async function logWebsiteAudit(websiteConnectionId, actorType, actorId, actionTy
 // Connect (or reconnect) a WordPress site to a business. Credentials are
 // verified against the real site BEFORE anything is stored — an invalid
 // username/Application Password never gets encrypted and saved.
+// ═══════════════════════════════════════════════════════════════════════════
+// SEO REST Bridge mu-plugin — a downloadable product asset, not something
+// specific to any one customer's WordPress site. Every Arreyon customer
+// connecting their own WordPress site hits the same underlying limitation
+// (SEO plugins ship their meta fields as REST-read-only by default), so
+// this is served directly by the app itself rather than living only in a
+// support conversation — no auth required, since the content is generic
+// and non-sensitive, and it may reasonably be handed to a client's own
+// developer rather than downloaded by the Arreyon account holder directly.
+const ARREYON_SEO_REST_BRIDGE_PLUGIN = `<?php
+/**
+ * Plugin Name: Arreyon SEO REST Bridge
+ * Description: Registers your SEO plugin's meta title/description fields
+ *              for REST API write access, so Arreyon Consult's SEO Agent
+ *              can actually update them. Without this, WordPress core
+ *              REST API can update a page/post's main title, but SEO
+ *              plugins (Yoast, Rank Math, All in One SEO) ship their own
+ *              meta fields as READ-ONLY by design — a write to them
+ *              silently succeeds at the API level while never actually
+ *              saving. This plugin closes that gap for whichever of the
+ *              three plugins you actually have installed; it does
+ *              nothing for the others.
+ * Version:     1.0.0
+ * Author:      G-DESIGNS LTD / Arreyon Consult
+ *
+ * INSTALLATION
+ * 1. Upload this file to wp-content/mu-plugins/ on your WordPress site
+ *    (create that folder if it doesn't exist yet).
+ * 2. That's it — files in mu-plugins activate automatically. There is
+ *    nothing to enable in the Plugins screen, and it cannot be
+ *    accidentally deactivated the way a normal plugin can.
+ *
+ * SECURITY
+ * Every field registered here requires the same edit_posts capability a
+ * normal WordPress user needs to edit that content — the Application
+ * Password Arreyon uses must belong to a user who already has that
+ * capability (Editor role or above). This plugin does not lower any
+ * permission; it only exposes fields that already exist to the same
+ * permission check WordPress already enforces everywhere else.
+ */
+
+if (!defined('ABSPATH')) {
+    exit; // Never execute this file directly, only as a loaded WordPress plugin.
+}
+
+function arreyon_register_seo_rest_fields() {
+    // Only registered for post types that are actually shown in the REST
+    // API (public, REST-enabled types) — matches what Arreyon itself reads
+    // and writes (pages and posts), and avoids registering fields on
+    // internal post types that were never meant to be exposed.
+    $post_types = get_post_types(['public' => true, 'show_in_rest' => true]);
+
+    // Field key => sanitize callback. sanitize_text_field is used for all
+    // of these since none of them are expected to contain HTML — a title
+    // or meta description with markup would be a data-quality issue in
+    // its own right, not something this plugin should silently allow.
+    $seo_fields = [
+        // Yoast SEO
+        '_yoast_wpseo_title'          => 'sanitize_text_field',
+        '_yoast_wpseo_metadesc'       => 'sanitize_text_field',
+        '_yoast_wpseo_focuskw'        => 'sanitize_text_field',
+        // Rank Math
+        'rank_math_title'             => 'sanitize_text_field',
+        'rank_math_description'       => 'sanitize_text_field',
+        'rank_math_focus_keyword'     => 'sanitize_text_field',
+        // All in One SEO
+        '_aioseo_title'               => 'sanitize_text_field',
+        '_aioseo_description'         => 'sanitize_text_field',
+        '_aioseo_keywords'            => 'sanitize_text_field',
+    ];
+
+    foreach ($post_types as $post_type) {
+        foreach ($seo_fields as $meta_key => $sanitize_callback) {
+            register_post_meta($post_type, $meta_key, [
+                'show_in_rest'      => true,
+                'single'            => true,
+                'type'              => 'string',
+                'sanitize_callback' => $sanitize_callback,
+                // Read requires nothing extra (these fields are visible to
+                // anyone who can already see the post); write requires the
+                // same capability WordPress already uses to decide whether
+                // someone can edit that specific post.
+                'auth_callback'     => function ($allowed, $meta_key, $post_id) {
+                    return current_user_can('edit_post', $post_id);
+                },
+            ]);
+        }
+    }
+}
+// Runs after both WordPress core (priority 10) and every major SEO plugin
+// have registered their own post types and meta boxes, so this never
+// races a plugin that hasn't finished setting up its own fields yet.
+add_action('init', 'arreyon_register_seo_rest_fields', 20);
+`;
+
+// Standalone CRC32 and a minimal single-file ZIP builder — no new npm
+// dependency, since that would require the person deploying this to run
+// npm install on their own server, a risk this file can't verify from
+// here. Doesn't rely on Node's built-in zlib.crc32 either, since that was
+// only added in Node 22.2.0 and this needs to work on whatever Node
+// version the deployed server actually runs, not just this one.
+function arreyonMakeCrcTable() {
+  const table = [];
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    table[n] = c;
+  }
+  return table;
+}
+const ARREYON_CRC_TABLE = arreyonMakeCrcTable();
+function arreyonCrc32(buf) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) crc = ARREYON_CRC_TABLE[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+// Builds a minimal, valid ZIP archive with one STORED (uncompressed) entry.
+// entryPath must include the plugin's own folder (e.g.
+// "arreyon-seo-rest-bridge/arreyon-seo-rest-bridge.php") since WordPress
+// expects the plugin file to sit inside a folder matching its slug, not
+// at the zip root.
+function arreyonBuildSingleFileZip(entryPath, content) {
+  const nameBuf = Buffer.from(entryPath, 'utf8');
+  const dataBuf = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8');
+  const crc = arreyonCrc32(dataBuf);
+  const dosTime = 0x0000, dosDate = 0x0021; // fixed, valid placeholder — the exact timestamp has no functional importance here
+
+  const localHeader = Buffer.alloc(30);
+  localHeader.writeUInt32LE(0x04034b50, 0);
+  localHeader.writeUInt16LE(20, 4);
+  localHeader.writeUInt16LE(0, 6);
+  localHeader.writeUInt16LE(0, 8);
+  localHeader.writeUInt16LE(dosTime, 10);
+  localHeader.writeUInt16LE(dosDate, 12);
+  localHeader.writeUInt32LE(crc, 14);
+  localHeader.writeUInt32LE(dataBuf.length, 18);
+  localHeader.writeUInt32LE(dataBuf.length, 22);
+  localHeader.writeUInt16LE(nameBuf.length, 26);
+  localHeader.writeUInt16LE(0, 28);
+  const localEntry = Buffer.concat([localHeader, nameBuf, dataBuf]);
+
+  const centralHeader = Buffer.alloc(46);
+  centralHeader.writeUInt32LE(0x02014b50, 0);
+  centralHeader.writeUInt16LE(20, 4);
+  centralHeader.writeUInt16LE(20, 6);
+  centralHeader.writeUInt16LE(0, 8);
+  centralHeader.writeUInt16LE(0, 10);
+  centralHeader.writeUInt16LE(dosTime, 12);
+  centralHeader.writeUInt16LE(dosDate, 14);
+  centralHeader.writeUInt32LE(crc, 16);
+  centralHeader.writeUInt32LE(dataBuf.length, 20);
+  centralHeader.writeUInt32LE(dataBuf.length, 24);
+  centralHeader.writeUInt16LE(nameBuf.length, 28);
+  centralHeader.writeUInt16LE(0, 30);
+  centralHeader.writeUInt16LE(0, 32);
+  centralHeader.writeUInt16LE(0, 34);
+  centralHeader.writeUInt16LE(0, 36);
+  centralHeader.writeUInt32LE(0, 38);
+  centralHeader.writeUInt32LE(0, 42); // offset of local header — 0, since this is the only entry
+  const centralEntry = Buffer.concat([centralHeader, nameBuf]);
+
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(1, 8);
+  eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(centralEntry.length, 12);
+  eocd.writeUInt32LE(localEntry.length, 16);
+  eocd.writeUInt16LE(0, 20);
+
+  return Buffer.concat([localEntry, centralEntry, eocd]);
+}
+
+// The primary, recommended path: a proper .zip a person installs through
+// WordPress's own familiar "Plugins → Add New → Upload Plugin" screen —
+// no FTP, no cPanel file manager, no knowledge of what mu-plugins even
+// are. Built fresh on each request (the file is tiny, so there's no
+// reason to cache it) rather than requiring a zip to be committed and
+// kept in sync with the source separately.
+app.get('/api/website-tools/seo-rest-bridge-plugin.zip', (req, res) => {
+  const zipBuf = arreyonBuildSingleFileZip('arreyon-seo-rest-bridge/arreyon-seo-rest-bridge.php', ARREYON_SEO_REST_BRIDGE_PLUGIN);
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename="arreyon-seo-rest-bridge.zip"');
+  res.send(zipBuf);
+});
+
+// The raw .php file — kept for developers who specifically want the
+// mu-plugin (auto-activates, can't be accidentally disabled) and already
+// know how to reach their site's file system.
+app.get('/api/website-tools/seo-rest-bridge-plugin', (req, res) => {
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'attachment; filename="arreyon-seo-rest-bridge.php"');
+  res.send(ARREYON_SEO_REST_BRIDGE_PLUGIN);
+});
+
 app.post('/api/business/:id/website/connect', authRequired, async (req, res) => {
   const { siteUrl, username, appPassword } = req.body;
   if (!siteUrl || !siteUrl.trim()) return res.status(400).json({ error: 'Please enter your website URL.' });
