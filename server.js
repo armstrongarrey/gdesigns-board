@@ -2732,7 +2732,7 @@ async function connectWordPressSite(businessId, siteUrl, username, appPassword, 
     return { ok: false, statusCode: 400, error: 'WordPress rejected these credentials. Please check your username and Application Password.' };
   }
   if (verifyRes.status === 403) {
-    return { ok: false, statusCode: 400, error: 'WordPress accepted the connection attempt but blocked it (403 Forbidden). This is usually a security plugin (like Wordfence or Solid Security) or your hosting provider\'s firewall restricting REST API access — check its settings for a REST API or "Application Passwords" restriction, or contact your host if you\'re not sure.' };
+    return { ok: false, statusCode: 400, error: 'WordPress accepted the connection attempt but blocked it (403 Forbidden). This is almost always a security plugin, not a real problem with your credentials. If you use Wordfence: go to Wordfence → All Options → Brute Force Protection → Additional Options, and make sure "Disable WordPress application passwords" is UNCHECKED (this is often turned on by default). If you use Solid Security / iThemes Security or a similar plugin, look for a "REST API" or "Application Passwords" restriction there instead. If neither applies, your hosting provider\'s own firewall may be blocking it — contact them if you\'re not sure.' };
   }
   if (!verifyRes.ok) {
     return { ok: false, statusCode: 400, error: `WordPress returned an unexpected error (status ${verifyRes.status}). Please verify your site supports the REST API.` };
@@ -2896,7 +2896,7 @@ app.post('/api/business/:id/website/verify', authRequired, async (req, res) => {
       return res.json({ connection_status: 'auth_expired', error: 'This Application Password is no longer valid — it may have been revoked in WordPress. Please reconnect.' });
     }
     if (verifyRes.status === 403) {
-      const msg = 'WordPress is blocking this request (403 Forbidden) — usually a security plugin or hosting firewall restricting REST API access.';
+      const msg = 'WordPress is blocking this request (403 Forbidden). If you use Wordfence, check Wordfence → All Options → Brute Force Protection → Additional Options for "Disable WordPress application passwords" (often on by default). Otherwise this is likely another security plugin or your host\'s firewall restricting REST API access.';
       await pool.query(`UPDATE website_connections SET connection_status = 'needs_attention', last_error = $1 WHERE id = $2`, [msg, connection.id]);
       return res.json({ connection_status: 'needs_attention', error: msg });
     }
@@ -8272,7 +8272,7 @@ async function wpApiRequest(siteUrl, username, appPassword, endpoint, options = 
       headers: {
         'Authorization': authHeader,
         'Content-Type': 'application/json',
-        'User-Agent': 'ArreyonConsultBot/1.0 (+https://consult.gdesignsme.com)',
+        'User-Agent': 'ArreyonConsult/1.0 (+https://consult.gdesignsme.com)',
         ...(options.headers || {})
       },
       body: options.body ? JSON.stringify(options.body) : undefined
@@ -8318,7 +8318,7 @@ async function safeFetch(urlStr, { maxBytes = 2_000_000, timeoutMs = 8000, maxRe
       res = await fetch(current, {
         signal: controller.signal,
         redirect: 'manual',
-        headers: { 'User-Agent': 'ArreyonConsultBot/1.0 (+https://consult.gdesignsme.com)' }
+        headers: { 'User-Agent': 'ArreyonConsult/1.0 (+https://consult.gdesignsme.com)' }
       });
     } finally {
       clearTimeout(timeout);
