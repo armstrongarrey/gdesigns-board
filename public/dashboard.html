@@ -1604,6 +1604,30 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <span id="websiteStatusBadge" style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:6px;white-space:nowrap"></span>
         </div>
         <div id="websiteStatusError" style="display:none;font-size:12px;color:#ff8080;background:rgba(239,68,68,.1);border-radius:8px;padding:10px 12px;margin-bottom:14px"></div>
+
+        <!-- PERMISSIONS & AUTOMATION — spec Section 4's 4 tiers, plus the
+             manual/automatic switch. Managed mode still requires approval
+             for destructive actions regardless — that safety rule is
+             enforced server-side, not something this toggle can bypass. -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;padding:14px;background:var(--bg3);border-radius:10px">
+          <div class="form-group" style="margin-bottom:0">
+            <label style="font-size:11px" data-i18n="web.permission_level_label">Permission Level</label>
+            <select class="form-input" id="websitePermissionLevel" onchange="updateWebsitePermissions()" style="font-size:12.5px">
+              <option value="read_only" data-i18n="web.permission_read_only">Read Only</option>
+              <option value="draft" data-i18n="web.permission_draft">Draft</option>
+              <option value="approval_required" data-i18n="web.permission_approval_required">Approval Required</option>
+              <option value="managed" data-i18n="web.permission_managed">Managed</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label style="font-size:11px" data-i18n="web.automation_mode_label">Automation</label>
+            <select class="form-input" id="websiteAutomationMode" onchange="updateWebsitePermissions()" style="font-size:12.5px">
+              <option value="manual" data-i18n="web.automation_manual">Manual (I approve everything)</option>
+              <option value="automatic" data-i18n="web.automation_automatic">Automatic (low-risk changes only)</option>
+            </select>
+          </div>
+        </div>
+
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn-secondary" onclick="verifyWebsiteConnection()" id="websiteRefreshBtn" data-i18n="web.refresh">Refresh</button>
           <button class="btn-secondary" onclick="disconnectWebsite()" style="color:#ef4444" data-i18n="web.disconnect">Disconnect</button>
@@ -1618,6 +1642,19 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <button class="btn-primary" onclick="generateWebsiteIntelligence()" id="websiteGenerateBtn" data-i18n="web.generate_button">Analyze Website</button>
         </div>
         <div id="websiteIntelligenceContent"></div>
+      </div>
+
+      <!-- PROPOSED CHANGES — the approval workflow. Preview, Approve,
+           Reject, Edit, per the spec's explicit requirement; nothing here
+           is ever executed against the live site yet (Increment 3) — the
+           UI is honest about that on every approved item rather than
+           implying a change has gone live. -->
+      <div id="websiteActionsSection" style="display:none;margin-top:28px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.proposed_changes_title">Proposed Changes</div>
+          <button class="btn-primary" onclick="generateSeoProposals()" id="websiteSeoProposalsBtn" data-i18n="web.find_seo_improvements">Find SEO Improvements</button>
+        </div>
+        <div id="websiteActionsContent"></div>
       </div>
 
     </div>
@@ -6693,6 +6730,9 @@ function renderWebsiteStatusCard(connection) {
   badge.style.color = style.color;
   badge.style.background = style.bg;
 
+  document.getElementById('websitePermissionLevel').value = connection.permission_level || 'read_only';
+  document.getElementById('websiteAutomationMode').value = connection.automation_mode || 'manual';
+
   const errEl = document.getElementById('websiteStatusError');
   if (connection.last_error && ['error', 'needs_attention', 'auth_expired'].includes(connection.connection_status)) {
     errEl.textContent = connection.last_error;
@@ -6724,14 +6764,17 @@ async function loadWebsiteSection() {
       document.getElementById('websiteEmptyState').style.display = 'block';
       document.getElementById('websiteStatusCard').style.display = 'none';
       document.getElementById('websiteIntelligenceSection').style.display = 'none';
+      document.getElementById('websiteActionsSection').style.display = 'none';
       return;
     }
 
     document.getElementById('websiteEmptyState').style.display = 'none';
     document.getElementById('websiteStatusCard').style.display = 'block';
     document.getElementById('websiteIntelligenceSection').style.display = 'block';
+    document.getElementById('websiteActionsSection').style.display = 'block';
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
+    loadWebsiteActions();
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
@@ -6899,6 +6942,161 @@ function renderWebsiteIntelligenceContent(intelligence, generatedAt) {
 
     ${intelligence.data_limitations_note ? `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">${escapeHtml(intelligence.data_limitations_note)}</div>` : ''}
   `;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 8 / INCREMENT 2 — Permissions & Approval Workflow
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function updateWebsitePermissions() {
+  const permissionLevel = document.getElementById('websitePermissionLevel').value;
+  const automationMode = document.getElementById('websiteAutomationMode').value;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/permissions`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissionLevel, automationMode })
+    });
+    if (res.ok) showToast(t('toast.saved'), 'success');
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+async function loadWebsiteActions() {
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/actions`);
+    const data = await res.json();
+    renderWebsiteActionsContent(data.actions || []);
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+const WEBSITE_ACTION_TYPE_LABELS = { update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description' };
+
+// Renders each proposal with its real previous value alongside the AI's
+// suggestion (spec's explicit CURRENT/PROPOSED preview format), an
+// editable field pre-filled with the suggestion so approving and editing
+// are the same flow rather than two separate modes, and an honest
+// "Approved — not yet published" state for anything already reviewed —
+// nothing here is ever executed against the live site yet (Increment 3),
+// and the UI says so rather than implying otherwise.
+function renderWebsiteActionsContent(actions) {
+  const contentEl = document.getElementById('websiteActionsContent');
+  const pending = actions.filter(a => a.approval_status === 'pending');
+  const reviewed = actions.filter(a => a.approval_status !== 'pending');
+
+  if (!actions.length) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px" data-i18n="web.no_proposals_yet">No proposed changes yet — click Find SEO Improvements to check for opportunities.</div>`;
+    return;
+  }
+
+  const renderProposedValue = (change) => {
+    if (change.title) return `<div><span style="color:var(--muted)">${t('web.field_title')}:</span> ${escapeHtml(change.title)}</div>`;
+    if (change.metaDescription) return `<div><span style="color:var(--muted)">${t('web.field_meta_description')}:</span> ${escapeHtml(change.metaDescription)}</div>`;
+    return '';
+  };
+  const renderPreviousValue = (prev, change) => {
+    if (change.title) return escapeHtml(prev.title || t('web.value_none'));
+    if (change.metaDescription) return escapeHtml(prev.metaDescription || t('web.value_none'));
+    return '';
+  };
+  const editFieldFor = (action) => action.proposed_change.title ? 'title' : 'metaDescription';
+
+  const pendingHtml = pending.map(a => `
+    <div style="background:var(--bg3);border-radius:10px;padding:16px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:2px">
+        <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(a.target_title)}</div>
+        <span style="font-size:10px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 8px;border-radius:4px;white-space:nowrap">${t('web.status_pending_review')}</span>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">${t(WEBSITE_ACTION_TYPE_LABELS[a.action_type] || 'web.action_type_title')}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:2px">${t('web.current_value')}</div>
+      <div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">${renderPreviousValue(a.previous_state, a.proposed_change)}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:2px">${t('web.proposed_value')}</div>
+      <input type="text" class="form-input" id="editField-${a.id}" data-original="${escapeHtml(a.proposed_change.title || a.proposed_change.metaDescription || '')}" value="${escapeHtml(a.proposed_change.title || a.proposed_change.metaDescription || '')}" style="font-size:12.5px;margin-bottom:8px">
+      ${a.reasoning ? `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:10px">${escapeHtml(a.reasoning)}</div>` : ''}
+      <div style="display:flex;gap:8px">
+        <button class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="approveWebsiteAction('${a.id}', '${editFieldFor(a)}')" data-i18n="web.approve">Approve</button>
+        <button class="btn-secondary" style="font-size:12px;padding:6px 14px;color:#ef4444" onclick="rejectWebsiteAction('${a.id}')" data-i18n="web.reject">Reject</button>
+      </div>
+    </div>`).join('');
+
+  const reviewedHtml = reviewed.length ? `
+    <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin:18px 0 8px" data-i18n="web.reviewed_title">Reviewed</div>
+    ${reviewed.map(a => {
+      const isApproved = a.approval_status === 'approved';
+      return `<div style="background:var(--bg3);border-radius:10px;padding:12px 16px;margin-bottom:8px;opacity:.75">
+        <div style="display:flex;justify-content:space-between;gap:10px">
+          <div style="font-size:12.5px;color:var(--text)">${escapeHtml(a.target_title)}</div>
+          <span style="font-size:9.5px;font-weight:700;color:${isApproved ? 'var(--green)' : '#ef4444'};white-space:nowrap">${isApproved ? t('web.status_approved_not_published') : t('web.status_rejected')}</span>
+        </div>
+      </div>`;
+    }).join('')}` : '';
+
+  contentEl.innerHTML = pendingHtml + reviewedHtml;
+}
+
+async function approveWebsiteAction(actionId, field) {
+  const inputEl = document.getElementById(`editField-${actionId}`);
+  const currentValue = inputEl ? inputEl.value.trim() : null;
+  const originalValue = inputEl ? inputEl.dataset.original : null;
+  // Only send editedChange if the person genuinely changed the text from
+  // what was actually proposed — otherwise the original AI proposal is
+  // approved as-is, and the audit trail correctly reflects that.
+  const wasEdited = currentValue && currentValue !== originalValue;
+  const editedChange = wasEdited ? { [field]: currentValue } : null;
+
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/actions/${actionId}/approve`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ editedChange })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showToast(t('web.approved_toast'), 'success');
+      loadWebsiteActions();
+    } else {
+      showToast(data.error || t('board.connection_error'), 'error');
+    }
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+async function rejectWebsiteAction(actionId) {
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/actions/${actionId}/reject`, { method: 'POST' });
+    if (res.ok) loadWebsiteActions();
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+async function generateSeoProposals() {
+  const btn = document.getElementById('websiteSeoProposalsBtn');
+  btn.disabled = true;
+  btn.textContent = t('web.finding_improvements');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/seo-proposals`, { method: 'POST' });
+    const data = await res.json();
+    if (res.ok) {
+      if (data.proposals && data.proposals.length) {
+        showToast(t('web.proposals_found_toast').replace('{n}', data.proposals.length), 'success');
+      } else {
+        showToast(data.message || t('web.no_proposals_found_toast'), 'success');
+      }
+      loadWebsiteActions();
+    } else {
+      showToast(data.error || t('board.connection_error'), 'error');
+    }
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.find_seo_improvements');
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => { init(); });
