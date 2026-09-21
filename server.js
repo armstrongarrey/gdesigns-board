@@ -65,6 +65,35 @@ const pool = new Pool({
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET || 'arreyon-jwt-secret-2026';
+
+// ── Credential encryption (Phase 8 / Website Intelligence) ─────────────────
+// A WordPress Application Password is a long-lived, static credential —
+// closer to a raw API key than the short-lived, provider-revocable OAuth
+// tokens used for Google/HubSpot/Zoho — so it's genuinely encrypted at
+// rest here (AES-256-GCM, authenticated so tampering is detected, not
+// just confidentiality), rather than relying on database access control
+// alone. CREDENTIAL_ENCRYPTION_KEY must be set in production; the
+// fallback below is for local development only.
+const CREDENTIAL_ENCRYPTION_KEY = crypto.scryptSync(
+  process.env.CREDENTIAL_ENCRYPTION_KEY || 'dev-only-fallback-key-set-CREDENTIAL_ENCRYPTION_KEY-in-production',
+  'arreyon-credential-salt', 32
+);
+function encryptSecret(plaintext) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', CREDENTIAL_ENCRYPTION_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return Buffer.concat([iv, authTag, encrypted]).toString('base64');
+}
+function decryptSecret(encoded) {
+  const data = Buffer.from(encoded, 'base64');
+  const iv = data.subarray(0, 12);
+  const authTag = data.subarray(12, 28);
+  const encrypted = data.subarray(28);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', CREDENTIAL_ENCRYPTION_KEY, iv);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+}
 const GMAIL_USER = 'gdesignsme@gmail.com';
 const GMAIL_PASS = process.env.GMAIL_APP_PASSWORD;
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'info@gdesignsme.com';
@@ -2451,7 +2480,395 @@ app.get('/api/share/:token', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PHASE 9 — REPORTS + ALERTS + OPPORTUNITY RADAR (Step 3: Reports Center)
+// PHASE 8 / INCREMENT 1 — WEBSITE INTELLIGENCE & CONTROL: connection + read-only
+//
+// A website connection belongs to a specific Business Workspace (business_id),
+// not the Arreyon account as a whole — unlike Google/HubSpot/Zoho, which are
+// account-wide OAuth connections. Ownership is checked the same way as every
+// other business-scoped endpoint (tracked_competitors, leads): resolve the
+// account, then confirm the business belongs to it.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Records an event to the audit log — read-only events (connected,
+// intelligence generated) from this increment onward, not just future
+// write actions, so the log has real, useful content from day one rather
+// than sitting empty until execution features exist.
+async function logWebsiteAudit(websiteConnectionId, actorType, actorId, actionType, description, details) {
+  await pool.query(
+    `INSERT INTO website_audit_log (website_connection_id, actor_type, actor_id, action_type, description, details)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [websiteConnectionId, actorType, actorId, actionType, description, JSON.stringify(details || {})]
+  );
+}
+
+// Connect (or reconnect) a WordPress site to a business. Credentials are
+// verified against the real site BEFORE anything is stored — an invalid
+// username/Application Password never gets encrypted and saved.
+app.post('/api/business/:id/website/connect', authRequired, async (req, res) => {
+  const { siteUrl, username, appPassword } = req.body;
+  if (!siteUrl || !siteUrl.trim()) return res.status(400).json({ error: 'Please enter your website URL.' });
+  if (!username || !username.trim()) return res.status(400).json({ error: 'Please enter your WordPress username.' });
+  if (!appPassword || !appPassword.trim()) return res.status(400).json({ error: 'Please enter your Application Password.' });
+
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const trimmedUrl = siteUrl.trim();
+    const trimmedUser = username.trim();
+    const trimmedPass = appPassword.trim();
+
+    // Unauthenticated root call for site metadata — WordPress serves this
+    // without requiring auth, and it doubles as a first check that the
+    // URL actually points at a real, reachable WordPress REST API before
+    // even attempting authenticated verification.
+    let siteName = null, wpVersion = null;
+    try {
+      const rootRes = await wpApiRequest(trimmedUrl, '', '', '/', { timeoutMs: 8000 });
+      if (rootRes.ok) {
+        const rootData = await rootRes.json();
+        siteName = rootData.name || null;
+        // Modern WordPress deliberately omits its version number from this
+        // unauthenticated response (to avoid version-fingerprinting), so
+        // this is honestly always unavailable here, not a real check.
+        wpVersion = null;
+      }
+    } catch (e) {
+      return res.status(400).json({ error: 'Could not reach a WordPress site at that URL. Please check the address and that the site is online.' });
+    }
+
+    // Authenticated verification — confirms the username/Application
+    // Password combination is actually valid, using the least-privilege
+    // read endpoint (the authenticated user's own record) rather than
+    // attempting any write during verification.
+    let verifyRes;
+    try {
+      verifyRes = await wpApiRequest(trimmedUrl, trimmedUser, trimmedPass, '/wp/v2/users/me', { timeoutMs: 10000 });
+    } catch (e) {
+      return res.status(400).json({ error: e.message || 'Could not connect to WordPress. Please check your website URL.' });
+    }
+
+    if (verifyRes.status === 401) {
+      return res.status(400).json({ error: 'WordPress rejected these credentials. Please check your username and Application Password.' });
+    }
+    if (!verifyRes.ok) {
+      return res.status(400).json({ error: `WordPress returned an unexpected error (status ${verifyRes.status}). Please verify your site supports the REST API.` });
+    }
+
+    const encryptedPassword = encryptSecret(trimmedPass);
+
+    // One connection per business for now — an existing row is replaced
+    // rather than left as a duplicate stale entry alongside the new one.
+    const existing = await pool.query('SELECT id FROM website_connections WHERE business_id = $1', [req.params.id]);
+    let connection;
+    if (existing.rows.length) {
+      const updated = await pool.query(
+        `UPDATE website_connections SET site_url = $1, site_name = $2, wp_version = $3, wp_username = $4,
+         wp_app_password_encrypted = $5, connection_status = 'connected', last_verified_at = NOW(),
+         last_error = NULL, connected_at = NOW(), disconnected_at = NULL
+         WHERE id = $6 RETURNING id, site_url, site_name, connection_status, permission_level, automation_mode, connected_at`,
+        [trimmedUrl, siteName, wpVersion, trimmedUser, encryptedPassword, existing.rows[0].id]
+      );
+      connection = updated.rows[0];
+    } else {
+      const inserted = await pool.query(
+        `INSERT INTO website_connections (business_id, site_url, site_name, wp_version, wp_username, wp_app_password_encrypted, connection_status, last_verified_at, connected_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'connected', NOW(), NOW())
+         RETURNING id, site_url, site_name, connection_status, permission_level, automation_mode, connected_at`,
+        [req.params.id, trimmedUrl, siteName, wpVersion, trimmedUser, encryptedPassword]
+      );
+      connection = inserted.rows[0];
+    }
+
+    await logWebsiteAudit(connection.id, 'user', req.userId, 'connected', `Connected WordPress site: ${trimmedUrl}`, { siteUrl: trimmedUrl });
+
+    res.json({ success: true, connection });
+  } catch (e) {
+    console.error('Website connect error:', e.message);
+    res.status(500).json({ error: 'Failed to connect website' });
+  }
+});
+
+// Read connection status — never returns the encrypted password or any
+// decrypted credential to the frontend.
+app.get('/api/business/:id/website', authRequired, async (req, res) => {
+  const lang = req.query.lang === 'fr' ? 'fr' : 'en';
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const result = await pool.query(
+      `SELECT id, site_url, site_name, wp_version, wp_username, connection_status, last_verified_at, last_error,
+       permission_level, automation_mode, connected_at, website_intelligence, website_intelligence_fr,
+       website_intelligence_generated_at
+       FROM website_connections WHERE business_id = $1`,
+      [req.params.id]
+    );
+    const connection = result.rows[0];
+
+    // Same discipline as Business X-Ray and Business Intelligence: translate
+    // ONCE on first French view and cache the result, rather than either
+    // showing stale English or burning a fresh, full re-analysis (which
+    // could also produce a genuinely different set of findings, not just a
+    // different language, since it isn't a translation at that point).
+    if (connection && lang === 'fr') {
+      if (connection.website_intelligence && !connection.website_intelligence_fr) {
+        try {
+          const translated = await translateStructuredContent(connection.website_intelligence, 'website intelligence analysis');
+          await pool.query('UPDATE website_connections SET website_intelligence_fr = $1 WHERE id = $2', [JSON.stringify(translated), connection.id]);
+          connection.website_intelligence_fr = translated;
+        } catch (e) {
+          console.error('Website Intelligence auto-translate failed (non-fatal, falling back to English):', e.message);
+        }
+      }
+      if (connection.website_intelligence_fr) connection.website_intelligence = connection.website_intelligence_fr;
+    }
+    if (connection) delete connection.website_intelligence_fr;
+
+    res.json({ connection: connection || null });
+  } catch (e) {
+    console.error('Get website connection error:', e.message);
+    res.status(500).json({ error: 'Failed to load website connection' });
+  }
+});
+
+// Re-check an existing connection's health without changing credentials —
+// used both by a manual "Refresh" action and could be called from a future
+// monitoring sweep to detect a revoked Application Password before the
+// person notices their site actions silently failing.
+app.post('/api/business/:id/website/verify', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+    const connection = connResult.rows[0];
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    let verifyRes;
+    try {
+      verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/users/me', { timeoutMs: 10000 });
+    } catch (e) {
+      await pool.query(`UPDATE website_connections SET connection_status = 'error', last_error = $1 WHERE id = $2`, [e.message, connection.id]);
+      return res.json({ connection_status: 'error', error: e.message });
+    }
+
+    if (verifyRes.status === 401) {
+      await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired', last_error = 'Credentials no longer valid' WHERE id = $1`, [connection.id]);
+      return res.json({ connection_status: 'auth_expired', error: 'This Application Password is no longer valid — it may have been revoked in WordPress. Please reconnect.' });
+    }
+    if (!verifyRes.ok) {
+      await pool.query(`UPDATE website_connections SET connection_status = 'needs_attention', last_error = $1 WHERE id = $2`, [`WordPress returned status ${verifyRes.status}`, connection.id]);
+      return res.json({ connection_status: 'needs_attention', error: `WordPress returned an unexpected status (${verifyRes.status}).` });
+    }
+
+    await pool.query(`UPDATE website_connections SET connection_status = 'connected', last_verified_at = NOW(), last_error = NULL WHERE id = $1`, [connection.id]);
+    res.json({ connection_status: 'connected' });
+  } catch (e) {
+    console.error('Website verify error:', e.message);
+    res.status(500).json({ error: 'Failed to verify website connection' });
+  }
+});
+
+app.delete('/api/business/:id/website', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT id, site_url FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+
+    await pool.query(`UPDATE website_connections SET connection_status = 'disconnected', disconnected_at = NOW() WHERE id = $1`, [connResult.rows[0].id]);
+    await logWebsiteAudit(connResult.rows[0].id, 'user', req.userId, 'disconnected', `Disconnected WordPress site: ${connResult.rows[0].site_url}`, {});
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Website disconnect error:', e.message);
+    res.status(500).json({ error: 'Failed to disconnect website' });
+  }
+});
+
+// Decodes HTML entities generically (named + numeric/hex) rather than a
+// hand-picked list of specific replacements — WordPress's own "wptexturize"
+// feature automatically converts plain quotes and hyphens into numeric
+// entities (e.g. &#8217;) in its rendered output, so this matters more for
+// WordPress content specifically than for generic page scraping.
+function decodeHtmlEntities(str) {
+  if (!str) return '';
+  const named = {
+    amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+    hellip: '…', mdash: '—', ndash: '–', lsquo: String.fromCharCode(8216), rsquo: String.fromCharCode(8217),
+    ldquo: String.fromCharCode(8220), rdquo: String.fromCharCode(8221), copy: '©', reg: '®', trade: '™'
+  };
+  return str
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&(\w+);/g, (m, name) => named[name] !== undefined ? named[name] : m);
+}
+function wpStripHtml(html) {
+  if (!html) return '';
+  return decodeHtmlEntities(html.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+}
+function wpCountHeadings(html) {
+  const counts = {};
+  for (let level = 1; level <= 6; level++) {
+    const matches = (html || '').match(new RegExp(`<h${level}[ >]`, 'gi'));
+    counts[`h${level}`] = matches ? matches.length : 0;
+  }
+  return counts;
+}
+
+// Fetches pages and posts from a connected WordPress site and reduces each
+// to the fields actually needed for analysis. Meta description is read
+// from Yoast's yoast_head_json field when present — this is NOT
+// guaranteed to exist (it depends entirely on the site having Yoast
+// installed with its REST integration enabled), and is left null rather
+// than assumed whenever it's absent, per the spec's explicit requirement
+// not to pretend data exists that the connected site doesn't actually expose.
+async function fetchWordPressContent(connection, decryptedPassword) {
+  const fetchType = async (type) => {
+    const res = await wpApiRequest(
+      connection.site_url, connection.wp_username, decryptedPassword,
+      `/wp/v2/${type}?per_page=20&status=publish&_fields=id,title,slug,link,excerpt,content,date,yoast_head_json`,
+      { timeoutMs: 15000 }
+    );
+    if (!res.ok) throw new Error(`Could not read ${type} from WordPress (status ${res.status})`);
+    const items = await res.json();
+    return items.map(item => {
+      const rawContent = item.content?.rendered || '';
+      const bodyText = wpStripHtml(rawContent);
+      return {
+        id: item.id,
+        title: decodeHtmlEntities(wpStripHtml(item.title?.rendered || '')),
+        slug: item.slug,
+        url: item.link,
+        wordCount: bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0,
+        headings: wpCountHeadings(rawContent),
+        metaDescription: item.yoast_head_json?.description || null,
+        bodyExcerpt: bodyText.slice(0, 500)
+      };
+    });
+  };
+
+  const [pages, posts] = await Promise.all([fetchType('pages'), fetchType('posts')]);
+  return { pages, posts };
+}
+
+// Generate read-only Website Intelligence — structure, SEO, and content
+// observations. The AI is explicitly instructed to separate "measured"
+// facts (directly present in the fetched page data — word counts, heading
+// presence, meta description presence) from "assessed" judgments (its own
+// opinion on quality) — this is the same observed/inferred discipline
+// already used for business-fact extraction elsewhere in the platform,
+// applied here because the spec is explicit that scores must never be
+// fabricated and measured data must stay visibly distinct from AI opinion.
+app.post('/api/business/:id/website/intelligence', authRequired, async (req, res) => {
+  const language = req.body?.language === 'fr' ? 'fr' : 'en';
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id, name FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+    const connection = connResult.rows[0];
+    if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    let pages, posts;
+    try {
+      ({ pages, posts } = await fetchWordPressContent(connection, decryptedPassword));
+    } catch (e) {
+      if (e.message.includes('401') || e.message.includes('status 401')) {
+        await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
+        return res.status(400).json({ error: 'This Application Password is no longer valid. Please reconnect your website.' });
+      }
+      throw e;
+    }
+
+    if (!pages.length && !posts.length) {
+      return res.status(400).json({ error: 'No published pages or posts were found on this website to analyze.' });
+    }
+
+    const pagesSummary = pages.map(p => `PAGE: "${p.title}" (${p.url})\n  Word count: ${p.wordCount} | Headings: ${JSON.stringify(p.headings)} | Meta description: ${p.metaDescription ? `"${p.metaDescription}"` : 'NOT DETECTED (may not exist, or the connected site may not expose it)'}\n  Excerpt: ${p.bodyExcerpt}`).join('\n\n');
+    const postsSummary = posts.map(p => `POST: "${p.title}" (${p.url}, ${p.date || ''})\n  Word count: ${p.wordCount} | Headings: ${JSON.stringify(p.headings)} | Meta description: ${p.metaDescription ? `"${p.metaDescription}"` : 'NOT DETECTED (may not exist, or the connected site may not expose it)'}\n  Excerpt: ${p.bodyExcerpt}`).join('\n\n');
+
+    const businessName = biz.rows[0].name || 'this business';
+
+    const prompt = `You are a website intelligence analyst reviewing a WordPress site for ${businessName}. You have been given REAL, MEASURED data fetched directly from the site's own content — word counts, heading structure, and meta description presence are all FACTS, not your opinion. Your job is to add ASSESSMENT on top of these facts, and you must keep the two clearly separate.
+
+MEASURED DATA — PAGES (${pages.length} found):
+${pagesSummary || 'None found.'}
+
+MEASURED DATA — POSTS (${posts.length} found):
+${postsSummary || 'None found.'}
+
+CRITICAL RULES:
+- Every issue you list must reference something ACTUALLY PRESENT in the measured data above (a specific page/post, an actual word count, an actual missing meta description) — never invent a page, a number, or an issue not grounded in what's shown.
+- Do NOT invent an overall numeric "website score." Scores are not requested and must not be fabricated.
+- "NOT DETECTED" for a meta description means the site's REST API did not expose one — this could mean it genuinely doesn't have one, OR that the connected site simply doesn't expose that data (e.g. no SEO plugin, or one not integrated with the REST API). State this honestly rather than assuming the description is missing.
+- Thin content threshold: treat under 300 words as a genuine content-depth concern worth flagging; do not flag naturally short pages (e.g. a simple contact page) as broken just for being short.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "structure_summary": "2-3 sentences on what this site actually consists of (page count, post count, general shape) — factual, not evaluative",
+  "seo_issues": [
+    { "page_title": "exact title from the measured data above", "url": "exact url from the measured data", "issue": "specific, concrete issue (e.g. missing meta description, no H1, thin content at N words)", "severity": "high" | "medium" | "low" }
+  ],
+  "content_observations": [
+    { "page_title": "exact title from the measured data", "observation": "one honest, specific observation about this page's content — thin, outdated-sounding, well-developed, etc." }
+  ],
+  "recommendations": [
+    { "title": "short, specific action title", "description": "1-2 sentences on what to do and why", "priority": "high" | "medium" | "low" }
+  ],
+  "data_limitations_note": "one honest sentence on what this analysis could NOT see (e.g. no SEO plugin data was exposed by this site, so on-page meta description completeness could not be fully assessed)"
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the Website Intelligence analysis now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_intelligence', userId: req.userId }, maxTokens: 3000 });
+
+    let intelligence;
+    try {
+      intelligence = extractJSON(raw);
+    } catch (e) {
+      console.error('Website Intelligence JSON parse failed:', e.message, '| Response length:', raw.length);
+      throw new Error('Could not generate Website Intelligence — please try again');
+    }
+    if (!Array.isArray(intelligence.seo_issues) || !Array.isArray(intelligence.recommendations)) {
+      console.error('Website Intelligence missing required arrays');
+      throw new Error('Could not generate Website Intelligence — please try again');
+    }
+
+    // Real, measured counts are stored alongside the AI's assessment —
+    // computed here in code, not asked of the AI, so these specific
+    // numbers can never be a fabrication risk.
+    intelligence.measured = {
+      pageCount: pages.length,
+      postCount: posts.length,
+      pagesWithNoMetaDescription: pages.filter(p => !p.metaDescription).length,
+      postsWithNoMetaDescription: posts.filter(p => !p.metaDescription).length,
+      pagesUnder300Words: pages.filter(p => p.wordCount < 300).length,
+      postsUnder300Words: posts.filter(p => p.wordCount < 300).length
+    };
+
+    await pool.query(
+      `UPDATE website_connections SET website_intelligence = $1, website_intelligence_fr = NULL, website_intelligence_generated_at = NOW() WHERE id = $2`,
+      [JSON.stringify(intelligence), connection.id]
+    );
+
+    await logWebsiteAudit(connection.id, 'ai_agent', null, 'intelligence_generated', `Generated Website Intelligence (${pages.length} pages, ${posts.length} posts analyzed)`, { pageCount: pages.length, postCount: posts.length });
+
+    res.json({ intelligence, generatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('Website Intelligence error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate Website Intelligence. Please try again.' });
+  }
+});
+
+
 // Pulls together what already exists across the platform for one business
 // into a single view — this endpoint generates nothing itself, it only
 // reports on what's already been generated elsewhere, so a business with
@@ -7170,6 +7587,48 @@ function isPrivateIP(ip) {
 }
 
 // Resolve hostname and reject if it points to a private/internal address
+// ── WordPress REST API client (Phase 8 / Website Intelligence) ─────────────
+// Authenticates via HTTP Basic Auth with a WordPress Application Password
+// (base64 of username:app_password) — the native WordPress mechanism since
+// 5.6, requiring no plugin. Reuses assertPublicHost() rather than
+// duplicating SSRF protection: a user-supplied site URL is exactly the
+// kind of input that could otherwise be abused to reach internal
+// infrastructure. Requires HTTPS, since Basic Auth credentials sent over
+// plain HTTP are visible to anyone on the network path.
+function buildWpUrl(siteUrl, endpoint) {
+  const base = siteUrl.trim().replace(/\/+$/, '');
+  return base + '/wp-json' + endpoint;
+}
+
+async function wpApiRequest(siteUrl, username, appPassword, endpoint, options = {}) {
+  const url = buildWpUrl(siteUrl, endpoint);
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'https:') {
+    throw new Error('WordPress connections must use https:// — WordPress Application Passwords are not safe to use over plain http.');
+  }
+  await assertPublicHost(parsed.hostname);
+
+  const authHeader = 'Basic ' + Buffer.from(`${username}:${appPassword}`).toString('base64');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 10000);
+  try {
+    const res = await fetch(url, {
+      method: options.method || 'GET',
+      signal: controller.signal,
+      headers: {
+        'Authorization': authHeader,
+        'Content-Type': 'application/json',
+        'User-Agent': 'ArreyonConsultBot/1.0 (+https://consult.gdesignsme.com)',
+        ...(options.headers || {})
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined
+    });
+    return res;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function assertPublicHost(hostname) {
   if (['localhost', '0.0.0.0'].includes(hostname.toLowerCase())) {
     throw new Error('URLs pointing to local/internal hosts are not allowed');
