@@ -6704,21 +6704,25 @@ async function loadWebsiteBusinesses() {
     const businesses = data.businesses || [];
     const select = document.getElementById('websiteBusinessSelect');
 
-    // The form must always be reachable, even with zero analyzed
-    // businesses — hiding it entirely in that case was the real reason
-    // the Site URL field couldn't be found at all.
     document.getElementById('websiteNoBizPrompt').style.display = 'none';
-    select.parentElement.style.display = 'block';
     document.getElementById('websiteMainWrap').style.display = 'block';
 
     const newBizOption = `<option value="__new__">${t('web.add_new_business_option')}</option>`;
     select.innerHTML = newBizOption + businesses.map(b => `<option value="${b.id}">${escapeHtml(b.name || b.website || 'Untitled business')}</option>`).join('');
 
     if (!businesses.length) {
-      // Nothing to select yet — go straight to the new-business path
-      // rather than defaulting to a business that doesn't exist.
+      // Nothing to select yet — show only the empty state, same as the
+      // existing-business-with-no-connection case below. The dropdown
+      // (and the new-business fields) only appear once "Connect Website"
+      // is actually clicked, not before.
+      currentWebsiteBusinessId = null;
       select.value = '__new__';
-      onWebsiteBusinessSelectChange();
+      select.parentElement.style.display = 'none';
+      document.getElementById('websiteEmptyState').style.display = 'block';
+      document.getElementById('websiteConnectForm').style.display = 'none';
+      document.getElementById('websiteStatusCard').style.display = 'none';
+      document.getElementById('websiteIntelligenceSection').style.display = 'none';
+      document.getElementById('websiteActionsSection').style.display = 'none';
       return;
     }
 
@@ -6728,7 +6732,12 @@ async function loadWebsiteBusinesses() {
     currentWebsiteBusinessId = stillExists ? savedId : businesses[0].id;
     select.value = currentWebsiteBusinessId;
 
-    loadWebsiteSection();
+    // The dropdown is revealed only if this default business already has
+    // a real connection to show — genuinely useful at that point for
+    // switching between businesses. If not, only the empty state shows,
+    // and the dropdown stays hidden until "Connect Website" is clicked.
+    const hasConnection = await loadWebsiteSection();
+    select.parentElement.style.display = hasConnection ? 'block' : 'none';
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
@@ -6738,7 +6747,10 @@ async function loadWebsiteBusinesses() {
 // selected existing business's connection state normally, or switches
 // into the new-business path (a text field for the business name, and
 // the connect form itself shown directly, since there's no existing
-// connection state to check yet).
+// connection state to check yet). Only reachable once the dropdown is
+// already visible, so it never needs to manage the dropdown's own
+// visibility — once shown, it stays shown regardless of which business
+// is picked next.
 function onWebsiteBusinessSelectChange() {
   const select = document.getElementById('websiteBusinessSelect');
   if (select.value === '__new__') {
@@ -6793,7 +6805,7 @@ function renderWebsiteStatusCard(connection) {
 async function loadWebsiteSection() {
   const select = document.getElementById('websiteBusinessSelect');
   currentWebsiteBusinessId = select.value || currentWebsiteBusinessId;
-  if (!currentWebsiteBusinessId || currentWebsiteBusinessId === '__new__') return;
+  if (!currentWebsiteBusinessId || currentWebsiteBusinessId === '__new__') return false;
   try { localStorage.setItem('arreyon_website_business_id', currentWebsiteBusinessId); } catch (e) {}
 
   hideWebsiteConnectForm();
@@ -6809,7 +6821,7 @@ async function loadWebsiteSection() {
       document.getElementById('websiteStatusCard').style.display = 'none';
       document.getElementById('websiteIntelligenceSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
-      return;
+      return false;
     }
 
     document.getElementById('websiteEmptyState').style.display = 'none';
@@ -6819,12 +6831,23 @@ async function loadWebsiteSection() {
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
     loadWebsiteActions();
+    return true;
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
+    return false;
   }
 }
 
+// The only place the dropdown becomes visible from a fully-hidden start —
+// covers both cases correctly: an existing business with no connection
+// yet (select.value is already that business's real id), and the
+// zero-businesses case (select.value is already '__new__' from
+// loadWebsiteBusinesses), so the new-business name field shows exactly
+// when it should without this function needing to know which case it is.
 function showWebsiteConnectForm() {
+  const select = document.getElementById('websiteBusinessSelect');
+  select.parentElement.style.display = 'block';
+  document.getElementById('newBusinessNameGroup').style.display = select.value === '__new__' ? 'block' : 'none';
   document.getElementById('websiteConnectForm').style.display = 'block';
   document.getElementById('websiteEmptyState').style.display = 'none';
   document.getElementById('websiteConnectMsg').style.display = 'none';
