@@ -2700,6 +2700,198 @@ app.get('/api/website-tools/seo-rest-bridge-plugin', (req, res) => {
   res.send(ARREYON_SEO_REST_BRIDGE_PLUGIN);
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Arreyon Connect plugin — the code-based, non-technical-friendly connection
+// path (Option 2). Reuses the same zip-builder helper as the SEO REST
+// Bridge plugin above rather than duplicating that logic.
+// ═══════════════════════════════════════════════════════════════════════════
+const ARREYON_CONNECT_PLUGIN = `<?php
+/**
+ * Plugin Name: Arreyon Connect
+ * Description: Connects this WordPress site to your Arreyon Consult account using a
+ *              short connection code — no need to manually find or paste an
+ *              Application Password. Generates its own Application Password
+ *              internally and sends it to Arreyon on your behalf, once you enter
+ *              the code shown in your Arreyon account.
+ * Version:     1.0.0
+ * Author:      G-DESIGNS LTD / Arreyon Consult
+ * Requires PHP: 7.4
+ *
+ * INSTALLATION
+ * WordPress admin → Plugins → Add New → Upload Plugin → choose this file's
+ * .zip → Install Now → Activate. Then go to Settings → Arreyon Connect.
+ *
+ * WHAT THIS PLUGIN DOES AND DOES NOT DO
+ * It creates one Application Password for whichever WordPress user runs the
+ * connection (must be able to manage_options — typically an Administrator),
+ * and sends that password to Arreyon Consult over HTTPS. It does not read,
+ * modify, or publish anything on this site by itself — all of that happens
+ * later, through Arreyon's own approval workflow, using the credential this
+ * plugin generated.
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+define('ARREYON_CONNECT_API_BASE', 'https://consult.gdesignsme.com');
+define('ARREYON_CONNECT_OPTION_KEY', 'arreyon_connect_status');
+
+add_action('admin_menu', function () {
+    add_options_page(
+        'Arreyon Connect',
+        'Arreyon Connect',
+        'manage_options',
+        'arreyon-connect',
+        'arreyon_connect_render_page'
+    );
+});
+
+function arreyon_connect_render_page() {
+    if (!current_user_can('manage_options')) {
+        wp_die(esc_html__('You do not have permission to access this page.'));
+    }
+
+    $status = get_option(ARREYON_CONNECT_OPTION_KEY, null);
+    $error = isset($_GET['arreyon_error']) ? sanitize_text_field(wp_unslash($_GET['arreyon_error'])) : null;
+    ?>
+    <div class="wrap">
+        <h1>Arreyon Connect</h1>
+
+        <?php if ($error): ?>
+            <div class="notice notice-error"><p><?php echo esc_html($error); ?></p></div>
+        <?php endif; ?>
+
+        <?php if ($status && !empty($status['connected'])): ?>
+            <div class="notice notice-success">
+                <p>
+                    🎉 <strong><?php echo esc_html($status['business_name'] ?: 'Your business'); ?></strong> is connected.<br>
+                    Website: <?php echo esc_html(wp_parse_url(home_url(), PHP_URL_HOST)); ?><br>
+                    Status: Connected<br>
+                    WordPress: Detected<br>
+                    Access: Read &amp; Analyze
+                </p>
+            </div>
+            <p>To connect a different Arreyon account or business, enter a new connection code below.</p>
+        <?php else: ?>
+            <p>Install this plugin, then enter the connection code shown in your Arreyon Consult account to link this website — no need to find or copy any password yourself.</p>
+        <?php endif; ?>
+
+        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+            <?php wp_nonce_field('arreyon_connect_action', 'arreyon_connect_nonce'); ?>
+            <input type="hidden" name="action" value="arreyon_connect">
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><label for="arreyon_code">Connection Code</label></th>
+                    <td>
+                        <input type="text" id="arreyon_code" name="arreyon_code" class="regular-text" placeholder="ARREYON-XXXX-XXXX" required>
+                        <p class="description">Shown in Arreyon Consult under Website → Connect Website.</p>
+                    </td>
+                </tr>
+            </table>
+            <?php submit_button('Connect to Arreyon'); ?>
+        </form>
+    </div>
+    <?php
+}
+
+add_action('admin_post_arreyon_connect', function () {
+    if (!current_user_can('manage_options')) {
+        wp_die(esc_html__('You do not have permission to do this.'));
+    }
+    check_admin_referer('arreyon_connect_action', 'arreyon_connect_nonce');
+
+    $redirect_base = admin_url('options-general.php?page=arreyon-connect');
+    $code = isset($_POST['arreyon_code']) ? sanitize_text_field(wp_unslash($_POST['arreyon_code'])) : '';
+
+    if (empty($code)) {
+        wp_safe_redirect(add_query_arg('arreyon_error', rawurlencode('Please enter a connection code.'), $redirect_base));
+        exit;
+    }
+
+    // Application Passwords require HTTPS by default — checked before
+    // attempting to create one, so the person gets a clear, specific
+    // reason rather than a generic failure if this site doesn't qualify.
+    if (!wp_is_application_passwords_available()) {
+        wp_safe_redirect(add_query_arg('arreyon_error', rawurlencode('Application Passwords are not available on this site — WordPress requires HTTPS for this feature.'), $redirect_base));
+        exit;
+    }
+
+    $user_id = get_current_user_id();
+    $current_user = wp_get_current_user();
+
+    // Include a timestamp in the name so reconnecting later (e.g. after a
+    // previous attempt failed partway through) never collides with an
+    // existing password of the same name, which WordPress rejects.
+    $password_name = 'Arreyon Consult - ' . current_time('Y-m-d H:i:s');
+    $created = WP_Application_Passwords::create_new_application_password($user_id, ['name' => $password_name]);
+
+    if (is_wp_error($created)) {
+        wp_safe_redirect(add_query_arg('arreyon_error', rawurlencode('Could not create an Application Password: ' . $created->get_error_message()), $redirect_base));
+        exit;
+    }
+
+    list($new_password, $new_item) = $created;
+
+    $response = wp_remote_post(ARREYON_CONNECT_API_BASE . '/api/website-connector/register', [
+        'timeout' => 20,
+        'headers' => ['Content-Type' => 'application/json'],
+        'body' => wp_json_encode([
+            'code' => $code,
+            'siteUrl' => home_url(),
+            'username' => $current_user->user_login,
+            'appPassword' => $new_password,
+        ]),
+    ]);
+
+    if (is_wp_error($response)) {
+        // The handshake never reached Arreyon — the password this plugin
+        // just created is orphaned and useless, so it's removed rather
+        // than left behind silently.
+        WP_Application_Passwords::delete_application_password($user_id, $new_item['uuid']);
+        wp_safe_redirect(add_query_arg('arreyon_error', rawurlencode('Could not reach Arreyon Consult: ' . $response->get_error_message()), $redirect_base));
+        exit;
+    }
+
+    $status_code = wp_remote_retrieve_response_code($response);
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+
+    if ($status_code !== 200 || empty($body['success'])) {
+        // Same reasoning — Arreyon rejected the handshake (an invalid or
+        // expired code, for instance), so this side's freshly-created
+        // password is cleaned up rather than left as a dangling,
+        // never-used credential.
+        WP_Application_Passwords::delete_application_password($user_id, $new_item['uuid']);
+        $error_message = !empty($body['error']) ? $body['error'] : 'Arreyon Consult rejected the connection attempt.';
+        wp_safe_redirect(add_query_arg('arreyon_error', rawurlencode($error_message), $redirect_base));
+        exit;
+    }
+
+    update_option(ARREYON_CONNECT_OPTION_KEY, [
+        'connected' => true,
+        'business_name' => !empty($body['businessName']) ? sanitize_text_field($body['businessName']) : null,
+        'connected_at' => current_time('mysql'),
+    ]);
+
+    wp_safe_redirect(add_query_arg('arreyon_connected', '1', $redirect_base));
+    exit;
+});
+`;
+
+app.get('/api/website-tools/arreyon-connect-plugin.zip', (req, res) => {
+  const zipBuf = arreyonBuildSingleFileZip('arreyon-connect/arreyon-connect.php', ARREYON_CONNECT_PLUGIN);
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename="arreyon-connect.zip"');
+  res.send(zipBuf);
+});
+
+app.get('/api/website-tools/arreyon-connect-plugin', (req, res) => {
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'attachment; filename="arreyon-connect.php"');
+  res.send(ARREYON_CONNECT_PLUGIN);
+});
+
+
 // Shared by both the connect endpoint (existing business) and
 // connect-new (a business created on the fly) — the actual WordPress
 // verification and website_connections storage logic is identical either
@@ -2800,6 +2992,110 @@ app.post('/api/business/website/connect-new', authRequired, async (req, res) => 
   } catch (e) {
     console.error('Website connect-new error:', e.message);
     res.status(500).json({ error: 'Failed to connect website' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ARREYON CONNECT PLUGIN — connection-code handshake (Option 2). Arreyon
+// generates a short-lived, single-use code and displays it; the person
+// enters that code into the Arreyon Connect plugin on their own WordPress
+// site, which then reaches OUT to Arreyon (the reverse of the direct
+// credential flow) with a fresh Application Password it generated itself.
+// Excludes visually ambiguous characters (0/O, 1/I/L) since a person needs
+// to type this by hand from one screen into another.
+// ═══════════════════════════════════════════════════════════════════════════
+function generateConnectionCode() {
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const segment = (len) => Array.from({ length: len }, () => chars[crypto.randomInt(chars.length)]).join('');
+  return `ARREYON-${segment(4)}-${segment(4)}`;
+}
+
+async function generateAndStoreConnectionCode(businessId) {
+  // Only one live code per business at a time — expiring any earlier,
+  // still-unused code for this business avoids confusion about which of
+  // several displayed codes is actually still valid.
+  await pool.query(`UPDATE website_connection_codes SET expires_at = NOW() WHERE business_id = $1 AND used_at IS NULL`, [businessId]);
+
+  const code = generateConnectionCode();
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes — long enough to switch tabs and install a plugin, short enough to keep the guessing window small
+  await pool.query(
+    'INSERT INTO website_connection_codes (business_id, code, expires_at) VALUES ($1, $2, $3)',
+    [businessId, code, expiresAt]
+  );
+  return { code, expiresAt };
+}
+
+app.post('/api/business/:id/website/generate-code', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const { code, expiresAt } = await generateAndStoreConnectionCode(req.params.id);
+    res.json({ code, expiresAt });
+  } catch (e) {
+    console.error('Generate connection code error:', e.message);
+    res.status(500).json({ error: 'Failed to generate a connection code' });
+  }
+});
+
+// Same as above, but for a business that hasn't been analyzed yet —
+// creates a minimal business record first (name only, same as
+// connect-new), then generates the code for it.
+app.post('/api/business/website/generate-code-new', authRequired, async (req, res) => {
+  const { businessName } = req.body;
+  if (!businessName || !businessName.trim()) return res.status(400).json({ error: 'Please enter a business name.' });
+
+  try {
+    const account = await resolveAccount(req.userId);
+    const inserted = await pool.query(
+      'INSERT INTO businesses (user_id, name) VALUES ($1, $2) RETURNING id',
+      [account.id, businessName.trim()]
+    );
+    const newBusinessId = inserted.rows[0].id;
+
+    const { code, expiresAt } = await generateAndStoreConnectionCode(newBusinessId);
+    res.json({ code, expiresAt, businessId: newBusinessId });
+  } catch (e) {
+    console.error('Generate connection code (new business) error:', e.message);
+    res.status(500).json({ error: 'Failed to generate a connection code' });
+  }
+});
+
+// Deliberately public — the caller here is the WordPress plugin itself,
+// not an Arreyon-authenticated person, so there is no Arreyon session to
+// check. Security instead rests on the code being short-lived,
+// single-use, and drawn from a large-enough space (30^8 combinations)
+// that guessing one within its 15-minute window is impractical.
+app.post('/api/website-connector/register', async (req, res) => {
+  const { code, siteUrl, username, appPassword } = req.body;
+  if (!code || !siteUrl || !username || !appPassword) {
+    return res.status(400).json({ error: 'Missing required fields.' });
+  }
+
+  try {
+    const codeResult = await pool.query(
+      'SELECT * FROM website_connection_codes WHERE code = $1',
+      [code.trim().toUpperCase()]
+    );
+    if (!codeResult.rows.length) return res.status(400).json({ error: 'This connection code was not recognized. Please generate a new one in Arreyon Consult.' });
+    const codeRow = codeResult.rows[0];
+
+    if (codeRow.used_at) return res.status(400).json({ error: 'This connection code has already been used. Please generate a new one in Arreyon Consult.' });
+    if (new Date(codeRow.expires_at) < new Date()) return res.status(400).json({ error: 'This connection code has expired. Please generate a new one in Arreyon Consult.' });
+
+    const biz = await pool.query('SELECT id, user_id FROM businesses WHERE id = $1', [codeRow.business_id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'The business associated with this code no longer exists.' });
+
+    const result = await connectWordPressSite(codeRow.business_id, siteUrl, username, appPassword, biz.rows[0].user_id);
+    if (!result.ok) return res.status(result.statusCode).json({ error: result.error });
+
+    await pool.query('UPDATE website_connection_codes SET used_at = NOW() WHERE id = $1', [codeRow.id]);
+
+    res.json({ success: true, businessName: (await pool.query('SELECT name FROM businesses WHERE id = $1', [codeRow.business_id])).rows[0]?.name || null });
+  } catch (e) {
+    console.error('Website connector register error:', e.message);
+    res.status(500).json({ error: 'Failed to complete the connection. Please try again.' });
   }
 });
 
