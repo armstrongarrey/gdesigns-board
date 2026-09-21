@@ -2738,13 +2738,25 @@ define('ARREYON_CONNECT_API_BASE', 'https://consult.gdesignsme.com');
 define('ARREYON_CONNECT_OPTION_KEY', 'arreyon_connect_status');
 
 add_action('admin_menu', function () {
-    add_options_page(
+    add_menu_page(
         'Arreyon Connect',
         'Arreyon Connect',
         'manage_options',
         'arreyon-connect',
-        'arreyon_connect_render_page'
+        'arreyon_connect_render_page',
+        'dashicons-admin-links',
+        80
     );
+});
+
+// The standard WordPress convention for plugin discoverability — a
+// "Settings" link right on the plugin's own row (next to
+// Deactivate/Delete) on the Plugins page, so a person doesn't have to
+// already know this menu item exists somewhere in the sidebar to find it.
+add_filter('plugin_action_links_' . plugin_basename(__FILE__), function ($actions) {
+    $settings_link = '<a href="' . esc_url(admin_url('admin.php?page=arreyon-connect')) . '">' . esc_html__('Settings') . '</a>';
+    array_unshift($actions, $settings_link);
+    return $actions;
 });
 
 function arreyon_connect_render_page() {
@@ -2801,7 +2813,7 @@ add_action('admin_post_arreyon_connect', function () {
     }
     check_admin_referer('arreyon_connect_action', 'arreyon_connect_nonce');
 
-    $redirect_base = admin_url('options-general.php?page=arreyon-connect');
+    $redirect_base = admin_url('admin.php?page=arreyon-connect');
     $code = isset($_POST['arreyon_code']) ? sanitize_text_field(wp_unslash($_POST['arreyon_code'])) : '';
 
     if (empty($code)) {
