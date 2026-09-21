@@ -1577,34 +1577,71 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <input type="text" class="form-input" id="wpNewBusinessName" placeholder="e.g. G-DESIGNS Main Website">
         </div>
         <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px" data-i18n="web.connect_form_title">Connect Your WordPress Site</div>
-        <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:8px" data-i18n="web.connect_access_note">Arreyon will be able to read your pages and posts to generate analysis. Nothing on your site is accessed until you connect it below.</div>
-        <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:18px" data-i18n="web.connect_form_desc">Arreyon uses WordPress's own Application Passwords feature — a separate, revocable credential, never your normal admin password. Generate one under Users → Profile → Application Passwords in your WordPress admin.</div>
+        <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:18px" data-i18n="web.connect_access_note">Arreyon will be able to read your pages and posts to generate analysis. Nothing on your site is accessed until you connect it below.</div>
 
-        <div class="form-group" style="margin-bottom:14px">
-          <label data-i18n="web.field_site_url">Website URL</label>
-          <input type="text" class="form-input" id="wpSiteUrl" placeholder="https://yourwebsite.com">
-        </div>
-        <div class="form-group" style="margin-bottom:14px">
-          <label data-i18n="web.field_username">WordPress Username</label>
-          <input type="text" class="form-input" id="wpUsername" placeholder="admin">
-        </div>
-        <div class="form-group" style="margin-bottom:18px">
-          <label data-i18n="web.field_app_password">Application Password</label>
-          <input type="text" class="form-input" id="wpAppPassword" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" style="font-family:monospace">
-        </div>
-        <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:14px">
-          <span data-i18n="web.seo_plugin_note">Note: page/post titles can always be updated. Meta description updates depend on your SEO plugin's own settings.</span>
-          <span data-i18n="web.seo_plugin_download">If those fail after connecting, download the Arreyon SEO REST Bridge plugin below.</span>
-          <br>
-          <a href="/api/website-tools/seo-rest-bridge-plugin.zip" download style="color:var(--purple-light)" data-i18n="web.seo_plugin_download_zip">↓ Download (.zip) — install via WordPress admin: Plugins → Add New → Upload Plugin</a>
-          <br>
-          <a href="/api/website-tools/seo-rest-bridge-plugin" download style="color:var(--muted);font-size:10.5px" data-i18n="web.seo_plugin_download_php">or download the raw file for a developer to install manually (mu-plugins)</a>
+        <!-- Method toggle — Option 1 (paste a credential yourself) vs
+             Option 2 (install a plugin, connect with a short code). -->
+        <div style="display:flex;gap:8px;margin-bottom:18px;background:var(--bg3);border-radius:10px;padding:4px">
+          <button type="button" class="wp-connect-method-btn" id="wpMethodPluginBtn" onclick="switchWebsiteConnectMethod('plugin')" style="flex:1;padding:8px;border:none;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer" data-i18n="web.connect_method_plugin">Arreyon Connect (Recommended)</button>
+          <button type="button" class="wp-connect-method-btn" id="wpMethodSimpleBtn" onclick="switchWebsiteConnectMethod('simple')" style="flex:1;padding:8px;border:none;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer" data-i18n="web.connect_method_simple">Simple Connection</button>
         </div>
 
-        <div id="websiteConnectMsg" style="display:none;font-size:12.5px;margin-bottom:14px"></div>
+        <!-- OPTION 2 — Arreyon Connect plugin, connection-code handshake -->
+        <div id="wpPluginConnectSection">
+          <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:14px" data-i18n="web.connect_plugin_desc">Best for non-technical users. Install the free Arreyon Connect plugin on your WordPress site, then enter the code shown below — no need to find or copy any password yourself.</div>
 
-        <div style="display:flex;gap:10px">
-          <button class="btn-primary" onclick="connectWebsite()" id="websiteConnectBtn" data-i18n="web.connect_submit">Connect</button>
+          <div id="wpPluginCodeGenerateWrap">
+            <button class="btn-primary" onclick="generateWebsiteConnectionCode()" id="wpGenerateCodeBtn" data-i18n="web.generate_code_button">Generate Connection Code</button>
+          </div>
+
+          <div id="wpPluginCodeDisplayWrap" style="display:none">
+            <div style="background:var(--bg3);border-radius:10px;padding:16px;text-align:center;margin-bottom:14px">
+              <div id="wpConnectionCodeText" style="font-size:20px;font-weight:700;color:var(--purple-light);font-family:monospace;letter-spacing:1px;margin-bottom:4px"></div>
+              <div id="wpConnectionCodeExpiry" style="font-size:11px;color:var(--muted)"></div>
+            </div>
+            <ol style="font-size:12.5px;color:var(--text2);line-height:2;margin:0 0 16px;padding-left:20px">
+              <li><a href="/api/website-tools/arreyon-connect-plugin.zip" download style="color:var(--purple-light)" data-i18n="web.connect_step_download">Download the Arreyon Connect plugin</a></li>
+              <li data-i18n="web.connect_step_install">In your WordPress admin: Plugins → Add New → Upload Plugin, choose the file, then Activate</li>
+              <li data-i18n="web.connect_step_navigate">Go to Settings → Arreyon Connect</li>
+              <li data-i18n="web.connect_step_paste">Paste the code shown above and click Connect to Arreyon</li>
+            </ol>
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)">
+              <span id="wpConnectPollingSpinner">⏳</span>
+              <span data-i18n="web.waiting_for_connection">Waiting for the connection from WordPress...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- OPTION 1 — paste an Application Password directly -->
+        <div id="wpSimpleConnectSection" style="display:none">
+          <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:18px" data-i18n="web.connect_form_desc">Arreyon uses WordPress's own Application Passwords feature — a separate, revocable credential, never your normal admin password. Generate one under Users → Profile → Application Passwords in your WordPress admin.</div>
+
+          <div class="form-group" style="margin-bottom:14px">
+            <label data-i18n="web.field_site_url">Website URL</label>
+            <input type="text" class="form-input" id="wpSiteUrl" placeholder="https://yourwebsite.com">
+          </div>
+          <div class="form-group" style="margin-bottom:14px">
+            <label data-i18n="web.field_username">WordPress Username</label>
+            <input type="text" class="form-input" id="wpUsername" placeholder="admin">
+          </div>
+          <div class="form-group" style="margin-bottom:18px">
+            <label data-i18n="web.field_app_password">Application Password</label>
+            <input type="text" class="form-input" id="wpAppPassword" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" style="font-family:monospace">
+          </div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:14px">
+            <span data-i18n="web.seo_plugin_note">Note: page/post titles can always be updated. Meta description updates depend on your SEO plugin's own settings.</span>
+            <span data-i18n="web.seo_plugin_download">If those fail after connecting, download the Arreyon SEO REST Bridge plugin below.</span>
+            <br>
+            <a href="/api/website-tools/seo-rest-bridge-plugin.zip" download style="color:var(--purple-light)" data-i18n="web.seo_plugin_download_zip">↓ Download (.zip) — install via WordPress admin: Plugins → Add New → Upload Plugin</a>
+            <br>
+            <a href="/api/website-tools/seo-rest-bridge-plugin" download style="color:var(--muted);font-size:10.5px" data-i18n="web.seo_plugin_download_php">or download the raw file for a developer to install manually (mu-plugins)</a>
+          </div>
+
+          <div id="websiteConnectMsg" style="display:none;font-size:12.5px;margin-bottom:14px"></div>
+
+          <div style="display:flex;gap:10px">
+            <button class="btn-primary" onclick="connectWebsite()" id="websiteConnectBtn" data-i18n="web.connect_submit">Connect</button>
+          </div>
         </div>
       </div>
 
@@ -6761,6 +6798,7 @@ function onWebsiteBusinessSelectChange() {
     document.getElementById('websiteStatusCard').style.display = 'none';
     document.getElementById('websiteIntelligenceSection').style.display = 'none';
     document.getElementById('websiteActionsSection').style.display = 'none';
+    resetWebsiteConnectForm();
     return;
   }
   document.getElementById('newBusinessNameGroup').style.display = 'none';
@@ -6851,10 +6889,140 @@ function showWebsiteConnectForm() {
   document.getElementById('websiteConnectForm').style.display = 'block';
   document.getElementById('websiteEmptyState').style.display = 'none';
   document.getElementById('websiteConnectMsg').style.display = 'none';
+  resetWebsiteConnectForm();
 }
 function hideWebsiteConnectForm() {
   const form = document.getElementById('websiteConnectForm');
   if (form) form.style.display = 'none';
+}
+
+// Called whenever the connect form is freshly shown for a (possibly new)
+// business context — defaults to the recommended plugin method, and
+// clears any code/polling state left over from a previous business, so
+// switching businesses never shows a stale code or keeps checking the
+// wrong business's connection status in the background.
+function resetWebsiteConnectForm() {
+  stopWebsiteCodePolling();
+  websiteCodeExpiresAt = null;
+  document.getElementById('wpPluginCodeGenerateWrap').style.display = 'block';
+  document.getElementById('wpPluginCodeDisplayWrap').style.display = 'none';
+  const generateBtn = document.getElementById('wpGenerateCodeBtn');
+  generateBtn.disabled = false;
+  generateBtn.textContent = t('web.generate_code_button');
+  switchWebsiteConnectMethod('plugin');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Arreyon Connect plugin — connection-code path (Option 2)
+// ═══════════════════════════════════════════════════════════════════════════
+let websiteCodePollInterval = null;
+let websiteCodeExpiresAt = null;
+
+function stopWebsiteCodePolling() {
+  if (websiteCodePollInterval) {
+    clearInterval(websiteCodePollInterval);
+    websiteCodePollInterval = null;
+  }
+}
+
+function switchWebsiteConnectMethod(method) {
+  const pluginBtn = document.getElementById('wpMethodPluginBtn');
+  const simpleBtn = document.getElementById('wpMethodSimpleBtn');
+  const pluginSection = document.getElementById('wpPluginConnectSection');
+  const simpleSection = document.getElementById('wpSimpleConnectSection');
+
+  pluginBtn.style.background = method === 'plugin' ? 'var(--purple)' : 'transparent';
+  pluginBtn.style.color = method === 'plugin' ? '#fff' : 'var(--text2)';
+  simpleBtn.style.background = method === 'simple' ? 'var(--purple)' : 'transparent';
+  simpleBtn.style.color = method === 'simple' ? '#fff' : 'var(--text2)';
+  pluginSection.style.display = method === 'plugin' ? 'block' : 'none';
+  simpleSection.style.display = method === 'simple' ? 'block' : 'none';
+
+  // Polling is only relevant while the plugin section is visible — leaving
+  // it running after switching away would waste requests checking a
+  // connection the person may not even be trying to complete anymore.
+  if (method !== 'plugin') stopWebsiteCodePolling();
+}
+
+async function generateWebsiteConnectionCode() {
+  const isNewBusiness = !currentWebsiteBusinessId;
+  const newBusinessName = document.getElementById('wpNewBusinessName').value.trim();
+  const btn = document.getElementById('wpGenerateCodeBtn');
+
+  if (isNewBusiness && !newBusinessName) {
+    showToast(t('web.error_missing_business_name'), 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = t('web.generating_code');
+
+  try {
+    const url = isNewBusiness ? '/api/business/website/generate-code-new' : `/api/business/${currentWebsiteBusinessId}/website/generate-code`;
+    const body = isNewBusiness ? { businessName: newBusinessName } : {};
+    const res = await fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+
+    if (isNewBusiness && data.businessId) {
+      currentWebsiteBusinessId = data.businessId;
+      try { localStorage.setItem('arreyon_website_business_id', data.businessId); } catch (e) {}
+    }
+
+    websiteCodeExpiresAt = new Date(data.expiresAt);
+    document.getElementById('wpConnectionCodeText').textContent = data.code;
+    document.getElementById('wpPluginCodeGenerateWrap').style.display = 'none';
+    document.getElementById('wpPluginCodeDisplayWrap').style.display = 'block';
+    updateWebsiteCodeExpiryText();
+
+    stopWebsiteCodePolling();
+    websiteCodePollInterval = setInterval(checkWebsiteCodeConnectionProgress, 4000);
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.generate_code_button');
+  }
+}
+
+function updateWebsiteCodeExpiryText() {
+  const el = document.getElementById('wpConnectionCodeExpiry');
+  if (!el || !websiteCodeExpiresAt) return;
+  const msLeft = websiteCodeExpiresAt - Date.now();
+  if (msLeft <= 0) {
+    el.textContent = t('web.code_expired');
+    stopWebsiteCodePolling();
+    return;
+  }
+  el.textContent = t('web.code_expires_in').replace('{n}', Math.ceil(msLeft / 60000));
+}
+
+// Polls the SAME endpoint the rest of the page already uses to read
+// connection status — no separate "code status" endpoint needed, since a
+// completed handshake shows up there the moment it happens.
+async function checkWebsiteCodeConnectionProgress() {
+  if (!currentWebsiteBusinessId) return;
+  updateWebsiteCodeExpiryText();
+  if (websiteCodeExpiresAt && Date.now() > websiteCodeExpiresAt) return; // updateWebsiteCodeExpiryText already stopped polling
+
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website?lang=${window.currentLang || 'en'}`);
+    const data = await res.json();
+    if (data.connection && data.connection.connection_status !== 'disconnected') {
+      stopWebsiteCodePolling();
+      showToast(t('web.connected_success'), 'success');
+      loadWebsiteBusinesses();
+    }
+  } catch (e) {
+    // Silent — a single failed poll isn't worth interrupting the person
+    // with a toast; the next interval tick tries again automatically.
+  }
 }
 
 async function connectWebsite() {
