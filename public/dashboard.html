@@ -1557,18 +1557,10 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
     <div id="websiteMainWrap" style="display:none;max-width:700px">
 
-      <!-- EMPTY STATE — spec section 25: explicit about what Arreyon will
-           access, and never implies access before the user actually connects. -->
-      <div id="websiteEmptyState" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:28px;text-align:center;margin-bottom:20px">
-        <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:8px" data-i18n="web.connect_title">Connect Your Website</div>
-        <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:8px;max-width:480px;margin-left:auto;margin-right:auto" data-i18n="web.connect_desc">Connect your website to Arreyon so your AI business team can analyze, monitor and help improve your digital presence.</div>
-        <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:18px;max-width:480px;margin-left:auto;margin-right:auto" data-i18n="web.connect_access_note">Arreyon will be able to read your pages and posts to generate analysis. Nothing on your site is accessed until you connect it below.</div>
-        <button class="btn-primary" onclick="showWebsiteConnectForm()" data-i18n="web.connect_button">Connect Website</button>
-      </div>
-
       <!-- CONNECTION FORM — WordPress Application Passwords, not the admin login password. -->
       <div id="websiteConnectForm" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:20px">
         <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px" data-i18n="web.connect_form_title">Connect Your WordPress Site</div>
+        <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:8px" data-i18n="web.connect_access_note">Arreyon will be able to read your pages and posts to generate analysis. Nothing on your site is accessed until you connect it below.</div>
         <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:18px" data-i18n="web.connect_form_desc">Arreyon uses WordPress's own Application Passwords feature — a separate, revocable credential, never your normal admin password. Generate one under Users → Profile → Application Passwords in your WordPress admin.</div>
 
         <div class="form-group" style="margin-bottom:14px">
@@ -1583,12 +1575,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <label data-i18n="web.field_app_password">Application Password</label>
           <input type="text" class="form-input" id="wpAppPassword" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" style="font-family:monospace">
         </div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:14px" data-i18n="web.seo_plugin_note">Note: page/post titles can always be updated. Meta description updates depend on your SEO plugin's own settings — if these fail verification after connecting, ask your developer about the Arreyon SEO REST Bridge plugin.</div>
 
         <div id="websiteConnectMsg" style="display:none;font-size:12.5px;margin-bottom:14px"></div>
 
         <div style="display:flex;gap:10px">
           <button class="btn-primary" onclick="connectWebsite()" id="websiteConnectBtn" data-i18n="web.connect_submit">Connect</button>
-          <button class="btn-secondary" onclick="hideWebsiteConnectForm()" data-i18n="web.cancel">Cancel</button>
         </div>
       </div>
 
@@ -6753,22 +6745,23 @@ async function loadWebsiteSection() {
   if (!currentWebsiteBusinessId) return;
   try { localStorage.setItem('arreyon_website_business_id', currentWebsiteBusinessId); } catch (e) {}
 
-  hideWebsiteConnectForm();
-
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website?lang=${window.currentLang || 'en'}`);
     const data = await res.json();
     const connection = data.connection;
 
     if (!connection || connection.connection_status === 'disconnected') {
-      document.getElementById('websiteEmptyState').style.display = 'block';
+      // Show the actual connection form directly — no extra click required
+      // to reveal the Site URL field, which was easy to miss when it sat
+      // behind a "Connect Website" button on its own separate screen.
+      document.getElementById('websiteConnectForm').style.display = 'block';
       document.getElementById('websiteStatusCard').style.display = 'none';
       document.getElementById('websiteIntelligenceSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return;
     }
 
-    document.getElementById('websiteEmptyState').style.display = 'none';
+    hideWebsiteConnectForm();
     document.getElementById('websiteStatusCard').style.display = 'block';
     document.getElementById('websiteIntelligenceSection').style.display = 'block';
     document.getElementById('websiteActionsSection').style.display = 'block';
@@ -6780,11 +6773,6 @@ async function loadWebsiteSection() {
   }
 }
 
-function showWebsiteConnectForm() {
-  document.getElementById('websiteConnectForm').style.display = 'block';
-  document.getElementById('websiteEmptyState').style.display = 'none';
-  document.getElementById('websiteConnectMsg').style.display = 'none';
-}
 function hideWebsiteConnectForm() {
   const form = document.getElementById('websiteConnectForm');
   if (form) form.style.display = 'none';
