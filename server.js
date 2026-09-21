@@ -3455,14 +3455,29 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
       if (!res.ok) {
         return { executed: false, verified: false, error: `WordPress rejected the update (status ${res.status}).` };
       }
-      const verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?_fields=yoast_head_json`, { timeoutMs: 10000 });
+      // context=edit is required to see the raw `meta` object — without
+      // it WordPress only returns the rendered/derived fields. Checking
+      // BOTH the raw meta value and Yoast's own derived output tells
+      // apart two genuinely different problems: if raw meta updated but
+      // the derived value didn't, the write itself worked and Yoast's
+      // cached "indexable" record just hasn't caught up yet — not
+      // something the SEO Bridge plugin can be missing, since that
+      // plugin's whole job is exactly the write that DID succeed here.
+      const verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?_fields=yoast_head_json,meta&context=edit`, { timeoutMs: 10000 });
       if (!verifyRes.ok) return { executed: true, verified: false, error: 'The update was sent, but verification could not confirm it — please check the page manually.' };
       const verifyData = await verifyRes.json();
-      const actualDescription = verifyData.yoast_head_json?.description || null;
-      if (actualDescription !== change.metaDescription) {
-        return { executed: true, verified: false, error: 'The update was sent and WordPress accepted it, but the meta description on the live page did not change. This WordPress site\'s SEO plugin does not allow meta description updates via the API by default — go to the Website page and download the "Arreyon SEO REST Bridge" plugin, then install it on this site to fix this.' };
+      const derivedDescription = verifyData.yoast_head_json?.description || null;
+      const rawMetaDescription = verifyData.meta?._yoast_wpseo_metadesc || null;
+
+      if (derivedDescription === change.metaDescription) {
+        return { executed: true, verified: true };
       }
-      return { executed: true, verified: true };
+      if (rawMetaDescription === change.metaDescription) {
+        // The write genuinely succeeded — this is Yoast's own cache
+        // lagging, not a permissions problem the SEO Bridge plugin fixes.
+        return { executed: true, verified: false, error: 'The update was saved correctly (confirmed in WordPress\'s raw data), but the live page\'s rendered meta description has not caught up yet. This is a known Yoast SEO caching behavior, not a permissions problem — installing the SEO Bridge plugin will not help here. Try refreshing the page directly in a browser, or wait a few minutes and check again; the underlying data is correct.' };
+      }
+      return { executed: true, verified: false, error: 'The update was sent and WordPress accepted it, but the meta description on the live page did not change. This WordPress site\'s SEO plugin does not allow meta description updates via the API by default — go to the Website page and download the "Arreyon SEO REST Bridge" plugin, then install AND ACTIVATE it on this site (installing alone is not enough — it must show "Active" on the Plugins page) to fix this.' };
     }
 
     return { executed: false, verified: false, error: 'This proposed change has no recognized field to update.' };
