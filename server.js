@@ -3544,18 +3544,25 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   "data_limitations_note": "one honest sentence on what this analysis could NOT see (e.g. no SEO plugin data was exposed by this site, so on-page meta description completeness could not be fully assessed)"
 }`;
 
-    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the Website Intelligence analysis now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_intelligence', userId: req.userId }, maxTokens: 3000 });
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the Website Intelligence analysis now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_intelligence', userId: req.userId }, maxTokens: 6000 });
 
     let intelligence;
     try {
       intelligence = extractJSON(raw);
     } catch (e) {
-      console.error('Website Intelligence JSON parse failed:', e.message, '| Response length:', raw.length);
-      throw new Error('Could not generate Website Intelligence — please try again');
+      // A cut-off response (the AI's JSON stopping mid-structure, most
+      // likely from running out of the token budget on a site with many
+      // pages/posts) looks very different from genuinely malformed JSON —
+      // this distinction is real, useful evidence rather than a guess,
+      // and is included directly so a repeat failure doesn't need another
+      // round of blind troubleshooting.
+      const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```');
+      console.error('Website Intelligence JSON parse failed:', e.message, '| Response length:', raw.length, '| Looks truncated:', looksTruncated);
+      throw new Error(`Could not generate Website Intelligence — the AI's response could not be read as valid data${looksTruncated ? ' (it appears to have been cut off before finishing, likely because this site has more pages/posts than fit in the response — please try again, or try a business with fewer connected pages)' : ' (please try again)'}.`);
     }
     if (!Array.isArray(intelligence.seo_issues) || !Array.isArray(intelligence.recommendations)) {
-      console.error('Website Intelligence missing required arrays');
-      throw new Error('Could not generate Website Intelligence — please try again');
+      console.error('Website Intelligence missing required arrays. Keys present:', Object.keys(intelligence));
+      throw new Error(`Could not generate Website Intelligence — the response was missing required data (got: ${Object.keys(intelligence).join(', ') || 'nothing'}). Please try again.`);
     }
 
     // Real, measured counts are stored alongside the AI's assessment —
@@ -3660,16 +3667,17 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   ]
 }`;
 
-    const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the SEO proposals now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_seo_proposals', userId: req.userId }, maxTokens: 3000 });
+    const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the SEO proposals now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_seo_proposals', userId: req.userId }, maxTokens: 4000 });
 
     let result;
     try {
       result = extractJSON(raw);
     } catch (e) {
-      console.error('SEO proposals JSON parse failed:', e.message);
-      throw new Error('Could not generate SEO proposals — please try again');
+      const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```');
+      console.error('SEO proposals JSON parse failed:', e.message, '| Response length:', raw.length, '| Looks truncated:', looksTruncated);
+      throw new Error(`Could not generate SEO proposals — the AI's response could not be read as valid data${looksTruncated ? ' (it appears to have been cut off before finishing — please try again)' : ' (please try again)'}.`);
     }
-    if (!Array.isArray(result.proposals)) throw new Error('Could not generate SEO proposals — please try again');
+    if (!Array.isArray(result.proposals)) throw new Error(`Could not generate SEO proposals — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
 
     // Explicit risk classification, not an assumption — both current
     // action types are non-destructive text changes. A future action type
