@@ -2674,6 +2674,50 @@ app.post('/api/business/:id/website/verify', authRequired, async (req, res) => {
   }
 });
 
+// Lets the person set the permission tier and automation switch for their
+// connection (spec Section 4). Whitelisted rather than accepting any
+// string — an invalid value here would otherwise be silently stored and
+// could produce unpredictable behavior wherever it's later checked.
+const VALID_PERMISSION_LEVELS = ['read_only', 'draft', 'approval_required', 'managed'];
+const VALID_AUTOMATION_MODES = ['manual', 'automatic'];
+app.put('/api/business/:id/website/permissions', authRequired, async (req, res) => {
+  const { permissionLevel, automationMode } = req.body;
+  if (permissionLevel && !VALID_PERMISSION_LEVELS.includes(permissionLevel)) {
+    return res.status(400).json({ error: 'Invalid permission level' });
+  }
+  if (automationMode && !VALID_AUTOMATION_MODES.includes(automationMode)) {
+    return res.status(400).json({ error: 'Invalid automation mode' });
+  }
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT id, permission_level, automation_mode FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+    const connection = connResult.rows[0];
+
+    const newPermissionLevel = permissionLevel || connection.permission_level;
+    const newAutomationMode = automationMode || connection.automation_mode;
+
+    await pool.query(
+      'UPDATE website_connections SET permission_level = $1, automation_mode = $2 WHERE id = $3',
+      [newPermissionLevel, newAutomationMode, connection.id]
+    );
+
+    if (newPermissionLevel !== connection.permission_level || newAutomationMode !== connection.automation_mode) {
+      await logWebsiteAudit(connection.id, 'user', req.userId, 'permissions_changed',
+        `Permission level set to "${newPermissionLevel}", automation mode set to "${newAutomationMode}"`,
+        { previousPermissionLevel: connection.permission_level, newPermissionLevel, previousAutomationMode: connection.automation_mode, newAutomationMode });
+    }
+
+    res.json({ success: true, permissionLevel: newPermissionLevel, automationMode: newAutomationMode });
+  } catch (e) {
+    console.error('Website permissions update error:', e.message);
+    res.status(500).json({ error: 'Failed to update permissions' });
+  }
+});
+
 app.delete('/api/business/:id/website', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
@@ -2865,6 +2909,204 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   } catch (err) {
     console.error('Website Intelligence error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to generate Website Intelligence. Please try again.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PHASE 8 / INCREMENT 2 — APPROVAL WORKFLOW
+//
+// The SEO Agent's first concrete capability: proposing meta title/description
+// improvements for pages and posts that genuinely have a real, measured gap
+// (missing description, or a generic/weak title) — never inventing an issue
+// that doesn't exist in the actual fetched data. Uses the same real business
+// context (industry, positioning, etc.) other AI features already use,
+// rather than treating the website as an isolated object, per the spec's
+// explicit Business Workspace integration requirement.
+//
+// Proposing a change is allowed at any permission level — it's read-only
+// analysis plus an AI suggestion, nothing is written to WordPress. The
+// permission tier is enforced at APPROVAL time instead (below), since
+// approval is the point where the person is expressing real intent to
+// eventually publish something.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/api/business/:id/website/seo-proposals', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+    const connection = connResult.rows[0];
+    if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    let pages, posts;
+    try {
+      ({ pages, posts } = await fetchWordPressContent(connection, decryptedPassword));
+    } catch (e) {
+      if (e.message.includes('401')) {
+        await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
+        return res.status(400).json({ error: 'This Application Password is no longer valid. Please reconnect your website.' });
+      }
+      throw e;
+    }
+
+    // Only pages/posts with a REAL, measured gap qualify — a missing meta
+    // description, or a title that's just the site/page name with no real
+    // content (a genuine weak-title heuristic, not an AI opinion at this
+    // filtering stage).
+    const genericTitlePattern = /^(home|untitled|page \d+|post \d+)$/i;
+    const candidates = [...pages, ...posts.map(p => ({ ...p, isPost: true }))].filter(item =>
+      !item.metaDescription || genericTitlePattern.test(item.title.trim())
+    );
+
+    if (!candidates.length) {
+      return res.json({ proposals: [], message: 'No meta title or description gaps were found — nothing to propose right now.' });
+    }
+
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+    // Capped once, at the source — both the prompt shown to the AI and the
+    // index lookup below reference this exact same list, so an index the
+    // AI returns can never accidentally resolve to a candidate it was
+    // never actually shown.
+    const cappedCandidates = candidates.slice(0, 15);
+    const candidatesSummary = cappedCandidates.map((c, i) => `[${i}] ${c.isPost ? 'POST' : 'PAGE'}: "${c.title}" (${c.url})\n  Current meta description: ${c.metaDescription ? `"${c.metaDescription}"` : 'MISSING'}\n  Content excerpt: ${c.bodyExcerpt}`).join('\n\n');
+
+    const prompt = `You are an SEO Agent proposing meta title and description improvements for a real business's WordPress site. You must ONLY propose a change for pages that genuinely need one — every candidate listed below already has a real, measured gap (missing description or a generic title), so you don't need to invent reasons; you need to write GOOD, SPECIFIC suggestions grounded in the actual page content and the real business context.
+${contextSummary}
+
+PAGES/POSTS NEEDING ATTENTION:
+${candidatesSummary}
+
+For EACH numbered item above, propose a suggested_title (only if the current title is genuinely generic/weak — otherwise leave suggested_title null) and a suggested_meta_description (a specific, compelling 120-155 character description grounded in that page's actual content, not generic boilerplate). Reference the actual business name/industry from the context above where it genuinely fits — never invent details about the business that aren't in the context.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "proposals": [
+    { "index": 0, "suggested_title": "specific improved title, or null if the current title is already fine", "suggested_meta_description": "specific 120-155 char description grounded in this page's actual content", "reasoning": "1 sentence on why this specific change helps" }
+  ]
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the SEO proposals now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_seo_proposals', userId: req.userId }, maxTokens: 3000 });
+
+    let result;
+    try {
+      result = extractJSON(raw);
+    } catch (e) {
+      console.error('SEO proposals JSON parse failed:', e.message);
+      throw new Error('Could not generate SEO proposals — please try again');
+    }
+    if (!Array.isArray(result.proposals)) throw new Error('Could not generate SEO proposals — please try again');
+
+    const insertedProposals = [];
+    for (const p of result.proposals) {
+      const candidate = cappedCandidates[p.index];
+      if (!candidate) continue; // AI referenced an index outside the real candidate list — skip rather than guess
+      if (!p.suggested_title && !p.suggested_meta_description) continue; // nothing actually proposed for this one
+
+      const actionType = p.suggested_title ? 'update_meta_title' : 'update_meta_description';
+      const previousState = { title: candidate.title, metaDescription: candidate.metaDescription };
+      const proposedChange = {};
+      if (p.suggested_title) proposedChange.title = p.suggested_title;
+      if (p.suggested_meta_description) proposedChange.metaDescription = p.suggested_meta_description;
+
+      const inserted = await pool.query(
+        `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
+         VALUES ($1, 'seo_agent', $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        [connection.id, actionType, candidate.isPost ? 'post' : 'page', candidate.id, candidate.url, candidate.title, JSON.stringify(previousState), JSON.stringify(proposedChange), p.reasoning || null]
+      );
+      insertedProposals.push(inserted.rows[0]);
+    }
+
+    await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated', `SEO Agent generated ${insertedProposals.length} proposal(s) awaiting approval`, { count: insertedProposals.length });
+
+    res.json({ proposals: insertedProposals });
+  } catch (err) {
+    console.error('SEO proposals error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate SEO proposals. Please try again.' });
+  }
+});
+
+app.get('/api/business/:id/website/actions', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT id FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.json({ actions: [] });
+
+    const actions = await pool.query(
+      'SELECT * FROM website_actions WHERE website_connection_id = $1 ORDER BY created_at DESC LIMIT 50',
+      [connResult.rows[0].id]
+    );
+    res.json({ actions: actions.rows });
+  } catch (e) {
+    console.error('Get website actions error:', e.message);
+    res.status(500).json({ error: 'Failed to load proposed changes' });
+  }
+});
+
+// Approving requires the connection to be at least "draft" tier — approval
+// expresses real intent to eventually publish, which read_only explicitly
+// should never allow (spec Section 4). editedChange lets the person adjust
+// the AI's suggestion before approving it (spec's explicit "Preview,
+// Approve, Reject, Edit" requirement) — the edit itself is what gets
+// approved, not silently discarded in favor of the original.
+app.post('/api/business/:id/website/actions/:actionId/approve', authRequired, async (req, res) => {
+  const { editedChange } = req.body || {};
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT id, permission_level FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+    const connection = connResult.rows[0];
+
+    if (connection.permission_level === 'read_only') {
+      return res.status(403).json({ error: 'This website is set to Read Only, which does not allow approving changes. Change the permission level first if you want to allow this.' });
+    }
+
+    const actionResult = await pool.query('SELECT id, approval_status FROM website_actions WHERE id = $1 AND website_connection_id = $2', [req.params.actionId, connection.id]);
+    if (!actionResult.rows.length) return res.status(404).json({ error: 'Proposed change not found' });
+    if (actionResult.rows[0].approval_status !== 'pending') return res.status(400).json({ error: 'This proposal has already been reviewed.' });
+
+    const updated = await pool.query(
+      `UPDATE website_actions SET approval_status = 'approved', edited_change = $1, reviewed_by = $2, reviewed_at = NOW() WHERE id = $3 RETURNING *`,
+      [editedChange ? JSON.stringify(editedChange) : null, req.userId, req.params.actionId]
+    );
+
+    await logWebsiteAudit(connection.id, 'user', req.userId, 'proposal_approved', `Approved proposed change: ${updated.rows[0].action_type} for "${updated.rows[0].target_title}"`, { actionId: updated.rows[0].id, wasEdited: !!editedChange });
+
+    res.json({ success: true, action: updated.rows[0] });
+  } catch (e) {
+    console.error('Approve website action error:', e.message);
+    res.status(500).json({ error: 'Failed to approve change' });
+  }
+});
+
+app.post('/api/business/:id/website/actions/:actionId/reject', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT id FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+
+    const actionResult = await pool.query('SELECT id, approval_status, action_type, target_title FROM website_actions WHERE id = $1 AND website_connection_id = $2', [req.params.actionId, connResult.rows[0].id]);
+    if (!actionResult.rows.length) return res.status(404).json({ error: 'Proposed change not found' });
+    if (actionResult.rows[0].approval_status !== 'pending') return res.status(400).json({ error: 'This proposal has already been reviewed.' });
+
+    await pool.query(`UPDATE website_actions SET approval_status = 'rejected', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`, [req.userId, req.params.actionId]);
+    await logWebsiteAudit(connResult.rows[0].id, 'user', req.userId, 'proposal_rejected', `Rejected proposed change: ${actionResult.rows[0].action_type} for "${actionResult.rows[0].target_title}"`, { actionId: req.params.actionId });
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Reject website action error:', e.message);
+    res.status(500).json({ error: 'Failed to reject change' });
   }
 });
 
