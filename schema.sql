@@ -1134,3 +1134,41 @@ CREATE TABLE IF NOT EXISTS website_audit_log (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_website_audit_log_connection ON website_audit_log(website_connection_id, created_at DESC);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PHASE 8 / INCREMENT 2 — Website Action Engine (spec Section 21): the
+-- generic proposal/approval record every future agent action flows
+-- through. Deliberately does NOT store a snapshot of permission_level —
+-- the spec is explicit that "the execution layer must independently
+-- enforce permissions... never trust an AI agent simply because it
+-- requested an action," so Increment 3's execution step re-checks
+-- website_connections.permission_level LIVE at execution time, not
+-- whatever it happened to be when the proposal was created.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS website_actions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  website_connection_id UUID REFERENCES website_connections(id) ON DELETE CASCADE,
+  ai_agent VARCHAR(50) NOT NULL, -- 'seo_agent' for now; 'webmaster_agent' | 'content_agent' in later increments
+  action_type VARCHAR(50) NOT NULL, -- 'update_meta_title' | 'update_meta_description' (more types added as agents grow)
+  target_type VARCHAR(20) NOT NULL, -- 'page' | 'post'
+  target_wp_id INTEGER NOT NULL, -- the WordPress post/page ID
+  target_url TEXT,
+  target_title TEXT, -- for display without re-fetching WordPress just to label the row
+  previous_state JSONB, -- the real, measured current value(s) this proposes to change
+  proposed_change JSONB NOT NULL, -- the AI's suggested new value(s)
+  reasoning TEXT, -- why the AI suggests this, shown to the user before they approve
+  edited_change JSONB, -- set if the user edited the proposal before approving (spec section 9/12: preview, approve, reject, EDIT)
+  approval_status VARCHAR(20) DEFAULT 'pending', -- 'pending' | 'approved' | 'rejected'
+  reviewed_by UUID REFERENCES users(id),
+  reviewed_at TIMESTAMPTZ,
+  -- Populated by Increment 3, which adds real WordPress write capability.
+  -- Left here now so the schema doesn't need another migration once
+  -- execution ships, and so the frontend can render an honest "not yet
+  -- executed" state rather than one built without a real column for it.
+  execution_status VARCHAR(20) DEFAULT 'not_executed', -- 'not_executed' | 'executing' | 'executed' | 'execution_failed'
+  verification_status VARCHAR(20), -- 'verified' | 'verification_failed' — set only after an actual post-execution check
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_website_actions_connection ON website_actions(website_connection_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_website_actions_pending ON website_actions(website_connection_id, approval_status) WHERE approval_status = 'pending';
