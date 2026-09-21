@@ -2539,18 +2539,28 @@ app.post('/api/business/:id/website/connect', authRequired, async (req, res) => 
     }
 
     // Authenticated verification — confirms the username/Application
-    // Password combination is actually valid, using the least-privilege
-    // read endpoint (the authenticated user's own record) rather than
-    // attempting any write during verification.
+    // Password combination is actually valid. Deliberately does NOT use
+    // /wp/v2/users/me: that endpoint family is a common, deliberate target
+    // for security-plugin hardening (Wordfence, Solid Security, and
+    // similar tools specifically restrict /wp/v2/users to prevent
+    // username enumeration attacks), so a real, valid Application Password
+    // can still receive a 403 there even though authentication itself
+    // would have succeeded against almost any other endpoint. Using pages
+    // with context=edit and status=any instead genuinely requires valid
+    // authentication (an anonymous request can't use either parameter)
+    // without touching that specifically-hardened namespace.
     let verifyRes;
     try {
-      verifyRes = await wpApiRequest(trimmedUrl, trimmedUser, trimmedPass, '/wp/v2/users/me', { timeoutMs: 10000 });
+      verifyRes = await wpApiRequest(trimmedUrl, trimmedUser, trimmedPass, '/wp/v2/pages?per_page=1&status=any&context=edit', { timeoutMs: 10000 });
     } catch (e) {
       return res.status(400).json({ error: e.message || 'Could not connect to WordPress. Please check your website URL.' });
     }
 
     if (verifyRes.status === 401) {
       return res.status(400).json({ error: 'WordPress rejected these credentials. Please check your username and Application Password.' });
+    }
+    if (verifyRes.status === 403) {
+      return res.status(400).json({ error: 'WordPress accepted the connection attempt but blocked it (403 Forbidden). This is usually a security plugin (like Wordfence or Solid Security) or your hosting provider\'s firewall restricting REST API access — check its settings for a REST API or "Application Passwords" restriction, or contact your host if you\'re not sure.' });
     }
     if (!verifyRes.ok) {
       return res.status(400).json({ error: `WordPress returned an unexpected error (status ${verifyRes.status}). Please verify your site supports the REST API.` });
@@ -2651,7 +2661,7 @@ app.post('/api/business/:id/website/verify', authRequired, async (req, res) => {
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
     let verifyRes;
     try {
-      verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/users/me', { timeoutMs: 10000 });
+      verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/pages?per_page=1&status=any&context=edit', { timeoutMs: 10000 });
     } catch (e) {
       await pool.query(`UPDATE website_connections SET connection_status = 'error', last_error = $1 WHERE id = $2`, [e.message, connection.id]);
       return res.json({ connection_status: 'error', error: e.message });
@@ -2660,6 +2670,11 @@ app.post('/api/business/:id/website/verify', authRequired, async (req, res) => {
     if (verifyRes.status === 401) {
       await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired', last_error = 'Credentials no longer valid' WHERE id = $1`, [connection.id]);
       return res.json({ connection_status: 'auth_expired', error: 'This Application Password is no longer valid — it may have been revoked in WordPress. Please reconnect.' });
+    }
+    if (verifyRes.status === 403) {
+      const msg = 'WordPress is blocking this request (403 Forbidden) — usually a security plugin or hosting firewall restricting REST API access.';
+      await pool.query(`UPDATE website_connections SET connection_status = 'needs_attention', last_error = $1 WHERE id = $2`, [msg, connection.id]);
+      return res.json({ connection_status: 'needs_attention', error: msg });
     }
     if (!verifyRes.ok) {
       await pool.query(`UPDATE website_connections SET connection_status = 'needs_attention', last_error = $1 WHERE id = $2`, [`WordPress returned status ${verifyRes.status}`, connection.id]);
