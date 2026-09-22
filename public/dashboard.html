@@ -7391,7 +7391,9 @@ async function executeWebsiteAction(actionId) {
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/actions/${actionId}/execute`, { method: 'POST' });
     const data = await res.json();
-    if (res.ok && data.success) {
+    if (res.ok && data.queuedForPoll) {
+      showToast(t('web.execute_queued_toast'), 'success');
+    } else if (res.ok && data.success) {
       showToast(t('web.execute_success_toast'), 'success');
     } else if (res.ok) {
       // Executed but not verified, or execution failed — the backend
