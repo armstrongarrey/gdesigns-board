@@ -2981,6 +2981,51 @@ function arreyon_poll_and_execute_actions() {
 // browser would load — which works correctly regardless of which of
 // the three supported SEO plugins is actually active, since all of
 // them render a standard <title> and <meta name="description"> tag.
+// Real, deliberate string-function approach — NOT regex. A prior
+// version of this used preg_match with several backslash-escaped
+// characters, and every one of them was silently stripped somewhere
+// between delivery and what actually got installed, twice — a real,
+// external problem, not something fixable from this side. Since
+// nothing here forces a choice between regex and correctness, this
+// rewrite avoids backslash-dependent syntax entirely, using plain,
+// boring position-finding instead.
+function arreyon_extract_tag_value($html, $start_marker, $end_marker) {
+    $start_pos = stripos($html, $start_marker);
+    if ($start_pos === false) return null;
+    $start_pos += strlen($start_marker);
+    $end_pos = stripos($html, $end_marker, $start_pos);
+    if ($end_pos === false) return null;
+    return substr($html, $start_pos, $end_pos - $start_pos);
+}
+
+function arreyon_extract_meta_description($html) {
+    // Real, deliberate manual scan for a real <meta name="description"
+    // ...> tag, handling both attribute orders (content before or
+    // after name) and both quote styles, without regex at all.
+    $name_pos = stripos($html, 'name="description"');
+    if ($name_pos === false) $name_pos = stripos($html, "name='description'");
+    if ($name_pos === false) return null;
+
+    $tag_start = strrpos(substr($html, 0, $name_pos), '<meta');
+    if ($tag_start === false) return null;
+    $tag_end = strpos($html, '>', $name_pos);
+    if ($tag_end === false) return null;
+    $tag = substr($html, $tag_start, $tag_end - $tag_start + 1);
+
+    $content_pos = stripos($tag, 'content="');
+    $quote_char = '"';
+    if ($content_pos === false) {
+        $content_pos = stripos($tag, "content='");
+        $quote_char = "'";
+    }
+    if ($content_pos === false) return null;
+
+    $value_start = $content_pos + strlen('content=') + 1;
+    $value_end = strpos($tag, $quote_char, $value_start);
+    if ($value_end === false) return null;
+    return substr($tag, $value_start, $value_end - $value_start);
+}
+
 function arreyon_verify_rendered_page($target_wp_id, $field, $expected_value) {
     $permalink = get_permalink($target_wp_id);
     if (!$permalink) {
@@ -2995,22 +3040,28 @@ function arreyon_verify_rendered_page($target_wp_id, $field, $expected_value) {
 
     if ($field === 'title') {
         // Real, deliberate "contains" check, not exact equality — a
-        // rendered <title> tag typically includes the site's own
+        // rendered <title> tag typically includes the site own
         // title template (e.g. "Page Title | Site Name"), so the
         // real, live title genuinely reflecting this change usually
         // means it appears WITHIN the full rendered tag, not that
         // the whole tag equals just this value alone.
-        if (preg_match('/<title[^>]*>(.*?)<\/title>/is', $html, $matches)) {
-            $rendered_title = html_entity_decode(trim($matches[1]), ENT_QUOTES, 'UTF-8');
-            return ['matched' => (strpos($rendered_title, $decoded_expected) !== false), 'error' => 'The real, live page title tag currently reads: "' . $rendered_title . '" — it does not yet reflect this change.'];
+        $rendered_title = arreyon_extract_tag_value($html, '<title>', '</title>');
+        if ($rendered_title !== null) {
+            $rendered_title = html_entity_decode(trim($rendered_title), ENT_QUOTES, 'UTF-8');
+            $matched = (strpos($rendered_title, $decoded_expected) !== false);
+            $error = $matched ? null : ('The real, live page title tag currently reads: "' . $rendered_title . '" and does not yet reflect this change.');
+            return ['matched' => $matched, 'error' => $error];
         }
-        return ['matched' => false, 'error' => 'Could not find a real <title> tag on the live page to verify against.'];
+        return ['matched' => false, 'error' => 'Could not find a real title tag on the live page to verify against.'];
     }
 
     if ($field === 'description') {
-        if (preg_match('/<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']/is', $html, $matches)) {
-            $rendered_description = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
-            return ['matched' => ($rendered_description === $decoded_expected), 'error' => 'The real, live page meta description currently reads: "' . $rendered_description . '" — it does not yet reflect this change. The underlying data is correct; this is most likely a caching layer (the site\'s SEO plugin, a caching plugin, or Cloudflare itself) that has not caught up yet.'];
+        $rendered_description = arreyon_extract_meta_description($html);
+        if ($rendered_description !== null) {
+            $rendered_description = html_entity_decode($rendered_description, ENT_QUOTES, 'UTF-8');
+            $matched = ($rendered_description === $decoded_expected);
+            $error = $matched ? null : ('The real, live page meta description currently reads: "' . $rendered_description . '" and does not yet reflect this change. The underlying data is correct; this is most likely a caching layer (this site has an SEO plugin, a caching plugin, or Cloudflare itself) that has not caught up yet.');
+            return ['matched' => $matched, 'error' => $error];
         }
         return ['matched' => false, 'error' => 'Could not find a real meta description tag on the live page to verify against.'];
     }
