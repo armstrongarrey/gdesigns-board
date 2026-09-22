@@ -1166,7 +1166,7 @@ CREATE TABLE IF NOT EXISTS website_actions (
   -- execution ships, and so the frontend can render an honest "not yet
   -- executed" state rather than one built without a real column for it.
   execution_status VARCHAR(20) DEFAULT 'not_executed', -- 'not_executed' | 'executing' | 'executed' | 'execution_failed'
-  verification_status VARCHAR(20), -- 'verified' | 'verification_failed' — set only after an actual post-execution check
+  verification_status VARCHAR(20), -- 'verified' | 'verification_failed' | 'manually_confirmed' — 'verified' is an automated re-check catching up; 'manually_confirmed' is the user's own word after checking their live site themselves, kept as a distinct, honest value rather than blurred into 'verified'
   error_message TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
