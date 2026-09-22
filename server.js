@@ -2987,26 +2987,24 @@ function arreyon_execute_one_action($token, $action) {
     $error = null;
 
     // Real, deliberate scope match — mirrors executeWebsiteAction on
-    // the Arreyon side exactly (title via wp_update_post, meta
-    // description via the Yoast-specific field only, for now — the
-    // same known, separate limitation that server-side execution
-    // already has, not something introduced here).
-    if (!empty($change['title'])) {
-        $result = wp_update_post(['ID' => $target_wp_id, 'post_title' => $change['title']], true);
-        if (is_wp_error($result)) {
-            $error = 'WordPress rejected the title update: ' . $result->get_error_message();
+    // the Arreyon side exactly: a meta title update writes to all
+    // three supported SEO plugins own title fields via post meta, NOT
+    // WordPress own core post_title (the actual page/post title shown
+    // as the page heading and browser tab) — a completely different,
+    // real thing from the SEO title tag search engines see. Writing
+    // to the wrong one previously meant an approved SEO title change
+    // silently edited a site real, visible page title instead.
+    if (!empty($change['metaTitle'])) {
+        update_post_meta($target_wp_id, '_yoast_wpseo_title', $change['metaTitle']);
+        update_post_meta($target_wp_id, 'rank_math_title', $change['metaTitle']);
+        update_post_meta($target_wp_id, '_aioseo_title', $change['metaTitle']);
+        $matched = get_post_meta($target_wp_id, '_yoast_wpseo_title', true) === $change['metaTitle']
+            || get_post_meta($target_wp_id, 'rank_math_title', true) === $change['metaTitle']
+            || get_post_meta($target_wp_id, '_aioseo_title', true) === $change['metaTitle'];
+        if ($matched) {
+            $success = true;
         } else {
-            // Real, immediate local re-fetch — clear the object cache
-            // for this post first so this genuinely reads the row
-            // that was just written, not a stale in-memory copy from
-            // earlier in the same request.
-            clean_post_cache($target_wp_id);
-            $actual_title = get_post_field('post_title', $target_wp_id, 'raw');
-            if ($actual_title === $change['title']) {
-                $success = true;
-            } else {
-                $error = 'The title was sent to WordPress, but the saved value ("' . $actual_title . '") does not match what was intended.';
-            }
+            $error = 'The meta title was sent to WordPress, but the saved value does not match what was intended for any of Yoast SEO, Rank Math, or All in One SEO.';
         }
     } elseif (!empty($change['metaDescription'])) {
         // Real, deliberate write to all three supported SEO plugins'
@@ -3791,15 +3789,22 @@ async function reVerifyWebsiteAction(action, connection, decryptedPassword) {
   const change = action.edited_change || action.proposed_change;
 
   try {
-    if (change.title) {
-      const verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?_fields=title`, { timeoutMs: 10000 });
+    if (change.metaTitle) {
+      const verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?_fields=yoast_head_json,meta&context=edit`, { timeoutMs: 10000 });
       if (!verifyRes.ok) return { verified: false, error: 'Verification could not confirm it — please check the page manually.' };
       const verifyData = await verifyRes.json();
-      const actualTitle = decodeHtmlEntities(wpStripHtml(verifyData.title?.rendered || ''));
-      if (actualTitle !== change.title) {
-        return { verified: false, error: `The title on the live page still reads "${actualTitle}" — it does not appear to have caught up yet.` };
+      const derivedTitle = verifyData.yoast_head_json?.title || null;
+      const rawYoastTitle = verifyData.meta?._yoast_wpseo_title || null;
+      const rawRankMathTitle = verifyData.meta?.rank_math_title || null;
+      const rawAioseoTitle = verifyData.meta?._aioseo_title || null;
+
+      if (derivedTitle === change.metaTitle || rawRankMathTitle === change.metaTitle || rawAioseoTitle === change.metaTitle) {
+        return { verified: true };
       }
-      return { verified: true };
+      if (rawYoastTitle === change.metaTitle) {
+        return { verified: false, error: 'This is a known Yoast SEO caching behavior, not a permissions problem — the underlying data is correct, it just has not appeared on the rendered page yet.' };
+      }
+      return { verified: false, error: 'The live page has still not caught up to the saved change yet.' };
     }
 
     if (change.metaDescription) {
@@ -3831,23 +3836,44 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
   const change = action.edited_change || action.proposed_change;
 
   try {
-    if (change.title) {
+    if (change.metaTitle) {
+      // Real, deliberate write to all three supported SEO plugins'
+      // meta title fields at once, and via the meta object — NOT
+      // WordPress's own core `title` field, which is the actual
+      // page/post title shown as the page heading and browser tab,
+      // a completely different thing from the SEO title tag search
+      // engines see. Writing to the wrong one here previously meant
+      // an approved "SEO title" change silently edited a site's real,
+      // visible page title instead — a real, meaningfully disruptive
+      // mistake, not a cosmetic one.
       const res = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}`, {
-        method: 'POST', body: { title: change.title }, timeoutMs: 15000
+        method: 'POST', body: { meta: { _yoast_wpseo_title: change.metaTitle, rank_math_title: change.metaTitle, _aioseo_title: change.metaTitle } }, timeoutMs: 15000
       });
       if (!res.ok) {
         return { executed: false, verified: false, error: `WordPress rejected the update (status ${res.status}).` };
       }
-      // Verify against a fresh GET, not the PUT response's echoed value —
-      // the echo only confirms what was SENT, not what was actually saved.
-      const verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?_fields=title`, { timeoutMs: 10000 });
+      // Same reasoning as the meta description check below: context=edit
+      // for the raw meta object, plus Yoast's own rendered output, since
+      // a raw write succeeding is not proof it has reached the rendered
+      // page yet.
+      const verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?_fields=yoast_head_json,meta&context=edit`, { timeoutMs: 10000 });
       if (!verifyRes.ok) return { executed: true, verified: false, error: 'The update was sent, but verification could not confirm it — please check the page manually.' };
       const verifyData = await verifyRes.json();
-      const actualTitle = decodeHtmlEntities(wpStripHtml(verifyData.title?.rendered || ''));
-      if (actualTitle !== change.title) {
-        return { executed: true, verified: false, error: `The update was sent, but the title on the live page still reads "${actualTitle}" — it does not appear to have been saved.` };
+      const derivedTitle = verifyData.yoast_head_json?.title || null;
+      const rawYoastTitle = verifyData.meta?._yoast_wpseo_title || null;
+      const rawRankMathTitle = verifyData.meta?.rank_math_title || null;
+      const rawAioseoTitle = verifyData.meta?._aioseo_title || null;
+
+      if (derivedTitle === change.metaTitle) {
+        return { executed: true, verified: true };
       }
-      return { executed: true, verified: true };
+      if (rawRankMathTitle === change.metaTitle || rawAioseoTitle === change.metaTitle) {
+        return { executed: true, verified: true };
+      }
+      if (rawYoastTitle === change.metaTitle) {
+        return { executed: true, verified: false, error: 'The update was saved correctly (confirmed in WordPress\'s raw data), but the live page\'s rendered meta title has not caught up yet. This is a known Yoast SEO caching behavior, not a permissions problem — installing the SEO Bridge plugin will not help here. Try refreshing the page directly in a browser, or wait a few minutes and check again; the underlying data is correct.' };
+      }
+      return { executed: true, verified: false, error: 'The update was sent and WordPress accepted it, but the meta title on the live page did not change. This WordPress site\'s SEO plugin does not allow meta title updates via the API by default — go to the Website page and download the "Arreyon SEO REST Bridge" plugin, then install AND ACTIVATE it on this site (installing alone is not enough — it must show "Active" on the Plugins page) to fix this.' };
     }
 
     if (change.metaDescription) {
@@ -4145,7 +4171,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
       const actionType = p.suggested_title ? 'update_meta_title' : 'update_meta_description';
       const previousState = { title: candidate.title, metaDescription: candidate.metaDescription };
       const proposedChange = {};
-      if (p.suggested_title) proposedChange.title = p.suggested_title;
+      if (p.suggested_title) proposedChange.metaTitle = p.suggested_title;
       if (p.suggested_meta_description) proposedChange.metaDescription = p.suggested_meta_description;
 
       const inserted = await pool.query(
