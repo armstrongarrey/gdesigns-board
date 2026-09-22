@@ -2916,10 +2916,21 @@ app.get('/api/website-tools/arreyon-connect-plugin', (req, res) => {
 // hosting-level block matters a lot: they need completely different
 // fixes, and guessing wrong wastes the person's time checking the wrong
 // setting.
-async function buildForbiddenErrorMessage(verifyRes) {
-  let bodyText = '';
-  try { bodyText = await verifyRes.text(); } catch (e) {}
-  const lower = bodyText.toLowerCase();
+// Real, shared detection — the exact signature Cloudflare's own
+// challenge page carries in its response body. Extracted as its own
+// helper because both the human-facing error message below AND the
+// automatic poll-mode fallback in connectWordPressSite need to ask
+// the same real question: is this specific 403 a Cloudflare
+// challenge, or something else (a security plugin, ModSecurity, wrong
+// credentials)? Duplicating this check in two places risks them
+// silently drifting apart over time.
+function isCloudflareChallenge(bodyText) {
+  const lower = (bodyText || '').toLowerCase();
+  return lower.includes('just a moment') && lower.includes('cloudflare');
+}
+
+async function buildForbiddenErrorMessage(bodyText) {
+  const lower = (bodyText || '').toLowerCase();
 
   if (lower.includes('rest_forbidden') || lower.includes('rest_cannot')) {
     return 'WordPress rejected this with a permissions error, not a security-plugin block: the WordPress user behind this Application Password does not have sufficient permissions (it needs at least an Editor role, or ideally Administrator). Please check that user\'s role in WordPress, or generate the Application Password using an Administrator account instead.';
@@ -2932,7 +2943,7 @@ async function buildForbiddenErrorMessage(verifyRes) {
   // Bot Fight Mode on the Free plan cannot be bypassed by ANY rule at
   // all — Cloudflare's own documentation is explicit about this — while
   // Super Bot Fight Mode on paid plans does support a targeted exception).
-  if (lower.includes('just a moment') && lower.includes('cloudflare')) {
+  if (isCloudflareChallenge(bodyText)) {
     return 'Cloudflare (sitting in front of this WordPress site) is showing its bot-challenge page — this happens before the request even reaches WordPress, so no WordPress or Arreyon setting can fix it directly. In the Cloudflare dashboard, check Security → Events to see exactly which feature fired. If it\'s "Bot Fight Mode" (the free-tier version), Cloudflare\'s own documentation confirms this cannot be bypassed by any rule — the only options are turning it off site-wide or upgrading to a paid plan. If it\'s "Super Bot Fight Mode" (Pro or higher) or a WAF rule, a targeted rule can be added so only authenticated REST API requests skip the challenge, e.g.: (http.request.uri.path contains "/wp-json/") and (http.request.headers["authorization"][0] ne "") — Action: Skip. This exempts only API traffic carrying real credentials, not regular visitors to the site.';
   }
 
@@ -2984,14 +2995,32 @@ async function connectWordPressSite(businessId, siteUrl, username, appPassword, 
   if (verifyRes.status === 401) {
     return { ok: false, statusCode: 400, error: 'WordPress rejected these credentials. Please check your username and Application Password.' };
   }
+
+  let pollingToken = null;
+  let usePollMode = false;
   if (verifyRes.status === 403) {
-    return { ok: false, statusCode: 400, error: await buildForbiddenErrorMessage(verifyRes) };
-  }
-  if (!verifyRes.ok) {
+    const bodyText = await verifyRes.text();
+    if (isCloudflareChallenge(bodyText)) {
+      // Real, deliberate fallback — Cloudflare is blocking this
+      // authenticated request before it ever reaches WordPress, and
+      // (for the free-tier Bot Fight Mode specifically) there is
+      // genuinely no rule that can exempt it. Rather than fail here,
+      // this site is connected in poll mode instead: its own plugin
+      // will call Arreyon directly (an outbound request from the
+      // site, never subject to Bot Fight Mode, which only inspects
+      // INBOUND traffic) and execute approved changes locally.
+      usePollMode = true;
+      pollingToken = crypto.randomBytes(32).toString('hex');
+    } else {
+      return { ok: false, statusCode: 400, error: await buildForbiddenErrorMessage(bodyText) };
+    }
+  } else if (!verifyRes.ok) {
     return { ok: false, statusCode: 400, error: `WordPress returned an unexpected error (status ${verifyRes.status}). Please verify your site supports the REST API.` };
   }
 
   const encryptedPassword = encryptSecret(trimmedPass);
+  const pollingTokenHash = pollingToken ? crypto.createHash('sha256').update(pollingToken).digest('hex') : null;
+  const connectionMode = usePollMode ? 'poll' : 'push';
 
   const existing = await pool.query('SELECT id FROM website_connections WHERE business_id = $1', [businessId]);
   let connection;
@@ -2999,24 +3028,34 @@ async function connectWordPressSite(businessId, siteUrl, username, appPassword, 
     const updated = await pool.query(
       `UPDATE website_connections SET site_url = $1, site_name = $2, wp_version = $3, wp_username = $4,
        wp_app_password_encrypted = $5, connection_status = 'connected', last_verified_at = NOW(),
-       last_error = NULL, connected_at = NOW(), disconnected_at = NULL
-       WHERE id = $6 RETURNING id, site_url, site_name, connection_status, permission_level, automation_mode, connected_at`,
-      [trimmedUrl, siteName, wpVersion, trimmedUser, encryptedPassword, existing.rows[0].id]
+       last_error = NULL, connected_at = NOW(), disconnected_at = NULL, connection_mode = $6, polling_token_hash = $7
+       WHERE id = $8 RETURNING id, site_url, site_name, connection_status, permission_level, automation_mode, connected_at, connection_mode`,
+      [trimmedUrl, siteName, wpVersion, trimmedUser, encryptedPassword, connectionMode, pollingTokenHash, existing.rows[0].id]
     );
     connection = updated.rows[0];
   } else {
     const inserted = await pool.query(
-      `INSERT INTO website_connections (business_id, site_url, site_name, wp_version, wp_username, wp_app_password_encrypted, connection_status, last_verified_at, connected_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 'connected', NOW(), NOW())
-       RETURNING id, site_url, site_name, connection_status, permission_level, automation_mode, connected_at`,
-      [businessId, trimmedUrl, siteName, wpVersion, trimmedUser, encryptedPassword]
+      `INSERT INTO website_connections (business_id, site_url, site_name, wp_version, wp_username, wp_app_password_encrypted, connection_status, last_verified_at, connected_at, connection_mode, polling_token_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, 'connected', NOW(), NOW(), $7, $8)
+       RETURNING id, site_url, site_name, connection_status, permission_level, automation_mode, connected_at, connection_mode`,
+      [businessId, trimmedUrl, siteName, wpVersion, trimmedUser, encryptedPassword, connectionMode, pollingTokenHash]
     );
     connection = inserted.rows[0];
   }
 
-  await logWebsiteAudit(connection.id, 'user', userId, 'connected', `Connected WordPress site: ${trimmedUrl}`, { siteUrl: trimmedUrl });
+  await logWebsiteAudit(connection.id, 'user', userId,
+    usePollMode ? 'connected_poll_mode' : 'connected',
+    usePollMode
+      ? `Connected WordPress site in poll mode (Cloudflare blocked the direct connection): ${trimmedUrl}`
+      : `Connected WordPress site: ${trimmedUrl}`,
+    { siteUrl: trimmedUrl });
 
-  return { ok: true, connection };
+  // pollingToken (plaintext) is only ever returned here, once, at the
+  // moment it's generated — same discipline as the Application
+  // Password itself never being returned to the frontend after
+  // creation. The plugin is the only other party that ever needs it,
+  // and only right now to store it for itself.
+  return { ok: true, connection, pollingToken };
 }
 
 // Connects a WordPress site to a business that hasn't been analyzed yet —
@@ -3153,10 +3192,119 @@ app.post('/api/website-connector/register', async (req, res) => {
 
     await pool.query('UPDATE website_connection_codes SET used_at = NOW() WHERE id = $1', [codeRow.id]);
 
-    res.json({ success: true, businessName: (await pool.query('SELECT name FROM businesses WHERE id = $1', [codeRow.business_id])).rows[0]?.name || null });
+    res.json({
+      success: true,
+      businessName: (await pool.query('SELECT name FROM businesses WHERE id = $1', [codeRow.business_id])).rows[0]?.name || null,
+      // Only present when Cloudflare blocked the direct connection —
+      // the plugin needs this to poll Arreyon itself going forward.
+      // A push-mode connection has no token and needs none.
+      connectionMode: result.connection.connection_mode,
+      pollingToken: result.pollingToken || null,
+    });
   } catch (e) {
     console.error('Website connector register error:', e.message);
     res.status(500).json({ error: 'Failed to complete the connection. Please try again.' });
+  }
+});
+
+// Real, deliberate lookup by hash, not by comparing against every
+// poll-mode connection — SHA-256 is deterministic, so the token the
+// plugin sends is hashed the same way once here and matched with a
+// real, indexed WHERE clause, the same as looking up any other unique
+// value. No authRequired here: the plugin is not a logged-in Arreyon
+// user, this token IS its authentication.
+app.get('/api/website-connector/poll', async (req, res) => {
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
+  if (!token) return res.status(400).json({ error: 'Missing token.' });
+
+  try {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const connResult = await pool.query(
+      `SELECT * FROM website_connections WHERE polling_token_hash = $1 AND connection_mode = 'poll'`,
+      [tokenHash]
+    );
+    if (!connResult.rows.length) return res.status(401).json({ error: 'This polling token was not recognized.' });
+    const connection = connResult.rows[0];
+
+    // Real, deliberate scope — only genuinely approved, not-yet-queued
+    // actions. 'queued_for_poll' actions are excluded so a plugin that
+    // polls again before finishing the last batch never receives the
+    // same action twice.
+    const pending = await pool.query(
+      `SELECT id, action_type, target_type, target_wp_id, proposed_change, edited_change
+       FROM website_actions
+       WHERE website_connection_id = $1 AND approval_status = 'approved' AND execution_status = 'not_executed'
+       ORDER BY created_at ASC`,
+      [connection.id]
+    );
+
+    if (pending.rows.length) {
+      await pool.query(
+        `UPDATE website_actions SET execution_status = 'queued_for_poll' WHERE id = ANY($1)`,
+        [pending.rows.map((r) => r.id)]
+      );
+    }
+
+    res.json({
+      actions: pending.rows.map((r) => ({
+        id: r.id,
+        actionType: r.action_type,
+        targetType: r.target_type,
+        targetWpId: r.target_wp_id,
+        change: r.edited_change || r.proposed_change,
+      })),
+    });
+  } catch (e) {
+    console.error('Website connector poll error:', e.message);
+    res.status(500).json({ error: 'Failed to check for pending changes.' });
+  }
+});
+
+// Real, deliberate trust boundary — a result reported here comes from
+// the plugin having just executed the change locally, inside
+// WordPress's own PHP runtime, and read back the value it just saved
+// from WordPress's own database, all within the same request. That is
+// a strictly more reliable confirmation than executeWebsiteAction's
+// own separate, later, network-based re-fetch (which a cache can sit
+// in front of) — so a reported success is recorded as both executed
+// AND verified in one step, not left pending a second, separate check.
+app.post('/api/website-connector/report-result', async (req, res) => {
+  const { token, actionId, success, error: reportedError } = req.body || {};
+  if (!token || !actionId) return res.status(400).json({ error: 'Missing required fields.' });
+
+  try {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const connResult = await pool.query(
+      `SELECT id FROM website_connections WHERE polling_token_hash = $1 AND connection_mode = 'poll'`,
+      [tokenHash]
+    );
+    if (!connResult.rows.length) return res.status(401).json({ error: 'This polling token was not recognized.' });
+    const connectionId = connResult.rows[0].id;
+
+    const actionResult = await pool.query(
+      `SELECT * FROM website_actions WHERE id = $1 AND website_connection_id = $2`,
+      [actionId, connectionId]
+    );
+    if (!actionResult.rows.length) return res.status(404).json({ error: 'This action was not found for this connection.' });
+    const action = actionResult.rows[0];
+
+    const executionStatus = success ? 'executed' : 'execution_failed';
+    const verificationStatus = success ? 'verified' : null;
+
+    const updated = await pool.query(
+      `UPDATE website_actions SET execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
+      [executionStatus, verificationStatus, success ? null : (reportedError || 'The site reported this change failed to apply.'), action.id]
+    );
+
+    await logWebsiteAudit(connectionId, 'system', null,
+      success ? 'change_executed_and_verified' : 'change_execution_issue',
+      `${action.action_type} for "${action.target_title}" reported by the site's own plugin: ${executionStatus}`,
+      { actionId: action.id, executionStatus, reportedError: reportedError || null, viaPoll: true });
+
+    res.json({ success: true, action: updated.rows[0] });
+  } catch (e) {
+    console.error('Website connector report-result error:', e.message);
+    res.status(500).json({ error: 'Failed to record this result.' });
   }
 });
 
@@ -3253,7 +3401,7 @@ app.post('/api/business/:id/website/verify', authRequired, async (req, res) => {
       return res.json({ connection_status: 'auth_expired', error: 'This Application Password is no longer valid — it may have been revoked in WordPress. Please reconnect.' });
     }
     if (verifyRes.status === 403) {
-      const msg = await buildForbiddenErrorMessage(verifyRes);
+      const msg = await buildForbiddenErrorMessage(await verifyRes.text());
       await pool.query(`UPDATE website_connections SET connection_status = 'needs_attention', last_error = $1 WHERE id = $2`, [msg, connection.id]);
       return res.json({ connection_status: 'needs_attention', error: msg });
     }
@@ -3894,6 +4042,18 @@ app.post('/api/business/:id/website/actions/:actionId/execute', authRequired, as
     }
 
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+
+    // Real, deliberate branch — a poll-mode connection's own plugin
+    // executes approved changes locally on its own schedule; a direct
+    // push from here would only hit the same Cloudflare block that
+    // put this connection into poll mode in the first place. The
+    // action is already eligible for pickup purely by being approved
+    // (see the poll endpoint's query) — this just gives the person
+    // honest, immediate feedback rather than silently doing nothing.
+    if (connection.connection_mode === 'poll') {
+      return res.json({ success: true, queuedForPoll: true, message: 'This site executes approved changes on its own schedule (usually within a few minutes) rather than instantly, since a direct connection from Arreyon is blocked by this site\'s Cloudflare settings.' });
+    }
+
     const result = await executeWebsiteAction(action, connection, decryptedPassword);
 
     if (result.authExpired) {
