@@ -3709,7 +3709,18 @@ async function fetchWordPressContent(connection, decryptedPassword) {
     );
     if (!res.ok) throw new Error(`Could not read ${type} from WordPress (status ${res.status})`);
     const items = await res.json();
-    return items.map(item => {
+    // Real, deliberate separate read — WordPress's REST API always
+    // includes this header on a collection endpoint, giving the real,
+    // true site-wide count directly, with no need to actually fetch
+    // every item's full content just to count them (which, on a site
+    // with hundreds or thousands of posts, would be far too slow and
+    // far too much data for the AI analysis step downstream anyway).
+    // Without this, items.length was being reported AS the real total
+    // — it's only ever the sample size, capped at per_page above,
+    // which silently under-reported by orders of magnitude on any
+    // site with more content than that cap.
+    const totalCount = parseInt(res.headers.get('X-WP-Total'), 10) || items.length;
+    const mapped = items.map(item => {
       const rawContent = item.content?.rendered || '';
       const bodyText = wpStripHtml(rawContent);
       return {
@@ -3723,10 +3734,18 @@ async function fetchWordPressContent(connection, decryptedPassword) {
         bodyExcerpt: bodyText.slice(0, 500)
       };
     });
+    return { items: mapped, totalCount };
   };
 
-  const [pages, posts] = await Promise.all([fetchType('pages'), fetchType('posts')]);
-  return { pages, posts };
+  const [pagesResult, postsResult] = await Promise.all([fetchType('pages'), fetchType('posts')]);
+  return {
+    pages: pagesResult.items,
+    posts: postsResult.items,
+    // Real site-wide totals — distinct from pages.length/posts.length,
+    // which are only ever the sample actually pulled for analysis.
+    totalPageCount: pagesResult.totalCount,
+    totalPostCount: postsResult.totalCount,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3915,9 +3934,9 @@ app.post('/api/business/:id/website/intelligence', authRequired, async (req, res
     if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
 
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
-    let pages, posts;
+    let pages, posts, totalPageCount, totalPostCount;
     try {
-      ({ pages, posts } = await fetchWordPressContent(connection, decryptedPassword));
+      ({ pages, posts, totalPageCount, totalPostCount } = await fetchWordPressContent(connection, decryptedPassword));
     } catch (e) {
       if (e.message.includes('401') || e.message.includes('status 401')) {
         await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
@@ -3937,10 +3956,10 @@ app.post('/api/business/:id/website/intelligence', authRequired, async (req, res
 
     const prompt = `You are a website intelligence analyst reviewing a WordPress site for ${businessName}. You have been given REAL, MEASURED data fetched directly from the site's own content — word counts, heading structure, and meta description presence are all FACTS, not your opinion. Your job is to add ASSESSMENT on top of these facts, and you must keep the two clearly separate.
 
-MEASURED DATA — PAGES (${pages.length} found):
+MEASURED DATA — PAGES (${pages.length} of ${totalPageCount} total found on the site were analyzed${pages.length < totalPageCount ? ' — a sample, not the full site' : ''}):
 ${pagesSummary || 'None found.'}
 
-MEASURED DATA — POSTS (${posts.length} found):
+MEASURED DATA — POSTS (${posts.length} of ${totalPostCount} total found on the site were analyzed${posts.length < totalPostCount ? ' — a sample, not the full site' : ''}):
 ${postsSummary || 'None found.'}
 
 CRITICAL RULES:
@@ -3951,7 +3970,7 @@ CRITICAL RULES:
 
 Return ONLY valid JSON, no markdown, in exactly this structure:
 {
-  "structure_summary": "2-3 sentences on what this site actually consists of (page count, post count, general shape) — factual, not evaluative",
+  "structure_summary": "2-3 sentences on what this site actually consists of (use the REAL total page/post counts stated above, not the number of samples analyzed, general shape) — factual, not evaluative",
   "seo_issues": [
     { "page_title": "exact title from the measured data above", "url": "exact url from the measured data", "issue": "specific, concrete issue (e.g. missing meta description, no H1, thin content at N words)", "severity": "high" | "medium" | "low" }
   ],
@@ -3989,8 +4008,16 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     // computed here in code, not asked of the AI, so these specific
     // numbers can never be a fabrication risk.
     intelligence.measured = {
-      pageCount: pages.length,
-      postCount: posts.length,
+      // Real, true site-wide totals — this is what should be shown as
+      // "how many pages/posts this site has."
+      pageCount: totalPageCount,
+      postCount: totalPostCount,
+      // The actual sample size analyzed, when it's smaller than the
+      // real total (a large site) — kept distinct so the frontend can
+      // honestly show "20 of 1,782 posts analyzed" rather than
+      // implying every post was reviewed.
+      analyzedPageCount: pages.length,
+      analyzedPostCount: posts.length,
       pagesWithNoMetaDescription: pages.filter(p => !p.metaDescription).length,
       postsWithNoMetaDescription: posts.filter(p => !p.metaDescription).length,
       pagesUnder300Words: pages.filter(p => p.wordCount < 300).length,
