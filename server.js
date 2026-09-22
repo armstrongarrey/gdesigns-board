@@ -2973,17 +2973,69 @@ function arreyon_poll_and_execute_actions() {
 // immediately reads back what was actually saved — within the same
 // PHP request, before any cache anywhere has a chance to interfere —
 // and reports that real outcome back to Arreyon.
+// Real, deliberate second verification layer — a raw database write
+// succeeding is not proof the actual, live, rendered page reflects
+// it yet (the exact same real distinction the direct-connection path
+// already makes via Yoast's own rendered output). This checks the
+// real, public page URL itself — the same thing a real visitor's
+// browser would load — which works correctly regardless of which of
+// the three supported SEO plugins is actually active, since all of
+// them render a standard <title> and <meta name="description"> tag.
+function arreyon_verify_rendered_page($target_wp_id, $field, $expected_value) {
+    $permalink = get_permalink($target_wp_id);
+    if (!$permalink) {
+        return ['matched' => false, 'error' => 'Could not determine the real, live URL for this page to verify it.'];
+    }
+    $response = wp_remote_get($permalink, ['timeout' => 15]);
+    if (is_wp_error($response)) {
+        return ['matched' => false, 'error' => 'Could not fetch the real, live page to verify it: ' . $response->get_error_message()];
+    }
+    $html = wp_remote_retrieve_body($response);
+    $decoded_expected = html_entity_decode($expected_value, ENT_QUOTES, 'UTF-8');
+
+    if ($field === 'title') {
+        // Real, deliberate "contains" check, not exact equality — a
+        // rendered <title> tag typically includes the site's own
+        // title template (e.g. "Page Title | Site Name"), so the
+        // real, live title genuinely reflecting this change usually
+        // means it appears WITHIN the full rendered tag, not that
+        // the whole tag equals just this value alone.
+        if (preg_match('/<title[^>]*>(.*?)<\/title>/is', $html, $matches)) {
+            $rendered_title = html_entity_decode(trim($matches[1]), ENT_QUOTES, 'UTF-8');
+            return ['matched' => (strpos($rendered_title, $decoded_expected) !== false), 'error' => 'The real, live page title tag currently reads: "' . $rendered_title . '" — it does not yet reflect this change.'];
+        }
+        return ['matched' => false, 'error' => 'Could not find a real <title> tag on the live page to verify against.'];
+    }
+
+    if ($field === 'description') {
+        if (preg_match('/<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']/is', $html, $matches)) {
+            $rendered_description = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
+            return ['matched' => ($rendered_description === $decoded_expected), 'error' => 'The real, live page meta description currently reads: "' . $rendered_description . '" — it does not yet reflect this change. The underlying data is correct; this is most likely a caching layer (the site\'s SEO plugin, a caching plugin, or Cloudflare itself) that has not caught up yet.'];
+        }
+        return ['matched' => false, 'error' => 'Could not find a real meta description tag on the live page to verify against.'];
+    }
+
+    return ['matched' => false, 'error' => 'Unrecognized field for rendered-page verification.'];
+}
+
 function arreyon_execute_one_action($token, $action) {
     $action_id = isset($action['id']) ? $action['id'] : null;
     $target_wp_id = isset($action['targetWpId']) ? (int) $action['targetWpId'] : 0;
     $change = isset($action['change']) && is_array($action['change']) ? $action['change'] : [];
 
     if (!$action_id || !$target_wp_id) {
-        arreyon_report_action_result($token, $action_id, false, 'Received an incomplete action from Arreyon — missing id or target.');
+        arreyon_report_action_result($token, $action_id, false, false, 'Received an incomplete action from Arreyon — missing id or target.');
         return;
     }
 
-    $success = false;
+    // executed: the raw database write itself genuinely succeeded.
+    // verified: the real, live, rendered page actually reflects it.
+    // These are kept as two real, separate facts — exactly the same
+    // distinction the direct-connection path already makes — rather
+    // than collapsed into one, since a raw write succeeding is not
+    // proof the change is actually visible yet.
+    $executed = false;
+    $verified = false;
     $error = null;
 
     // Real, deliberate scope match — mirrors executeWebsiteAction on
@@ -3002,7 +3054,10 @@ function arreyon_execute_one_action($token, $action) {
             || get_post_meta($target_wp_id, 'rank_math_title', true) === $change['metaTitle']
             || get_post_meta($target_wp_id, '_aioseo_title', true) === $change['metaTitle'];
         if ($matched) {
-            $success = true;
+            $executed = true;
+            $rendered = arreyon_verify_rendered_page($target_wp_id, 'title', $change['metaTitle']);
+            $verified = $rendered['matched'];
+            if (!$verified) $error = $rendered['error'];
         } else {
             $error = 'The meta title was sent to WordPress, but the saved value does not match what was intended for any of Yoast SEO, Rank Math, or All in One SEO.';
         }
@@ -3026,7 +3081,10 @@ function arreyon_execute_one_action($token, $action) {
             || get_post_meta($target_wp_id, 'rank_math_description', true) === $change['metaDescription']
             || get_post_meta($target_wp_id, '_aioseo_description', true) === $change['metaDescription'];
         if ($matched) {
-            $success = true;
+            $executed = true;
+            $rendered = arreyon_verify_rendered_page($target_wp_id, 'description', $change['metaDescription']);
+            $verified = $rendered['matched'];
+            if (!$verified) $error = $rendered['error'];
         } else {
             $error = 'The meta description was sent to WordPress, but the saved value does not match what was intended for any of Yoast SEO, Rank Math, or All in One SEO.';
         }
@@ -3034,17 +3092,18 @@ function arreyon_execute_one_action($token, $action) {
         $error = 'This proposed change has no recognized field to execute.';
     }
 
-    arreyon_report_action_result($token, $action_id, $success, $error);
+    arreyon_report_action_result($token, $action_id, $executed, $verified, $error);
 }
 
-function arreyon_report_action_result($token, $action_id, $success, $error) {
+function arreyon_report_action_result($token, $action_id, $executed, $verified, $error) {
     $response = wp_remote_post(ARREYON_CONNECT_API_BASE . '/api/website-connector/report-result', [
         'timeout' => 15,
         'headers' => ['Content-Type' => 'application/json'],
         'body' => wp_json_encode([
             'token' => $token,
             'actionId' => $action_id,
-            'success' => $success,
+            'executed' => $executed,
+            'verified' => $verified,
             'error' => $error,
         ]),
     ]);
@@ -3450,7 +3509,7 @@ app.get('/api/website-connector/poll', async (req, res) => {
 // in front of) — so a reported success is recorded as both executed
 // AND verified in one step, not left pending a second, separate check.
 app.post('/api/website-connector/report-result', async (req, res) => {
-  const { token, actionId, success, error: reportedError } = req.body || {};
+  const { token, actionId, executed, verified, error: reportedError } = req.body || {};
   if (!token || !actionId) return res.status(400).json({ error: 'Missing required fields.' });
 
   try {
@@ -3469,20 +3528,27 @@ app.post('/api/website-connector/report-result', async (req, res) => {
     if (!actionResult.rows.length) return res.status(404).json({ error: 'This action was not found for this connection.' });
     const action = actionResult.rows[0];
 
-    const executionStatus = success ? 'executed' : 'execution_failed';
-    const verificationStatus = success ? 'verified' : null;
+    // Real, deliberate three-state model, matching the direct-connection
+    // path exactly — executed (the raw database write itself genuinely
+    // succeeded) and verified (the real, live, rendered page actually
+    // reflects it) are two separate, real facts, not one. Reporting
+    // only a single success/failure here previously meant a raw write
+    // succeeding got reported as a full, unqualified "published and
+    // verified" even when the live page had not caught up yet.
+    const executionStatus = executed ? 'executed' : 'execution_failed';
+    const verificationStatus = executed ? (verified ? 'verified' : 'verification_failed') : null;
 
     const updated = await pool.query(
       `UPDATE website_actions SET execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
-      [executionStatus, verificationStatus, success ? null : (reportedError || 'The site reported this change failed to apply.'), action.id]
+      [executionStatus, verificationStatus, (executed && verified) ? null : (reportedError || 'The site reported this change did not fully apply.'), action.id]
     );
 
     await logWebsiteAudit(connectionId, 'system', null,
-      success ? 'change_executed_and_verified' : 'change_execution_issue',
-      `${action.action_type} for "${action.target_title}" reported by the site's own plugin: ${executionStatus}`,
-      { actionId: action.id, executionStatus, reportedError: reportedError || null, viaPoll: true });
+      (executed && verified) ? 'change_executed_and_verified' : 'change_execution_issue',
+      `${action.action_type} for "${action.target_title}" reported by the site's own plugin: executed=${!!executed}, verified=${!!verified}`,
+      { actionId: action.id, executionStatus, verificationStatus, reportedError: reportedError || null, viaPoll: true });
 
-    res.json({ success: true, action: updated.rows[0] });
+    res.json({ success: !!(executed && verified), action: updated.rows[0] });
   } catch (e) {
     console.error('Website connector report-result error:', e.message);
     res.status(500).json({ error: 'Failed to record this result.' });
@@ -4375,6 +4441,17 @@ app.post('/api/business/:id/website/actions/:actionId/re-verify', authRequired, 
     }
     if (action.verification_status === 'verified' || action.verification_status === 'manually_confirmed') {
       return res.status(400).json({ error: 'This change is already confirmed — nothing to re-check.' });
+    }
+    // Real, deliberate honesty — this endpoint's own re-check works by
+    // calling the site directly over REST, the exact same kind of
+    // request Cloudflare blocked for this site in the first place
+    // (the reason it's in poll mode at all). Attempting it here would
+    // just fail the same way, not genuinely re-check anything. Poll
+    // mode's own plugin already re-verifies on its own schedule; if
+    // the person has personally seen the change live, "I've confirmed
+    // this myself" is the real, working path for this site.
+    if (connection.connection_mode === 'poll') {
+      return res.status(400).json({ error: 'This site connects in poll mode, so re-checking this way is not available — a direct request from Arreyon would be blocked the same way the original connection was. If you have personally confirmed the change is live on the site, use "I\'ve confirmed this myself" below instead.' });
     }
 
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
