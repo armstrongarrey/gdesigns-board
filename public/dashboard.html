@@ -7165,6 +7165,7 @@ function renderWebsiteIntelligenceContent(intelligence, generatedAt) {
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
       <span style="font-size:9px;font-weight:700;color:var(--green);background:rgba(16,185,129,.15);padding:2px 7px;border-radius:4px" data-i18n="plan.computed_badge">Computed</span>
       <span style="font-size:11.5px;color:var(--text2)">${(m.pageCount||0)} ${t('web.pages_label')} · ${(m.postCount||0)} ${t('web.posts_label')} · ${(m.pagesWithNoMetaDescription||0)+(m.postsWithNoMetaDescription||0)} ${t('web.missing_meta_label')} · ${(m.pagesUnder300Words||0)+(m.postsUnder300Words||0)} ${t('web.thin_content_label')}</span>
+      ${(m.analyzedPageCount < m.pageCount || m.analyzedPostCount < m.postCount) ? `<div style="font-size:10.5px;color:var(--text3);margin-top:2px">${t('web.sample_analyzed_note').replace('{pages}', m.analyzedPageCount||0).replace('{posts}', m.analyzedPostCount||0)}</div>` : ''}
     </div>
     ${generatedAt ? `<div style="font-size:11px;color:var(--muted);margin-bottom:16px">${t('web.last_analyzed')}: ${new Date(generatedAt).toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US')}</div>` : ''}
 
