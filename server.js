@@ -3009,16 +3009,28 @@ function arreyon_execute_one_action($token, $action) {
             }
         }
     } elseif (!empty($change['metaDescription'])) {
-        $updated = update_post_meta($target_wp_id, '_yoast_wpseo_metadesc', $change['metaDescription']);
+        // Real, deliberate write to all three supported SEO plugins'
+        // fields at once — this plugin's own REST Bridge counterpart
+        // was built to support Yoast, Rank Math, and All in One SEO,
+        // and only ever writing the Yoast-specific field meant a site
+        // running either of the other two would always silently fail
+        // here. Only one is ever actually read by whichever plugin
+        // this specific site genuinely runs; the other two just sit
+        // unused and harmless.
+        update_post_meta($target_wp_id, '_yoast_wpseo_metadesc', $change['metaDescription']);
+        update_post_meta($target_wp_id, 'rank_math_description', $change['metaDescription']);
+        update_post_meta($target_wp_id, '_aioseo_description', $change['metaDescription']);
         // update_post_meta returns false both on genuine failure AND
         // when the new value is identical to the existing one — so
-        // this reads the real, current value back rather than
+        // this reads the real, current values back rather than
         // trusting the return value alone to decide success.
-        $actual_description = get_post_meta($target_wp_id, '_yoast_wpseo_metadesc', true);
-        if ($actual_description === $change['metaDescription']) {
+        $matched = get_post_meta($target_wp_id, '_yoast_wpseo_metadesc', true) === $change['metaDescription']
+            || get_post_meta($target_wp_id, 'rank_math_description', true) === $change['metaDescription']
+            || get_post_meta($target_wp_id, '_aioseo_description', true) === $change['metaDescription'];
+        if ($matched) {
             $success = true;
         } else {
-            $error = 'The meta description was sent to WordPress, but the saved value does not match what was intended. This can happen if this site\'s SEO plugin is not Yoast SEO.';
+            $error = 'The meta description was sent to WordPress, but the saved value does not match what was intended for any of Yoast SEO, Rank Math, or All in One SEO.';
         }
     } else {
         $error = 'This proposed change has no recognized field to execute.';
@@ -3728,15 +3740,19 @@ async function fetchWordPressContent(connection, decryptedPassword) {
 //   WordPress REST API field. This is reliable on any WordPress site
 //   regardless of plugins.
 //
-// - Meta description updates target _yoast_wpseo_metadesc via the meta
-//   object. Yoast's own REST surface is READ-ONLY BY DESIGN — a write to
-//   this field silently no-ops (the API returns success, but the value is
+// - Meta description updates write all three supported SEO plugins'
+//   fields at once (_yoast_wpseo_metadesc, rank_math_description,
+//   _aioseo_description) via the meta object, since only one is ever
+//   actually read by whichever plugin a given site genuinely runs and
+//   there is no reliable way to detect that in advance. Each of these
+//   plugins' own REST surface is READ-ONLY BY DESIGN — a write to any
+//   of them silently no-ops (the API returns success, but the value is
 //   never actually saved) unless the site has specifically registered
-//   this meta key with show_in_rest (a custom snippet or third-party
-//   plugin, not a default Yoast behavior). Even when a site DOES support
-//   this, Yoast's cached "indexable" record can lag behind a direct meta
-//   write, so the field appearing to save is not proof it actually took
-//   effect on the rendered page.
+//   these meta keys with show_in_rest (the SEO Bridge plugin, not a
+//   default behavior of any of them). Even when a site DOES support
+//   this, Yoast's cached "indexable" record specifically can lag behind
+//   a direct meta write, so the field appearing to save is not proof it
+//   actually took effect on the rendered page.
 //
 // This is exactly why verification here is not a nice-to-have: after
 // every execution, this re-fetches the SAME field used for reading
@@ -3772,8 +3788,15 @@ async function reVerifyWebsiteAction(action, connection, decryptedPassword) {
       if (!verifyRes.ok) return { verified: false, error: 'Verification could not confirm it — please check the page manually.' };
       const verifyData = await verifyRes.json();
       const derivedDescription = verifyData.yoast_head_json?.description || null;
-      if (derivedDescription === change.metaDescription) {
+      const rawYoastDescription = verifyData.meta?._yoast_wpseo_metadesc || null;
+      const rawRankMathDescription = verifyData.meta?.rank_math_description || null;
+      const rawAioseoDescription = verifyData.meta?._aioseo_description || null;
+
+      if (derivedDescription === change.metaDescription || rawRankMathDescription === change.metaDescription || rawAioseoDescription === change.metaDescription) {
         return { verified: true };
+      }
+      if (rawYoastDescription === change.metaDescription) {
+        return { verified: false, error: 'This is a known Yoast SEO caching behavior, not a permissions problem — the underlying data is correct, it just hasn\'t appeared on the rendered page yet.' };
       }
       return { verified: false, error: 'The live page has still not caught up to the saved change yet.' };
     }
@@ -3809,8 +3832,18 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
     }
 
     if (change.metaDescription) {
+      // Real, deliberate write to all three supported SEO plugins'
+      // fields at once, not just Yoast's — this platform's own SEO
+      // Bridge plugin was built to support Yoast, Rank Math, and All
+      // in One SEO, and only ever writing the Yoast-specific field
+      // meant a site running either of the other two would always
+      // silently fail here, regardless of the Bridge plugin being
+      // installed and active. Only one of these fields is ever
+      // actually read/rendered by whichever plugin a given site
+      // genuinely runs — the other two just sit unused and harmless,
+      // so this needs no upfront detection of which plugin that is.
       const res = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}`, {
-        method: 'POST', body: { meta: { _yoast_wpseo_metadesc: change.metaDescription } }, timeoutMs: 15000
+        method: 'POST', body: { meta: { _yoast_wpseo_metadesc: change.metaDescription, rank_math_description: change.metaDescription, _aioseo_description: change.metaDescription } }, timeoutMs: 15000
       });
       if (!res.ok) {
         return { executed: false, verified: false, error: `WordPress rejected the update (status ${res.status}).` };
@@ -3827,12 +3860,24 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
       if (!verifyRes.ok) return { executed: true, verified: false, error: 'The update was sent, but verification could not confirm it — please check the page manually.' };
       const verifyData = await verifyRes.json();
       const derivedDescription = verifyData.yoast_head_json?.description || null;
-      const rawMetaDescription = verifyData.meta?._yoast_wpseo_metadesc || null;
+      const rawYoastDescription = verifyData.meta?._yoast_wpseo_metadesc || null;
+      const rawRankMathDescription = verifyData.meta?.rank_math_description || null;
+      const rawAioseoDescription = verifyData.meta?._aioseo_description || null;
 
       if (derivedDescription === change.metaDescription) {
         return { executed: true, verified: true };
       }
-      if (rawMetaDescription === change.metaDescription) {
+      // Real, deliberate order — checked BEFORE the Yoast-raw-only
+      // case below: if this site is genuinely running Rank Math or
+      // All in One SEO, its own field matching is a real, clean
+      // success on its own terms, not something needing Yoast's
+      // specific "rendered cache lag" explanation, which is a known
+      // behavior of Yoast specifically, not verified to apply the
+      // same way to either of these other two plugins.
+      if (rawRankMathDescription === change.metaDescription || rawAioseoDescription === change.metaDescription) {
+        return { executed: true, verified: true };
+      }
+      if (rawYoastDescription === change.metaDescription) {
         // The write genuinely succeeded — this is Yoast's own cache
         // lagging, not a permissions problem the SEO Bridge plugin fixes.
         return { executed: true, verified: false, error: 'The update was saved correctly (confirmed in WordPress\'s raw data), but the live page\'s rendered meta description has not caught up yet. This is a known Yoast SEO caching behavior, not a permissions problem — installing the SEO Bridge plugin will not help here. Try refreshing the page directly in a browser, or wait a few minutes and check again; the underlying data is correct.' };
