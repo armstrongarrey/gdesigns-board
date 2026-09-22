@@ -2736,6 +2736,19 @@ if (!defined('ABSPATH')) {
 
 define('ARREYON_CONNECT_API_BASE', 'https://consult.gdesignsme.com');
 define('ARREYON_CONNECT_OPTION_KEY', 'arreyon_connect_status');
+define('ARREYON_POLLING_TOKEN_OPTION_KEY', 'arreyon_polling_token');
+define('ARREYON_CRON_HOOK', 'arreyon_poll_for_actions');
+
+// Real, deliberate custom interval — WordPress's built-in schedules
+// (hourly, twicedaily, daily) are all far coarser than the few
+// minutes of delay this is meant to keep an approved change within.
+add_filter('cron_schedules', function ($schedules) {
+    $schedules['arreyon_five_minutes'] = [
+        'interval' => 300,
+        'display'  => __('Every 5 Minutes (Arreyon Connect)'),
+    ];
+    return $schedules;
+});
 
 add_action('admin_menu', function () {
     add_menu_page(
@@ -2885,8 +2898,166 @@ add_action('admin_post_arreyon_connect', function () {
         'connected_at' => current_time('mysql'),
     ]);
 
+    // Real, deliberate fallback path — only present when Arreyon's own
+    // verification request was blocked before it ever reached
+    // WordPress (Cloudflare Bot Fight Mode being the known case this
+    // exists for). This site's own outbound requests to Arreyon are
+    // never subject to that same protection, so polling from this
+    // side is what makes execution possible at all in that situation.
+    if (!empty($body['connectionMode']) && $body['connectionMode'] === 'poll' && !empty($body['pollingToken'])) {
+        update_option(ARREYON_POLLING_TOKEN_OPTION_KEY, sanitize_text_field($body['pollingToken']));
+        if (!wp_next_scheduled(ARREYON_CRON_HOOK)) {
+            wp_schedule_event(time(), 'arreyon_five_minutes', ARREYON_CRON_HOOK);
+        }
+    } else {
+        // A normal, direct (push-mode) connection needs no polling at
+        // all — clear any previous poll-mode leftovers from an
+        // earlier connection attempt so this site doesn't keep
+        // polling Arreyon for no reason.
+        delete_option(ARREYON_POLLING_TOKEN_OPTION_KEY);
+        $scheduled = wp_next_scheduled(ARREYON_CRON_HOOK);
+        if ($scheduled) {
+            wp_unschedule_event($scheduled, ARREYON_CRON_HOOK);
+        }
+    }
+
     wp_safe_redirect(add_query_arg('arreyon_connected', '1', $redirect_base));
     exit;
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POLL-MODE EXECUTION — only ever runs when this site was connected in
+// poll mode (a stored token exists), which only happens when Arreyon's
+// own direct verification request was blocked before reaching WordPress
+// at all (the known case: Cloudflare Bot Fight Mode on the free tier,
+// which cannot be exempted by any rule). Runs the OPPOSITE direction
+// from a normal push-mode connection: this site calls OUT to Arreyon —
+// an outbound request Cloudflare's inbound bot protection never
+// inspects — fetches whatever real, approved changes are waiting, and
+// executes them locally using WordPress's own native functions rather
+// than the REST API, then reports the real, immediate result back.
+add_action(ARREYON_CRON_HOOK, 'arreyon_poll_and_execute_actions');
+
+function arreyon_poll_and_execute_actions() {
+    $token = get_option(ARREYON_POLLING_TOKEN_OPTION_KEY, null);
+    if (empty($token)) {
+        // Not (or no longer) in poll mode — nothing to do. This can
+        // happen if the cron event fires once more right after a
+        // reconnect switched this site back to push mode.
+        return;
+    }
+
+    $response = wp_remote_get(
+        ARREYON_CONNECT_API_BASE . '/api/website-connector/poll?token=' . rawurlencode($token),
+        ['timeout' => 15]
+    );
+
+    if (is_wp_error($response)) {
+        error_log('Arreyon Connect: could not reach Arreyon to poll for actions: ' . $response->get_error_message());
+        return;
+    }
+    if (wp_remote_retrieve_response_code($response) !== 200) {
+        error_log('Arreyon Connect: polling request rejected (status ' . wp_remote_retrieve_response_code($response) . ')');
+        return;
+    }
+
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+    $actions = !empty($body['actions']) && is_array($body['actions']) ? $body['actions'] : [];
+
+    foreach ($actions as $action) {
+        arreyon_execute_one_action($token, $action);
+    }
+}
+
+// Executes a single real, already-approved change locally, then
+// immediately reads back what was actually saved — within the same
+// PHP request, before any cache anywhere has a chance to interfere —
+// and reports that real outcome back to Arreyon.
+function arreyon_execute_one_action($token, $action) {
+    $action_id = isset($action['id']) ? $action['id'] : null;
+    $target_wp_id = isset($action['targetWpId']) ? (int) $action['targetWpId'] : 0;
+    $change = isset($action['change']) && is_array($action['change']) ? $action['change'] : [];
+
+    if (!$action_id || !$target_wp_id) {
+        arreyon_report_action_result($token, $action_id, false, 'Received an incomplete action from Arreyon — missing id or target.');
+        return;
+    }
+
+    $success = false;
+    $error = null;
+
+    // Real, deliberate scope match — mirrors executeWebsiteAction on
+    // the Arreyon side exactly (title via wp_update_post, meta
+    // description via the Yoast-specific field only, for now — the
+    // same known, separate limitation that server-side execution
+    // already has, not something introduced here).
+    if (!empty($change['title'])) {
+        $result = wp_update_post(['ID' => $target_wp_id, 'post_title' => $change['title']], true);
+        if (is_wp_error($result)) {
+            $error = 'WordPress rejected the title update: ' . $result->get_error_message();
+        } else {
+            // Real, immediate local re-fetch — clear the object cache
+            // for this post first so this genuinely reads the row
+            // that was just written, not a stale in-memory copy from
+            // earlier in the same request.
+            clean_post_cache($target_wp_id);
+            $actual_title = get_post_field('post_title', $target_wp_id, 'raw');
+            if ($actual_title === $change['title']) {
+                $success = true;
+            } else {
+                $error = 'The title was sent to WordPress, but the saved value ("' . $actual_title . '") does not match what was intended.';
+            }
+        }
+    } elseif (!empty($change['metaDescription'])) {
+        $updated = update_post_meta($target_wp_id, '_yoast_wpseo_metadesc', $change['metaDescription']);
+        // update_post_meta returns false both on genuine failure AND
+        // when the new value is identical to the existing one — so
+        // this reads the real, current value back rather than
+        // trusting the return value alone to decide success.
+        $actual_description = get_post_meta($target_wp_id, '_yoast_wpseo_metadesc', true);
+        if ($actual_description === $change['metaDescription']) {
+            $success = true;
+        } else {
+            $error = 'The meta description was sent to WordPress, but the saved value does not match what was intended. This can happen if this site\'s SEO plugin is not Yoast SEO.';
+        }
+    } else {
+        $error = 'This proposed change has no recognized field to execute.';
+    }
+
+    arreyon_report_action_result($token, $action_id, $success, $error);
+}
+
+function arreyon_report_action_result($token, $action_id, $success, $error) {
+    $response = wp_remote_post(ARREYON_CONNECT_API_BASE . '/api/website-connector/report-result', [
+        'timeout' => 15,
+        'headers' => ['Content-Type' => 'application/json'],
+        'body' => wp_json_encode([
+            'token' => $token,
+            'actionId' => $action_id,
+            'success' => $success,
+            'error' => $error,
+        ]),
+    ]);
+
+    if (is_wp_error($response)) {
+        // Real, deliberate no-op beyond logging — the change was
+        // already genuinely applied (or genuinely failed) on this
+        // site regardless of whether Arreyon ever hears about it; a
+        // failed report here shouldn't retry the write itself, since
+        // WordPress-side idempotency for a partially-reported action
+        // isn't something this endpoint currently guards against.
+        error_log('Arreyon Connect: could not report action result back to Arreyon: ' . $response->get_error_message());
+    }
+}
+
+// Real, deliberate cleanup — a scheduled cron event left behind after
+// deactivation would keep firing (and keep trying to reach Arreyon)
+// for a plugin the site owner just turned off.
+register_deactivation_hook(__FILE__, function () {
+    $scheduled = wp_next_scheduled(ARREYON_CRON_HOOK);
+    if ($scheduled) {
+        wp_unschedule_event($scheduled, ARREYON_CRON_HOOK);
+    }
 });
 `;
 
