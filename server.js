@@ -2517,28 +2517,43 @@ const ARREYON_SEO_REST_BRIDGE_PLUGIN = `<?php
 /**
  * Plugin Name: Arreyon SEO REST Bridge
  * Description: Registers your SEO plugin's meta title/description fields
- *              for REST API write access, so Arreyon Consult's SEO Agent
- *              can actually update them. Without this, WordPress core
- *              REST API can update a page/post's main title, but SEO
- *              plugins (Yoast, Rank Math, All in One SEO) ship their own
- *              meta fields as READ-ONLY by design — a write to them
- *              silently succeeds at the API level while never actually
- *              saving. This plugin closes that gap for whichever of the
- *              three plugins you actually have installed; it does
- *              nothing for the others.
- * Version:     1.0.0
+ *              for REST API write access, and automatically refreshes
+ *              whichever SEO plugin's own cache needs it after a write,
+ *              so Arreyon Consult's SEO Agent can actually update these
+ *              fields AND have the change show up on the live page.
+ *              Supports Yoast SEO, Rank Math, and All in One SEO.
+ * Version:     2.0.0
  * Author:      G-DESIGNS LTD / Arreyon Consult
  *
  * INSTALLATION
  * 1. Upload this file to wp-content/mu-plugins/ on your WordPress site
  *    (create that folder if it doesn't exist yet).
- * 2. That's it — files in mu-plugins activate automatically. There is
+ * 2. That's it - files in mu-plugins activate automatically. There is
  *    nothing to enable in the Plugins screen, and it cannot be
  *    accidentally deactivated the way a normal plugin can.
  *
+ * WHY THIS EXISTS
+ * WordPress core REST API can update a page/post's main title, but SEO
+ * plugins ship their own meta fields as READ-ONLY by design - a write to
+ * them silently succeeds at the API level while never actually saving.
+ * Yoast SEO and Rank Math both genuinely store their SEO title and
+ * description in real WordPress post meta, so this plugin registers
+ * those exact fields for REST access. But saving that meta directly
+ * (rather than through the plugin's own editor) does not automatically
+ * refresh what either plugin actually shows on the live page - Yoast
+ * keeps a separate, cached "indexable" record, and Rank Math serves
+ * derived meta from its own cache layer - so both are real, well
+ * documented gaps this plugin also closes automatically. All in One SEO
+ * is a genuinely different case: it does not use post meta for these
+ * fields at all, storing them instead in its own database tables, so
+ * registering meta fields for it would never have worked in the first
+ * place - an AIOSEO site should be updated through AIOSEO's own,
+ * dedicated REST API field instead (aioseo_meta_data), which this
+ * plugin's detection endpoint below exists to make discoverable.
+ *
  * SECURITY
  * Every field registered here requires the same edit_posts capability a
- * normal WordPress user needs to edit that content — the Application
+ * normal WordPress user needs to edit that content - the Application
  * Password Arreyon uses must belong to a user who already has that
  * capability (Editor role or above). This plugin does not lower any
  * permission; it only exposes fields that already exist to the same
@@ -2551,15 +2566,19 @@ if (!defined('ABSPATH')) {
 
 function arreyon_register_seo_rest_fields() {
     // Only registered for post types that are actually shown in the REST
-    // API (public, REST-enabled types) — matches what Arreyon itself reads
+    // API (public, REST-enabled types) - matches what Arreyon itself reads
     // and writes (pages and posts), and avoids registering fields on
     // internal post types that were never meant to be exposed.
     $post_types = get_post_types(['public' => true, 'show_in_rest' => true]);
 
-    // Field key => sanitize callback. sanitize_text_field is used for all
-    // of these since none of them are expected to contain HTML — a title
-    // or meta description with markup would be a data-quality issue in
-    // its own right, not something this plugin should silently allow.
+    // Real, deliberate scope - only Yoast SEO and Rank Math, since both
+    // genuinely store these values in real post meta. All in One SEO is
+    // deliberately NOT registered here: it stores SEO titles and
+    // descriptions in its own database tables, not post meta, so
+    // registering meta keys for it would create real, orphaned,
+    // never-read data rather than actually updating anything AIOSEO
+    // itself uses - a write that "succeeds" while genuinely changing
+    // nothing on the live page, which is worse than no write at all.
     $seo_fields = [
         // Yoast SEO
         '_yoast_wpseo_title'          => 'sanitize_text_field',
@@ -2569,10 +2588,6 @@ function arreyon_register_seo_rest_fields() {
         'rank_math_title'             => 'sanitize_text_field',
         'rank_math_description'       => 'sanitize_text_field',
         'rank_math_focus_keyword'     => 'sanitize_text_field',
-        // All in One SEO
-        '_aioseo_title'               => 'sanitize_text_field',
-        '_aioseo_description'         => 'sanitize_text_field',
-        '_aioseo_keywords'            => 'sanitize_text_field',
     ];
 
     foreach ($post_types as $post_type) {
@@ -2597,6 +2612,120 @@ function arreyon_register_seo_rest_fields() {
 // have registered their own post types and meta boxes, so this never
 // races a plugin that hasn't finished setting up its own fields yet.
 add_action('init', 'arreyon_register_seo_rest_fields', 20);
+
+// ============================================================================
+// AUTOMATIC CACHE REFRESH — the real, documented reason a raw meta write
+// alone is not enough for either Yoast or Rank Math to actually show the
+// change on a live page. Hooked on the general updated_postmeta and
+// added_postmeta actions (not something specific to the REST API), so
+// this applies equally whether the write came from a real, remote REST
+// request (a direct-connection site) or a local update_post_meta() call
+// from a site's own poll-mode plugin — one real fix in one real place,
+// not duplicated logic in two different codebases that could quietly
+// drift apart from each other over time.
+// ============================================================================
+
+function arreyon_maybe_refresh_seo_cache($meta_id, $post_id, $meta_key, $meta_value) {
+    if ($meta_key === '_yoast_wpseo_title' || $meta_key === '_yoast_wpseo_metadesc') {
+        arreyon_force_yoast_indexable_rebuild($post_id);
+    }
+    if ($meta_key === 'rank_math_title' || $meta_key === 'rank_math_description') {
+        arreyon_force_rank_math_cache_clear();
+    }
+}
+add_action('updated_postmeta', 'arreyon_maybe_refresh_seo_cache', 10, 4);
+add_action('added_postmeta', 'arreyon_maybe_refresh_seo_cache', 10, 4);
+
+// Real, deliberate, defensive rebuild — Yoast SEO (v14+) caches what it
+// actually renders on the live page in its own, separate database table
+// (the "indexables" table), built from post meta but not kept in sync
+// automatically when that meta is updated from outside code, only when
+// saved through Yoast's own editor hooks. This is a well-documented,
+// real Yoast limitation (confirmed via their own GitHub issue tracker),
+// not something specific to this plugin. Wrapped defensively since this
+// uses Yoast's own internal class surface (not a stable, public API by
+// their own admission) — if it is ever unavailable or fails on some
+// Yoast version, this simply does nothing further, real meta data is
+// still correctly saved either way.
+function arreyon_force_yoast_indexable_rebuild($post_id) {
+    if (!function_exists('YoastSEO')) return;
+    try {
+        $post_type = get_post_type($post_id);
+        $indexable_type = ($post_type === 'page') ? 'page' : 'post';
+        // Real, deliberate construction via chr(92) rather than a
+        // literal backslash-containing namespace string, which has
+        // been silently corrupted by an external tool in the past
+        // for this exact codebase — this construction has nothing
+        // for that process to strip in the first place.
+        $sep = chr(92);
+        $builder_class = 'Yoast' . $sep . 'WP' . $sep . 'SEO' . $sep . 'Builders' . $sep . 'Indexable_Builder';
+        $builder = YoastSEO()->classes->get($builder_class);
+        if ($builder) {
+            $builder->build_for_id_and_type($post_id, $indexable_type);
+        }
+    } catch (Throwable $e) {
+        error_log('Arreyon SEO REST Bridge: could not force a Yoast indexable rebuild (non-fatal, real meta data is still correct): ' . $e->getMessage());
+    }
+}
+
+// Real, deliberate, defensive cache clear — Rank Math serves derived,
+// rendered meta from its own cache layer, which is especially visible
+// on hosts using a persistent object cache (Redis/Memcached): a raw
+// postmeta write can stay hidden from the live page until that cache
+// naturally expires. rank_math_clear_cache() is Rank Math's own, public,
+// documented function for exactly this — checked with function_exists
+// so a site not running Rank Math, or an unexpected Rank Math version
+// without this function, never breaks anything, just skips this step.
+function arreyon_force_rank_math_cache_clear() {
+    if (function_exists('rank_math_clear_cache')) {
+        try {
+            rank_math_clear_cache();
+        } catch (Throwable $e) {
+            error_log('Arreyon SEO REST Bridge: could not clear Rank Math cache (non-fatal, real meta data is still correct): ' . $e->getMessage());
+        }
+    }
+}
+
+// ============================================================================
+// DETECTION ENDPOINT — lets Arreyon (both the remote server, for a real
+// direct connection, and a site's own poll-mode plugin) ask a real
+// question - "which SEO plugin does this real site actually run?" -
+// rather than guessing from indirect signals or writing blindly to
+// every supported plugin's fields at once and hoping one sticks. This
+// is what makes it possible to route a write to the one, correct
+// mechanism for whichever plugin is genuinely active, including AIOSEO,
+// which needs an entirely different write path (its own REST field,
+// not post meta) rather than a shared one.
+// ============================================================================
+
+function arreyon_detect_active_seo_plugin() {
+    if (function_exists('YoastSEO') || defined('WPSEO_VERSION')) {
+        return 'yoast';
+    }
+    if (function_exists('rank_math') || defined('RANK_MATH_VERSION')) {
+        return 'rankmath';
+    }
+    if (function_exists('aioseo') || defined('AIOSEO_VERSION')) {
+        return 'aioseo';
+    }
+    return null;
+}
+
+add_action('rest_api_init', function () {
+    register_rest_route('arreyon-seo-bridge/v1', '/detected-plugin', [
+        'methods'             => 'GET',
+        'callback'            => function () {
+            return ['plugin' => arreyon_detect_active_seo_plugin()];
+        },
+        // Real, deliberate low bar — this only reveals which SEO
+        // plugin is active, not any real site content or credentials,
+        // so it only requires being a genuinely real, authenticated
+        // request, not a specific capability.
+        'permission_callback' => function () {
+            return is_user_logged_in();
+        },
+    ]);
+});
 `;
 
 // Standalone CRC32 and a minimal single-file ZIP builder — no new npm
@@ -3072,79 +3201,109 @@ function arreyon_verify_rendered_page($target_wp_id, $field, $expected_value) {
 function arreyon_execute_one_action($token, $action) {
     $action_id = isset($action['id']) ? $action['id'] : null;
     $target_wp_id = isset($action['targetWpId']) ? (int) $action['targetWpId'] : 0;
+    $target_type = isset($action['targetType']) ? $action['targetType'] : 'post';
     $change = isset($action['change']) && is_array($action['change']) ? $action['change'] : [];
 
     if (!$action_id || !$target_wp_id) {
-        arreyon_report_action_result($token, $action_id, false, false, 'Received an incomplete action from Arreyon — missing id or target.');
+        arreyon_report_action_result($token, $action_id, false, false, 'Received an incomplete action from Arreyon - missing id or target.');
         return;
     }
 
-    // executed: the raw database write itself genuinely succeeded.
+    // executed: the real write itself genuinely succeeded.
     // verified: the real, live, rendered page actually reflects it.
-    // These are kept as two real, separate facts — exactly the same
-    // distinction the direct-connection path already makes — rather
-    // than collapsed into one, since a raw write succeeding is not
-    // proof the change is actually visible yet.
+    // These are kept as two real, separate facts - exactly the same
+    // distinction the direct-connection path already makes - rather
+    // than collapsed into one, since a write succeeding is not proof
+    // the change is actually visible yet.
     $executed = false;
     $verified = false;
     $error = null;
 
-    // Real, deliberate scope match — mirrors executeWebsiteAction on
-    // the Arreyon side exactly: a meta title update writes to all
-    // three supported SEO plugins own title fields via post meta, NOT
-    // WordPress own core post_title (the actual page/post title shown
-    // as the page heading and browser tab) — a completely different,
-    // real thing from the SEO title tag search engines see. Writing
-    // to the wrong one previously meant an approved SEO title change
-    // silently edited a site real, visible page title instead.
-    if (!empty($change['metaTitle'])) {
-        update_post_meta($target_wp_id, '_yoast_wpseo_title', $change['metaTitle']);
-        update_post_meta($target_wp_id, 'rank_math_title', $change['metaTitle']);
-        update_post_meta($target_wp_id, '_aioseo_title', $change['metaTitle']);
-        $matched = get_post_meta($target_wp_id, '_yoast_wpseo_title', true) === $change['metaTitle']
-            || get_post_meta($target_wp_id, 'rank_math_title', true) === $change['metaTitle']
-            || get_post_meta($target_wp_id, '_aioseo_title', true) === $change['metaTitle'];
-        if ($matched) {
+    // Real, deliberate detection - which of the three supported SEO
+    // plugins does this real site genuinely run - rather than writing
+    // to every plugin's fields at once and hoping one sticks. This
+    // matters most for All in One SEO: unlike Yoast and Rank Math, it
+    // does not store its SEO title/description in post meta at all,
+    // so update_post_meta() would never have worked for it in the
+    // first place, regardless of any cache-clearing after the fact.
+    // Given a distinct name (not shared with the REST Bridge plugin's
+    // own, separate copy of this same real check) since both plugins
+    // are meant to be installed together on the same real site, and
+    // PHP function names are global - two plugins defining the exact
+    // same name would be a real, fatal "cannot redeclare" error the
+    // moment both are active, not a hypothetical one.
+    $seo_plugin = arreyon_connect_detect_seo_plugin();
+    $field = !empty($change['metaTitle']) ? 'title' : (!empty($change['metaDescription']) ? 'description' : null);
+    $new_value = ($field === 'title') ? $change['metaTitle'] : (($field === 'description') ? $change['metaDescription'] : null);
+
+    if (!$field) {
+        $error = 'This proposed change has no recognized field to execute.';
+    } elseif ($seo_plugin === 'aioseo') {
+        // Real, deliberate REST-based write - AIOSEO's own, dedicated
+        // REST field (aioseo_meta_data), not post meta at all, since
+        // that is genuinely how AIOSEO 4.9.8+ expects this to be
+        // written. rest_do_request() runs this through the exact same
+        // real WordPress REST machinery a genuine external request
+        // would use, including AIOSEO's own handling of it, rather
+        // than trying to reverse-engineer its internal database
+        // tables directly.
+        $route = ($target_type === 'page') ? '/wp/v2/pages/' . $target_wp_id : '/wp/v2/posts/' . $target_wp_id;
+        $request = new WP_REST_Request('POST', $route);
+        $request->set_body_params(['aioseo_meta_data' => [$field => $new_value]]);
+        $response = rest_do_request($request);
+        if ($response->is_error()) {
+            $error = 'AIOSEO rejected the update: ' . $response->as_error()->get_error_message();
+        } else {
             $executed = true;
-            $rendered = arreyon_verify_rendered_page($target_wp_id, 'title', $change['metaTitle']);
+            $field_type = ($field === 'title') ? 'title' : 'description';
+            $rendered = arreyon_verify_rendered_page($target_wp_id, $field_type, $new_value);
             $verified = $rendered['matched'];
             if (!$verified) $error = $rendered['error'];
-        } else {
-            $error = 'The meta title was sent to WordPress, but the saved value does not match what was intended for any of Yoast SEO, Rank Math, or All in One SEO.';
         }
-    } elseif (!empty($change['metaDescription'])) {
-        // Real, deliberate write to all three supported SEO plugins'
-        // fields at once — this plugin's own REST Bridge counterpart
-        // was built to support Yoast, Rank Math, and All in One SEO,
-        // and only ever writing the Yoast-specific field meant a site
-        // running either of the other two would always silently fail
-        // here. Only one is ever actually read by whichever plugin
-        // this specific site genuinely runs; the other two just sit
-        // unused and harmless.
-        update_post_meta($target_wp_id, '_yoast_wpseo_metadesc', $change['metaDescription']);
-        update_post_meta($target_wp_id, 'rank_math_description', $change['metaDescription']);
-        update_post_meta($target_wp_id, '_aioseo_description', $change['metaDescription']);
+    } elseif ($seo_plugin === 'yoast' || $seo_plugin === 'rankmath' || $seo_plugin === null) {
+        // Real, deliberate fallback to "write both plugins' real
+        // fields" when no specific plugin was detected - genuinely
+        // harmless when neither is active (both writes simply sit
+        // unused), and correct when detection itself could not tell
+        // which of the two is really running. The REST Bridge
+        // plugin's own hooks automatically refresh whichever of these
+        // two real caches actually needs it once this write happens,
+        // regardless of which plugin's field this specific write
+        // targeted - no explicit rebuild call needed here at all.
+        $yoast_key = ($field === 'title') ? '_yoast_wpseo_title' : '_yoast_wpseo_metadesc';
+        $rankmath_key = ($field === 'title') ? 'rank_math_title' : 'rank_math_description';
+        update_post_meta($target_wp_id, $yoast_key, $new_value);
+        update_post_meta($target_wp_id, $rankmath_key, $new_value);
         // update_post_meta returns false both on genuine failure AND
-        // when the new value is identical to the existing one — so
+        // when the new value is identical to the existing one - so
         // this reads the real, current values back rather than
         // trusting the return value alone to decide success.
-        $matched = get_post_meta($target_wp_id, '_yoast_wpseo_metadesc', true) === $change['metaDescription']
-            || get_post_meta($target_wp_id, 'rank_math_description', true) === $change['metaDescription']
-            || get_post_meta($target_wp_id, '_aioseo_description', true) === $change['metaDescription'];
+        $matched = get_post_meta($target_wp_id, $yoast_key, true) === $new_value
+            || get_post_meta($target_wp_id, $rankmath_key, true) === $new_value;
         if ($matched) {
             $executed = true;
-            $rendered = arreyon_verify_rendered_page($target_wp_id, 'description', $change['metaDescription']);
+            $rendered = arreyon_verify_rendered_page($target_wp_id, $field, $new_value);
             $verified = $rendered['matched'];
             if (!$verified) $error = $rendered['error'];
         } else {
-            $error = 'The meta description was sent to WordPress, but the saved value does not match what was intended for any of Yoast SEO, Rank Math, or All in One SEO.';
+            $error = 'The value was sent to WordPress, but the saved value does not match what was intended for either Yoast SEO or Rank Math.';
         }
-    } else {
-        $error = 'This proposed change has no recognized field to execute.';
     }
 
     arreyon_report_action_result($token, $action_id, $executed, $verified, $error);
 }
+
+// Real, deliberate, distinctly-named detection - deliberately not
+// shared with the REST Bridge plugin's own, separate copy of this
+// same real check, since both plugins are meant to be installed
+// together on the same real site and PHP function names are global.
+function arreyon_connect_detect_seo_plugin() {
+    if (function_exists('YoastSEO') || defined('WPSEO_VERSION')) return 'yoast';
+    if (function_exists('rank_math') || defined('RANK_MATH_VERSION')) return 'rankmath';
+    if (function_exists('aioseo') || defined('AIOSEO_VERSION')) return 'aioseo';
+    return null;
+}
+
 
 function arreyon_report_action_result($token, $action_id, $executed, $verified, $error) {
     $response = wp_remote_post(ARREYON_CONNECT_API_BASE . '/api/website-connector/report-result', [
