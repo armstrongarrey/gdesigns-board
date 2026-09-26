@@ -1108,24 +1108,6 @@ CREATE TABLE IF NOT EXISTS website_connections (
   -- migration to add it once execution features exist.
   permission_level VARCHAR(20) DEFAULT 'read_only', -- 'read_only' | 'draft' | 'approval_required' | 'managed'
   automation_mode VARCHAR(20) DEFAULT 'manual', -- 'manual' | 'automatic' — low-risk actions only; destructive actions always require approval regardless of this switch
-  -- 'push' (default): Arreyon calls the site's REST API directly,
-  -- real-time. 'poll': the site's own plugin calls Arreyon instead and
-  -- executes changes locally via native WordPress functions — the
-  -- fallback for sites where an inbound request from Arreyon is
-  -- blocked before it ever reaches WordPress (e.g. Cloudflare Bot
-  -- Fight Mode on the free tier, which cannot be bypassed by any rule
-  -- at all), since a site's own outbound request to Arreyon is never
-  -- subject to that same protection.
-  connection_mode VARCHAR(20) DEFAULT 'push',
-  -- SHA-256, not bcrypt — deliberately deterministic. Unlike a
-  -- user's chosen password, this is a full 32-byte random value, so a
-  -- fast, deterministic hash is secure at this entropy level while
-  -- also enabling a real, indexed WHERE lookup by hash. bcrypt's
-  -- salted, non-deterministic output can only ever be verified
-  -- against one already-known record — it can't be looked up this
-  -- way at all, which would mean comparing every poll-mode
-  -- connection's hash against every incoming poll request.
-  polling_token_hash TEXT,
   website_intelligence JSONB,
   website_intelligence_fr JSONB,
   website_intelligence_generated_at TIMESTAMPTZ,
@@ -1183,8 +1165,8 @@ CREATE TABLE IF NOT EXISTS website_actions (
   -- Left here now so the schema doesn't need another migration once
   -- execution ships, and so the frontend can render an honest "not yet
   -- executed" state rather than one built without a real column for it.
-  execution_status VARCHAR(20) DEFAULT 'not_executed', -- 'not_executed' | 'executing' | 'queued_for_poll' | 'executed' | 'execution_failed' — 'queued_for_poll' is poll-mode connections only: approved and waiting for the site's own plugin to pick it up and execute it locally on its next check-in
-  verification_status VARCHAR(20), -- 'verified' | 'verification_failed' | 'manually_confirmed' — 'verified' is an automated re-check catching up; 'manually_confirmed' is the user's own word after checking their live site themselves, kept as a distinct, honest value rather than blurred into 'verified'
+  execution_status VARCHAR(20) DEFAULT 'not_executed', -- 'not_executed' | 'executing' | 'executed' | 'execution_failed'
+  verification_status VARCHAR(20), -- 'verified' | 'verification_failed' — set only after an actual post-execution check
   error_message TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -1209,3 +1191,14 @@ CREATE TABLE IF NOT EXISTS website_connection_codes (
   used_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_website_connection_codes_business ON website_connection_codes(business_id);
+
+-- The businesses table already had country/region/city, but nothing ever
+-- populated them reliably — the Analyze My Business flow only tried to
+-- infer location from AI-extracted facts about a website/description,
+-- which silently stays empty when the source text doesn't clearly state
+-- a location. market_scope lets the person explicitly choose whether
+-- analysis should focus on their local market, their whole country, or
+-- go broader — 'local' by default, since that's what most small
+-- businesses actually need, not a US-centric or otherwise ungrounded
+-- global default.
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS market_scope VARCHAR(20) DEFAULT 'local';
