@@ -8746,7 +8746,21 @@ async function safeFetch(urlStr, { maxBytes = 2_000_000, timeoutMs = 8000, maxRe
       continue; // re-validate the new host on next loop iteration
     }
 
-    if (!res.ok) throw new Error(`Fetch failed with status ${res.status}`);
+    if (!res.ok) {
+      let bodySnippet = '';
+      try { bodySnippet = (await res.text()).toLowerCase(); } catch (e) {}
+      let reason = '';
+      if (res.status === 403) {
+        if (bodySnippet.includes('just a moment') && bodySnippet.includes('cloudflare')) {
+          reason = ' — this site\'s own Cloudflare bot-protection is blocking automated access (the same kind of protection a browser passes automatically but an automated fetch cannot). Try describing your business in the text field instead of pasting the URL.';
+        } else if (bodySnippet.includes('captcha') || bodySnippet.includes('are you a robot') || bodySnippet.includes('access denied')) {
+          reason = ' — this site appears to be blocking automated access. Try describing your business in the text field instead of pasting the URL.';
+        } else {
+          reason = ' — this site is refusing automated access to this page. Try describing your business in the text field instead of pasting the URL.';
+        }
+      }
+      throw new Error(`Could not read ${current} (status ${res.status})${reason}`);
+    }
 
     const contentType = res.headers.get('content-type') || '';
     if (!contentType.includes('text/html') && !contentType.includes('text/plain')) {
