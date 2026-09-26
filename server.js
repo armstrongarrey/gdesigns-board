@@ -10782,6 +10782,30 @@ app.put('/api/alerts/read-all', authRequired, async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Failed to update alerts' }); }
 });
 
+// Bulk convenience — clears every already-read alert in one action,
+// leaving unread ones untouched so nothing unseen gets lost by accident.
+// Defined BEFORE /api/alerts/:id below — Express matches routes in
+// order, and the generic :id path would otherwise swallow this one,
+// treating "clear-read" as if it were an alert's id.
+app.delete('/api/alerts/clear-read', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(`DELETE FROM monitoring_alerts WHERE owner_id = $1 AND is_read = true RETURNING id`, [account.id]);
+    res.json({ success: true, clearedCount: result.rows.length });
+  } catch (e) { res.status(500).json({ error: 'Failed to clear alerts' }); }
+});
+
+// A real delete, not a soft "dismissed" flag — matches what the person
+// asked for (choosing which specific alerts to clear, read or not).
+app.delete('/api/alerts/:id', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(`DELETE FROM monitoring_alerts WHERE id = $1 AND owner_id = $2 RETURNING id`, [req.params.id, account.id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Alert not found' });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to delete alert' }); }
+});
+
 app.get('/api/alerts/preferences', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
