@@ -3884,8 +3884,11 @@ async function loadAnalyzedBusinesses() {
       <div class="history-item" style="cursor:pointer" onclick="loadBusinessIntoView('${b.id}')">
         <div class="history-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
         <div style="flex:1"><div class="history-title">${b.name || b.website || 'My Business'}</div>
-        <div class="history-meta"><span>${b.website || 'No website'}</span></div></div>
+        <div class="history-meta"><span>${b.website || 'No website'}</span>${b.city || b.country ? `<span> · ${[b.city, b.country].filter(Boolean).join(', ')}</span>` : ''}</div></div>
         <div class="history-time">${timeAgo(b.updated_at)}</div>
+        <button type="button" class="business-delete-btn" title="${t('analyzer.delete_business')}" onclick="event.stopPropagation();deleteAnalyzedBusiness('${b.id}', ${JSON.stringify(b.name || b.website || 'My Business')})" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:6px;margin-left:8px;display:flex;align-items:center;border-radius:6px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+        </button>
       </div>`).join('');
 
     // After a page refresh, nothing is loaded into the main view yet — automatically
@@ -3896,6 +3899,29 @@ async function loadAnalyzedBusinesses() {
   } catch (e) {
     const list = document.getElementById('analyzedBusinessList');
     if (list) list.innerHTML = `<div style="text-align:center;padding:24px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  }
+}
+
+async function deleteAnalyzedBusiness(id, name) {
+  if (!confirm(t('analyzer.confirm_delete').replace('{name}', name))) return;
+  try {
+    const res = await fetch(`/api/business/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('analyzer.deleted_success').replace('{name}', name), 'success');
+    // If the deleted business was the one currently loaded in the main
+    // view, clear it — leaving it displayed would show data for a
+    // business that no longer exists.
+    if (currentBusinessId === id) {
+      currentBusinessId = null;
+      document.getElementById('analyzerResults').style.display = 'none';
+    }
+    loadAnalyzedBusinesses();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
   }
 }
 
