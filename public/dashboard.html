@@ -730,6 +730,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn-ghost" style="font-size:12px;padding:8px 14px" onclick="markAllAlertsRead()" data-i18n="alerts.mark_all_read">Mark all read</button>
+          <button class="btn-ghost" style="font-size:12px;padding:8px 14px" onclick="clearReadAlerts()" data-i18n="alerts.clear_read">Clear read</button>
           <button class="btn-ghost" style="font-size:12px;padding:8px 14px" onclick="toggleAlertPreferences()" data-i18n="alerts.settings">Settings</button>
         </div>
       </div>
@@ -2937,7 +2938,10 @@ async function loadAlertsSection() {
           <div style="font-size:12.5px;color:var(--text2);line-height:1.5">${escapeHtml(a.message)}</div>
           <div style="font-size:11px;color:var(--muted);margin-top:6px">${dateStr}</div>
         </div>
-        ${a.is_read ? '' : `<button onclick="markAlertRead('${a.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;white-space:nowrap;align-self:flex-start" title="${t('alerts.mark_read')}">✓ ${t('alerts.mark_read')}</button>`}
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+          ${a.is_read ? '' : `<button onclick="markAlertRead('${a.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;white-space:nowrap" title="${t('alerts.mark_read')}">✓ ${t('alerts.mark_read')}</button>`}
+          <button onclick="deleteAlert('${a.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;white-space:nowrap" title="${t('alerts.clear_one')}">✕ ${t('alerts.clear_one')}</button>
+        </div>
       </div>`;
     }).join('');
   } catch (e) {
@@ -2961,6 +2965,30 @@ async function markAllAlertsRead() {
     const res = await fetch('/api/alerts/read-all', { method: 'PUT' });
     if (res.ok) loadAlertsSection();
     else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+async function deleteAlert(id) {
+  try {
+    const res = await fetch(`/api/alerts/${id}`, { method: 'DELETE' });
+    if (res.ok) loadAlertsSection();
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+async function clearReadAlerts() {
+  if (!confirm(t('alerts.confirm_clear_read'))) return;
+  try {
+    const res = await fetch('/api/alerts/clear-read', { method: 'DELETE' });
+    const data = await res.json();
+    if (res.ok) {
+      showToast(t('alerts.cleared_count').replace('{n}', data.clearedCount), 'success');
+      loadAlertsSection();
+    } else showToast(data.error || t('board.connection_error'), 'error');
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
