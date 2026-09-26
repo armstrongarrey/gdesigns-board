@@ -9099,11 +9099,33 @@ app.get('/api/business', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
     const result = await pool.query(
-      'SELECT id, name, website, industry, created_at, updated_at FROM businesses WHERE user_id = $1 AND is_active = true ORDER BY updated_at DESC',
+      'SELECT id, name, website, industry, city, country, region, market_scope, created_at, updated_at FROM businesses WHERE user_id = $1 AND is_active = true ORDER BY updated_at DESC',
       [account.id]
     );
     res.json({ businesses: result.rows });
   } catch (e) { res.status(500).json({ error: 'Failed to load businesses' }); }
+});
+
+// A genuine, permanent delete — not a soft-hide — matching what the
+// person actually asked for ("clear or remove"). Every table that
+// references a business already uses ON DELETE CASCADE except a handful
+// of account-level integration connections (Google Analytics, Search
+// Console, HubSpot, Zoho Books), which intentionally use SET NULL so
+// those connections survive even if one business tied to them is
+// deleted — this delete relies on that existing schema behavior rather
+// than manually deleting from every related table one by one.
+app.delete('/api/business/:id', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id, name FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found.' });
+
+    await pool.query('DELETE FROM businesses WHERE id = $1', [req.params.id]);
+    res.json({ success: true, deletedName: biz.rows[0].name });
+  } catch (e) {
+    console.error('Delete business error:', e.message);
+    res.status(500).json({ error: 'Failed to delete this business. Please try again.' });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
