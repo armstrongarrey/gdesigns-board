@@ -4291,6 +4291,53 @@ function wpCountHeadings(html) {
   return counts;
 }
 
+// Real, deliberate extraction of only internal (same-domain) links —
+// external link health is a different real concern with its own real
+// risk (rate limiting, bot-blocking on someone else's site), not
+// mixed in here. Relative hrefs (the most common real case in
+// WordPress-generated content) are resolved against the real site
+// URL rather than skipped.
+function wpExtractInternalLinks(html, siteUrl) {
+  if (!html) return [];
+  const siteHost = new URL(siteUrl).host;
+  const hrefs = [...html.matchAll(/<a\s[^>]*href=["']([^"']+)["']/gi)].map(m => m[1]);
+  const internal = new Set();
+  for (const href of hrefs) {
+    if (href.startsWith('#') || href.startsWith('mailto:') || href.startsWith('tel:') || href.startsWith('javascript:')) continue;
+    try {
+      const resolved = new URL(href, siteUrl);
+      if (resolved.host === siteHost) internal.add(resolved.href);
+    } catch {
+      // Real, deliberate no-op — a genuinely malformed href isn't a
+      // real, checkable link either way.
+    }
+  }
+  return [...internal];
+}
+
+// Real, deliberate distinction — a 403/429/503 usually means real
+// bot-protection (Cloudflare, rate-limiting) on the site's own server
+// responding to Arreyon's own check, not a genuinely broken link; the
+// server responded at all, which a truly broken/removed page could
+// not do. A 404 gets no such benefit — it specifically means this
+// exact path was not found, a real, meaningful signal.
+async function checkInternalLinkResolves(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    let response = await fetch(url, { method: 'HEAD', signal: controller.signal, redirect: 'follow' });
+    if (response.status === 405 || response.status === 501) {
+      response = await fetch(url, { method: 'GET', signal: controller.signal, redirect: 'follow' });
+    }
+    const isLikelyBotProtection = [403, 429, 503].includes(response.status);
+    return { broken: !response.ok && !isLikelyBotProtection, status: response.status };
+  } catch (e) {
+    return { broken: true, status: null, error: e.name === 'AbortError' ? 'Request timed out' : e.message };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // Fetches pages and posts from a connected WordPress site and reduces each
 // to the fields actually needed for analysis. Meta description is read
 // from Yoast's yoast_head_json field when present — this is NOT
@@ -4336,6 +4383,7 @@ async function fetchWordPressContent(connection, decryptedPassword) {
         metaDescription: item.yoast_head_json?.description || null,
         metaTitle: item.yoast_head_json?.title || null,
         bodyExcerpt: bodyText.slice(0, 500),
+        internalLinks: wpExtractInternalLinks(rawContent, connection.site_url),
         // Real, deliberate presence only for posts (see taxonomyFields
         // above) — undefined for pages, which don't have these at all.
         categoryIds: item.categories,
@@ -5096,6 +5144,85 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   } catch (err) {
     console.error('Taxonomy proposals error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to generate category/tag proposals. Please try again.' });
+  }
+});
+
+app.post('/api/business/:id/website/broken-links', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+    const connection = connResult.rows[0];
+    if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
+
+    // Real, deliberate scope limit, disclosed honestly rather than
+    // silently failing — checking a link means Arreyon making a real,
+    // direct HTTP request to the site's own URL, which is blocked the
+    // exact same way a direct read/write is for a poll-mode site (the
+    // reason it's in poll mode at all). Checking links from the site's
+    // own plugin instead (a real, viable path, since a server checking
+    // its own URLs isn't the same real thing Cloudflare blocks) isn't
+    // built yet.
+    if (connection.connection_mode === 'poll') {
+      return res.status(400).json({ error: 'Checking links directly isn\'t available yet for a poll-mode connection — this is planned as a future improvement.' });
+    }
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    let pages, posts;
+    try {
+      ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+    } catch (e) {
+      if (e.message.includes('401')) {
+        await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
+        return res.status(400).json({ error: 'This Application Password is no longer valid. Please reconnect your website.' });
+      }
+      throw e;
+    }
+
+    // Real, deliberate de-duplication before checking anything — the
+    // exact same broken link commonly appears in a site's navigation
+    // or footer across many pages; checking it once and reusing the
+    // real result everywhere it appears is both far faster and avoids
+    // hammering the site with repeat requests for the same real URL.
+    const allItems = [...pages.map(p => ({ ...p, isPost: false })), ...posts.map(p => ({ ...p, isPost: true }))];
+    const linkToReferrers = new Map();
+    for (const item of allItems) {
+      for (const link of item.internalLinks || []) {
+        if (!linkToReferrers.has(link)) linkToReferrers.set(link, []);
+        linkToReferrers.get(link).push({ title: item.title, url: item.url, isPost: item.isPost });
+      }
+    }
+
+    const uniqueLinks = [...linkToReferrers.keys()];
+    // Real, deliberate cap — keeps one check run bounded and fast even
+    // on a site with hundreds of real internal links; a person can
+    // simply run this again later to keep working through the rest.
+    const cappedLinks = uniqueLinks.slice(0, 40);
+
+    const checks = await Promise.all(cappedLinks.map(async (link) => ({ link, ...(await checkInternalLinkResolves(link)) })));
+    const brokenLinks = checks.filter(c => c.broken).map(c => ({
+      url: c.link,
+      status: c.status,
+      error: c.error || null,
+      foundOn: linkToReferrers.get(c.link),
+    }));
+
+    await logWebsiteAudit(connection.id, 'ai_agent', null, 'broken_links_checked',
+      `Checked ${cappedLinks.length} unique internal link(s), found ${brokenLinks.length} broken`,
+      { checkedCount: cappedLinks.length, brokenCount: brokenLinks.length, totalUniqueLinks: uniqueLinks.length });
+
+    res.json({
+      brokenLinks,
+      checkedCount: cappedLinks.length,
+      totalUniqueLinks: uniqueLinks.length,
+      message: brokenLinks.length ? null : 'No broken internal links were found among the ones checked.',
+    });
+  } catch (err) {
+    console.error('Broken links check error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to check for broken links. Please try again.' });
   }
 });
 
