@@ -3177,6 +3177,7 @@ function arreyon_gather_content_for_type($post_type, $seo_plugin) {
             'wordCount' => $word_count,
             'headings' => $heading_count,
             'metaDescription' => arreyon_get_local_meta_description($item->ID, $seo_plugin),
+            'metaTitle' => arreyon_get_local_meta_title($item->ID, $seo_plugin),
             'bodyExcerpt' => substr($body_text, 0, 500),
         ];
         // Real, deliberate limit to posts only — pages don't support
@@ -3212,6 +3213,27 @@ function arreyon_get_local_meta_description($post_id, $seo_plugin) {
         global $wpdb;
         $table = $wpdb->prefix . 'aioseo_posts';
         $value = $wpdb->get_var($wpdb->prepare("SELECT description FROM {$table} WHERE post_id = %d", $post_id));
+        return $value ? $value : null;
+    }
+    return null;
+}
+
+// Real, deliberate mirror of the function above, for the meta title
+// instead of the description — same real, per-plugin distinction,
+// since it's the same real storage mechanism either field uses.
+function arreyon_get_local_meta_title($post_id, $seo_plugin) {
+    if ($seo_plugin === 'yoast') {
+        $value = get_post_meta($post_id, '_yoast_wpseo_title', true);
+        return $value !== '' ? $value : null;
+    }
+    if ($seo_plugin === 'rankmath') {
+        $value = get_post_meta($post_id, 'rank_math_title', true);
+        return $value !== '' ? $value : null;
+    }
+    if ($seo_plugin === 'aioseo') {
+        global $wpdb;
+        $table = $wpdb->prefix . 'aioseo_posts';
+        $value = $wpdb->get_var($wpdb->prepare("SELECT title FROM {$table} WHERE post_id = %d", $post_id));
         return $value ? $value : null;
     }
     return null;
@@ -4312,6 +4334,7 @@ async function fetchWordPressContent(connection, decryptedPassword) {
         wordCount: bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0,
         headings: wpCountHeadings(rawContent),
         metaDescription: item.yoast_head_json?.description || null,
+        metaTitle: item.yoast_head_json?.title || null,
         bodyExcerpt: bodyText.slice(0, 500),
         // Real, deliberate presence only for posts (see taxonomyFields
         // above) — undefined for pages, which don't have these at all.
@@ -5073,6 +5096,148 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   } catch (err) {
     console.error('Taxonomy proposals error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to generate category/tag proposals. Please try again.' });
+  }
+});
+
+app.post('/api/business/:id/website/duplicate-title-proposals', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+    const connection = connResult.rows[0];
+    if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    let pages, posts;
+    try {
+      ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+    } catch (e) {
+      if (e.pendingPoll) return res.status(202).json({ pendingPoll: true, message: e.message, proposals: [] });
+      if (e.message.includes('401')) {
+        await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
+        return res.status(400).json({ error: 'This Application Password is no longer valid. Please reconnect your website.' });
+      }
+      throw e;
+    }
+
+    // Real, deliberate group-by-effective-title — the real SEO title if
+    // one is set (what search engines and browser tabs actually show),
+    // falling back to the real page/post title when no SEO plugin
+    // title has been set at all. Two pages sharing the exact same
+    // title tag is a real, measurable SEO problem (search engines
+    // can't tell which one is the more authoritative result), not an
+    // AI opinion.
+    const allItems = [...pages.map(p => ({ ...p, isPost: false })), ...posts.map(p => ({ ...p, isPost: true }))];
+    const groups = new Map();
+    for (const item of allItems) {
+      const effectiveTitle = (item.metaTitle || item.title || '').trim().toLowerCase();
+      if (!effectiveTitle) continue;
+      if (!groups.has(effectiveTitle)) groups.set(effectiveTitle, []);
+      groups.get(effectiveTitle).push(item);
+    }
+    // Real, deliberate choice to keep the first item in each duplicate
+    // group untouched (its title is already fine on its own) and only
+    // propose a change for the rest — every other item in a group
+    // genuinely needs a real, different title, not an AI opinion.
+    const candidates = [];
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      for (const item of group.slice(1)) candidates.push(item);
+    }
+
+    if (!candidates.length) {
+      return res.json({ proposals: [], message: 'No duplicate page/post titles were found — nothing to propose right now.' });
+    }
+
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+    const cappedCandidates = candidates.slice(0, 15);
+    const candidatesSummary = cappedCandidates.map((c, i) => `[${i}] ${c.isPost ? 'POST' : 'PAGE'}: currently titled "${c.metaTitle || c.title}" (${c.url}) — this exact title is also used by at least one other real page/post on this site.\n  Content excerpt: ${c.bodyExcerpt}`).join('\n\n');
+
+    const prompt = `You are an SEO Agent fixing a real, measured technical SEO problem: multiple pages/posts on this WordPress site share the exact same page title, which hurts search visibility since search engines can't tell which is the more authoritative result for that title.
+${contextSummary}
+
+PAGES/POSTS SHARING A DUPLICATE TITLE WITH ANOTHER REAL PAGE ON THIS SITE:
+${candidatesSummary}
+
+For EACH numbered item above, write a new, genuinely distinct 50-60 character title, grounded in that specific item's own actual content, that no longer collides with the other page's title. Never invent details about the business that aren't in the context above.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "proposals": [
+    { "index": 0, "suggested_title": "specific, distinct title grounded in this item's real content", "reasoning": "1 sentence on why this title is now genuinely distinct and still fits the content" }
+  ]
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the duplicate-title fixes now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_duplicate_title_proposals', userId: req.userId }, maxTokens: 4000 });
+
+    let result;
+    try {
+      result = extractJSON(raw);
+    } catch (e) {
+      const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```');
+      console.error('Duplicate title proposals JSON parse failed:', e.message, '| Response length:', raw.length, '| Looks truncated:', looksTruncated);
+      throw new Error(`Could not generate duplicate-title fixes — the AI's response could not be read as valid data${looksTruncated ? ' (it appears to have been cut off before finishing — please try again)' : ' (please try again)'}.`);
+    }
+    if (!Array.isArray(result.proposals)) throw new Error(`Could not generate duplicate-title fixes — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
+
+    // Real, deliberate reuse — this is the exact same real action type,
+    // execution logic, and verification the SEO Agent's own title
+    // proposals already use; a duplicate-title fix is still, at
+    // bottom, a real meta title update, just triggered by a different,
+    // real, measured reason.
+    const autoExecuteEligible = connection.permission_level === 'managed' && connection.automation_mode === 'automatic';
+
+    const insertedProposals = [];
+    for (const p of result.proposals) {
+      const candidate = cappedCandidates[p.index];
+      if (!candidate || !p.suggested_title) continue;
+
+      const previousState = { title: candidate.metaTitle || candidate.title };
+      const proposedChange = { metaTitle: p.suggested_title };
+
+      const inserted = await pool.query(
+        `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
+         VALUES ($1, 'seo_agent', 'update_meta_title', $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [connection.id, candidate.isPost ? 'post' : 'page', candidate.id, candidate.url, candidate.title, JSON.stringify(previousState), JSON.stringify(proposedChange), p.reasoning || null]
+      );
+      let action = inserted.rows[0];
+
+      if (autoExecuteEligible) {
+        await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
+        await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: duplicate-title fix for "${candidate.title}"`, { actionId: action.id });
+
+        const execResult = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
+        const executionStatus = execResult.executed ? 'executed' : 'execution_failed';
+        const verificationStatus = execResult.executed ? (execResult.verified ? 'verified' : 'verification_failed') : null;
+
+        const updated = await pool.query(
+          `UPDATE website_actions SET approval_status = 'approved', execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
+          [executionStatus, verificationStatus, execResult.error || null, action.id]
+        );
+        action = updated.rows[0];
+
+        await logWebsiteAudit(connection.id, 'system', null,
+          execResult.verified ? 'change_executed_and_verified' : 'change_execution_issue',
+          `Auto-executed duplicate-title fix for "${candidate.title}": ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
+          { actionId: action.id, executionStatus, verificationStatus, error: execResult.error });
+      }
+
+      insertedProposals.push(action);
+    }
+
+    const autoExecutedCount = insertedProposals.filter(a => a.execution_status === 'executed').length;
+    const pendingCount = insertedProposals.length - autoExecutedCount;
+    await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
+      `SEO Agent generated ${insertedProposals.length} duplicate-title fix(es)` + (autoExecutedCount ? ` — ${autoExecutedCount} auto-executed under Managed/Automatic settings, ${pendingCount} awaiting approval` : ' awaiting approval'),
+      { count: insertedProposals.length, autoExecutedCount, pendingCount });
+
+    res.json({ proposals: insertedProposals });
+  } catch (err) {
+    console.error('Duplicate title proposals error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate duplicate-title fixes. Please try again.' });
   }
 });
 
