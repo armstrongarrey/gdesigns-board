@@ -1760,9 +1760,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
            UI is honest about that on every approved item rather than
            implying a change has gone live. -->
       <div id="websiteActionsSection" style="display:none;margin-top:28px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.proposed_changes_title">Proposed Changes</div>
-          <button class="btn-primary" onclick="generateSeoProposals()" id="websiteSeoProposalsBtn" data-i18n="web.find_seo_improvements">Find SEO Improvements</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn-secondary" onclick="generateTaxonomyProposals()" id="websiteTaxonomyProposalsBtn" data-i18n="web.suggest_categories_tags">Suggest Categories &amp; Tags</button>
+            <button class="btn-primary" onclick="generateSeoProposals()" id="websiteSeoProposalsBtn" data-i18n="web.find_seo_improvements">Find SEO Improvements</button>
+          </div>
         </div>
         <div id="websiteActionsContent"></div>
       </div>
@@ -7491,7 +7494,7 @@ async function loadWebsiteActions() {
   }
 }
 
-const WEBSITE_ACTION_TYPE_LABELS = { update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description' };
+const WEBSITE_ACTION_TYPE_LABELS = { update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description', assign_taxonomy: 'web.action_type_taxonomy' };
 
 // Renders each proposal with its real previous value alongside the AI's
 // suggestion (spec's explicit CURRENT/PROPOSED preview format), an
@@ -7522,14 +7525,21 @@ function renderWebsiteActionsContent(actions) {
   const renderProposedValue = (change) => {
     if (change.title) return `<div><span style="color:var(--muted)">${t('web.field_title')}:</span> ${escapeHtml(change.title)}</div>`;
     if (change.metaDescription) return `<div><span style="color:var(--muted)">${t('web.field_meta_description')}:</span> ${escapeHtml(change.metaDescription)}</div>`;
+    if (change.category || change.tags) {
+      const parts = [];
+      if (change.category) parts.push(`<div><span style="color:var(--muted)">${t('web.field_category')}:</span> ${escapeHtml(change.category)}</div>`);
+      if (Array.isArray(change.tags) && change.tags.length) parts.push(`<div><span style="color:var(--muted)">${t('web.field_tags')}:</span> ${change.tags.map(escapeHtml).join(', ')}</div>`);
+      return parts.join('');
+    }
     return '';
   };
   const renderPreviousValue = (prev, change) => {
     if (change.title) return escapeHtml(prev.title || t('web.value_none'));
     if (change.metaDescription) return escapeHtml(prev.metaDescription || t('web.value_none'));
+    if (change.category || change.tags) return t('web.value_none');
     return '';
   };
-  const editFieldFor = (action) => action.proposed_change.title ? 'title' : 'metaDescription';
+  const editFieldFor = (action) => action.proposed_change.title ? 'title' : (action.proposed_change.metaDescription ? 'metaDescription' : null);
 
   const pendingHtml = pending.map(a => `
     <div style="background:var(--bg3);border-radius:10px;padding:16px;margin-bottom:12px">
@@ -7540,8 +7550,8 @@ function renderWebsiteActionsContent(actions) {
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px">${t(WEBSITE_ACTION_TYPE_LABELS[a.action_type] || 'web.action_type_title')}</div>
       <div style="font-size:11.5px;color:var(--muted);margin-bottom:2px">${t('web.current_value')}</div>
       <div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">${renderPreviousValue(a.previous_state, a.proposed_change)}</div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:2px">${t('web.proposed_value')}</div>
-      <input type="text" class="form-input" id="editField-${a.id}" data-original="${escapeHtml(a.proposed_change.title || a.proposed_change.metaDescription || '')}" value="${escapeHtml(a.proposed_change.title || a.proposed_change.metaDescription || '')}" style="font-size:12.5px;margin-bottom:8px">
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:2px" data-i18n="web.proposed_value">Proposed</div>
+      ${editFieldFor(a) ? `<input type="text" class="form-input" id="editField-${a.id}" data-original="${escapeHtml(a.proposed_change.title || a.proposed_change.metaDescription || '')}" value="${escapeHtml(a.proposed_change.title || a.proposed_change.metaDescription || '')}" style="font-size:12.5px;margin-bottom:8px">` : `<div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">${renderProposedValue(a.proposed_change)}</div>`}
       ${a.reasoning ? `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:10px">${escapeHtml(a.reasoning)}</div>` : ''}
       <div style="display:flex;gap:8px">
         <button class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="approveWebsiteAction('${a.id}', '${editFieldFor(a)}')" data-i18n="web.approve">Approve</button>
@@ -7753,6 +7763,33 @@ async function generateSeoProposals() {
   } finally {
     btn.disabled = false;
     btn.textContent = t('web.find_seo_improvements');
+  }
+}
+
+async function generateTaxonomyProposals() {
+  const btn = document.getElementById('websiteTaxonomyProposalsBtn');
+  btn.disabled = true;
+  btn.textContent = t('web.finding_categorization');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/taxonomy-proposals`, { method: 'POST' });
+    const data = await res.json();
+    if (data.pendingPoll) {
+      showToast(data.message, 'success');
+    } else if (res.ok) {
+      if (data.proposals && data.proposals.length) {
+        showToast(t('web.proposals_found_toast').replace('{n}', data.proposals.length), 'success');
+      } else {
+        showToast(data.message || t('web.no_proposals_found_toast'), 'success');
+      }
+      loadWebsiteActions();
+    } else {
+      showToast(data.error || t('board.connection_error'), 'error');
+    }
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.suggest_categories_tags');
   }
 }
 
