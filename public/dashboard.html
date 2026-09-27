@@ -1754,6 +1754,18 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
       </div>
 
+      <!-- BROKEN INTERNAL LINKS — pure detection, not a proposal. Fixing a
+           broken link means editing body content, which the SEO Agent
+           doesn't touch yet, so this only surfaces the problem for the
+           person to act on themselves. -->
+      <div id="websiteBrokenLinksSection" style="display:none;margin-top:28px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.broken_links_title">Broken Internal Links</div>
+          <button class="btn-secondary" onclick="checkBrokenLinks()" id="websiteBrokenLinksBtn" data-i18n="web.check_links_button">Check Links</button>
+        </div>
+        <div id="websiteBrokenLinksContent"></div>
+      </div>
+
       <!-- PROPOSED CHANGES — the approval workflow. Preview, Approve,
            Reject, Edit, per the spec's explicit requirement; nothing here
            is ever executed against the live site yet (Increment 3) — the
@@ -6958,6 +6970,7 @@ async function loadWebsiteBusinesses() {
       document.getElementById('websiteStatusCard').style.display = 'none';
       document.getElementById('websiteIntelligenceSection').style.display = 'none';
       document.getElementById('websiteTaxonomySection').style.display = 'none';
+      document.getElementById('websiteBrokenLinksSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return;
     }
@@ -6997,6 +7010,7 @@ function onWebsiteBusinessSelectChange() {
     document.getElementById('websiteStatusCard').style.display = 'none';
     document.getElementById('websiteIntelligenceSection').style.display = 'none';
     document.getElementById('websiteTaxonomySection').style.display = 'none';
+    document.getElementById('websiteBrokenLinksSection').style.display = 'none';
     document.getElementById('websiteActionsSection').style.display = 'none';
     resetWebsiteConnectForm();
     return;
@@ -7059,6 +7073,7 @@ async function loadWebsiteSection() {
       document.getElementById('websiteStatusCard').style.display = 'none';
       document.getElementById('websiteIntelligenceSection').style.display = 'none';
       document.getElementById('websiteTaxonomySection').style.display = 'none';
+      document.getElementById('websiteBrokenLinksSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return false;
     }
@@ -7067,6 +7082,7 @@ async function loadWebsiteSection() {
     document.getElementById('websiteStatusCard').style.display = 'block';
     document.getElementById('websiteIntelligenceSection').style.display = 'block';
     document.getElementById('websiteTaxonomySection').style.display = 'block';
+    document.getElementById('websiteBrokenLinksSection').style.display = 'block';
     document.getElementById('websiteActionsSection').style.display = 'block';
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
@@ -7504,19 +7520,20 @@ const WEBSITE_ACTION_TYPE_LABELS = { update_meta_title: 'web.action_type_title',
 // "Approved — not yet published" state for anything already reviewed —
 // nothing here is ever executed against the live site yet (Increment 3),
 // and the UI says so rather than implying otherwise.
+// Real, deliberate visual distinction — a proposal list mixing pages
+// and posts with only a title shown gave no way to tell which was
+// which, especially when a page and a post happen to share a similar
+// or identical title. A genuine, top-level function (not scoped to
+// one caller) since more than one place now needs this same badge.
+function targetTypeBadge(type) {
+  const isPage = type === 'page';
+  return `<span style="font-size:9px;font-weight:700;color:${isPage ? 'var(--purple-light)' : 'var(--green)'};background:${isPage ? 'rgba(139,92,246,.15)' : 'rgba(16,163,127,.15)'};padding:2px 6px;border-radius:4px;white-space:nowrap;text-transform:uppercase;margin-right:6px">${isPage ? t('web.badge_page') : t('web.badge_post')}</span>`;
+}
+
 function renderWebsiteActionsContent(actions) {
   const contentEl = document.getElementById('websiteActionsContent');
   const pending = actions.filter(a => a.approval_status === 'pending');
   const reviewed = actions.filter(a => a.approval_status !== 'pending');
-
-  // Real, deliberate visual distinction — a proposal list mixing pages
-  // and posts with only a title shown gave no way to tell which was
-  // which, especially when a page and a post happen to share a similar
-  // or identical title.
-  const targetTypeBadge = (type) => {
-    const isPage = type === 'page';
-    return `<span style="font-size:9px;font-weight:700;color:${isPage ? 'var(--purple-light)' : 'var(--green)'};background:${isPage ? 'rgba(139,92,246,.15)' : 'rgba(16,163,127,.15)'};padding:2px 6px;border-radius:4px;white-space:nowrap;text-transform:uppercase;margin-right:6px">${isPage ? t('web.badge_page') : t('web.badge_post')}</span>`;
-  };
 
   if (!actions.length) {
     contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px" data-i18n="web.no_proposals_yet">No proposed changes yet — click Find SEO Improvements to check for opportunities.</div>`;
@@ -7818,6 +7835,38 @@ async function generateDuplicateTitleProposals() {
   } finally {
     btn.disabled = false;
     btn.textContent = t('web.fix_duplicate_titles');
+  }
+}
+
+async function checkBrokenLinks() {
+  const btn = document.getElementById('websiteBrokenLinksBtn');
+  const contentEl = document.getElementById('websiteBrokenLinksContent');
+  btn.disabled = true;
+  btn.textContent = t('web.checking_links');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/broken-links`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+      return;
+    }
+    if (!data.brokenLinks.length) {
+      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${escapeHtml(data.message)} (${t('web.links_checked_of').replace('{checked}', data.checkedCount).replace('{total}', data.totalUniqueLinks)})</div>`;
+      return;
+    }
+    contentEl.innerHTML = `
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${t('web.links_checked_of').replace('{checked}', data.checkedCount).replace('{total}', data.totalUniqueLinks)}</div>
+      ${data.brokenLinks.map(b => `
+        <div style="background:var(--bg3);border-radius:10px;padding:14px 16px;margin-bottom:10px;border-left:3px solid #ef4444">
+          <div style="font-size:12.5px;font-weight:600;color:var(--text);margin-bottom:4px;word-break:break-all">${escapeHtml(b.url)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${b.status ? t('web.link_status').replace('{status}', b.status) : escapeHtml(b.error || '')}</div>
+          <div style="font-size:11px;color:var(--muted)">${t('web.found_on')}: ${b.foundOn.map(f => `${targetTypeBadge(f.isPost ? 'post' : 'page')}${escapeHtml(f.title)}`).join(', ')}</div>
+        </div>`).join('')}`;
+  } catch (e) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.check_links_button');
   }
 }
 
