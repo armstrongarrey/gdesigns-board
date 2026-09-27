@@ -7505,6 +7505,15 @@ function renderWebsiteActionsContent(actions) {
   const pending = actions.filter(a => a.approval_status === 'pending');
   const reviewed = actions.filter(a => a.approval_status !== 'pending');
 
+  // Real, deliberate visual distinction — a proposal list mixing pages
+  // and posts with only a title shown gave no way to tell which was
+  // which, especially when a page and a post happen to share a similar
+  // or identical title.
+  const targetTypeBadge = (type) => {
+    const isPage = type === 'page';
+    return `<span style="font-size:9px;font-weight:700;color:${isPage ? 'var(--purple-light)' : 'var(--green)'};background:${isPage ? 'rgba(139,92,246,.15)' : 'rgba(16,163,127,.15)'};padding:2px 6px;border-radius:4px;white-space:nowrap;text-transform:uppercase;margin-right:6px">${isPage ? t('web.badge_page') : t('web.badge_post')}</span>`;
+  };
+
   if (!actions.length) {
     contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px" data-i18n="web.no_proposals_yet">No proposed changes yet — click Find SEO Improvements to check for opportunities.</div>`;
     return;
@@ -7525,7 +7534,7 @@ function renderWebsiteActionsContent(actions) {
   const pendingHtml = pending.map(a => `
     <div style="background:var(--bg3);border-radius:10px;padding:16px;margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:2px">
-        <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(a.target_title)}</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text)">${targetTypeBadge(a.target_type)}${escapeHtml(a.target_title)}</div>
         <span style="font-size:10px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 8px;border-radius:4px;white-space:nowrap">${t('web.status_pending_review')}</span>
       </div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px">${t(WEBSITE_ACTION_TYPE_LABELS[a.action_type] || 'web.action_type_title')}</div>
@@ -7546,7 +7555,7 @@ function renderWebsiteActionsContent(actions) {
       if (a.approval_status === 'rejected') {
         return `<div style="background:var(--bg3);border-radius:10px;padding:12px 16px;margin-bottom:8px;opacity:.75">
           <div style="display:flex;justify-content:space-between;gap:10px">
-            <div style="font-size:12.5px;color:var(--text)">${escapeHtml(a.target_title)}</div>
+            <div style="font-size:12.5px;color:var(--text)">${targetTypeBadge(a.target_type)}${escapeHtml(a.target_title)}</div>
             <span style="font-size:9.5px;font-weight:700;color:#ef4444;white-space:nowrap">${t('web.status_rejected')}</span>
           </div>
         </div>`;
@@ -7556,7 +7565,7 @@ function renderWebsiteActionsContent(actions) {
       if (a.execution_status === 'not_executed') {
         return `<div style="background:var(--bg3);border-radius:10px;padding:14px 16px;margin-bottom:8px">
           <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
-            <div style="font-size:12.5px;color:var(--text)">${escapeHtml(a.target_title)}</div>
+            <div style="font-size:12.5px;color:var(--text)">${targetTypeBadge(a.target_type)}${escapeHtml(a.target_title)}</div>
             <button class="btn-primary" style="font-size:11.5px;padding:5px 12px" onclick="executeWebsiteAction('${a.id}')" id="executeBtn-${a.id}" data-i18n="web.execute">Execute</button>
           </div>
         </div>`;
@@ -7564,7 +7573,7 @@ function renderWebsiteActionsContent(actions) {
       if (a.execution_status === 'executed' && (a.verification_status === 'verified' || a.verification_status === 'manually_confirmed')) {
         return `<div style="background:var(--bg3);border-radius:10px;padding:12px 16px;margin-bottom:8px">
           <div style="display:flex;justify-content:space-between;gap:10px">
-            <div style="font-size:12.5px;color:var(--text)">${escapeHtml(a.target_title)}</div>
+            <div style="font-size:12.5px;color:var(--text)">${targetTypeBadge(a.target_type)}${escapeHtml(a.target_title)}</div>
             <span style="font-size:9.5px;font-weight:700;color:var(--green);white-space:nowrap">${a.verification_status === 'manually_confirmed' ? t('web.status_manually_confirmed') : t('web.status_published_verified')}</span>
           </div>
         </div>`;
@@ -7581,7 +7590,7 @@ function renderWebsiteActionsContent(actions) {
       if (a.execution_status === 'executed' && a.verification_status === 'verification_failed') {
         return `<div style="background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.3);border-radius:10px;padding:14px 16px;margin-bottom:8px">
           <div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:6px">
-            <div style="font-size:12.5px;color:var(--text)">${escapeHtml(a.target_title)}</div>
+            <div style="font-size:12.5px;color:var(--text)">${targetTypeBadge(a.target_type)}${escapeHtml(a.target_title)}</div>
             <span style="font-size:9.5px;font-weight:700;color:#eab308;white-space:nowrap">${t('web.status_saved_not_visible_yet')}</span>
           </div>
           <div style="font-size:12px;color:var(--text2);margin-bottom:8px">${t('web.saved_not_visible_explainer')}</div>
@@ -7593,7 +7602,7 @@ function renderWebsiteActionsContent(actions) {
       }
       return `<div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);border-radius:10px;padding:14px 16px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:6px">
-          <div style="font-size:12.5px;color:var(--text)">${escapeHtml(a.target_title)}</div>
+          <div style="font-size:12.5px;color:var(--text)">${targetTypeBadge(a.target_type)}${escapeHtml(a.target_title)}</div>
           <span style="font-size:9.5px;font-weight:700;color:#ef4444;white-space:nowrap">${t('web.status_execution_issue')}</span>
         </div>
         <div style="font-size:12px;color:var(--text2);margin-bottom:8px">${escapeHtml(a.error_message || '')}</div>
