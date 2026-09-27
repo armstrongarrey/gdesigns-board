@@ -803,6 +803,23 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           </div>
         </div>
 
+        <!-- Real, deliberate explicit fields, not left to the AI to infer from
+             website content or free-text description — a stated location here
+             is treated as ground truth and anchors every downstream market
+             and competitor search to it, rather than defaulting to whatever
+             is most represented in generic, unscoped search results (which
+             skews heavily toward the US/Western market for most topics). -->
+        <div style="display:flex;gap:10px;margin-top:4px">
+          <div class="form-group" style="flex:1">
+            <label data-i18n="analyzer.country_label">Country</label>
+            <input class="form-input" id="analyzerCountry" data-i18n-placeholder="analyzer.country_placeholder" placeholder="e.g. Cameroon">
+          </div>
+          <div class="form-group" style="flex:1">
+            <label data-i18n="analyzer.city_label">City / Region (optional)</label>
+            <input class="form-input" id="analyzerCity" data-i18n-placeholder="analyzer.city_placeholder" placeholder="e.g. Buea">
+          </div>
+        </div>
+
         <button class="btn-primary" style="width:100%;padding:12px" onclick="runAnalysis()" id="analyzeBtn" data-i18n="analyzer.analyze_button">Analyze My Business</button>
         <div id="analyzerLimitMsg" style="margin-top:10px;font-size:12px;color:var(--muted);display:none"></div>
       </div>
@@ -818,9 +835,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
       <!-- Results -->
       <div id="analyzerResults" style="display:none">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
           <div class="section-title" style="margin:0;font-size:16px" id="resultBizName">Business Profile</div>
           <a id="resultUrl" href="#" target="_blank" style="font-size:12px;color:var(--purple-light);text-decoration:none" data-i18n="analyzer.visit_site">visit site ↗</a>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:16px">
+          <span style="font-size:12px;color:var(--muted)" id="resultLocation"></span>
+          <button type="button" onclick="editBusinessLocation()" style="background:none;border:none;color:var(--purple-light);cursor:pointer;font-size:11px;padding:0" data-i18n="analyzer.edit_location">✎ edit</button>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:18px" id="resultPages"></div>
         <div id="socialLimitNotice" style="display:none;font-size:12.5px;color:var(--gold);background:#2a1f0022;border:1px solid var(--gold);border-radius:8px;padding:12px 14px;margin-bottom:18px"></div>
@@ -859,8 +880,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div style="min-width:220px">
             <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px" data-i18n="analyzer.research_scope">Research Scope</label>
             <select class="form-input" id="researchScope" style="padding:10px 12px">
-              <option value="national" data-i18n="analyzer.national_only">National only</option>
-              <option value="both" selected data-i18n="analyzer.national_international">National + International</option>
+              <option value="national" selected data-i18n="analyzer.national_only">National only</option>
+              <option value="both" data-i18n="analyzer.national_international">National + International</option>
             </select>
           </div>
           <button class="btn-primary" style="padding:11px 20px" onclick="runResearch()" id="researchBtn">🔍 <span data-i18n="analyzer.research_button">Research Market &amp; Competitors</span></button>
@@ -3256,9 +3277,11 @@ async function runAnalysis() {
   }, 3000);
 
   try {
+    const country = document.getElementById('analyzerCountry').value.trim();
+    const city = document.getElementById('analyzerCity').value.trim();
     const res = await fetch('/api/business/analyze', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(Object.assign(isWebsite ? { url } : { description }, { language: window.currentLang || 'en' }))
+      body: JSON.stringify(Object.assign(isWebsite ? { url } : { description }, { country, city, language: window.currentLang || 'en' }))
     });
     const data = await res.json();
     clearInterval(progressTimer);
@@ -3288,6 +3311,7 @@ async function runAnalysis() {
 }
 
 let currentBusinessId = null;
+let currentBusinessLocation = { country: '', city: '' };
 let businessViewRequestToken = 0;
 
 async function loadBusinessIntoView(businessId) {
@@ -3325,7 +3349,9 @@ async function loadBusinessIntoView(businessId) {
       analyzedUrl: bizData.business.website,
       isDescriptionOnly: !bizData.business.website,
       pagesAnalyzed: bizData.business.website ? [bizData.business.website] : ['Business description'],
-      facts: factsMap
+      facts: factsMap,
+      country: bizData.business.country,
+      city: bizData.business.city,
     });
     loadBusinessIntelligence(bizData.business.id, bizData.business.intelligence_snapshot, bizData.business.intelligence_generated_at);
     loadBusinessXray(bizData.business.id, bizData.business.business_xray, bizData.business.business_xray_generated_at);
@@ -3421,6 +3447,33 @@ document.addEventListener('arreyon:langchange', async () => {
 });
 let currentAnalysisData = null;
 
+async function editBusinessLocation() {
+  if (!currentBusinessId) return;
+  const newCountry = prompt(t('analyzer.prompt_country'), currentBusinessLocation.country || '');
+  if (newCountry === null) return; // cancelled
+  const newCity = prompt(t('analyzer.prompt_city'), currentBusinessLocation.city || '');
+  if (newCity === null) return; // cancelled
+
+  try {
+    const res = await fetch(`/api/business/${currentBusinessId}/location`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ country: newCountry.trim(), city: newCity.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    currentBusinessLocation = { country: data.country || '', city: data.city || '' };
+    document.getElementById('resultLocation').textContent = data.country
+      ? `📍 ${[data.city, data.country].filter(Boolean).join(', ')}`
+      : t('analyzer.no_location_set');
+    showToast(t('analyzer.location_updated'), 'success');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
 function renderAnalysisResults(data) {
   currentBusinessId = data.businessId;
   currentAnalysisData = data;
@@ -3437,6 +3490,12 @@ function renderAnalysisResults(data) {
   document.getElementById('resultPages').textContent = data.isDescriptionOnly
     ? t('analyzer.based_on_description')
     : `${t('analyzer.analyzed_pages')} ${data.pagesAnalyzed.length} ${data.pagesAnalyzed.length > 1 ? t('analyzer.page_plural') : t('analyzer.page_singular')}`;
+
+  currentBusinessLocation = { country: data.country || '', city: data.city || '' };
+  const locEl = document.getElementById('resultLocation');
+  locEl.textContent = data.country
+    ? `📍 ${[data.city, data.country].filter(Boolean).join(', ')}`
+    : t('analyzer.no_location_set');
 
   const socialNotice = document.getElementById('socialLimitNotice');
   if (data.socialInfo) {
