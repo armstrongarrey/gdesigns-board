@@ -1704,6 +1704,35 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div id="websiteIntelligenceContent"></div>
       </div>
 
+      <!-- CATEGORIES & TAGS — read the site's real, existing taxonomy and
+           create a new one directly. Not part of the approval workflow
+           below: creating a term doesn't touch any existing, live content,
+           so it's a direct action rather than an AI proposal. -->
+      <div id="websiteTaxonomySection" style="display:none;margin-top:28px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.taxonomy_title">Categories &amp; Tags</div>
+          <button class="btn-secondary" onclick="loadWebsiteTaxonomy()" id="websiteTaxonomyRefreshBtn" data-i18n="web.refresh">Refresh</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+          <div>
+            <div style="font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:8px;text-transform:uppercase" data-i18n="web.categories_label">Categories</div>
+            <div style="display:flex;gap:8px;margin-bottom:10px">
+              <input type="text" id="newCategoryName" data-i18n-placeholder="web.new_category_placeholder" placeholder="New category name" style="flex:1" onkeydown="if(event.key==='Enter')createWebsiteTaxonomyTerm('category')">
+              <button class="btn-primary" onclick="createWebsiteTaxonomyTerm('category')" data-i18n="web.add_button">Add</button>
+            </div>
+            <div id="websiteCategoriesList"></div>
+          </div>
+          <div>
+            <div style="font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:8px;text-transform:uppercase" data-i18n="web.tags_label">Tags</div>
+            <div style="display:flex;gap:8px;margin-bottom:10px">
+              <input type="text" id="newTagName" data-i18n-placeholder="web.new_tag_placeholder" placeholder="New tag name" style="flex:1" onkeydown="if(event.key==='Enter')createWebsiteTaxonomyTerm('tag')">
+              <button class="btn-primary" onclick="createWebsiteTaxonomyTerm('tag')" data-i18n="web.add_button">Add</button>
+            </div>
+            <div id="websiteTagsList"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- PROPOSED CHANGES — the approval workflow. Preview, Approve,
            Reject, Edit, per the spec's explicit requirement; nothing here
            is ever executed against the live site yet (Increment 3) — the
@@ -6865,6 +6894,7 @@ async function loadWebsiteBusinesses() {
       document.getElementById('websiteConnectForm').style.display = 'none';
       document.getElementById('websiteStatusCard').style.display = 'none';
       document.getElementById('websiteIntelligenceSection').style.display = 'none';
+      document.getElementById('websiteTaxonomySection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return;
     }
@@ -6903,6 +6933,7 @@ function onWebsiteBusinessSelectChange() {
     document.getElementById('websiteConnectForm').style.display = 'block';
     document.getElementById('websiteStatusCard').style.display = 'none';
     document.getElementById('websiteIntelligenceSection').style.display = 'none';
+    document.getElementById('websiteTaxonomySection').style.display = 'none';
     document.getElementById('websiteActionsSection').style.display = 'none';
     resetWebsiteConnectForm();
     return;
@@ -6964,6 +6995,7 @@ async function loadWebsiteSection() {
       document.getElementById('websiteEmptyState').style.display = 'block';
       document.getElementById('websiteStatusCard').style.display = 'none';
       document.getElementById('websiteIntelligenceSection').style.display = 'none';
+      document.getElementById('websiteTaxonomySection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return false;
     }
@@ -6971,9 +7003,11 @@ async function loadWebsiteSection() {
     document.getElementById('websiteEmptyState').style.display = 'none';
     document.getElementById('websiteStatusCard').style.display = 'block';
     document.getElementById('websiteIntelligenceSection').style.display = 'block';
+    document.getElementById('websiteTaxonomySection').style.display = 'block';
     document.getElementById('websiteActionsSection').style.display = 'block';
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
+    loadWebsiteTaxonomy();
     loadWebsiteActions();
     return true;
   } catch (e) {
@@ -7251,6 +7285,72 @@ async function generateWebsiteIntelligence() {
 const WEBSITE_SEVERITY_COLORS = { high: '#ef4444', medium: 'var(--gold)', low: 'var(--muted)' };
 
 // Renders the AI's assessment (seo_issues, content_observations,
+async function loadWebsiteTaxonomy() {
+  const catList = document.getElementById('websiteCategoriesList');
+  const tagList = document.getElementById('websiteTagsList');
+  const renderList = (el, items, emptyKey) => {
+    if (!items.length) {
+      el.innerHTML = `<div style="font-size:12.5px;color:var(--muted);padding:8px 0">${t(emptyKey)}</div>`;
+      return;
+    }
+    el.innerHTML = items.map(item => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:8px;background:var(--bg2);border:1px solid var(--border);margin-bottom:6px">
+        <span style="font-size:13px;color:var(--text)">${escapeHtml(item.name)}</span>
+        <span style="font-size:11px;color:var(--muted)">${item.count}</span>
+      </div>`).join('');
+  };
+
+  try {
+    const [catRes, tagRes] = await Promise.all([
+      fetch(`/api/business/${currentWebsiteBusinessId}/website/categories`),
+      fetch(`/api/business/${currentWebsiteBusinessId}/website/tags`),
+    ]);
+    const catData = await catRes.json();
+    const tagData = await tagRes.json();
+
+    if (catData.pendingPoll || tagData.pendingPoll) {
+      const msg = `<div style="font-size:12.5px;color:var(--muted);padding:8px 0">${escapeHtml(catData.message || tagData.message)}</div>`;
+      catList.innerHTML = msg;
+      tagList.innerHTML = msg;
+      return;
+    }
+    renderList(catList, catData.categories || [], 'web.no_categories');
+    renderList(tagList, tagData.tags || [], 'web.no_tags');
+  } catch (e) {
+    catList.innerHTML = `<div style="font-size:12.5px;color:#ff8080;padding:8px 0">${t('board.connection_error')}</div>`;
+    tagList.innerHTML = '';
+  }
+}
+
+async function createWebsiteTaxonomyTerm(taxonomyType) {
+  const inputId = taxonomyType === 'tag' ? 'newTagName' : 'newCategoryName';
+  const input = document.getElementById(inputId);
+  const name = input.value.trim();
+  if (!name) return;
+
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/${taxonomyType === 'tag' ? 'tags' : 'categories'}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
+    });
+    const data = await res.json();
+    if (data.queuedForPoll) {
+      showToast(data.message, 'success');
+      input.value = '';
+      return;
+    }
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.taxonomy_created').replace('{name}', name), 'success');
+    input.value = '';
+    loadWebsiteTaxonomy();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+// Real, deliberate visual separation of AI-generated content (findings,
 // recommendations) visually distinct from the real, measured counts
 // (intelligence.measured, computed in code, never AI-generated) — the
 // same measured-vs-assessed separation the backend prompt was built to
