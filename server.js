@@ -9720,7 +9720,7 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
     const knownFacts = {};
     factsResult.rows.forEach(r => { knownFacts[r.fact_key] = r.fact_value; });
 
-    const requestedScope = req.body?.scope === 'national' ? 'national' : 'both';
+    const requestedScope = req.body?.scope === 'both' ? 'both' : 'national';
     const requestedLanguage = req.body?.language === 'fr' ? 'fr' : 'en';
     const { summary, structured, sources, queries } = await runBusinessResearch(biz.rows[0], req.userId, requestedScope, knownFacts, requestedLanguage);
 
@@ -10223,6 +10223,15 @@ const ANALYZER_LIMITS = { starter: 1, pro: 10, business: -1 };
 // ── Website Analyzer endpoint (also handles no-website description input) ──
 app.post('/api/business/analyze', authRequired, async (req, res) => {
   const { url, description, businessName } = req.body;
+  // Real, deliberate ground truth — a location the person directly typed
+  // in, kept separate from and taking priority over anything the AI
+  // later infers from a website or free-text description, since that
+  // inference step is exactly what silently failed before (an empty
+  // result defaulted every downstream market/competitor search to no
+  // geographic constraint at all, which skews heavily toward the
+  // US/Western market for most search topics).
+  const statedCountry = (req.body?.country || '').trim() || null;
+  const statedCity = (req.body?.city || '').trim() || null;
   const hasUrl = url && url.trim();
   const hasDescription = description && description.trim().length >= 20;
 
@@ -10281,11 +10290,12 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
     const requestedLanguage = req.body?.language === 'fr' ? 'fr' : 'en';
     const facts = await structureBusinessFacts(pages, sourceLabel, req.userId, requestedLanguage);
 
-    // Parse the AI-extracted location fact into city/country the research engine can use
-    let parsedCity = null, parsedCountry = null;
-    if (facts.location?.value) {
+    // Parse the AI-extracted location fact into city/country the research engine can use —
+    // only as a fallback for whatever the person didn't directly state themselves above.
+    let parsedCity = statedCity, parsedCountry = statedCountry;
+    if (!parsedCountry && facts.location?.value) {
       const parts = facts.location.value.split(',').map(p => p.trim()).filter(Boolean);
-      if (parts.length >= 2) { parsedCity = parts[0]; parsedCountry = parts[parts.length - 1]; }
+      if (parts.length >= 2) { parsedCity = parsedCity || parts[0]; parsedCountry = parts[parts.length - 1]; }
       else if (parts.length === 1) { parsedCountry = parts[0]; }
     }
     const parsedIndustry = facts.industry?.value || null;
@@ -10338,7 +10348,9 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
       isDescriptionOnly: !normalizedUrl,
       pagesAnalyzed: normalizedUrl ? pages.map(p => p.url) : ['Business description'],
       facts,
-      socialInfo
+      socialInfo,
+      country: parsedCountry,
+      city: parsedCity,
     });
   } catch (err) {
     console.error('Website analysis error:', err.message);
@@ -11291,6 +11303,32 @@ app.get('/api/entrepreneur/:sessionId/report', authRequired, async (req, res) =>
 });
 
 // ── Get one business profile with its current facts (latest value per key) ──
+// Real, deliberate correction path — separate from the analyze flow,
+// for a business whose location was never captured (analyzed before
+// this fix existed) or was inferred wrong, so it doesn't have to be
+// re-analyzed from scratch just to fix this one thing. Every downstream
+// market/competitor search reads this same, current value fresh on each
+// run, so correcting it here immediately fixes future research too.
+app.patch('/api/business/:id/location', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const country = (req.body?.country || '').trim() || null;
+    const city = (req.body?.city || '').trim() || null;
+
+    const updated = await pool.query(
+      `UPDATE businesses SET country = $1, city = $2, updated_at = NOW() WHERE id = $3 RETURNING country, city`,
+      [country, city, req.params.id]
+    );
+    res.json({ success: true, country: updated.rows[0].country, city: updated.rows[0].city });
+  } catch (e) {
+    console.error('Update business location error:', e.message);
+    res.status(500).json({ error: 'Could not update location.' });
+  }
+});
+
 app.get('/api/business/:id', authRequired, async (req, res) => {
   const lang = req.query.lang === 'fr' ? 'fr' : 'en';
   try {
