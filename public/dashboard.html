@@ -1764,6 +1764,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.proposed_changes_title">Proposed Changes</div>
           <div style="display:flex;gap:8px">
             <button class="btn-secondary" onclick="generateTaxonomyProposals()" id="websiteTaxonomyProposalsBtn" data-i18n="web.suggest_categories_tags">Suggest Categories &amp; Tags</button>
+            <button class="btn-secondary" onclick="generateDuplicateTitleProposals()" id="websiteDuplicateTitleBtn" data-i18n="web.fix_duplicate_titles">Fix Duplicate Titles</button>
             <button class="btn-primary" onclick="generateSeoProposals()" id="websiteSeoProposalsBtn" data-i18n="web.find_seo_improvements">Find SEO Improvements</button>
           </div>
         </div>
@@ -7790,6 +7791,33 @@ async function generateTaxonomyProposals() {
   } finally {
     btn.disabled = false;
     btn.textContent = t('web.suggest_categories_tags');
+  }
+}
+
+async function generateDuplicateTitleProposals() {
+  const btn = document.getElementById('websiteDuplicateTitleBtn');
+  btn.disabled = true;
+  btn.textContent = t('web.finding_duplicates');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/duplicate-title-proposals`, { method: 'POST' });
+    const data = await res.json();
+    if (data.pendingPoll) {
+      showToast(data.message, 'success');
+    } else if (res.ok) {
+      if (data.proposals && data.proposals.length) {
+        showToast(t('web.proposals_found_toast').replace('{n}', data.proposals.length), 'success');
+      } else {
+        showToast(data.message || t('web.no_proposals_found_toast'), 'success');
+      }
+      loadWebsiteActions();
+    } else {
+      showToast(data.error || t('board.connection_error'), 'error');
+    }
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.fix_duplicate_titles');
   }
 }
 
