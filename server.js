@@ -3122,7 +3122,23 @@ function arreyon_gather_and_report_content($token) {
         'posts' => $posts,
         'totalPageCount' => isset($counts_pages->publish) ? (int) $counts_pages->publish : count($pages),
         'totalPostCount' => isset($counts_posts->publish) ? (int) $counts_posts->publish : count($posts),
+        'categories' => arreyon_gather_taxonomy('category'),
+        'tags' => arreyon_gather_taxonomy('post_tag'),
     ]);
+}
+
+// Real, deliberate small, bounded read — mirrors fetchWordPressContent's
+// own real per_page=100 cap on the direct-connection side, since a
+// real site's full taxonomy list is genuinely useful to see in its
+// entirety when choosing one for a new post, not just a sample.
+function arreyon_gather_taxonomy($taxonomy) {
+    $terms = get_terms(['taxonomy' => $taxonomy, 'hide_empty' => false, 'number' => 100]);
+    if (is_wp_error($terms) || !is_array($terms)) return [];
+    $results = [];
+    foreach ($terms as $term) {
+        $results[] = ['id' => $term->term_id, 'name' => html_entity_decode($term->name, ENT_QUOTES, 'UTF-8'), 'count' => (int) $term->count];
+    }
+    return $results;
 }
 
 function arreyon_gather_content_for_type($post_type, $seo_plugin) {
@@ -3322,12 +3338,49 @@ function arreyon_verify_rendered_page($target_wp_id, $field, $expected_value) {
 
 function arreyon_execute_one_action($token, $action) {
     $action_id = isset($action['id']) ? $action['id'] : null;
+    $action_type = isset($action['actionType']) ? $action['actionType'] : '';
     $target_wp_id = isset($action['targetWpId']) ? (int) $action['targetWpId'] : 0;
     $target_type = isset($action['targetType']) ? $action['targetType'] : 'post';
     $change = isset($action['change']) && is_array($action['change']) ? $action['change'] : [];
 
-    if (!$action_id || !$target_wp_id) {
-        arreyon_report_action_result($token, $action_id, false, false, 'Received an incomplete action from Arreyon - missing id or target.');
+    if (!$action_id) {
+        arreyon_report_action_result($token, $action_id, false, false, 'Received an incomplete action from Arreyon - missing id.');
+        return;
+    }
+
+    // Real, deliberate early branch — a category/tag creation has no
+    // existing page or post to target at all (that's the whole real
+    // difference from a title/description change), so it's handled
+    // as its own, separate real case before the target_wp_id
+    // requirement below, which only makes sense for an action that
+    // genuinely does target an existing piece of content.
+    if ($action_type === 'create_category' || $action_type === 'create_tag') {
+        $taxonomy = ($action_type === 'create_tag') ? 'post_tag' : 'category';
+        $name = isset($change['name']) ? trim($change['name']) : '';
+        if ($name === '') {
+            arreyon_report_action_result($token, $action_id, false, false, 'No name was provided to create.');
+            return;
+        }
+        $result = wp_insert_term($name, $taxonomy);
+        if (is_wp_error($result)) {
+            $error_data = $result->get_error_data();
+            if (is_array($error_data) && isset($error_data['term_id'])) {
+                // Real, deliberate treatment as success — a genuine
+                // duplicate means the real, intended term already
+                // exists, which is the actual real-world outcome the
+                // person wanted, not a failure to report as one.
+                arreyon_report_action_result($token, $action_id, true, true, null);
+                return;
+            }
+            arreyon_report_action_result($token, $action_id, false, false, 'WordPress rejected creating this: ' . $result->get_error_message());
+            return;
+        }
+        arreyon_report_action_result($token, $action_id, true, true, null);
+        return;
+    }
+
+    if (!$target_wp_id) {
+        arreyon_report_action_result($token, $action_id, false, false, 'Received an incomplete action from Arreyon - missing target.');
         return;
     }
 
@@ -3903,7 +3956,7 @@ app.post('/api/website-connector/report-result', async (req, res) => {
 // so /website/intelligence and /website/seo-proposals need no
 // awareness of which connection mode actually produced this data.
 app.post('/api/website-connector/report-content', async (req, res) => {
-  const { token, pages, posts, totalPageCount, totalPostCount } = req.body || {};
+  const { token, pages, posts, totalPageCount, totalPostCount, categories, tags } = req.body || {};
   if (!token || !Array.isArray(pages) || !Array.isArray(posts)) {
     return res.status(400).json({ error: 'Missing required fields.' });
   }
@@ -3917,7 +3970,17 @@ app.post('/api/website-connector/report-content', async (req, res) => {
     if (!connResult.rows.length) return res.status(401).json({ error: 'This polling token was not recognized.' });
     const connectionId = connResult.rows[0].id;
 
-    const content = { pages, posts, totalPageCount: totalPageCount || pages.length, totalPostCount: totalPostCount || posts.length };
+    const content = {
+      pages, posts,
+      totalPageCount: totalPageCount || pages.length,
+      totalPostCount: totalPostCount || posts.length,
+      // Real, deliberate defaults — an older plugin version that
+      // hasn't been updated yet simply won't send these fields at
+      // all; defaulting to an empty list here rather than failing the
+      // whole report keeps page/post analysis working either way.
+      categories: Array.isArray(categories) ? categories : [],
+      tags: Array.isArray(tags) ? tags : [],
+    };
 
     await pool.query(
       `UPDATE website_connections SET cached_wp_content = $1, cached_wp_content_at = NOW(), pending_content_request_at = NULL WHERE id = $2`,
@@ -3925,8 +3988,8 @@ app.post('/api/website-connector/report-content', async (req, res) => {
     );
 
     await logWebsiteAudit(connectionId, 'system', null, 'content_reported',
-      `Site's own plugin reported ${pages.length} page(s) and ${posts.length} post(s) for analysis`,
-      { pageCount: pages.length, postCount: posts.length, viaPoll: true });
+      `Site's own plugin reported ${pages.length} page(s), ${posts.length} post(s), ${content.categories.length} categor(y/ies), and ${content.tags.length} tag(s) for analysis`,
+      { pageCount: pages.length, postCount: posts.length, categoryCount: content.categories.length, tagCount: content.tags.length, viaPoll: true });
 
     res.json({ success: true });
   } catch (e) {
@@ -4181,7 +4244,26 @@ async function fetchWordPressContent(connection, decryptedPassword) {
     return { items: mapped, totalCount };
   };
 
-  const [pagesResult, postsResult] = await Promise.all([fetchType('pages'), fetchType('posts')]);
+  // Real, deliberate small, bounded read — a real site's full taxonomy
+  // list (unlike posts/pages) is genuinely useful to see in its
+  // entirety, not just a sample, since choosing the right one for a
+  // new post depends on seeing all of them; 100 is far more than any
+  // real site is likely to have, but still a real, explicit bound
+  // rather than an unbounded fetch.
+  const fetchTaxonomy = async (type) => {
+    const res = await wpApiRequest(
+      connection.site_url, connection.wp_username, decryptedPassword,
+      `/wp/v2/${type}?per_page=100&_fields=id,name,count`,
+      { timeoutMs: 15000 }
+    );
+    if (!res.ok) throw new Error(`Could not read ${type} from WordPress (status ${res.status})`);
+    const items = await res.json();
+    return items.map(item => ({ id: item.id, name: decodeHtmlEntities(item.name), count: item.count }));
+  };
+
+  const [pagesResult, postsResult, categories, tags] = await Promise.all([
+    fetchType('pages'), fetchType('posts'), fetchTaxonomy('categories'), fetchTaxonomy('tags'),
+  ]);
   return {
     pages: pagesResult.items,
     posts: postsResult.items,
@@ -4189,6 +4271,8 @@ async function fetchWordPressContent(connection, decryptedPassword) {
     // which are only ever the sample actually pulled for analysis.
     totalPageCount: pagesResult.totalCount,
     totalPostCount: postsResult.totalCount,
+    categories,
+    tags,
   };
 }
 
@@ -4333,6 +4417,32 @@ async function reVerifyWebsiteAction(action, connection, decryptedPassword) {
   } catch (e) {
     return { verified: false, error: e.message || 'Failed to re-check this change.' };
   }
+}
+
+// Real, deliberate, separate function from executeWebsiteAction — a
+// new category or tag isn't a proposed change to something that
+// already exists needing approval, it's a direct, immediate action
+// the person themselves asked for by typing a name and submitting it.
+// No AI proposal, no approval queue, just a direct write (push mode)
+// or a queued one for poll mode.
+async function createWordPressTaxonomyTerm(connection, decryptedPassword, taxonomyType, name) {
+  const endpoint = taxonomyType === 'tag' ? 'tags' : 'categories';
+  const res = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${endpoint}`, {
+    method: 'POST', body: { name }, timeoutMs: 15000,
+  });
+  if (res.ok) {
+    const created = await res.json();
+    return { success: true, id: created.id, name: created.name };
+  }
+  // Real, deliberate friendly handling — WordPress's own, real,
+  // documented response for a genuine duplicate name, not a generic
+  // failure the person has to interpret themselves.
+  let detail = null;
+  try { detail = await res.json(); } catch { /* Real, deliberate no-op — a non-JSON body still falls through to the generic error below. */ }
+  if (detail?.code === 'term_exists') {
+    return { success: false, error: `A ${taxonomyType} named "${name}" already exists.`, alreadyExists: true, existingId: detail.data?.term_id || null };
+  }
+  return { success: false, error: detail?.message || `WordPress rejected creating this ${taxonomyType} (status ${res.status}).` };
 }
 
 async function executeWebsiteAction(action, connection, decryptedPassword) {
@@ -4597,6 +4707,94 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 // approval is the point where the person is expressing real intent to
 // eventually publish something.
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// CATEGORIES & TAGS — read the site's real, existing taxonomy, and
+// create a new one directly. Unlike title/meta description changes,
+// creating a category or tag doesn't touch any existing, live content
+// at all, so this is a direct action the person takes themselves
+// rather than an AI proposal needing approval.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function getConnectionForBusiness(req) {
+  const account = await resolveAccount(req.userId);
+  const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+  if (!biz.rows.length) return { error: 'Business not found', status: 404 };
+  const connResult = await pool.query(`SELECT * FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [req.params.id]);
+  if (!connResult.rows.length) return { error: 'No website connected', status: 404 };
+  return { connection: connResult.rows[0] };
+}
+
+app.get('/api/business/:id/website/categories', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    const content = await getWordPressContentForAnalysis(connection, decryptedPassword);
+    res.json({ categories: content.categories || [] });
+  } catch (e) {
+    if (e.pendingPoll) return res.status(202).json({ pendingPoll: true, message: e.message, categories: [] });
+    console.error('Get categories error:', e.message);
+    res.status(500).json({ error: 'Could not read categories from this website.' });
+  }
+});
+
+app.get('/api/business/:id/website/tags', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    const content = await getWordPressContentForAnalysis(connection, decryptedPassword);
+    res.json({ tags: content.tags || [] });
+  } catch (e) {
+    if (e.pendingPoll) return res.status(202).json({ pendingPoll: true, message: e.message, tags: [] });
+    console.error('Get tags error:', e.message);
+    res.status(500).json({ error: 'Could not read tags from this website.' });
+  }
+});
+
+async function handleCreateTaxonomyTerm(req, res, taxonomyType) {
+  try {
+    const name = (req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'A name is required.' });
+
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+
+    if (connection.connection_mode === 'poll') {
+      // Real, deliberate queue — a direct write to a poll-mode site is
+      // blocked the same way a direct read is, so this goes through
+      // the same real, already-built poll-and-execute pipeline as any
+      // other approved change, auto-approved since the person directly
+      // asked for this themselves, not an AI proposing it.
+      const inserted = await pool.query(
+        `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_title, proposed_change, approval_status, execution_status)
+         VALUES ($1, 'founder', $2, $3, 0, $4, $5, 'approved', 'queued_for_poll') RETURNING id`,
+        [connection.id, `create_${taxonomyType}`, taxonomyType, name, JSON.stringify({ name })]
+      );
+      await logWebsiteAudit(connection.id, req.userId, null, `create_${taxonomyType}_queued`, `Queued creating ${taxonomyType} "${name}" for this site's next check-in`, { name });
+      return res.status(202).json({ queuedForPoll: true, actionId: inserted.rows[0].id, message: `This site connects in poll mode — "${name}" will be created on its next check-in (usually within a few minutes).` });
+    }
+
+    const result = await createWordPressTaxonomyTerm(connection, decryptedPassword, taxonomyType, name);
+    await pool.query(
+      `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_title, proposed_change, approval_status, execution_status, error_message)
+       VALUES ($1, 'founder', $2, $3, $4, $5, $6, 'approved', $7, $8)`,
+      [connection.id, `create_${taxonomyType}`, taxonomyType, result.id || 0, name, JSON.stringify({ name }), result.success ? 'executed' : 'execution_failed', result.success ? null : result.error]
+    );
+    await logWebsiteAudit(connection.id, req.userId, null, `create_${taxonomyType}`, result.success ? `Created ${taxonomyType} "${name}"` : `Failed to create ${taxonomyType} "${name}": ${result.error}`, result);
+
+    if (!result.success) return res.status(400).json(result);
+    res.json(result);
+  } catch (e) {
+    console.error(`Create ${taxonomyType} error:`, e.message);
+    res.status(500).json({ error: `Could not create this ${taxonomyType}.` });
+  }
+}
+
+app.post('/api/business/:id/website/categories', authRequired, (req, res) => handleCreateTaxonomyTerm(req, res, 'category'));
+app.post('/api/business/:id/website/tags', authRequired, (req, res) => handleCreateTaxonomyTerm(req, res, 'tag'));
+
 app.post('/api/business/:id/website/seo-proposals', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
