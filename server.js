@@ -3096,7 +3096,102 @@ function arreyon_poll_and_execute_actions() {
     foreach ($actions as $action) {
         arreyon_execute_one_action($token, $action);
     }
+
+    if (!empty($body['contentRequested'])) {
+        arreyon_gather_and_report_content($token);
+    }
 }
+
+// Real, deliberate local gathering — reads real, live page/post data
+// straight from WordPress's own database, the same real data a direct
+// REST read would return, but without ever making an inbound request
+// to this site from Arreyon (the exact thing blocked in poll mode).
+// Mirrors fetchWordPressContent's real shape on the Arreyon side, so
+// this reported data slots into the exact same downstream analysis
+// with no special-casing needed there.
+function arreyon_gather_and_report_content($token) {
+    $seo_plugin = arreyon_connect_detect_seo_plugin();
+    $pages = arreyon_gather_content_for_type('page', $seo_plugin);
+    $posts = arreyon_gather_content_for_type('post', $seo_plugin);
+
+    $counts_pages = wp_count_posts('page');
+    $counts_posts = wp_count_posts('post');
+
+    arreyon_report_content($token, [
+        'pages' => $pages,
+        'posts' => $posts,
+        'totalPageCount' => isset($counts_pages->publish) ? (int) $counts_pages->publish : count($pages),
+        'totalPostCount' => isset($counts_posts->publish) ? (int) $counts_posts->publish : count($posts),
+    ]);
+}
+
+function arreyon_gather_content_for_type($post_type, $seo_plugin) {
+    // Real, deliberate cap — matches fetchWordPressContent's own
+    // per_page=20 real limit on the direct-connection side, since the
+    // AI analysis step downstream only ever looks at a real, bounded
+    // sample either way.
+    $items = get_posts(['post_type' => $post_type, 'post_status' => 'publish', 'numberposts' => 20, 'orderby' => 'date', 'order' => 'DESC']);
+    $results = [];
+    foreach ($items as $item) {
+        $raw_content = $item->post_content;
+        $body_text = wp_strip_all_tags($raw_content);
+        $word_count = $body_text ? str_word_count($body_text) : 0;
+        $heading_count = substr_count($raw_content, '<h1') + substr_count($raw_content, '<h2') + substr_count($raw_content, '<h3');
+        $results[] = [
+            'id' => $item->ID,
+            'title' => html_entity_decode(get_the_title($item), ENT_QUOTES, 'UTF-8'),
+            'slug' => $item->post_name,
+            'url' => get_permalink($item),
+            'wordCount' => $word_count,
+            'headings' => $heading_count,
+            'metaDescription' => arreyon_get_local_meta_description($item->ID, $seo_plugin),
+            'bodyExcerpt' => substr($body_text, 0, 500),
+        ];
+    }
+    return $results;
+}
+
+// Real, deliberate plugin-aware read — mirrors the same real per-
+// plugin distinction arreyon_execute_one_action already makes for
+// writing: Yoast and Rank Math both genuinely store this in real post
+// meta, but All in One SEO does not, storing it instead in its own
+// real database table, so reading it needs a real, direct, read-only
+// query against that table rather than a meta lookup that would
+// always come back empty on an AIOSEO site.
+function arreyon_get_local_meta_description($post_id, $seo_plugin) {
+    if ($seo_plugin === 'yoast') {
+        $value = get_post_meta($post_id, '_yoast_wpseo_metadesc', true);
+        return $value !== '' ? $value : null;
+    }
+    if ($seo_plugin === 'rankmath') {
+        $value = get_post_meta($post_id, 'rank_math_description', true);
+        return $value !== '' ? $value : null;
+    }
+    if ($seo_plugin === 'aioseo') {
+        global $wpdb;
+        $table = $wpdb->prefix . 'aioseo_posts';
+        $value = $wpdb->get_var($wpdb->prepare("SELECT description FROM {$table} WHERE post_id = %d", $post_id));
+        return $value ? $value : null;
+    }
+    return null;
+}
+
+function arreyon_report_content($token, $content) {
+    $response = wp_remote_post(ARREYON_CONNECT_API_BASE . '/api/website-connector/report-content', [
+        'timeout' => 20,
+        'headers' => ['Content-Type' => 'application/json'],
+        'body' => wp_json_encode(array_merge(['token' => $token], $content)),
+    ]);
+
+    if (is_wp_error($response)) {
+        // Real, deliberate no-op beyond logging — the next scheduled
+        // poll will naturally see contentRequested still set (Arreyon
+        // never learned this succeeded) and try again on its own,
+        // rather than this needing its own separate retry logic.
+        error_log('Arreyon Connect: could not report content back to Arreyon: ' . $response->get_error_message());
+    }
+}
+
 
 // Executes a single real, already-approved change locally, then
 // immediately reads back what was actually saved — within the same
@@ -3730,6 +3825,13 @@ app.get('/api/website-connector/poll', async (req, res) => {
         targetWpId: r.target_wp_id,
         change: r.edited_change || r.proposed_change,
       })),
+      // Real, deliberate signal — set by getWordPressContentForAnalysis
+      // when a real page load asked for this site's content and none
+      // was cached (or it had gone stale). A direct read from Arreyon
+      // is blocked the same real way a direct write is, so gathering
+      // this locally and reporting it back is the only way this site's
+      // content ever reaches Arreyon at all.
+      contentRequested: !!connection.pending_content_request_at,
     });
   } catch (e) {
     console.error('Website connector poll error:', e.message);
@@ -3789,6 +3891,47 @@ app.post('/api/website-connector/report-result', async (req, res) => {
   } catch (e) {
     console.error('Website connector report-result error:', e.message);
     res.status(500).json({ error: 'Failed to record this result.' });
+  }
+});
+
+// Real, deliberate counterpart to report-result, for content rather
+// than an executed change — a poll-mode site's own plugin gathers its
+// real page/post data locally (the same real reason it executes
+// changes locally: a direct read from Arreyon would be blocked the
+// same way a direct write is) and reports it back here in the exact
+// shape getWordPressContentForAnalysis expects to hand to its callers,
+// so /website/intelligence and /website/seo-proposals need no
+// awareness of which connection mode actually produced this data.
+app.post('/api/website-connector/report-content', async (req, res) => {
+  const { token, pages, posts, totalPageCount, totalPostCount } = req.body || {};
+  if (!token || !Array.isArray(pages) || !Array.isArray(posts)) {
+    return res.status(400).json({ error: 'Missing required fields.' });
+  }
+
+  try {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const connResult = await pool.query(
+      `SELECT id FROM website_connections WHERE polling_token_hash = $1 AND connection_mode = 'poll'`,
+      [tokenHash]
+    );
+    if (!connResult.rows.length) return res.status(401).json({ error: 'This polling token was not recognized.' });
+    const connectionId = connResult.rows[0].id;
+
+    const content = { pages, posts, totalPageCount: totalPageCount || pages.length, totalPostCount: totalPostCount || posts.length };
+
+    await pool.query(
+      `UPDATE website_connections SET cached_wp_content = $1, cached_wp_content_at = NOW(), pending_content_request_at = NULL WHERE id = $2`,
+      [JSON.stringify(content), connectionId]
+    );
+
+    await logWebsiteAudit(connectionId, 'system', null, 'content_reported',
+      `Site's own plugin reported ${pages.length} page(s) and ${posts.length} post(s) for analysis`,
+      { pageCount: pages.length, postCount: posts.length, viaPoll: true });
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Website connector report-content error:', e.message);
+    res.status(500).json({ error: 'Failed to record this content report.' });
   }
 });
 
@@ -4049,6 +4192,64 @@ async function fetchWordPressContent(connection, decryptedPassword) {
   };
 }
 
+// Real, deliberate signal type — thrown (not returned) so every
+// existing caller of fetchWordPressContent must explicitly decide how
+// to handle "this is still being gathered" rather than silently
+// treating a poll-mode wait the same as page/post data.
+class WebsiteContentPendingError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'WebsiteContentPendingError';
+    this.pendingPoll = true;
+  }
+}
+
+// Real, deliberate single entry point both /website/intelligence and
+// /website/seo-proposals now go through, instead of each calling
+// fetchWordPressContent directly. A push-mode connection behaves
+// exactly as before (a real, direct, live read) — the real gap this
+// closes is poll-mode: a direct read from Arreyon is blocked the
+// exact same way a direct write is (Cloudflare Bot Fight Mode on the
+// free tier, the reason the connection is in poll mode at all), so
+// this content has to come from the site's own plugin reporting it
+// locally, the same real pattern already used for executing changes.
+async function getWordPressContentForAnalysis(connection, decryptedPassword) {
+  if (connection.connection_mode !== 'poll') {
+    return fetchWordPressContent(connection, decryptedPassword);
+  }
+
+  // Real, deliberate freshness window — page/post content and their
+  // SEO meta genuinely don't change every few minutes, so a report
+  // from the last half hour is still a real, accurate picture, not a
+  // stale one. Avoids asking the site's plugin to re-gather and
+  // re-report on every single click of "Find SEO Improvements."
+  const FRESH_MS = 30 * 60 * 1000;
+  if (connection.cached_wp_content && connection.cached_wp_content_at) {
+    const age = Date.now() - new Date(connection.cached_wp_content_at).getTime();
+    if (age < FRESH_MS) {
+      return connection.cached_wp_content;
+    }
+  }
+
+  // Real, deliberate re-request throttling — if a request was already
+  // made recently and the site simply hasn't checked in yet (its own
+  // schedule, usually within a few minutes), asking again on every
+  // page load would just be noise; only re-request if the previous
+  // one looks stale enough that something likely went wrong.
+  const PENDING_STALE_MS = 10 * 60 * 1000;
+  const pendingAge = connection.pending_content_request_at
+    ? Date.now() - new Date(connection.pending_content_request_at).getTime()
+    : Infinity;
+  if (pendingAge > PENDING_STALE_MS) {
+    await pool.query(`UPDATE website_connections SET pending_content_request_at = NOW() WHERE id = $1`, [connection.id]);
+  }
+
+  throw new WebsiteContentPendingError(
+    'This site connects in poll mode, so its content is gathered by its own plugin rather than read directly (a direct read would be blocked the same way a direct write is). A request has been sent — this site checks in periodically (usually within a few minutes). Please try again shortly.'
+  );
+}
+
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PHASE 8 / INCREMENT 3 — EXECUTION + VERIFICATION
 //
@@ -4265,8 +4466,11 @@ app.post('/api/business/:id/website/intelligence', authRequired, async (req, res
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
     let pages, posts, totalPageCount, totalPostCount;
     try {
-      ({ pages, posts, totalPageCount, totalPostCount } = await fetchWordPressContent(connection, decryptedPassword));
+      ({ pages, posts, totalPageCount, totalPostCount } = await getWordPressContentForAnalysis(connection, decryptedPassword));
     } catch (e) {
+      if (e.pendingPoll) {
+        return res.status(202).json({ pendingPoll: true, message: e.message });
+      }
       if (e.message.includes('401') || e.message.includes('status 401')) {
         await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
         return res.status(400).json({ error: 'This Application Password is no longer valid. Please reconnect your website.' });
@@ -4296,6 +4500,7 @@ CRITICAL RULES:
 - Do NOT invent an overall numeric "website score." Scores are not requested and must not be fabricated.
 - "NOT DETECTED" for a meta description means the site's REST API did not expose one — this could mean it genuinely doesn't have one, OR that the connected site simply doesn't expose that data (e.g. no SEO plugin, or one not integrated with the REST API). State this honestly rather than assuming the description is missing.
 - Thin content threshold: treat under 300 words as a genuine content-depth concern worth flagging; do not flag naturally short pages (e.g. a simple contact page) as broken just for being short.
+- This site may have more pages/posts than can be covered individually — use ALL of the measured data above to inform your structure_summary and to pick the most important findings, but limit your output to AT MOST 15 seo_issues, 10 content_observations, and 8 recommendations, prioritizing the most significant, highest-severity findings. Do not attempt one entry per page/post — a bounded, prioritized list is required, not a note-by-note walkthrough of everything.
 
 Return ONLY valid JSON, no markdown, in exactly this structure:
 {
@@ -4309,10 +4514,10 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   "recommendations": [
     { "title": "short, specific action title", "description": "1-2 sentences on what to do and why", "priority": "high" | "medium" | "low" }
   ],
-  "data_limitations_note": "one honest sentence on what this analysis could NOT see (e.g. no SEO plugin data was exposed by this site, so on-page meta description completeness could not be fully assessed)"
+  "data_limitations_note": "one honest sentence on what this analysis could NOT see (e.g. no SEO plugin data was exposed by this site, so on-page meta description completeness could not be fully assessed) — if the site has more pages/posts than fit in the 15/10/8 limits above, mention that here too, so the person knows the list is prioritized, not exhaustive"
 }`;
 
-    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the Website Intelligence analysis now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_intelligence', userId: req.userId }, maxTokens: 6000 });
+    const raw = await callAI({ persona: prompt + frenchInstruction(language, { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the Website Intelligence analysis now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_intelligence', userId: req.userId }, maxTokens: 8000 });
 
     let intelligence;
     try {
@@ -4332,6 +4537,14 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
       console.error('Website Intelligence missing required arrays. Keys present:', Object.keys(intelligence));
       throw new Error(`Could not generate Website Intelligence — the response was missing required data (got: ${Object.keys(intelligence).join(', ') || 'nothing'}). Please try again.`);
     }
+
+    // Defensive cap alongside the prompt instruction above — a prompt
+    // instruction is a soft constraint the AI might not always follow
+    // exactly, so this guarantees the response never balloons even if it
+    // occasionally lists more than asked.
+    intelligence.seo_issues = intelligence.seo_issues.slice(0, 15);
+    if (Array.isArray(intelligence.content_observations)) intelligence.content_observations = intelligence.content_observations.slice(0, 10);
+    intelligence.recommendations = intelligence.recommendations.slice(0, 8);
 
     // Real, measured counts are stored alongside the AI's assessment —
     // computed here in code, not asked of the AI, so these specific
@@ -4398,8 +4611,11 @@ app.post('/api/business/:id/website/seo-proposals', authRequired, async (req, re
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
     let pages, posts;
     try {
-      ({ pages, posts } = await fetchWordPressContent(connection, decryptedPassword));
+      ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
     } catch (e) {
+      if (e.pendingPoll) {
+        return res.status(202).json({ pendingPoll: true, message: e.message, proposals: [] });
+      }
       if (e.message.includes('401')) {
         await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
         return res.status(400).json({ error: 'This Application Password is no longer valid. Please reconnect your website.' });
@@ -9944,6 +10160,20 @@ app.get('/api/business', authRequired, async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Failed to load businesses' }); }
 });
 
+app.delete('/api/business/:id', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id, name FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found.' });
+
+    await pool.query('DELETE FROM businesses WHERE id = $1', [req.params.id]);
+    res.json({ success: true, deletedName: biz.rows[0].name });
+  } catch (e) {
+    console.error('Delete business error:', e.message);
+    res.status(500).json({ error: 'Failed to delete this business. Please try again.' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // REPORT GENERATION — HTML, PDF, and Word (DOCX) downloadable reports
 // ═══════════════════════════════════════════════════════════════════════════
@@ -11596,6 +11826,25 @@ app.put('/api/alerts/read-all', authRequired, async (req, res) => {
     await pool.query(`UPDATE monitoring_alerts SET is_read = true WHERE owner_id = $1 AND is_read = false`, [account.id]);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Failed to update alerts' }); }
+});
+
+app.delete('/api/alerts/clear-read', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(`DELETE FROM monitoring_alerts WHERE owner_id = $1 AND is_read = true RETURNING id`, [account.id]);
+    res.json({ success: true, clearedCount: result.rows.length });
+  } catch (e) { res.status(500).json({ error: 'Failed to clear alerts' }); }
+});
+
+// A real delete, not a soft "dismissed" flag — matches what the person
+// asked for (choosing which specific alerts to clear, read or not).
+app.delete('/api/alerts/:id', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const result = await pool.query(`DELETE FROM monitoring_alerts WHERE id = $1 AND owner_id = $2 RETURNING id`, [req.params.id, account.id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Alert not found' });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to delete alert' }); }
 });
 
 app.get('/api/alerts/preferences', authRequired, async (req, res) => {
