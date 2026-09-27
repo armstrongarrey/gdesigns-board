@@ -3131,6 +3131,22 @@ function arreyon_gather_and_report_content($token) {
 // own real per_page=100 cap on the direct-connection side, since a
 // real site's full taxonomy list is genuinely useful to see in its
 // entirety when choosing one for a new post, not just a sample.
+// Real, deliberate case-insensitive lookup before ever creating —
+// "SEO" and "seo" should resolve to the exact same real term, not
+// create a genuine duplicate that only differs by letter case.
+function arreyon_find_or_create_term($name, $taxonomy) {
+    if ($name === '') return null;
+    $existing = get_term_by('name', $name, $taxonomy);
+    if ($existing) return $existing->term_id;
+    $result = wp_insert_term($name, $taxonomy);
+    if (is_wp_error($result)) {
+        $error_data = $result->get_error_data();
+        if (is_array($error_data) && isset($error_data['term_id'])) return $error_data['term_id'];
+        return null;
+    }
+    return $result['term_id'];
+}
+
 function arreyon_gather_taxonomy($taxonomy) {
     $terms = get_terms(['taxonomy' => $taxonomy, 'hide_empty' => false, 'number' => 100]);
     if (is_wp_error($terms) || !is_array($terms)) return [];
@@ -3153,7 +3169,7 @@ function arreyon_gather_content_for_type($post_type, $seo_plugin) {
         $body_text = wp_strip_all_tags($raw_content);
         $word_count = $body_text ? str_word_count($body_text) : 0;
         $heading_count = substr_count($raw_content, '<h1') + substr_count($raw_content, '<h2') + substr_count($raw_content, '<h3');
-        $results[] = [
+        $entry = [
             'id' => $item->ID,
             'title' => html_entity_decode(get_the_title($item), ENT_QUOTES, 'UTF-8'),
             'slug' => $item->post_name,
@@ -3163,6 +3179,15 @@ function arreyon_gather_content_for_type($post_type, $seo_plugin) {
             'metaDescription' => arreyon_get_local_meta_description($item->ID, $seo_plugin),
             'bodyExcerpt' => substr($body_text, 0, 500),
         ];
+        // Real, deliberate limit to posts only — pages don't support
+        // categories or tags at all in standard WordPress, so this
+        // mirrors the same real constraint fetchWordPressContent
+        // applies on the direct-connection side.
+        if ($post_type === 'post') {
+            $entry['categoryIds'] = wp_get_post_categories($item->ID);
+            $entry['tagIds'] = wp_get_post_tags($item->ID, ['fields' => 'ids']);
+        }
+        $results[] = $entry;
     }
     return $results;
 }
@@ -3376,6 +3401,50 @@ function arreyon_execute_one_action($token, $action) {
             return;
         }
         arreyon_report_action_result($token, $action_id, true, true, null);
+        return;
+    }
+
+    // Real, deliberate second early branch — assigning a category/tag
+    // to a real, existing post is neither a title/description change
+    // nor a brand-new, standalone term creation; it resolves each
+    // suggested name into a real term id (reusing an existing match
+    // case-insensitively, creating only if genuinely nothing matches)
+    // and sets those ids directly on the post.
+    if ($action_type === 'assign_taxonomy') {
+        if (!$target_wp_id) {
+            arreyon_report_action_result($token, $action_id, false, false, 'Received an incomplete action from Arreyon - missing target.');
+            return;
+        }
+        $category_id = null;
+        $tag_ids = [];
+        if (!empty($change['category'])) {
+            $category_id = arreyon_find_or_create_term(trim($change['category']), 'category');
+        }
+        if (!empty($change['tags']) && is_array($change['tags'])) {
+            foreach ($change['tags'] as $tag_name) {
+                $tag_id = arreyon_find_or_create_term(trim($tag_name), 'post_tag');
+                if ($tag_id) $tag_ids[] = $tag_id;
+            }
+        }
+        if (!$category_id && empty($tag_ids)) {
+            arreyon_report_action_result($token, $action_id, false, false, 'Could not resolve the suggested category or tags to real WordPress terms.');
+            return;
+        }
+        if ($category_id) wp_set_post_categories($target_wp_id, [$category_id]);
+        if (!empty($tag_ids)) wp_set_post_tags($target_wp_id, $tag_ids);
+
+        // Real, deliberate verification — read the post's real, saved
+        // term assignments back rather than trusting the set calls
+        // above succeeded just because they didn't throw.
+        $saved_categories = wp_get_post_categories($target_wp_id);
+        $saved_tags = wp_get_post_tags($target_wp_id, ['fields' => 'ids']);
+        $category_ok = !$category_id || in_array($category_id, $saved_categories);
+        $tags_ok = empty($tag_ids) || !array_diff($tag_ids, $saved_tags);
+        if ($category_ok && $tags_ok) {
+            arreyon_report_action_result($token, $action_id, true, true, null);
+        } else {
+            arreyon_report_action_result($token, $action_id, true, false, 'The update was applied, but the post real, saved categories/tags do not yet fully reflect it.');
+        }
         return;
     }
 
@@ -4209,9 +4278,14 @@ function wpCountHeadings(html) {
 // not to pretend data exists that the connected site doesn't actually expose.
 async function fetchWordPressContent(connection, decryptedPassword) {
   const fetchType = async (type) => {
+    // Real, deliberate distinction — WordPress pages don't support
+    // categories or tags at all by default (only posts do), so only
+    // requesting those fields for posts avoids asking for something
+    // that doesn't exist on the other type.
+    const taxonomyFields = type === 'posts' ? ',categories,tags' : '';
     const res = await wpApiRequest(
       connection.site_url, connection.wp_username, decryptedPassword,
-      `/wp/v2/${type}?per_page=20&status=publish&_fields=id,title,slug,link,excerpt,content,date,yoast_head_json`,
+      `/wp/v2/${type}?per_page=20&status=publish&_fields=id,title,slug,link,excerpt,content,date,yoast_head_json${taxonomyFields}`,
       { timeoutMs: 15000 }
     );
     if (!res.ok) throw new Error(`Could not read ${type} from WordPress (status ${res.status})`);
@@ -4238,7 +4312,11 @@ async function fetchWordPressContent(connection, decryptedPassword) {
         wordCount: bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0,
         headings: wpCountHeadings(rawContent),
         metaDescription: item.yoast_head_json?.description || null,
-        bodyExcerpt: bodyText.slice(0, 500)
+        bodyExcerpt: bodyText.slice(0, 500),
+        // Real, deliberate presence only for posts (see taxonomyFields
+        // above) — undefined for pages, which don't have these at all.
+        categoryIds: item.categories,
+        tagIds: item.tags,
       };
     });
     return { items: mapped, totalCount };
@@ -4425,6 +4503,23 @@ async function reVerifyWebsiteAction(action, connection, decryptedPassword) {
 // the person themselves asked for by typing a name and submitting it.
 // No AI proposal, no approval queue, just a direct write (push mode)
 // or a queued one for poll mode.
+// Real, deliberate case-insensitive lookup before ever creating —
+// "SEO" and "seo" should resolve to the exact same real term, not
+// create a genuine duplicate that only differs by letter case.
+async function findOrCreateWordPressTerm(connection, decryptedPassword, taxonomyType, name) {
+  const endpoint = taxonomyType === 'tag' ? 'tags' : 'categories';
+  const searchRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${endpoint}?search=${encodeURIComponent(name)}&per_page=100`, { timeoutMs: 10000 });
+  if (searchRes.ok) {
+    const existing = await searchRes.json();
+    const match = existing.find(t => t.name.toLowerCase().trim() === name.toLowerCase().trim());
+    if (match) return match.id;
+  }
+  const created = await createWordPressTaxonomyTerm(connection, decryptedPassword, taxonomyType, name);
+  if (created.success) return created.id;
+  if (created.alreadyExists && created.existingId) return created.existingId;
+  return null;
+}
+
 async function createWordPressTaxonomyTerm(connection, decryptedPassword, taxonomyType, name) {
   const endpoint = taxonomyType === 'tag' ? 'tags' : 'categories';
   const res = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${endpoint}`, {
@@ -4450,6 +4545,51 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
   const change = action.edited_change || action.proposed_change;
 
   try {
+    if (change.category || change.tags) {
+      // Real, deliberate separate branch — assigning a category/tag
+      // isn't a text field update like title/meta description, it's
+      // resolving real names into real WordPress term IDs (creating
+      // a genuinely new one only if no existing match is found) and
+      // then setting those IDs on the post.
+      try {
+        const categoryIds = [];
+        if (change.category) {
+          const id = await findOrCreateWordPressTerm(connection, decryptedPassword, 'category', change.category);
+          if (id) categoryIds.push(id);
+        }
+        const tagIds = [];
+        if (Array.isArray(change.tags)) {
+          for (const tagName of change.tags) {
+            const id = await findOrCreateWordPressTerm(connection, decryptedPassword, 'tag', tagName);
+            if (id) tagIds.push(id);
+          }
+        }
+        if (!categoryIds.length && !tagIds.length) {
+          return { executed: false, verified: false, error: 'Could not resolve the suggested category or tags to real WordPress terms.' };
+        }
+        const body = {};
+        if (categoryIds.length) body.categories = categoryIds;
+        if (tagIds.length) body.tags = tagIds;
+        const res = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/posts/${action.target_wp_id}`, {
+          method: 'POST', body, timeoutMs: 15000,
+        });
+        if (!res.ok) return { executed: false, verified: false, error: `WordPress rejected the update (status ${res.status}).` };
+        // Real, deliberate immediate verification — read the post back
+        // and confirm the real, assigned ids actually include what was
+        // just set, the same "don't trust a 200 alone" discipline as
+        // every other real write in this app.
+        const verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/posts/${action.target_wp_id}?_fields=categories,tags`, { timeoutMs: 10000 });
+        if (!verifyRes.ok) return { executed: true, verified: false, error: 'The update was sent, but verification could not confirm it — please check the post manually.' };
+        const verifyData = await verifyRes.json();
+        const categoryOk = !categoryIds.length || categoryIds.every(id => (verifyData.categories || []).includes(id));
+        const tagOk = !tagIds.length || tagIds.every(id => (verifyData.tags || []).includes(id));
+        if (categoryOk && tagOk) return { executed: true, verified: true };
+        return { executed: true, verified: false, error: 'The update was sent, but the post\'s real, saved categories/tags do not yet reflect it — it may need a moment to catch up.' };
+      } catch (e) {
+        return { executed: false, verified: false, error: e.message };
+      }
+    }
+
     if (change.metaTitle) {
       // Real, deliberate write to all three supported SEO plugins'
       // meta title fields at once, and via the meta object — NOT
@@ -4794,6 +4934,147 @@ async function handleCreateTaxonomyTerm(req, res, taxonomyType) {
 
 app.post('/api/business/:id/website/categories', authRequired, (req, res) => handleCreateTaxonomyTerm(req, res, 'category'));
 app.post('/api/business/:id/website/tags', authRequired, (req, res) => handleCreateTaxonomyTerm(req, res, 'tag'));
+
+app.post('/api/business/:id/website/taxonomy-proposals', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+    const connection = connResult.rows[0];
+    if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    let posts, categories, tags;
+    try {
+      ({ posts, categories, tags } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+    } catch (e) {
+      if (e.pendingPoll) return res.status(202).json({ pendingPoll: true, message: e.message, proposals: [] });
+      if (e.message.includes('401')) {
+        await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
+        return res.status(400).json({ error: 'This Application Password is no longer valid. Please reconnect your website.' });
+      }
+      throw e;
+    }
+    categories = categories || [];
+    tags = tags || [];
+
+    // Real, deliberate scope — pages don't support categories or tags
+    // at all in standard WordPress, so this only ever looks at posts.
+    // A post genuinely needs this when it has no real category beyond
+    // the default "Uncategorized" WordPress always assigns, or has no
+    // tags at all — a plain, measured gap, not an AI opinion.
+    const uncategorizedId = categories.find(c => c.name.toLowerCase() === 'uncategorized')?.id;
+    const candidates = (posts || []).filter(p => {
+      const hasRealCategory = (p.categoryIds || []).some(id => id !== uncategorizedId);
+      const hasTags = (p.tagIds || []).length > 0;
+      return !hasRealCategory || !hasTags;
+    });
+
+    if (!candidates.length) {
+      return res.json({ proposals: [], message: 'Every post already has a real category and at least one tag — nothing to propose right now.' });
+    }
+
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+    const realCategoryNames = categories.map(c => c.name).filter(n => n.toLowerCase() !== 'uncategorized');
+    const realTagNames = tags.map(t => t.name);
+    const cappedCandidates = candidates.slice(0, 15);
+    const candidatesSummary = cappedCandidates.map((c, i) => `[${i}] "${c.title}" (${c.url})\n  Current category: ${(c.categoryIds || []).some(id => id !== uncategorizedId) ? 'has a real one already' : 'none (Uncategorized)'}\n  Current tags: ${(c.tagIds || []).length ? 'has tags already' : 'none'}\n  Content excerpt: ${c.bodyExcerpt}`).join('\n\n');
+
+    const prompt = `You are an SEO Agent organizing a real business's WordPress blog into its existing category and tag structure. You must ONLY suggest what's genuinely missing for each post below — some already have a real category and just need tags, or vice versa; only fill in what's actually absent.
+${contextSummary}
+
+THIS SITE'S REAL, EXISTING CATEGORIES (strongly prefer reusing one of these — only suggest a genuinely new one if truly nothing fits):
+${realCategoryNames.length ? realCategoryNames.join(', ') : '(none yet)'}
+
+THIS SITE'S REAL, EXISTING TAGS (strongly prefer reusing these — new tags are fine when genuinely more specific and useful):
+${realTagNames.length ? realTagNames.join(', ') : '(none yet)'}
+
+POSTS NEEDING ATTENTION:
+${candidatesSummary}
+
+For EACH numbered post above, based on its actual content: if it has no real category, suggest exactly ONE category name (existing preferred). If it has no tags, suggest 2-4 tag names (existing preferred, a genuinely new one is fine when it adds real specificity). Leave a field null if that post already has it (per the notes above) — never suggest replacing something that already exists.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "proposals": [
+    { "index": 0, "suggested_category": "Category Name or null", "suggested_tags": ["tag1", "tag2"] or null, "reasoning": "1 sentence on why these fit this post's actual content" }
+  ]
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the category and tag proposals now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_taxonomy_proposals', userId: req.userId }, maxTokens: 4000 });
+
+    let result;
+    try {
+      result = extractJSON(raw);
+    } catch (e) {
+      const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```');
+      console.error('Taxonomy proposals JSON parse failed:', e.message, '| Response length:', raw.length, '| Looks truncated:', looksTruncated);
+      throw new Error(`Could not generate category/tag proposals — the AI's response could not be read as valid data${looksTruncated ? ' (it appears to have been cut off before finishing — please try again)' : ' (please try again)'}.`);
+    }
+    if (!Array.isArray(result.proposals)) throw new Error(`Could not generate category/tag proposals — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
+
+    // Real, deliberate low-risk classification — assigning an existing
+    // or a genuinely new category/tag never touches a post's actual,
+    // visible content, title, or meta fields; it's purely additive
+    // organizational metadata, the same real risk profile as a meta
+    // description change.
+    const autoExecuteEligible = connection.permission_level === 'managed' && connection.automation_mode === 'automatic';
+
+    const insertedProposals = [];
+    for (const p of result.proposals) {
+      const candidate = cappedCandidates[p.index];
+      if (!candidate) continue;
+      if (!p.suggested_category && !(Array.isArray(p.suggested_tags) && p.suggested_tags.length)) continue;
+
+      const proposedChange = {};
+      if (p.suggested_category) proposedChange.category = p.suggested_category;
+      if (Array.isArray(p.suggested_tags) && p.suggested_tags.length) proposedChange.tags = p.suggested_tags;
+
+      const inserted = await pool.query(
+        `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
+         VALUES ($1, 'seo_agent', 'assign_taxonomy', 'post', $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [connection.id, candidate.id, candidate.url, candidate.title, JSON.stringify({}), JSON.stringify(proposedChange), p.reasoning || null]
+      );
+      let action = inserted.rows[0];
+
+      if (autoExecuteEligible) {
+        await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
+        await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: assign_taxonomy for "${candidate.title}"`, { actionId: action.id });
+
+        const execResult = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
+        const executionStatus = execResult.executed ? 'executed' : 'execution_failed';
+        const verificationStatus = execResult.executed ? (execResult.verified ? 'verified' : 'verification_failed') : null;
+
+        const updated = await pool.query(
+          `UPDATE website_actions SET approval_status = 'approved', execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
+          [executionStatus, verificationStatus, execResult.error || null, action.id]
+        );
+        action = updated.rows[0];
+
+        await logWebsiteAudit(connection.id, 'system', null,
+          execResult.verified ? 'change_executed_and_verified' : 'change_execution_issue',
+          `Auto-executed assign_taxonomy for "${candidate.title}": ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
+          { actionId: action.id, executionStatus, verificationStatus, error: execResult.error });
+      }
+
+      insertedProposals.push(action);
+    }
+
+    const autoExecutedCount = insertedProposals.filter(a => a.execution_status === 'executed').length;
+    const pendingCount = insertedProposals.length - autoExecutedCount;
+    await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
+      `SEO Agent generated ${insertedProposals.length} category/tag proposal(s)` + (autoExecutedCount ? ` — ${autoExecutedCount} auto-executed under Managed/Automatic settings, ${pendingCount} awaiting approval` : ' awaiting approval'),
+      { count: insertedProposals.length, autoExecutedCount, pendingCount });
+
+    res.json({ proposals: insertedProposals });
+  } catch (err) {
+    console.error('Taxonomy proposals error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate category/tag proposals. Please try again.' });
+  }
+});
 
 app.post('/api/business/:id/website/seo-proposals', authRequired, async (req, res) => {
   try {
