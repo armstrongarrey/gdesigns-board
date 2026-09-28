@@ -1777,6 +1777,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div style="display:flex;gap:8px">
             <button class="btn-secondary" onclick="generateTaxonomyProposals()" id="websiteTaxonomyProposalsBtn" data-i18n="web.suggest_categories_tags">Suggest Categories &amp; Tags</button>
             <button class="btn-secondary" onclick="generateDuplicateTitleProposals()" id="websiteDuplicateTitleBtn" data-i18n="web.fix_duplicate_titles">Fix Duplicate Titles</button>
+            <button class="btn-secondary" onclick="generateFeaturedImageProposals()" id="websiteFeaturedImageBtn" data-i18n="web.generate_featured_images">Generate Featured Images</button>
             <button class="btn-primary" onclick="generateSeoProposals()" id="websiteSeoProposalsBtn" data-i18n="web.find_seo_improvements">Find SEO Improvements</button>
           </div>
         </div>
@@ -7511,7 +7512,7 @@ async function loadWebsiteActions() {
   }
 }
 
-const WEBSITE_ACTION_TYPE_LABELS = { update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description', assign_taxonomy: 'web.action_type_taxonomy' };
+const WEBSITE_ACTION_TYPE_LABELS = { update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description', assign_taxonomy: 'web.action_type_taxonomy', generate_featured_image: 'web.action_type_featured_image' };
 
 // Renders each proposal with its real previous value alongside the AI's
 // suggestion (spec's explicit CURRENT/PROPOSED preview format), an
@@ -7549,12 +7550,18 @@ function renderWebsiteActionsContent(actions) {
       if (Array.isArray(change.tags) && change.tags.length) parts.push(`<div><span style="color:var(--muted)">${t('web.field_tags')}:</span> ${change.tags.map(escapeHtml).join(', ')}</div>`);
       return parts.join('');
     }
+    if (change.imagePrompt) {
+      return `<div style="margin-bottom:4px"><span style="color:var(--muted)">${t('web.field_image_concept')}:</span> ${escapeHtml(change.imagePrompt)}</div>
+        <div style="margin-bottom:4px"><span style="color:var(--muted)">${t('web.field_image_title')}:</span> ${escapeHtml(change.imageTitle || '')}</div>
+        <div><span style="color:var(--muted)">${t('web.field_alt_text')}:</span> ${escapeHtml(change.altText || '')}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;font-style:italic">${t('web.image_generated_on_approval')}</div>`;
+    }
     return '';
   };
   const renderPreviousValue = (prev, change) => {
     if (change.title) return escapeHtml(prev.title || t('web.value_none'));
     if (change.metaDescription) return escapeHtml(prev.metaDescription || t('web.value_none'));
-    if (change.category || change.tags) return t('web.value_none');
+    if (change.category || change.tags || change.imagePrompt) return t('web.value_none');
     return '';
   };
   const editFieldFor = (action) => action.proposed_change.title ? 'title' : (action.proposed_change.metaDescription ? 'metaDescription' : null);
@@ -7835,6 +7842,33 @@ async function generateDuplicateTitleProposals() {
   } finally {
     btn.disabled = false;
     btn.textContent = t('web.fix_duplicate_titles');
+  }
+}
+
+async function generateFeaturedImageProposals() {
+  const btn = document.getElementById('websiteFeaturedImageBtn');
+  btn.disabled = true;
+  btn.textContent = t('web.finding_missing_images');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/featured-image-proposals`, { method: 'POST' });
+    const data = await res.json();
+    if (data.pendingPoll) {
+      showToast(data.message, 'success');
+    } else if (res.ok) {
+      if (data.proposals && data.proposals.length) {
+        showToast(t('web.proposals_found_toast').replace('{n}', data.proposals.length), 'success');
+      } else {
+        showToast(data.message || t('web.no_proposals_found_toast'), 'success');
+      }
+      loadWebsiteActions();
+    } else {
+      showToast(data.error || t('board.connection_error'), 'error');
+    }
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.generate_featured_images');
   }
 }
 
