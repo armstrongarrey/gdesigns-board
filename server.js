@@ -3124,7 +3124,28 @@ function arreyon_gather_and_report_content($token) {
         'totalPostCount' => isset($counts_posts->publish) ? (int) $counts_posts->publish : count($posts),
         'categories' => arreyon_gather_taxonomy('category'),
         'tags' => arreyon_gather_taxonomy('post_tag'),
+        'media' => arreyon_gather_media(),
     ]);
+}
+
+// Real, deliberate small, bounded read — mirrors fetchWordPressContent's
+// own real per_page=30 cap on the direct-connection side.
+function arreyon_gather_media() {
+    $items = get_posts(['post_type' => 'attachment', 'post_status' => 'inherit', 'post_mime_type' => 'image', 'numberposts' => 30, 'orderby' => 'date', 'order' => 'DESC']);
+    $results = [];
+    foreach ($items as $item) {
+        $metadata = wp_get_attachment_metadata($item->ID);
+        $results[] = [
+            'id' => $item->ID,
+            'title' => html_entity_decode(get_the_title($item), ENT_QUOTES, 'UTF-8'),
+            'url' => wp_get_attachment_url($item->ID),
+            'altText' => get_post_meta($item->ID, '_wp_attachment_image_alt', true) ?: '',
+            'width' => isset($metadata['width']) ? (int) $metadata['width'] : null,
+            'height' => isset($metadata['height']) ? (int) $metadata['height'] : null,
+            'mimeType' => $item->post_mime_type,
+        ];
+    }
+    return $results;
 }
 
 // Real, deliberate small, bounded read — mirrors fetchWordPressContent's
@@ -4106,7 +4127,7 @@ app.post('/api/website-connector/report-result', async (req, res) => {
 // so /website/intelligence and /website/seo-proposals need no
 // awareness of which connection mode actually produced this data.
 app.post('/api/website-connector/report-content', async (req, res) => {
-  const { token, pages, posts, totalPageCount, totalPostCount, categories, tags } = req.body || {};
+  const { token, pages, posts, totalPageCount, totalPostCount, categories, tags, media } = req.body || {};
   if (!token || !Array.isArray(pages) || !Array.isArray(posts)) {
     return res.status(400).json({ error: 'Missing required fields.' });
   }
@@ -4130,6 +4151,7 @@ app.post('/api/website-connector/report-content', async (req, res) => {
       // whole report keeps page/post analysis working either way.
       categories: Array.isArray(categories) ? categories : [],
       tags: Array.isArray(tags) ? tags : [],
+      media: Array.isArray(media) ? media : [],
     };
 
     await pool.query(
@@ -4497,8 +4519,30 @@ async function fetchWordPressContent(connection, decryptedPassword) {
     return items.map(item => ({ id: item.id, name: decodeHtmlEntities(item.name), count: item.count }));
   };
 
-  const [pagesResult, postsResult, categories, tags] = await Promise.all([
-    fetchType('pages'), fetchType('posts'), fetchTaxonomy('categories'), fetchTaxonomy('tags'),
+  // Real, deliberate small, bounded read — enough to give a real,
+  // useful sample of what's already available to reuse, without
+  // pulling a real site's entire, possibly large media library.
+  const fetchMedia = async () => {
+    const res = await wpApiRequest(
+      connection.site_url, connection.wp_username, decryptedPassword,
+      `/wp/v2/media?per_page=30&media_type=image&_fields=id,title,source_url,alt_text,media_details,mime_type`,
+      { timeoutMs: 15000 }
+    );
+    if (!res.ok) throw new Error(`Could not read media from WordPress (status ${res.status})`);
+    const items = await res.json();
+    return items.map(item => ({
+      id: item.id,
+      title: decodeHtmlEntities(wpStripHtml(item.title?.rendered || '')),
+      url: item.source_url,
+      altText: item.alt_text || '',
+      width: item.media_details?.width || null,
+      height: item.media_details?.height || null,
+      mimeType: item.mime_type,
+    }));
+  };
+
+  const [pagesResult, postsResult, categories, tags, media] = await Promise.all([
+    fetchType('pages'), fetchType('posts'), fetchTaxonomy('categories'), fetchTaxonomy('tags'), fetchMedia(),
   ]);
   return {
     pages: pagesResult.items,
@@ -4509,6 +4553,7 @@ async function fetchWordPressContent(connection, decryptedPassword) {
     totalPostCount: postsResult.totalCount,
     categories,
     tags,
+    media,
   };
 }
 
@@ -5073,6 +5118,20 @@ app.get('/api/business/:id/website/categories', authRequired, async (req, res) =
     if (e.pendingPoll) return res.status(202).json({ pendingPoll: true, message: e.message, categories: [] });
     console.error('Get categories error:', e.message);
     res.status(500).json({ error: 'Could not read categories from this website.' });
+  }
+});
+
+app.get('/api/business/:id/website/media', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    const content = await getWordPressContentForAnalysis(connection, decryptedPassword);
+    res.json({ media: content.media || [] });
+  } catch (e) {
+    if (e.pendingPoll) return res.status(202).json({ pendingPoll: true, message: e.message, media: [] });
+    console.error('Get media error:', e.message);
+    res.status(500).json({ error: 'Could not read media from this website.' });
   }
 });
 
