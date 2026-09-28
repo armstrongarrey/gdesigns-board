@@ -3179,6 +3179,7 @@ function arreyon_gather_content_for_type($post_type, $seo_plugin) {
             'metaDescription' => arreyon_get_local_meta_description($item->ID, $seo_plugin),
             'metaTitle' => arreyon_get_local_meta_title($item->ID, $seo_plugin),
             'bodyExcerpt' => substr($body_text, 0, 500),
+            'hasFeaturedImage' => has_post_thumbnail($item->ID),
         ];
         // Real, deliberate limit to posts only — pages don't support
         // categories or tags at all in standard WordPress, so this
@@ -3392,6 +3393,64 @@ function arreyon_execute_one_action($token, $action) {
 
     if (!$action_id) {
         arreyon_report_action_result($token, $action_id, false, false, 'Received an incomplete action from Arreyon - missing id.');
+        return;
+    }
+
+    // Real, deliberate early branch — the real image itself was
+    // already generated server-side (Arreyon holds the real OpenAI
+    // key, never this plugin), arriving here as real base64 bytes to
+    // upload locally using WordPress's own, native media functions,
+    // the exact same real path the WordPress admin UI itself uses.
+    if ($action_type === 'generate_featured_image') {
+        if (!$target_wp_id || empty($change['imageBase64'])) {
+            arreyon_report_action_result($token, $action_id, false, false, 'Received an incomplete image action from Arreyon - missing target or image data.');
+            return;
+        }
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+
+        $decoded = base64_decode($change['imageBase64']);
+        if ($decoded === false) {
+            arreyon_report_action_result($token, $action_id, false, false, 'Could not decode the real image data received from Arreyon.');
+            return;
+        }
+        $title = !empty($change['imageTitle']) ? $change['imageTitle'] : 'Featured Image';
+        $filename = sanitize_file_name(strtolower($title)) . '.png';
+
+        $upload = wp_upload_bits($filename, null, $decoded);
+        if (!empty($upload['error'])) {
+            arreyon_report_action_result($token, $action_id, false, false, 'WordPress rejected saving the real image file: ' . $upload['error']);
+            return;
+        }
+
+        $attachment_id = wp_insert_attachment([
+            'post_mime_type' => 'image/png',
+            'post_title' => $title,
+            'post_status' => 'inherit',
+        ], $upload['file'], $target_wp_id);
+        if (is_wp_error($attachment_id) || !$attachment_id) {
+            arreyon_report_action_result($token, $action_id, false, false, 'WordPress rejected creating the real media item.');
+            return;
+        }
+
+        $attachment_data = wp_generate_attachment_metadata($attachment_id, $upload['file']);
+        wp_update_attachment_metadata($attachment_id, $attachment_data);
+        if (!empty($change['altText'])) {
+            update_post_meta($attachment_id, '_wp_attachment_image_alt', $change['altText']);
+        }
+
+        set_post_thumbnail($target_wp_id, $attachment_id);
+
+        // Real, deliberate immediate verification — reads the post's
+        // real, saved thumbnail id back rather than trusting the set
+        // call above succeeded just because it didn't throw.
+        $saved_thumbnail_id = (int) get_post_thumbnail_id($target_wp_id);
+        if ($saved_thumbnail_id === (int) $attachment_id) {
+            arreyon_report_action_result($token, $action_id, true, true, null);
+        } else {
+            arreyon_report_action_result($token, $action_id, true, false, 'The image was uploaded, but the post real, saved featured image does not yet reflect it.');
+        }
         return;
     }
 
@@ -4321,6 +4380,33 @@ function wpExtractInternalLinks(html, siteUrl) {
 // server responded at all, which a truly broken/removed page could
 // not do. A 404 gets no such benefit — it specifically means this
 // exact path was not found, a real, meaningful signal.
+// Real, deliberate, separate external API integration — OpenAI's image
+// generation, distinct from the Claude-based callAI used everywhere
+// else in this app, since Claude itself doesn't generate images.
+// Returns a real, ready-to-upload PNG buffer, not a URL — gpt-image-1
+// returns base64-encoded image data directly, so there's no separate
+// download step needed before this can be handed to WordPress.
+async function generateAIImage(prompt) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY is not configured — required to generate featured images.');
+  }
+  const response = await fetch('https://api.openai.com/v1/images/generations', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'gpt-image-1', prompt, size: '1536x1024', quality: 'medium', n: 1 }),
+  });
+  if (!response.ok) {
+    let detail = '';
+    try { detail = (await response.json())?.error?.message || ''; } catch { /* Real, deliberate no-op — a non-JSON error body still reports via the real HTTP status below. */ }
+    throw new Error(`OpenAI image generation failed (status ${response.status}): ${detail || response.statusText}`);
+  }
+  const data = await response.json();
+  const b64 = data?.data?.[0]?.b64_json;
+  if (!b64) throw new Error('OpenAI returned no image data.');
+  return Buffer.from(b64, 'base64');
+}
+
 async function checkInternalLinkResolves(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
@@ -4354,7 +4440,7 @@ async function fetchWordPressContent(connection, decryptedPassword) {
     const taxonomyFields = type === 'posts' ? ',categories,tags' : '';
     const res = await wpApiRequest(
       connection.site_url, connection.wp_username, decryptedPassword,
-      `/wp/v2/${type}?per_page=20&status=publish&_fields=id,title,slug,link,excerpt,content,date,yoast_head_json${taxonomyFields}`,
+      `/wp/v2/${type}?per_page=20&status=publish&_fields=id,title,slug,link,excerpt,content,date,yoast_head_json,featured_media${taxonomyFields}`,
       { timeoutMs: 15000 }
     );
     if (!res.ok) throw new Error(`Could not read ${type} from WordPress (status ${res.status})`);
@@ -4384,6 +4470,7 @@ async function fetchWordPressContent(connection, decryptedPassword) {
         metaTitle: item.yoast_head_json?.title || null,
         bodyExcerpt: bodyText.slice(0, 500),
         internalLinks: wpExtractInternalLinks(rawContent, connection.site_url),
+        hasFeaturedImage: !!item.featured_media,
         // Real, deliberate presence only for posts (see taxonomyFields
         // above) — undefined for pages, which don't have these at all.
         categoryIds: item.categories,
@@ -4616,6 +4703,46 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
   const change = action.edited_change || action.proposed_change;
 
   try {
+    if (change.imagePrompt) {
+      // Real, deliberate real-cost step — this is the actual, billed
+      // OpenAI call, only ever reached once a person has genuinely
+      // approved this specific proposal (see the exclusion from
+      // auto-execute in the proposal-generation route above).
+      try {
+        const imageBuffer = await generateAIImage(change.imagePrompt);
+        const uploadRes = await wpApiRequestBinary(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/media', {
+          buffer: imageBuffer, contentType: 'image/png', filename: `${(change.imageTitle || 'featured-image').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60)}.png`,
+        });
+        if (!uploadRes.ok) return { executed: false, verified: false, error: `WordPress rejected the image upload (status ${uploadRes.status}).` };
+        const media = await uploadRes.json();
+
+        // Real, deliberate follow-up write — title/alt text aren't
+        // reliably accepted on the initial multipart upload across
+        // every real WordPress version, the same real reason the
+        // earlier, separate media-upload work in this app's own
+        // history did this as a second step too.
+        await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/media/${media.id}`, {
+          method: 'POST', body: { title: change.imageTitle || '', alt_text: change.altText || '' }, timeoutMs: 15000,
+        });
+
+        const setRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}`, {
+          method: 'POST', body: { featured_media: media.id }, timeoutMs: 15000,
+        });
+        if (!setRes.ok) return { executed: false, verified: false, error: `The image uploaded, but WordPress rejected setting it as the featured image (status ${setRes.status}).` };
+
+        // Real, deliberate immediate verification — read the post back
+        // and confirm its real, saved featured_media actually matches
+        // the real, just-uploaded image id.
+        const verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?_fields=featured_media`, { timeoutMs: 10000 });
+        if (!verifyRes.ok) return { executed: true, verified: false, error: 'The image was uploaded and set, but verification could not confirm it — please check the post manually.' };
+        const verifyData = await verifyRes.json();
+        if (verifyData.featured_media === media.id) return { executed: true, verified: true };
+        return { executed: true, verified: false, error: 'The image was uploaded, but the post\'s real, saved featured image does not yet reflect it — it may need a moment to catch up.' };
+      } catch (e) {
+        return { executed: false, verified: false, error: e.message };
+      }
+    }
+
     if (change.category || change.tags) {
       // Real, deliberate separate branch — assigning a category/tag
       // isn't a text field update like title/meta description, it's
@@ -5147,6 +5274,108 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   }
 });
 
+app.post('/api/business/:id/website/featured-image-proposals', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+    const connection = connResult.rows[0];
+    if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    let pages, posts;
+    try {
+      ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+    } catch (e) {
+      if (e.pendingPoll) return res.status(202).json({ pendingPoll: true, message: e.message, proposals: [] });
+      if (e.message.includes('401')) {
+        await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
+        return res.status(400).json({ error: 'This Application Password is no longer valid. Please reconnect your website.' });
+      }
+      throw e;
+    }
+
+    const allItems = [...(pages || []).map(p => ({ ...p, isPost: false })), ...(posts || []).map(p => ({ ...p, isPost: true }))];
+    const candidates = allItems.filter(item => !item.hasFeaturedImage);
+
+    if (!candidates.length) {
+      return res.json({ proposals: [], message: 'Every page and post already has a featured image — nothing to propose right now.' });
+    }
+
+    // Real, deliberate cheap step — this only drafts the plan (an
+    // image prompt, a title, alt text), a real Claude text call, not
+    // the actual, real-cost image generation itself. The real OpenAI
+    // cost is only ever incurred once a specific proposal is actually
+    // approved and executed, the same real, deferred-cost discipline
+    // as every other proposal in this app.
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+    const cappedCandidates = candidates.slice(0, 15);
+    const candidatesSummary = cappedCandidates.map((c, i) => `[${i}] ${c.isPost ? 'POST' : 'PAGE'}: "${c.title}" (${c.url})\n  Content excerpt: ${c.bodyExcerpt}`).join('\n\n');
+
+    const prompt = `You are an SEO Agent planning a featured image for each real page/post below, which currently has none. A missing featured image hurts how a page looks when shared on social media and in some search results.
+${contextSummary}
+
+PAGES/POSTS WITH NO FEATURED IMAGE:
+${candidatesSummary}
+
+For EACH numbered item above, based on its actual content, write:
+- A detailed, specific, professional image-generation prompt (describe a real, concrete scene/composition/style — never generic stock-photo phrasing like "business people shaking hands"; ground it in what this specific piece is actually about). Never request any real, identifiable person, brand logo, or copyrighted character.
+- A short, descriptive image title (a few words).
+- Accessible alt text (one concise sentence describing what the image shows, for real screen-reader users, not for SEO keyword stuffing).
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "proposals": [
+    { "index": 0, "image_prompt": "...", "image_title": "...", "alt_text": "...", "reasoning": "1 sentence on why this concept fits this specific content" }
+  ]
+}`;
+
+    const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the featured image plans now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_featured_image_proposals', userId: req.userId }, maxTokens: 4000 });
+
+    let result;
+    try {
+      result = extractJSON(raw);
+    } catch (e) {
+      const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```');
+      console.error('Featured image proposals JSON parse failed:', e.message, '| Response length:', raw.length, '| Looks truncated:', looksTruncated);
+      throw new Error(`Could not generate featured image plans — the AI's response could not be read as valid data${looksTruncated ? ' (it appears to have been cut off before finishing — please try again)' : ' (please try again)'}.`);
+    }
+    if (!Array.isArray(result.proposals)) throw new Error(`Could not generate featured image plans — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
+
+    // Real, deliberate exclusion from auto-execute, even under Managed
+    // + Automatic — unlike a title/description/taxonomy change, this
+    // one has a real, per-image cost and an unpredictable real visual
+    // result; a person should see the plan and decide, at least until
+    // this has been used and trusted for a while.
+    const insertedProposals = [];
+    for (const p of result.proposals) {
+      const candidate = cappedCandidates[p.index];
+      if (!candidate || !p.image_prompt) continue;
+
+      const proposedChange = { imagePrompt: p.image_prompt, imageTitle: p.image_title || candidate.title, altText: p.alt_text || candidate.title };
+
+      const inserted = await pool.query(
+        `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
+         VALUES ($1, 'seo_agent', 'generate_featured_image', $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [connection.id, candidate.isPost ? 'post' : 'page', candidate.id, candidate.url, candidate.title, JSON.stringify({}), JSON.stringify(proposedChange), p.reasoning || null]
+      );
+      insertedProposals.push(inserted.rows[0]);
+    }
+
+    await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
+      `SEO Agent generated ${insertedProposals.length} featured image plan(s) awaiting approval`,
+      { count: insertedProposals.length });
+
+    res.json({ proposals: insertedProposals });
+  } catch (err) {
+    console.error('Featured image proposals error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate featured image plans. Please try again.' });
+  }
+});
+
 app.post('/api/business/:id/website/broken-links', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
@@ -5610,6 +5839,26 @@ app.post('/api/business/:id/website/actions/:actionId/execute', authRequired, as
     // (see the poll endpoint's query) — this just gives the person
     // honest, immediate feedback rather than silently doing nothing.
     if (connection.connection_mode === 'poll') {
+      // Real, deliberate exception — a poll-mode site's own plugin
+      // cannot safely hold the real OpenAI API key itself (anyone who
+      // installed the plugin could extract it from the file), so the
+      // real, billed image generation has to happen here, server-side,
+      // once, right now — not repeated on every future poll. The
+      // resulting real image is embedded directly into edited_change,
+      // which the poll endpoint already sends to the plugin unchanged,
+      // so the plugin only ever needs to upload bytes it's handed, not
+      // call OpenAI or handle any real credential itself.
+      if (action.action_type === 'generate_featured_image') {
+        const change = action.edited_change || action.proposed_change;
+        try {
+          const imageBuffer = await generateAIImage(change.imagePrompt);
+          const augmentedChange = { ...change, imageBase64: imageBuffer.toString('base64') };
+          await pool.query(`UPDATE website_actions SET edited_change = $1 WHERE id = $2`, [JSON.stringify(augmentedChange), action.id]);
+        } catch (e) {
+          await pool.query(`UPDATE website_actions SET execution_status = 'execution_failed', error_message = $1 WHERE id = $2`, [e.message, action.id]);
+          return res.status(500).json({ error: `Could not generate the real image: ${e.message}` });
+        }
+      }
       return res.json({ success: true, queuedForPoll: true, message: 'This site executes approved changes on its own schedule (usually within a few minutes) rather than instantly, since a direct connection from Arreyon is blocked by this site\'s Cloudflare settings.' });
     }
 
@@ -10540,6 +10789,44 @@ async function wpApiRequest(siteUrl, username, appPassword, endpoint, options = 
         ...(options.headers || {})
       },
       body: options.body ? JSON.stringify(options.body) : undefined
+    });
+    return res;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Real, deliberate binary counterpart to wpApiRequest above — reuses
+// the exact same real security posture (HTTPS enforcement, the same
+// SSRF-guarding assertPublicHost check, the same real auth), since
+// uploading a real image is still a real, authenticated write to the
+// same real site; only the body/header handling differs, since a
+// real image upload needs raw binary + a Content-Disposition header,
+// not a JSON-stringified body.
+async function wpApiRequestBinary(siteUrl, username, appPassword, endpoint, { buffer, contentType, filename, timeoutMs = 20000 }) {
+  const url = buildWpUrl(siteUrl, endpoint);
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'https:') {
+    throw new Error('WordPress connections must use https:// — WordPress Application Passwords are not safe to use over plain http.');
+  }
+  await assertPublicHost(parsed.hostname);
+
+  const authHeader = 'Basic ' + Buffer.from(`${username}:${appPassword}`).toString('base64');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Authorization': authHeader,
+        'Content-Type': contentType,
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'X-Arreyon-Client': 'consult.gdesignsme.com',
+      },
+      body: new Uint8Array(buffer),
     });
     return res;
   } finally {
