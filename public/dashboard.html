@@ -1984,7 +1984,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div id="websiteActionsSection" style="display:none;margin-top:28px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.proposed_changes_title">Proposed Changes</div>
-          <div style="display:flex;gap:8px">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap">
+              <input type="checkbox" id="websiteUseLiveResearch" style="width:auto">
+              <span data-i18n="web.use_live_research">Ground in live competitor research</span>
+            </label>
             <button class="btn-secondary" onclick="generateTaxonomyProposals()" id="websiteTaxonomyProposalsBtn" data-i18n="web.suggest_categories_tags">Suggest Categories &amp; Tags</button>
             <button class="btn-secondary" onclick="generateDuplicateTitleProposals()" id="websiteDuplicateTitleBtn" data-i18n="web.fix_duplicate_titles">Fix Duplicate Titles</button>
             <button class="btn-secondary" onclick="generateFeaturedImageProposals()" id="websiteFeaturedImageBtn" data-i18n="web.generate_featured_images">Generate Featured Images</button>
@@ -7980,10 +7984,13 @@ async function confirmWebsiteActionManually(actionId) {
 
 async function generateSeoProposals() {
   const btn = document.getElementById('websiteSeoProposalsBtn');
+  const useLiveResearch = document.getElementById('websiteUseLiveResearch').checked;
   btn.disabled = true;
   btn.textContent = t('web.finding_improvements');
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/seo-proposals`, { method: 'POST' });
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/seo-proposals`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ useLiveResearch }),
+    });
     const data = await res.json();
     if (data.pendingPoll) {
       showToast(data.message, 'success');
