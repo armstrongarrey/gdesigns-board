@@ -1159,9 +1159,15 @@ CREATE TABLE IF NOT EXISTS website_audit_log (
   action_type VARCHAR(50) NOT NULL,
   description TEXT NOT NULL,
   details JSONB,
+  -- Real, deliberate feature tag (e.g. 'seo_proposals', 'taxonomy',
+  -- 'broken_links', 'featured_images', 'intelligence', 'connection',
+  -- 'general') — lets the activity log be viewed and cleared per real
+  -- feature rather than as one single, undifferentiated list.
+  feature VARCHAR(50) NOT NULL DEFAULT 'general',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_website_audit_log_connection ON website_audit_log(website_connection_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_website_audit_log_feature ON website_audit_log(website_connection_id, feature);
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- PHASE 8 / INCREMENT 2 — Website Action Engine (spec Section 21): the
