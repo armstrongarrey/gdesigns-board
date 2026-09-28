@@ -7681,6 +7681,34 @@ async function createWebsiteTaxonomyTerm(taxonomyType) {
 // (intelligence.measured, computed in code, never AI-generated) — the
 // same measured-vs-assessed separation the backend prompt was built to
 // enforce is carried through here rather than blurring the two on display.
+// Real, deliberate general-purpose helper — a genuinely long list
+// (15 SEO issues, a full reviewed-proposals history, a big media
+// library) reading as one unbroken wall of items down the page is
+// exactly the "boring/unprofessional" feel worth fixing everywhere
+// it shows up, not just in one place. Shows the first `initialCount`
+// items directly, with the rest revealed by a real "Show more" toggle
+// rather than always rendering everything at once.
+function renderCollapsibleItems(items, renderFn, initialCount, uniqueId) {
+  if (!items.length) return '';
+  const visible = items.slice(0, initialCount);
+  const hidden = items.slice(initialCount);
+  const visibleHtml = visible.map(renderFn).join('');
+  if (!hidden.length) return visibleHtml;
+  const hiddenHtml = hidden.map(renderFn).join('');
+  const showText = t('web.show_more').replace('{n}', hidden.length);
+  const hideText = t('web.show_less');
+  return `${visibleHtml}
+    <div id="collapsed-${uniqueId}" style="display:none">${hiddenHtml}</div>
+    <button type="button" onclick="toggleCollapsedList('${uniqueId}', this)" class="btn-ghost" style="font-size:11.5px;padding:6px 12px;margin-top:2px;margin-bottom:10px" data-show-text="${escapeHtml(showText)}" data-hide-text="${escapeHtml(hideText)}">${escapeHtml(showText)}</button>`;
+}
+
+function toggleCollapsedList(uniqueId, btn) {
+  const el = document.getElementById(`collapsed-${uniqueId}`);
+  const isHidden = el.style.display === 'none';
+  el.style.display = isHidden ? 'block' : 'none';
+  btn.textContent = isHidden ? btn.dataset.hideText : btn.dataset.showText;
+}
+
 function renderWebsiteIntelligenceContent(intelligence, generatedAt) {
   const contentEl = document.getElementById('websiteIntelligenceContent');
   if (!intelligence) {
@@ -7706,24 +7734,24 @@ function renderWebsiteIntelligenceContent(intelligence, generatedAt) {
       <span style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase" data-i18n="web.seo_issues_title">SEO Issues</span>
       <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
     </div>
-    ${(intelligence.seo_issues||[]).length ? (intelligence.seo_issues||[]).map(issue => `
+    ${(intelligence.seo_issues||[]).length ? renderCollapsibleItems(intelligence.seo_issues, issue => `
       <div style="background:var(--bg3);border-radius:8px;padding:10px 14px;margin-bottom:6px;display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
         <div style="min-width:0">
           <div style="font-size:12.5px;color:var(--text);font-weight:600">${escapeHtml(issue.page_title || '')}</div>
           <div style="font-size:12px;color:var(--text2)">${escapeHtml(issue.issue || '')}</div>
         </div>
         <span style="font-size:9px;font-weight:700;color:${WEBSITE_SEVERITY_COLORS[issue.severity]||'var(--muted)'};white-space:nowrap;text-transform:uppercase">${escapeHtml(issue.severity || '')}</span>
-      </div>`).join('') : `<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px" data-i18n="web.no_seo_issues">No SEO issues identified.</div>`}
+      </div>`, 5, 'seoIssues') : `<div style="font-size:12.5px;color:var(--muted);margin-bottom:14px" data-i18n="web.no_seo_issues">No SEO issues identified.</div>`}
 
     <div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;margin:18px 0 8px" data-i18n="web.recommendations_title">Recommendations</div>
-    ${(intelligence.recommendations||[]).length ? (intelligence.recommendations||[]).map(rec => `
+    ${(intelligence.recommendations||[]).length ? renderCollapsibleItems(intelligence.recommendations, rec => `
       <div style="background:var(--bg3);border-radius:8px;padding:10px 14px;margin-bottom:6px">
         <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
           <div style="font-size:12.5px;color:var(--text);font-weight:600">${escapeHtml(rec.title || '')}</div>
           <span style="font-size:9px;font-weight:700;color:${WEBSITE_SEVERITY_COLORS[rec.priority]||'var(--muted)'};white-space:nowrap;text-transform:uppercase">${escapeHtml(rec.priority || '')}</span>
         </div>
         <div style="font-size:12px;color:var(--text2);margin-top:3px">${escapeHtml(rec.description || '')}</div>
-      </div>`).join('') : `<div style="font-size:12.5px;color:var(--muted)" data-i18n="web.no_recommendations">No recommendations yet.</div>`}
+      </div>`, 5, 'recommendations') : `<div style="font-size:12.5px;color:var(--muted)" data-i18n="web.no_recommendations">No recommendations yet.</div>`}
 
     ${intelligence.data_limitations_note ? `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">${escapeHtml(intelligence.data_limitations_note)}</div>` : ''}
   `;
@@ -7832,7 +7860,7 @@ function renderWebsiteActionsContent(actions) {
 
   const reviewedHtml = reviewed.length ? `
     <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin:18px 0 8px" data-i18n="web.reviewed_title">Reviewed</div>
-    ${reviewed.map(a => {
+    ${renderCollapsibleItems(reviewed, a => {
       if (a.approval_status === 'rejected') {
         return `<div style="background:var(--bg3);border-radius:10px;padding:12px 16px;margin-bottom:8px;opacity:.75">
           <div style="display:flex;justify-content:space-between;gap:10px">
@@ -7889,7 +7917,7 @@ function renderWebsiteActionsContent(actions) {
         <div style="font-size:12px;color:var(--text2);margin-bottom:8px">${escapeHtml(a.error_message || '')}</div>
         <button class="btn-secondary" style="font-size:11.5px;padding:5px 12px" onclick="executeWebsiteAction('${a.id}')" data-i18n="web.retry">Retry</button>
       </div>`;
-    }).join('')}` : '';
+    }, 5, 'reviewedProposals')}` : '';
 
   contentEl.innerHTML = pendingHtml + reviewedHtml;
 }
@@ -8010,6 +8038,21 @@ async function confirmWebsiteActionManually(actionId) {
   }
 }
 
+// Real, deliberate "found vs fixed" distinction — under Managed +
+// Automatic settings, some proposals are already executed by the time
+// this response comes back, not merely proposed; a flat "found N
+// improvements" was misleading either way (understating real,
+// completed work, or implying review is needed when it already isn't
+// for some of them).
+function describeProposalResults(proposals) {
+  const total = proposals.length;
+  const fixed = proposals.filter(p => p.execution_status === 'executed').length;
+  const pending = total - fixed;
+  if (fixed && pending) return t('web.found_and_fixed_toast').replace('{total}', total).replace('{fixed}', fixed).replace('{pending}', pending);
+  if (fixed && !pending) return t('web.all_fixed_toast').replace('{n}', fixed);
+  return t('web.proposals_found_toast').replace('{n}', total);
+}
+
 async function generateSeoProposals() {
   const btn = document.getElementById('websiteSeoProposalsBtn');
   const useLiveResearch = document.getElementById('websiteUseLiveResearch').checked;
@@ -8024,7 +8067,7 @@ async function generateSeoProposals() {
       showToast(data.message, 'success');
     } else if (res.ok) {
       if (data.proposals && data.proposals.length) {
-        showToast(t('web.proposals_found_toast').replace('{n}', data.proposals.length), 'success');
+        showToast(describeProposalResults(data.proposals), 'success');
       } else {
         showToast(data.message || t('web.no_proposals_found_toast'), 'success');
       }
@@ -8051,7 +8094,7 @@ async function generateTaxonomyProposals() {
       showToast(data.message, 'success');
     } else if (res.ok) {
       if (data.proposals && data.proposals.length) {
-        showToast(t('web.proposals_found_toast').replace('{n}', data.proposals.length), 'success');
+        showToast(describeProposalResults(data.proposals), 'success');
       } else {
         showToast(data.message || t('web.no_proposals_found_toast'), 'success');
       }
@@ -8078,7 +8121,7 @@ async function generateDuplicateTitleProposals() {
       showToast(data.message, 'success');
     } else if (res.ok) {
       if (data.proposals && data.proposals.length) {
-        showToast(t('web.proposals_found_toast').replace('{n}', data.proposals.length), 'success');
+        showToast(describeProposalResults(data.proposals), 'success');
       } else {
         showToast(data.message || t('web.no_proposals_found_toast'), 'success');
       }
@@ -8105,7 +8148,7 @@ async function generateFeaturedImageProposals() {
       showToast(data.message, 'success');
     } else if (res.ok) {
       if (data.proposals && data.proposals.length) {
-        showToast(t('web.proposals_found_toast').replace('{n}', data.proposals.length), 'success');
+        showToast(describeProposalResults(data.proposals), 'success');
       } else {
         showToast(data.message || t('web.no_proposals_found_toast'), 'success');
       }
