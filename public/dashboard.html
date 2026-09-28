@@ -1953,6 +1953,17 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
       </div>
 
+      <!-- MEDIA LIBRARY — pure, read-only browsing of images already on the
+           site, so existing images can be identified for reuse rather than
+           generating or uploading a duplicate. No create/upload here. -->
+      <div id="websiteMediaSection" style="display:none;margin-top:28px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.media_library_title">Media Library</div>
+          <button class="btn-secondary" onclick="loadWebsiteMedia()" id="websiteMediaRefreshBtn" data-i18n="web.refresh">Refresh</button>
+        </div>
+        <div id="websiteMediaContent" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:12px"></div>
+      </div>
+
       <!-- BROKEN INTERNAL LINKS — pure detection, not a proposal. Fixing a
            broken link means editing body content, which the SEO Agent
            doesn't touch yet, so this only surfaces the problem for the
@@ -7171,6 +7182,7 @@ async function loadWebsiteBusinesses() {
       document.getElementById('websiteIntelligenceSection').style.display = 'none';
       document.getElementById('websiteTaxonomySection').style.display = 'none';
       document.getElementById('websiteBrokenLinksSection').style.display = 'none';
+      document.getElementById('websiteMediaSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return;
     }
@@ -7211,6 +7223,7 @@ function onWebsiteBusinessSelectChange() {
     document.getElementById('websiteIntelligenceSection').style.display = 'none';
     document.getElementById('websiteTaxonomySection').style.display = 'none';
     document.getElementById('websiteBrokenLinksSection').style.display = 'none';
+    document.getElementById('websiteMediaSection').style.display = 'none';
     document.getElementById('websiteActionsSection').style.display = 'none';
     resetWebsiteConnectForm();
     return;
@@ -7274,6 +7287,7 @@ async function loadWebsiteSection() {
       document.getElementById('websiteIntelligenceSection').style.display = 'none';
       document.getElementById('websiteTaxonomySection').style.display = 'none';
       document.getElementById('websiteBrokenLinksSection').style.display = 'none';
+      document.getElementById('websiteMediaSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return false;
     }
@@ -7283,6 +7297,7 @@ async function loadWebsiteSection() {
     document.getElementById('websiteIntelligenceSection').style.display = 'block';
     document.getElementById('websiteTaxonomySection').style.display = 'block';
     document.getElementById('websiteBrokenLinksSection').style.display = 'block';
+    document.getElementById('websiteMediaSection').style.display = 'block';
     document.getElementById('websiteActionsSection').style.display = 'block';
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
@@ -8100,6 +8115,46 @@ async function checkBrokenLinks() {
   } finally {
     btn.disabled = false;
     btn.textContent = t('web.check_links_button');
+  }
+}
+
+async function loadWebsiteMedia() {
+  const contentEl = document.getElementById('websiteMediaContent');
+  const btn = document.getElementById('websiteMediaRefreshBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/media`);
+    const data = await res.json();
+    if (data.pendingPoll) {
+      contentEl.style.display = 'block';
+      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${escapeHtml(data.message)}</div>`;
+      return;
+    }
+    if (!res.ok) {
+      contentEl.style.display = 'block';
+      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+      return;
+    }
+    if (!data.media.length) {
+      contentEl.style.display = 'block';
+      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${t('web.no_media_found')}</div>`;
+      return;
+    }
+    contentEl.style.display = 'grid';
+    contentEl.innerHTML = data.media.map(m => `
+      <div style="background:var(--bg3);border-radius:10px;overflow:hidden;border:1px solid var(--border)">
+        <img src="${escapeHtml(m.url)}" alt="${escapeHtml(m.altText)}" style="width:100%;height:100px;object-fit:cover;display:block;background:var(--bg2)" loading="lazy">
+        <div style="padding:8px 10px">
+          <div style="font-size:11px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(m.title)}">${escapeHtml(m.title || t('web.value_none'))}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">${m.width && m.height ? `${m.width}×${m.height}` : ''}</div>
+          ${!m.altText ? `<div style="font-size:10px;color:#f59e0b;margin-top:2px">${t('web.no_alt_text')}</div>` : ''}
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    contentEl.style.display = 'block';
+    contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  } finally {
+    btn.disabled = false;
   }
 }
 
