@@ -2493,12 +2493,29 @@ app.get('/api/share/:token', async (req, res) => {
 // intelligence generated) from this increment onward, not just future
 // write actions, so the log has real, useful content from day one rather
 // than sitting empty until execution features exist.
-async function logWebsiteAudit(websiteConnectionId, actorType, actorId, actionType, description, details) {
+// Real, deliberate feature tag — lets the activity log be viewed and
+// cleared per-feature (SEO proposals vs categories/tags vs broken
+// links, etc.) rather than as one single, undifferentiated list.
+// Defaults to 'general' so a call site that doesn't specify one yet
+// still logs correctly rather than failing.
+async function logWebsiteAudit(websiteConnectionId, actorType, actorId, actionType, description, details, feature = 'general') {
   await pool.query(
-    `INSERT INTO website_audit_log (website_connection_id, actor_type, actor_id, action_type, description, details)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [websiteConnectionId, actorType, actorId, actionType, description, JSON.stringify(details || {})]
+    `INSERT INTO website_audit_log (website_connection_id, actor_type, actor_id, action_type, description, details, feature)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [websiteConnectionId, actorType, actorId, actionType, description, JSON.stringify(details || {}), feature]
   );
+}
+
+// Real, deliberate central mapping — several routes (approve, reject,
+// execute, confirm, re-verify) are generic and serve every proposal
+// type through the same code path, so this is the one place that
+// decides which real feature a given action_type actually belongs to,
+// rather than guessing separately at every call site.
+function featureForActionType(actionType) {
+  if (actionType === 'update_meta_title' || actionType === 'update_meta_description') return 'seo_proposals';
+  if (actionType === 'assign_taxonomy' || actionType === 'create_category' || actionType === 'create_tag') return 'taxonomy';
+  if (actionType === 'generate_featured_image') return 'featured_images';
+  return 'general';
 }
 
 // Connect (or reconnect) a WordPress site to a business. Credentials are
@@ -3844,7 +3861,7 @@ async function connectWordPressSite(businessId, siteUrl, username, appPassword, 
     usePollMode
       ? `Connected WordPress site in poll mode (Cloudflare blocked the direct connection): ${trimmedUrl}`
       : `Connected WordPress site: ${trimmedUrl}`,
-    { siteUrl: trimmedUrl });
+    { siteUrl: trimmedUrl }, 'connection');
 
   // pollingToken (plaintext) is only ever returned here, once, at the
   // moment it's generated — same discipline as the Application
@@ -4109,7 +4126,7 @@ app.post('/api/website-connector/report-result', async (req, res) => {
     await logWebsiteAudit(connectionId, 'system', null,
       (executed && verified) ? 'change_executed_and_verified' : 'change_execution_issue',
       `${action.action_type} for "${action.target_title}" reported by the site's own plugin: executed=${!!executed}, verified=${!!verified}`,
-      { actionId: action.id, executionStatus, verificationStatus, reportedError: reportedError || null, viaPoll: true });
+      { actionId: action.id, executionStatus, verificationStatus, reportedError: reportedError || null, viaPoll: true }, featureForActionType(action.action_type));
 
     res.json({ success: !!(executed && verified), action: updated.rows[0] });
   } catch (e) {
@@ -4161,7 +4178,7 @@ app.post('/api/website-connector/report-content', async (req, res) => {
 
     await logWebsiteAudit(connectionId, 'system', null, 'content_reported',
       `Site's own plugin reported ${pages.length} page(s), ${posts.length} post(s), ${content.categories.length} categor(y/ies), and ${content.tags.length} tag(s) for analysis`,
-      { pageCount: pages.length, postCount: posts.length, categoryCount: content.categories.length, tagCount: content.tags.length, viaPoll: true });
+      { pageCount: pages.length, postCount: posts.length, categoryCount: content.categories.length, tagCount: content.tags.length, viaPoll: true }, 'connection');
 
     res.json({ success: true });
   } catch (e) {
@@ -4314,7 +4331,7 @@ app.put('/api/business/:id/website/permissions', authRequired, async (req, res) 
     if (newPermissionLevel !== connection.permission_level || newAutomationMode !== connection.automation_mode) {
       await logWebsiteAudit(connection.id, 'user', req.userId, 'permissions_changed',
         `Permission level set to "${newPermissionLevel}", automation mode set to "${newAutomationMode}"`,
-        { previousPermissionLevel: connection.permission_level, newPermissionLevel, previousAutomationMode: connection.automation_mode, newAutomationMode });
+        { previousPermissionLevel: connection.permission_level, newPermissionLevel, previousAutomationMode: connection.automation_mode, newAutomationMode }, 'connection');
     }
 
     res.json({ success: true, permissionLevel: newPermissionLevel, automationMode: newAutomationMode });
@@ -4334,7 +4351,7 @@ app.delete('/api/business/:id/website', authRequired, async (req, res) => {
     if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
 
     await pool.query(`UPDATE website_connections SET connection_status = 'disconnected', disconnected_at = NOW() WHERE id = $1`, [connResult.rows[0].id]);
-    await logWebsiteAudit(connResult.rows[0].id, 'user', req.userId, 'disconnected', `Disconnected WordPress site: ${connResult.rows[0].site_url}`, {});
+    await logWebsiteAudit(connResult.rows[0].id, 'user', req.userId, 'disconnected', `Disconnected WordPress site: ${connResult.rows[0].site_url}`, {}, 'connection');
     res.json({ success: true });
   } catch (e) {
     console.error('Website disconnect error:', e.message);
@@ -5064,7 +5081,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
       [JSON.stringify(intelligence), connection.id]
     );
 
-    await logWebsiteAudit(connection.id, 'ai_agent', null, 'intelligence_generated', `Generated Website Intelligence (${pages.length} pages, ${posts.length} posts analyzed)`, { pageCount: pages.length, postCount: posts.length });
+    await logWebsiteAudit(connection.id, 'ai_agent', null, 'intelligence_generated', `Generated Website Intelligence (${pages.length} pages, ${posts.length} posts analyzed)`, { pageCount: pages.length, postCount: posts.length }, 'intelligence');
 
     res.json({ intelligence, generatedAt: new Date().toISOString() });
   } catch (err) {
@@ -5135,6 +5152,91 @@ app.get('/api/business/:id/website/media', authRequired, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ACTIVITY LOG — a real, per-feature view of website_audit_log, which has
+// been written to all along but never had anything to actually read or
+// clear it. Real feature tags (see featureForActionType and every
+// logWebsiteAudit call site above) are what make filtering and selective
+// clearing genuinely reliable here, rather than guessing from free text.
+// ═══════════════════════════════════════════════════════════════════════════
+
+app.get('/api/business/:id/website/activity-log', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+
+    const feature = req.query.feature && req.query.feature !== 'all' ? req.query.feature : null;
+    // Real, deliberate bound — a real site's history could grow large over
+    // real time; the most recent 100 real entries (per feature, when
+    // filtered) is what a person actually reviews in practice.
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 200);
+
+    const rows = feature
+      ? await pool.query(
+          `SELECT id, actor_type, actor_id, action_type, description, details, feature, created_at
+           FROM website_audit_log WHERE website_connection_id = $1 AND feature = $2
+           ORDER BY created_at DESC LIMIT $3`,
+          [connection.id, feature, limit]
+        )
+      : await pool.query(
+          `SELECT id, actor_type, actor_id, action_type, description, details, feature, created_at
+           FROM website_audit_log WHERE website_connection_id = $1
+           ORDER BY created_at DESC LIMIT $2`,
+          [connection.id, limit]
+        );
+
+    // Real, deliberate summary — lets the UI show real per-feature counts
+    // (for tabs/labels) without a second, separate real round trip.
+    const counts = await pool.query(
+      `SELECT feature, COUNT(*)::int AS count FROM website_audit_log WHERE website_connection_id = $1 GROUP BY feature`,
+      [connection.id]
+    );
+
+    res.json({ entries: rows.rows, featureCounts: counts.rows });
+  } catch (e) {
+    console.error('Get activity log error:', e.message);
+    res.status(500).json({ error: 'Could not load the activity log.' });
+  }
+});
+
+app.delete('/api/business/:id/website/activity-log', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+
+    const { ids, feature, all } = req.body || {};
+
+    // Real, deliberate three explicit modes — never an ambiguous default
+    // that could accidentally clear more than the person actually asked
+    // for. Exactly one of these must be genuinely specified.
+    if (Array.isArray(ids) && ids.length) {
+      const result = await pool.query(
+        `DELETE FROM website_audit_log WHERE website_connection_id = $1 AND id = ANY($2::uuid[]) RETURNING id`,
+        [connection.id, ids]
+      );
+      return res.json({ success: true, clearedCount: result.rows.length });
+    }
+    if (feature && feature !== 'all') {
+      const result = await pool.query(
+        `DELETE FROM website_audit_log WHERE website_connection_id = $1 AND feature = $2 RETURNING id`,
+        [connection.id, feature]
+      );
+      return res.json({ success: true, clearedCount: result.rows.length });
+    }
+    if (all === true) {
+      const result = await pool.query(
+        `DELETE FROM website_audit_log WHERE website_connection_id = $1 RETURNING id`,
+        [connection.id]
+      );
+      return res.json({ success: true, clearedCount: result.rows.length });
+    }
+    res.status(400).json({ error: 'Specify which entries to clear: ids, feature, or all.' });
+  } catch (e) {
+    console.error('Clear activity log error:', e.message);
+    res.status(500).json({ error: 'Could not clear the activity log.' });
+  }
+});
+
 app.get('/api/business/:id/website/tags', authRequired, async (req, res) => {
   try {
     const { connection, error, status } = await getConnectionForBusiness(req);
@@ -5169,7 +5271,7 @@ async function handleCreateTaxonomyTerm(req, res, taxonomyType) {
          VALUES ($1, 'founder', $2, $3, 0, $4, $5, 'approved', 'queued_for_poll') RETURNING id`,
         [connection.id, `create_${taxonomyType}`, taxonomyType, name, JSON.stringify({ name })]
       );
-      await logWebsiteAudit(connection.id, req.userId, null, `create_${taxonomyType}_queued`, `Queued creating ${taxonomyType} "${name}" for this site's next check-in`, { name });
+      await logWebsiteAudit(connection.id, 'user', req.userId, `create_${taxonomyType}_queued`, `Queued creating ${taxonomyType} "${name}" for this site's next check-in`, { name }, 'taxonomy');
       return res.status(202).json({ queuedForPoll: true, actionId: inserted.rows[0].id, message: `This site connects in poll mode — "${name}" will be created on its next check-in (usually within a few minutes).` });
     }
 
@@ -5179,7 +5281,7 @@ async function handleCreateTaxonomyTerm(req, res, taxonomyType) {
        VALUES ($1, 'founder', $2, $3, $4, $5, $6, 'approved', $7, $8)`,
       [connection.id, `create_${taxonomyType}`, taxonomyType, result.id || 0, name, JSON.stringify({ name }), result.success ? 'executed' : 'execution_failed', result.success ? null : result.error]
     );
-    await logWebsiteAudit(connection.id, req.userId, null, `create_${taxonomyType}`, result.success ? `Created ${taxonomyType} "${name}"` : `Failed to create ${taxonomyType} "${name}": ${result.error}`, result);
+    await logWebsiteAudit(connection.id, 'user', req.userId, `create_${taxonomyType}`, result.success ? `Created ${taxonomyType} "${name}"` : `Failed to create ${taxonomyType} "${name}": ${result.error}`, result, 'taxonomy');
 
     if (!result.success) return res.status(400).json(result);
     res.json(result);
@@ -5299,7 +5401,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 
       if (autoExecuteEligible) {
         await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
-        await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: assign_taxonomy for "${candidate.title}"`, { actionId: action.id });
+        await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: assign_taxonomy for "${candidate.title}"`, { actionId: action.id }, 'taxonomy');
 
         const execResult = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
         const executionStatus = execResult.executed ? 'executed' : 'execution_failed';
@@ -5314,7 +5416,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
         await logWebsiteAudit(connection.id, 'system', null,
           execResult.verified ? 'change_executed_and_verified' : 'change_execution_issue',
           `Auto-executed assign_taxonomy for "${candidate.title}": ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
-          { actionId: action.id, executionStatus, verificationStatus, error: execResult.error });
+          { actionId: action.id, executionStatus, verificationStatus, error: execResult.error }, 'taxonomy');
       }
 
       insertedProposals.push(action);
@@ -5324,7 +5426,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     const pendingCount = insertedProposals.length - autoExecutedCount;
     await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
       `SEO Agent generated ${insertedProposals.length} category/tag proposal(s)` + (autoExecutedCount ? ` — ${autoExecutedCount} auto-executed under Managed/Automatic settings, ${pendingCount} awaiting approval` : ' awaiting approval'),
-      { count: insertedProposals.length, autoExecutedCount, pendingCount });
+      { count: insertedProposals.length, autoExecutedCount, pendingCount }, 'taxonomy');
 
     res.json({ proposals: insertedProposals });
   } catch (err) {
@@ -5426,7 +5528,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 
     await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
       `SEO Agent generated ${insertedProposals.length} featured image plan(s) awaiting approval`,
-      { count: insertedProposals.length });
+      { count: insertedProposals.length }, 'featured_images');
 
     res.json({ proposals: insertedProposals });
   } catch (err) {
@@ -5500,7 +5602,7 @@ app.post('/api/business/:id/website/broken-links', authRequired, async (req, res
 
     await logWebsiteAudit(connection.id, 'ai_agent', null, 'broken_links_checked',
       `Checked ${cappedLinks.length} unique internal link(s), found ${brokenLinks.length} broken`,
-      { checkedCount: cappedLinks.length, brokenCount: brokenLinks.length, totalUniqueLinks: uniqueLinks.length });
+      { checkedCount: cappedLinks.length, brokenCount: brokenLinks.length, totalUniqueLinks: uniqueLinks.length }, 'broken_links');
 
     res.json({
       brokenLinks,
@@ -5622,7 +5724,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 
       if (autoExecuteEligible) {
         await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
-        await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: duplicate-title fix for "${candidate.title}"`, { actionId: action.id });
+        await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: duplicate-title fix for "${candidate.title}"`, { actionId: action.id }, 'duplicate_titles');
 
         const execResult = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
         const executionStatus = execResult.executed ? 'executed' : 'execution_failed';
@@ -5637,7 +5739,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
         await logWebsiteAudit(connection.id, 'system', null,
           execResult.verified ? 'change_executed_and_verified' : 'change_execution_issue',
           `Auto-executed duplicate-title fix for "${candidate.title}": ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
-          { actionId: action.id, executionStatus, verificationStatus, error: execResult.error });
+          { actionId: action.id, executionStatus, verificationStatus, error: execResult.error }, 'duplicate_titles');
       }
 
       insertedProposals.push(action);
@@ -5647,7 +5749,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     const pendingCount = insertedProposals.length - autoExecutedCount;
     await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
       `SEO Agent generated ${insertedProposals.length} duplicate-title fix(es)` + (autoExecutedCount ? ` — ${autoExecutedCount} auto-executed under Managed/Automatic settings, ${pendingCount} awaiting approval` : ' awaiting approval'),
-      { count: insertedProposals.length, autoExecutedCount, pendingCount });
+      { count: insertedProposals.length, autoExecutedCount, pendingCount }, 'duplicate_titles');
 
     res.json({ proposals: insertedProposals });
   } catch (err) {
@@ -5793,7 +5895,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 
       if (autoExecuteEligible && ACTION_RISK[actionType] === 'low') {
         await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
-        await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: ${actionType} for "${candidate.title}"`, { actionId: action.id });
+        await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: ${actionType} for "${candidate.title}"`, { actionId: action.id }, featureForActionType(actionType));
 
         const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
         const execResult = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
@@ -5809,7 +5911,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
         await logWebsiteAudit(connection.id, 'system', null,
           execResult.verified ? 'change_executed_and_verified' : 'change_execution_issue',
           `Auto-executed ${actionType} for "${candidate.title}": ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
-          { actionId: action.id, executionStatus, verificationStatus, error: execResult.error });
+          { actionId: action.id, executionStatus, verificationStatus, error: execResult.error }, featureForActionType(actionType));
       }
 
       insertedProposals.push(action);
@@ -5819,7 +5921,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     const pendingCount = insertedProposals.length - autoExecutedCount;
     await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
       `SEO Agent generated ${insertedProposals.length} proposal(s)` + (autoExecutedCount ? ` — ${autoExecutedCount} auto-executed under Managed/Automatic settings, ${pendingCount} awaiting approval` : ' awaiting approval'),
-      { count: insertedProposals.length, autoExecutedCount, pendingCount });
+      { count: insertedProposals.length, autoExecutedCount, pendingCount }, 'seo_proposals');
 
     res.json({ proposals: insertedProposals });
   } catch (err) {
@@ -5878,7 +5980,7 @@ app.post('/api/business/:id/website/actions/:actionId/approve', authRequired, as
       [editedChange ? JSON.stringify(editedChange) : null, req.userId, req.params.actionId]
     );
 
-    await logWebsiteAudit(connection.id, 'user', req.userId, 'proposal_approved', `Approved proposed change: ${updated.rows[0].action_type} for "${updated.rows[0].target_title}"`, { actionId: updated.rows[0].id, wasEdited: !!editedChange });
+    await logWebsiteAudit(connection.id, 'user', req.userId, 'proposal_approved', `Approved proposed change: ${updated.rows[0].action_type} for "${updated.rows[0].target_title}"`, { actionId: updated.rows[0].id, wasEdited: !!editedChange }, featureForActionType(updated.rows[0].action_type));
 
     res.json({ success: true, action: updated.rows[0] });
   } catch (e) {
@@ -5970,7 +6072,7 @@ app.post('/api/business/:id/website/actions/:actionId/execute', authRequired, as
     await logWebsiteAudit(connection.id, 'system', req.userId,
       result.verified ? 'change_executed_and_verified' : 'change_execution_issue',
       `${action.action_type} for "${action.target_title}": execution ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
-      { actionId: action.id, executionStatus, verificationStatus, error: result.error });
+      { actionId: action.id, executionStatus, verificationStatus, error: result.error }, featureForActionType(action.action_type));
 
     res.json({ success: result.executed && result.verified, action: updated.rows[0], error: result.error });
   } catch (e) {
@@ -6030,7 +6132,7 @@ app.post('/api/business/:id/website/actions/:actionId/re-verify', authRequired, 
     await logWebsiteAudit(connection.id, 'system', req.userId,
       result.verified ? 'change_reverify_succeeded' : 'change_reverify_still_pending',
       `Re-verification of ${action.action_type} for "${action.target_title}": ${verificationStatus}`,
-      { actionId: action.id, verificationStatus, error: result.error });
+      { actionId: action.id, verificationStatus, error: result.error }, featureForActionType(action.action_type));
 
     res.json({ success: result.verified, action: updated.rows[0], error: result.error });
   } catch (e) {
@@ -6076,7 +6178,7 @@ app.post('/api/business/:id/website/actions/:actionId/confirm-manually', authReq
 
     await logWebsiteAudit(connResult.rows[0].id, 'user', req.userId, 'change_manually_confirmed',
       `${action.action_type} for "${action.target_title}" manually confirmed by the user as live on their site`,
-      { actionId: action.id });
+      { actionId: action.id }, featureForActionType(action.action_type));
 
     res.json({ success: true, action: updated.rows[0] });
   } catch (e) {
@@ -6099,7 +6201,7 @@ app.post('/api/business/:id/website/actions/:actionId/reject', authRequired, asy
     if (actionResult.rows[0].approval_status !== 'pending') return res.status(400).json({ error: 'This proposal has already been reviewed.' });
 
     await pool.query(`UPDATE website_actions SET approval_status = 'rejected', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`, [req.userId, req.params.actionId]);
-    await logWebsiteAudit(connResult.rows[0].id, 'user', req.userId, 'proposal_rejected', `Rejected proposed change: ${actionResult.rows[0].action_type} for "${actionResult.rows[0].target_title}"`, { actionId: req.params.actionId });
+    await logWebsiteAudit(connResult.rows[0].id, 'user', req.userId, 'proposal_rejected', `Rejected proposed change: ${actionResult.rows[0].action_type} for "${actionResult.rows[0].target_title}"`, { actionId: req.params.actionId }, featureForActionType(actionResult.rows[0].action_type));
 
     res.json({ success: true });
   } catch (e) {
