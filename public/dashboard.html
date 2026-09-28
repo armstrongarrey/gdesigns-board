@@ -1976,6 +1976,29 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div id="websiteBrokenLinksContent"></div>
       </div>
 
+      <!-- ACTIVITY LOG — a real, per-feature history of what's happened on
+           this connection, with timestamps and selective clearing. Reads
+           website_audit_log, which has been written to all along but had
+           no view built for it until now. -->
+      <div id="websiteActivityLogSection" style="display:none;margin-top:28px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.activity_log_title">Activity Log</div>
+          <button class="btn-secondary" onclick="loadWebsiteActivityLog()" data-i18n="web.refresh">Refresh</button>
+        </div>
+        <div id="websiteActivityLogTabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer">
+            <input type="checkbox" id="websiteActivityLogSelectAll" onchange="toggleSelectAllActivityLog(this.checked)" style="width:auto">
+            <span data-i18n="web.select_all">Select all</span>
+          </label>
+          <div style="display:flex;gap:8px">
+            <button class="btn-ghost" onclick="clearSelectedActivityLog()" data-i18n="web.clear_selected">Clear Selected</button>
+            <button class="btn-ghost" onclick="clearActivityLogByFeature()" id="websiteClearFeatureBtn" data-i18n="web.clear_this_view">Clear This View</button>
+          </div>
+        </div>
+        <div id="websiteActivityLogContent"></div>
+      </div>
+
       <!-- PROPOSED CHANGES — the approval workflow. Preview, Approve,
            Reject, Edit, per the spec's explicit requirement; nothing here
            is ever executed against the live site yet (Increment 3) — the
@@ -7187,6 +7210,7 @@ async function loadWebsiteBusinesses() {
       document.getElementById('websiteTaxonomySection').style.display = 'none';
       document.getElementById('websiteBrokenLinksSection').style.display = 'none';
       document.getElementById('websiteMediaSection').style.display = 'none';
+      document.getElementById('websiteActivityLogSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return;
     }
@@ -7228,6 +7252,7 @@ function onWebsiteBusinessSelectChange() {
     document.getElementById('websiteTaxonomySection').style.display = 'none';
     document.getElementById('websiteBrokenLinksSection').style.display = 'none';
     document.getElementById('websiteMediaSection').style.display = 'none';
+    document.getElementById('websiteActivityLogSection').style.display = 'none';
     document.getElementById('websiteActionsSection').style.display = 'none';
     resetWebsiteConnectForm();
     return;
@@ -7292,6 +7317,7 @@ async function loadWebsiteSection() {
       document.getElementById('websiteTaxonomySection').style.display = 'none';
       document.getElementById('websiteBrokenLinksSection').style.display = 'none';
       document.getElementById('websiteMediaSection').style.display = 'none';
+      document.getElementById('websiteActivityLogSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return false;
     }
@@ -7302,10 +7328,12 @@ async function loadWebsiteSection() {
     document.getElementById('websiteTaxonomySection').style.display = 'block';
     document.getElementById('websiteBrokenLinksSection').style.display = 'block';
     document.getElementById('websiteMediaSection').style.display = 'block';
+    document.getElementById('websiteActivityLogSection').style.display = 'block';
     document.getElementById('websiteActionsSection').style.display = 'block';
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
     loadWebsiteTaxonomy();
+    loadWebsiteActivityLog();
     loadWebsiteActions();
     return true;
   } catch (e) {
@@ -8162,6 +8190,116 @@ async function loadWebsiteMedia() {
     contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
   } finally {
     btn.disabled = false;
+  }
+}
+
+// ── ACTIVITY LOG ─────────────────────────────────────────────────────────
+let currentActivityLogFeature = 'all';
+let currentActivityLogEntries = [];
+
+const ACTIVITY_LOG_FEATURES = [
+  { key: 'all', labelKey: 'web.feature_all' },
+  { key: 'seo_proposals', labelKey: 'web.action_type_title' },
+  { key: 'taxonomy', labelKey: 'web.action_type_taxonomy' },
+  { key: 'duplicate_titles', labelKey: 'web.fix_duplicate_titles' },
+  { key: 'broken_links', labelKey: 'web.broken_links_title' },
+  { key: 'featured_images', labelKey: 'web.action_type_featured_image' },
+  { key: 'intelligence', labelKey: 'web.intelligence_title' },
+  { key: 'connection', labelKey: 'web.feature_connection' },
+  { key: 'general', labelKey: 'web.feature_general' },
+];
+
+async function loadWebsiteActivityLog() {
+  const contentEl = document.getElementById('websiteActivityLogContent');
+  contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${t('web.loading')}</div>`;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/activity-log?feature=${currentActivityLogFeature}`);
+    const data = await res.json();
+    if (!res.ok) {
+      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+      return;
+    }
+    currentActivityLogEntries = data.entries || [];
+    renderActivityLogTabs(data.featureCounts || []);
+    renderActivityLogList();
+  } catch (e) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderActivityLogTabs(featureCounts) {
+  const countByFeature = {};
+  featureCounts.forEach(f => { countByFeature[f.feature] = f.count; });
+  const totalCount = featureCounts.reduce((sum, f) => sum + f.count, 0);
+
+  document.getElementById('websiteActivityLogTabs').innerHTML = ACTIVITY_LOG_FEATURES.map(f => {
+    const count = f.key === 'all' ? totalCount : (countByFeature[f.key] || 0);
+    if (f.key !== 'all' && count === 0) return ''; // real, empty features don't clutter the tab bar
+    const active = currentActivityLogFeature === f.key;
+    return `<button onclick="switchActivityLogFeature('${f.key}')" style="padding:6px 12px;border-radius:20px;font-size:12px;border:1px solid ${active ? 'var(--purple)' : 'var(--border)'};background:${active ? 'var(--purple)' : 'transparent'};color:${active ? '#fff' : 'var(--text2)'};cursor:pointer">${t(f.labelKey)} (${count})</button>`;
+  }).join('');
+}
+
+function switchActivityLogFeature(feature) {
+  currentActivityLogFeature = feature;
+  loadWebsiteActivityLog();
+}
+
+function renderActivityLogList() {
+  const contentEl = document.getElementById('websiteActivityLogContent');
+  document.getElementById('websiteActivityLogSelectAll').checked = false;
+  if (!currentActivityLogEntries.length) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${t('web.no_activity_yet')}</div>`;
+    return;
+  }
+  contentEl.innerHTML = currentActivityLogEntries.map(entry => {
+    const when = new Date(entry.created_at);
+    const fullTimestamp = when.toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' });
+    return `
+    <div style="display:flex;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);margin-bottom:6px;align-items:flex-start">
+      <input type="checkbox" class="activity-log-checkbox" data-id="${entry.id}" style="width:auto;margin-top:3px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12.5px;color:var(--text)">${escapeHtml(entry.description)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px" title="${escapeHtml(fullTimestamp)}">${timeAgo(entry.created_at)} · ${escapeHtml(fullTimestamp)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleSelectAllActivityLog(checked) {
+  document.querySelectorAll('.activity-log-checkbox').forEach(cb => { cb.checked = checked; });
+}
+
+async function clearSelectedActivityLog() {
+  const ids = [...document.querySelectorAll('.activity-log-checkbox:checked')].map(cb => cb.dataset.id);
+  if (!ids.length) {
+    showToast(t('web.select_entries_first'), 'error');
+    return;
+  }
+  if (!confirm(t('web.confirm_clear_selected').replace('{n}', ids.length))) return;
+  await performActivityLogClear({ ids });
+}
+
+async function clearActivityLogByFeature() {
+  const label = currentActivityLogFeature === 'all' ? t('web.feature_all') : t(ACTIVITY_LOG_FEATURES.find(f => f.key === currentActivityLogFeature)?.labelKey || 'web.feature_all');
+  if (!confirm(t('web.confirm_clear_view').replace('{view}', label))) return;
+  await performActivityLogClear(currentActivityLogFeature === 'all' ? { all: true } : { feature: currentActivityLogFeature });
+}
+
+async function performActivityLogClear(payload) {
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/activity-log`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.entries_cleared').replace('{n}', data.clearedCount), 'success');
+    loadWebsiteActivityLog();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
   }
 }
 
