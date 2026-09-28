@@ -5701,11 +5701,43 @@ app.post('/api/business/:id/website/seo-proposals', authRequired, async (req, re
     // AI returns can never accidentally resolve to a candidate it was
     // never actually shown.
     const cappedCandidates = candidates.slice(0, 15);
-    const candidatesSummary = cappedCandidates.map((c, i) => `[${i}] ${c.isPost ? 'POST' : 'PAGE'}: "${c.title}" (${c.url})\n  Current meta description: ${c.metaDescription ? `"${c.metaDescription}"` : 'MISSING'}\n  Content excerpt: ${c.bodyExcerpt}`).join('\n\n');
+
+    // Real, deliberate opt-in — grounding each suggestion in what's
+    // actually ranking right now for that topic (via Tavily, the same
+    // real search backend Market Context already uses) is a genuinely
+    // stronger, more competitive suggestion than one written from
+    // general AI knowledge alone, but it means one real, billed search
+    // per candidate — a real cost difference the person should choose,
+    // not something silently applied to every click. Capped tighter
+    // than the plain candidate list above for exactly that reason.
+    const useLiveResearch = !!req.body?.useLiveResearch;
+    const researchCandidates = useLiveResearch ? cappedCandidates.slice(0, 8) : [];
+    const liveResearchByIndex = new Map();
+    if (useLiveResearch) {
+      await Promise.all(researchCandidates.map(async (c, i) => {
+        try {
+          const results = await researchSearch(c.title, { maxResults: 5 });
+          liveResearchByIndex.set(i, results);
+        } catch (e) {
+          // Real, deliberate graceful degradation — a failed search for
+          // one candidate shouldn't block proposals for the rest; that
+          // candidate just falls back to being written without live
+          // grounding, same as when the option is off entirely.
+        }
+      }));
+    }
+
+    const candidatesSummary = cappedCandidates.map((c, i) => {
+      const liveResearch = liveResearchByIndex.get(i);
+      const researchBlock = liveResearch && liveResearch.length
+        ? `\n  REAL, CURRENTLY-RANKING PAGES FOR THIS TOPIC (write something genuinely differentiated against these, not a copy):\n${liveResearch.map(r => `    - "${r.title}" (${r.url}): ${r.snippet ? r.snippet.slice(0, 150) : ''}`).join('\n')}`
+        : '';
+      return `[${i}] ${c.isPost ? 'POST' : 'PAGE'}: "${c.title}" (${c.url})\n  Current meta description: ${c.metaDescription ? `"${c.metaDescription}"` : 'MISSING'}\n  Content excerpt: ${c.bodyExcerpt}${researchBlock}`;
+    }).join('\n\n');
 
     const prompt = `You are an SEO Agent proposing meta title and description improvements for a real business's WordPress site. You must ONLY propose a change for pages that genuinely need one — every candidate listed below already has a real, measured gap (missing description or a generic title), so you don't need to invent reasons; you need to write GOOD, SPECIFIC suggestions grounded in the actual page content and the real business context.
 ${contextSummary}
-
+${useLiveResearch ? '\nSome candidates below include real, currently-ranking pages for that same topic, found via a real, live web search just now — where present, write a title/description that is genuinely, specifically differentiated from those real competitors, not simply similar to them.\n' : ''}
 PAGES/POSTS NEEDING ATTENTION:
 ${candidatesSummary}
 
