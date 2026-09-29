@@ -4791,7 +4791,7 @@ async function findOrCreateWordPressTerm(connection, decryptedPassword, taxonomy
 // post's real, already-published slug. The slug is set exactly once,
 // at creation, and WordPress itself owns making it unique thereafter.
 async function createWordPressBlogPost(connection, decryptedPassword, postData) {
-  const { title, bodyHtml, slug, metaTitle, metaDescription, category, tags, status } = postData;
+  const { title, bodyHtml, slug, metaTitle, metaDescription, focusKeyword, category, tags, status, generateFeaturedImage, imagePrompt } = postData;
 
   const categoryIds = [];
   if (category) {
@@ -4826,21 +4826,52 @@ async function createWordPressBlogPost(connection, decryptedPassword, postData) 
   // other meta title/description change in this app — via the meta
   // object, across all three supported SEO plugins' real fields, never
   // WordPress's own core title field (already set correctly above,
-  // directly, as the real post title itself).
-  if (metaTitle || metaDescription) {
+  // directly, as the real post title itself). Focus keyword follows
+  // the same real, established multi-plugin meta pattern.
+  if (metaTitle || metaDescription || focusKeyword) {
     await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/posts/${created.id}`, {
       method: 'POST',
       body: {
         meta: {
           ...(metaTitle ? { _yoast_wpseo_title: metaTitle, rank_math_title: metaTitle } : {}),
           ...(metaDescription ? { _yoast_wpseo_metadesc: metaDescription, rank_math_description: metaDescription } : {}),
+          ...(focusKeyword ? { _yoast_wpseo_focuskw: focusKeyword, rank_math_focus_keyword: focusKeyword } : {}),
         },
       },
       timeoutMs: 15000,
     });
   }
 
-  return { success: true, id: created.id, url: created.link, slug: created.slug, status: created.status };
+  // Real, deliberate optional step — a real, billed OpenAI call, only
+  // ever made when explicitly requested for this post; a failure here
+  // never fails the whole post creation, since the post's real text
+  // content is already safely created either way.
+  let featuredImageGenerated = false;
+  if (generateFeaturedImage && imagePrompt) {
+    try {
+      const imageBuffer = await generateAIImage(imagePrompt);
+      const uploadRes = await wpApiRequestBinary(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/media', {
+        buffer: imageBuffer, contentType: 'image/png', filename: `${slug}.png`,
+      });
+      if (uploadRes.ok) {
+        const media = await uploadRes.json();
+        await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/media/${media.id}`, {
+          method: 'POST', body: { title, alt_text: title }, timeoutMs: 15000,
+        });
+        const setRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/posts/${created.id}`, {
+          method: 'POST', body: { featured_media: media.id }, timeoutMs: 15000,
+        });
+        featuredImageGenerated = setRes.ok;
+      }
+    } catch (e) {
+      // Real, deliberate no-op beyond the flag staying false — the
+      // post itself is already real and created; a missing featured
+      // image is visible and fixable afterward, not a reason to have
+      // failed the whole real thing.
+    }
+  }
+
+  return { success: true, id: created.id, url: created.link, slug: created.slug, status: created.status, featuredImageGenerated };
 }
 
 // Real, deliberate, two-stage link discipline — every internal link the
@@ -4906,6 +4937,7 @@ Respond in EXACTLY this two-part format, with no other text before, between, or 
   "title": "...",
   "metaTitle": "... (50-60 characters)",
   "metaDescription": "... (150-160 characters)",
+  "focusKeyword": "the single primary keyword/phrase this post targets",
   "category": "a single, fitting category name",
   "tags": ["2-4 relevant tag names"]
 }
@@ -4933,6 +4965,7 @@ Respond in EXACTLY this two-part format, with no other text before, between, or 
     title: parsed.title,
     metaTitle: parsed.metaTitle,
     metaDescription: parsed.metaDescription || '',
+    focusKeyword: parsed.focusKeyword || '',
     category: parsed.category || null,
     tags: Array.isArray(parsed.tags) ? parsed.tags : [],
     bodyHtml,
@@ -5805,17 +5838,25 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   return parsed.topics;
 }
 
-async function runBlogPostGeneration(connection, decryptedPassword, context, topic) {
+async function runBlogPostGeneration(connection, decryptedPassword, context, topic, generateFeaturedImage = false) {
   let pages, posts;
   ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
 
   const generated = await generateBlogPostContent(connection, decryptedPassword, context, topic, pages || [], posts || []);
 
   const publishStatus = connection.content_automation_publish_mode === 'publish' ? 'publish' : 'draft';
+  // Real, deliberate deterministic image prompt, built directly from
+  // this real post's own real title/topic rather than a further AI
+  // call — keeps this one real, optional feature from adding both
+  // extra real cost and extra real latency for what's meant to be a
+  // simple, sensible default illustration.
+  const imagePrompt = `A professional, editorial-style illustration representing the concept of: ${generated.title}. Clean, modern, suitable for a business blog. Do not include any real, identifiable people, logos, or text.`;
+
   const result = await createWordPressBlogPost(connection, decryptedPassword, {
     title: generated.title, bodyHtml: generated.bodyHtml, slug: generated.slug,
-    metaTitle: generated.metaTitle, metaDescription: generated.metaDescription,
+    metaTitle: generated.metaTitle, metaDescription: generated.metaDescription, focusKeyword: generated.focusKeyword,
     category: generated.category, tags: generated.tags, status: publishStatus,
+    generateFeaturedImage, imagePrompt,
   });
 
   await logWebsiteAudit(connection.id, 'ai_agent', null, result.success ? (publishStatus === 'publish' ? 'blog_post_published' : 'blog_post_drafted') : 'blog_post_generation_failed',
@@ -5825,8 +5866,130 @@ async function runBlogPostGeneration(connection, decryptedPassword, context, top
     { topic, title: generated.title, slug: generated.slug, url: result.url || null, error: result.error || null },
     'content_generation');
 
+  // Real, deliberate local record — this is what makes the post
+  // visible, editable, and publishable from within Arreyon itself,
+  // not only by visiting the connected site directly.
+  if (result.success) {
+    await pool.query(
+      `INSERT INTO website_generated_posts (website_connection_id, wp_post_id, topic, title, slug, body_html, meta_title, meta_description, focus_keyword, category, tags, featured_image_generated, status, wp_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [connection.id, result.id, topic, generated.title, generated.slug, generated.bodyHtml, generated.metaTitle, generated.metaDescription, generated.focusKeyword, generated.category, JSON.stringify(generated.tags), result.featuredImageGenerated, result.status, result.url]
+    );
+  }
+
   return { ...result, title: generated.title, publishStatus };
 }
+
+app.get('/api/business/:id/website/generated-posts', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    const result = await pool.query(
+      `SELECT * FROM website_generated_posts WHERE website_connection_id = $1 ORDER BY created_at DESC LIMIT 100`,
+      [connection.id]
+    );
+    res.json({ posts: result.rows });
+  } catch (e) {
+    console.error('Get generated posts error:', e.message);
+    res.status(500).json({ error: 'Could not load generated posts.' });
+  }
+});
+
+app.put('/api/business/:id/website/generated-posts/:postId', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    if (connection.connection_mode === 'poll') {
+      return res.status(400).json({ error: 'Editing a generated post isn\'t available yet for a poll-mode connection.' });
+    }
+
+    const postResult = await pool.query('SELECT * FROM website_generated_posts WHERE id = $1 AND website_connection_id = $2', [req.params.postId, connection.id]);
+    if (!postResult.rows.length) return res.status(404).json({ error: 'Post not found.' });
+    const post = postResult.rows[0];
+
+    const { title, bodyHtml, metaTitle, metaDescription, focusKeyword, category, tags } = req.body || {};
+    const newTitle = title !== undefined ? title : post.title;
+    const newBodyHtml = bodyHtml !== undefined ? bodyHtml : post.body_html;
+    const newMetaTitle = metaTitle !== undefined ? metaTitle : post.meta_title;
+    const newMetaDescription = metaDescription !== undefined ? metaDescription : post.meta_description;
+    const newFocusKeyword = focusKeyword !== undefined ? focusKeyword : post.focus_keyword;
+    const newCategory = category !== undefined ? category : post.category;
+    const newTags = Array.isArray(tags) ? tags : post.tags;
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+
+    // Real, deliberate real write to the real, live post on WordPress —
+    // this is never just a local edit; the same real post the person
+    // will see live or in their own WordPress editor is what's updated
+    // here, kept in sync rather than diverging from a local-only copy.
+    const categoryIds = [];
+    if (newCategory) {
+      const id = await findOrCreateWordPressTerm(connection, decryptedPassword, 'category', newCategory);
+      if (id) categoryIds.push(id);
+    }
+    const tagIds = [];
+    for (const tagName of (newTags || [])) {
+      const id = await findOrCreateWordPressTerm(connection, decryptedPassword, 'tag', tagName);
+      if (id) tagIds.push(id);
+    }
+
+    const updateRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/posts/${post.wp_post_id}`, {
+      method: 'POST',
+      body: {
+        title: newTitle, content: newBodyHtml,
+        ...(categoryIds.length ? { categories: categoryIds } : {}),
+        ...(tagIds.length ? { tags: tagIds } : {}),
+        meta: {
+          ...(newMetaTitle ? { _yoast_wpseo_title: newMetaTitle, rank_math_title: newMetaTitle } : {}),
+          ...(newMetaDescription ? { _yoast_wpseo_metadesc: newMetaDescription, rank_math_description: newMetaDescription } : {}),
+          ...(newFocusKeyword ? { _yoast_wpseo_focuskw: newFocusKeyword, rank_math_focus_keyword: newFocusKeyword } : {}),
+        },
+      },
+      timeoutMs: 20000,
+    });
+    if (!updateRes.ok) return res.status(400).json({ error: `WordPress rejected saving these changes (status ${updateRes.status}).` });
+
+    await pool.query(
+      `UPDATE website_generated_posts SET title = $1, body_html = $2, meta_title = $3, meta_description = $4, focus_keyword = $5, category = $6, tags = $7, updated_at = NOW() WHERE id = $8`,
+      [newTitle, newBodyHtml, newMetaTitle, newMetaDescription, newFocusKeyword, newCategory, JSON.stringify(newTags), post.id]
+    );
+
+    await logWebsiteAudit(connection.id, 'user', req.userId, 'generated_post_edited', `Edited generated post: "${newTitle}"`, { postId: post.id, wpPostId: post.wp_post_id }, 'content_generation');
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Edit generated post error:', e.message);
+    res.status(500).json({ error: 'Could not save these changes.' });
+  }
+});
+
+app.post('/api/business/:id/website/generated-posts/:postId/publish', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    if (connection.connection_mode === 'poll') {
+      return res.status(400).json({ error: 'Publishing a generated post isn\'t available yet for a poll-mode connection.' });
+    }
+
+    const postResult = await pool.query('SELECT * FROM website_generated_posts WHERE id = $1 AND website_connection_id = $2', [req.params.postId, connection.id]);
+    if (!postResult.rows.length) return res.status(404).json({ error: 'Post not found.' });
+    const post = postResult.rows[0];
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    const publishRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/posts/${post.wp_post_id}`, {
+      method: 'POST', body: { status: 'publish' }, timeoutMs: 15000,
+    });
+    if (!publishRes.ok) return res.status(400).json({ error: `WordPress rejected publishing this post (status ${publishRes.status}).` });
+
+    await pool.query(`UPDATE website_generated_posts SET status = 'publish', updated_at = NOW() WHERE id = $1`, [post.id]);
+    await logWebsiteAudit(connection.id, 'user', req.userId, 'generated_post_published', `Published: "${post.title}"`, { postId: post.id, wpPostId: post.wp_post_id }, 'content_generation');
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Publish generated post error:', e.message);
+    res.status(500).json({ error: 'Could not publish this post.' });
+  }
+});
 
 app.post('/api/business/:id/website/topic-suggestions', authRequired, async (req, res) => {
   try {
@@ -5878,9 +6041,10 @@ app.post('/api/business/:id/website/generate-blog-post', authRequired, async (re
 
     const topic = (req.body?.topic || '').trim();
     if (!topic) return res.status(400).json({ error: 'A topic is required.' });
+    const generateFeaturedImage = !!req.body?.generateFeaturedImage;
 
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
-    const result = await runBlogPostGeneration(connection, decryptedPassword, context, topic);
+    const result = await runBlogPostGeneration(connection, decryptedPassword, context, topic, generateFeaturedImage);
 
     if (!result.success) return res.status(400).json({ error: result.error });
     res.json(result);
