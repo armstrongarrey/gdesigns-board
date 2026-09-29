@@ -1121,6 +1121,9 @@ CREATE TABLE IF NOT EXISTS website_connections (
   -- further human review — a real, explicit, separate choice from
   -- content_automation_enabled itself, not implied by it.
   content_automation_publish_mode VARCHAR(20) DEFAULT 'draft',
+  -- 'daily' (default) | 'weekly' | 'monthly' — how often the automatic
+  -- content cycle runs for this specific connection, when enabled.
+  content_automation_frequency VARCHAR(20) DEFAULT 'daily',
   content_automation_last_run_at TIMESTAMPTZ,
   -- 'push' (default): Arreyon calls the site's REST API directly,
   -- real-time. 'poll': the site's own plugin calls Arreyon instead and
