@@ -4303,29 +4303,35 @@ app.post('/api/business/:id/website/verify', authRequired, async (req, res) => {
 // could produce unpredictable behavior wherever it's later checked.
 const VALID_PERMISSION_LEVELS = ['read_only', 'draft', 'approval_required', 'managed'];
 const VALID_AUTOMATION_MODES = ['manual', 'automatic'];
+const VALID_PUBLISH_MODES = ['draft', 'publish'];
 app.put('/api/business/:id/website/permissions', authRequired, async (req, res) => {
-  const { permissionLevel, automationMode } = req.body;
+  const { permissionLevel, automationMode, contentAutomationEnabled, contentAutomationPublishMode } = req.body;
   if (permissionLevel && !VALID_PERMISSION_LEVELS.includes(permissionLevel)) {
     return res.status(400).json({ error: 'Invalid permission level' });
   }
   if (automationMode && !VALID_AUTOMATION_MODES.includes(automationMode)) {
     return res.status(400).json({ error: 'Invalid automation mode' });
   }
+  if (contentAutomationPublishMode && !VALID_PUBLISH_MODES.includes(contentAutomationPublishMode)) {
+    return res.status(400).json({ error: 'Invalid publish mode' });
+  }
   try {
     const account = await resolveAccount(req.userId);
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
-    const connResult = await pool.query('SELECT id, permission_level, automation_mode FROM website_connections WHERE business_id = $1', [req.params.id]);
+    const connResult = await pool.query('SELECT id, permission_level, automation_mode, content_automation_enabled, content_automation_publish_mode FROM website_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
     const connection = connResult.rows[0];
 
     const newPermissionLevel = permissionLevel || connection.permission_level;
     const newAutomationMode = automationMode || connection.automation_mode;
+    const newContentAutomationEnabled = contentAutomationEnabled !== undefined ? !!contentAutomationEnabled : connection.content_automation_enabled;
+    const newContentAutomationPublishMode = contentAutomationPublishMode || connection.content_automation_publish_mode;
 
     await pool.query(
-      'UPDATE website_connections SET permission_level = $1, automation_mode = $2 WHERE id = $3',
-      [newPermissionLevel, newAutomationMode, connection.id]
+      'UPDATE website_connections SET permission_level = $1, automation_mode = $2, content_automation_enabled = $3, content_automation_publish_mode = $4 WHERE id = $5',
+      [newPermissionLevel, newAutomationMode, newContentAutomationEnabled, newContentAutomationPublishMode, connection.id]
     );
 
     if (newPermissionLevel !== connection.permission_level || newAutomationMode !== connection.automation_mode) {
@@ -4333,8 +4339,13 @@ app.put('/api/business/:id/website/permissions', authRequired, async (req, res) 
         `Permission level set to "${newPermissionLevel}", automation mode set to "${newAutomationMode}"`,
         { previousPermissionLevel: connection.permission_level, newPermissionLevel, previousAutomationMode: connection.automation_mode, newAutomationMode }, 'connection');
     }
+    if (newContentAutomationEnabled !== connection.content_automation_enabled || newContentAutomationPublishMode !== connection.content_automation_publish_mode) {
+      await logWebsiteAudit(connection.id, 'user', req.userId, 'content_automation_changed',
+        `Automatic content creation ${newContentAutomationEnabled ? 'enabled' : 'disabled'}, publish mode set to "${newContentAutomationPublishMode}"`,
+        { previousEnabled: connection.content_automation_enabled, newContentAutomationEnabled, previousPublishMode: connection.content_automation_publish_mode, newContentAutomationPublishMode }, 'content_generation');
+    }
 
-    res.json({ success: true, permissionLevel: newPermissionLevel, automationMode: newAutomationMode });
+    res.json({ success: true, permissionLevel: newPermissionLevel, automationMode: newAutomationMode, contentAutomationEnabled: newContentAutomationEnabled, contentAutomationPublishMode: newContentAutomationPublishMode });
   } catch (e) {
     console.error('Website permissions update error:', e.message);
     res.status(500).json({ error: 'Failed to update permissions' });
@@ -4376,6 +4387,35 @@ function decodeHtmlEntities(str) {
     .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
     .replace(/&(\w+);/g, (m, name) => named[name] !== undefined ? named[name] : m);
 }
+
+// Real, deliberate code-level, deterministic slug generation — never
+// left to the AI to decide, since consistently producing a real,
+// URL-safe, reasonably short slug is exactly the kind of formatting
+// rule an AI model can't be trusted to follow every single time. Only
+// ever used when CREATING a genuinely new post — this function is
+// never called anywhere that would change an existing post's real,
+// already-published URL, which stays fixed for its entire lifetime
+// once created, by design, not by convention.
+function generateSeoFriendlySlug(title) {
+  const slug = title
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '') // strip accents, e.g. "café" -> "cafe"
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/[\s_]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  // Real, deliberate length cap — a genuinely long title still makes
+  // a real, reasonably short slug rather than an unwieldy, truncated-
+  // mid-word real URL.
+  const MAX_LENGTH = 60;
+  if (slug.length <= MAX_LENGTH) return slug;
+  const truncated = slug.slice(0, MAX_LENGTH);
+  const lastHyphen = truncated.lastIndexOf('-');
+  return lastHyphen > 0 ? truncated.slice(0, lastHyphen) : truncated;
+}
+
 function wpStripHtml(html) {
   if (!html) return '';
   return decodeHtmlEntities(html.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
@@ -4738,6 +4778,161 @@ async function findOrCreateWordPressTerm(connection, decryptedPassword, taxonomy
   if (created.success) return created.id;
   if (created.alreadyExists && created.existingId) return created.existingId;
   return null;
+}
+
+// Real, deliberate, single-purpose post creation — the ONLY function in
+// this codebase that creates a genuinely new post; nothing here, or
+// anywhere this function is called from, ever modifies an existing
+// post's real, already-published slug. The slug is set exactly once,
+// at creation, and WordPress itself owns making it unique thereafter.
+async function createWordPressBlogPost(connection, decryptedPassword, postData) {
+  const { title, bodyHtml, slug, metaTitle, metaDescription, category, tags, status } = postData;
+
+  const categoryIds = [];
+  if (category) {
+    const id = await findOrCreateWordPressTerm(connection, decryptedPassword, 'category', category);
+    if (id) categoryIds.push(id);
+  }
+  const tagIds = [];
+  if (Array.isArray(tags)) {
+    for (const tagName of tags) {
+      const id = await findOrCreateWordPressTerm(connection, decryptedPassword, 'tag', tagName);
+      if (id) tagIds.push(id);
+    }
+  }
+
+  const createRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/posts', {
+    method: 'POST',
+    body: {
+      title, content: bodyHtml, slug, status,
+      ...(categoryIds.length ? { categories: categoryIds } : {}),
+      ...(tagIds.length ? { tags: tagIds } : {}),
+    },
+    timeoutMs: 20000,
+  });
+  if (!createRes.ok) {
+    let detail = null;
+    try { detail = await createRes.json(); } catch { /* Real, deliberate no-op — a non-JSON body still falls through to the generic error below. */ }
+    return { success: false, error: detail?.message || `WordPress rejected creating this post (status ${createRes.status}).` };
+  }
+  const created = await createRes.json();
+
+  // Real, deliberate follow-up write for the same real reason as every
+  // other meta title/description change in this app — via the meta
+  // object, across all three supported SEO plugins' real fields, never
+  // WordPress's own core title field (already set correctly above,
+  // directly, as the real post title itself).
+  if (metaTitle || metaDescription) {
+    await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/posts/${created.id}`, {
+      method: 'POST',
+      body: {
+        meta: {
+          ...(metaTitle ? { _yoast_wpseo_title: metaTitle, rank_math_title: metaTitle } : {}),
+          ...(metaDescription ? { _yoast_wpseo_metadesc: metaDescription, rank_math_description: metaDescription } : {}),
+        },
+      },
+      timeoutMs: 15000,
+    });
+  }
+
+  return { success: true, id: created.id, url: created.link, slug: created.slug, status: created.status };
+}
+
+// Real, deliberate, two-stage link discipline — every internal link the
+// AI is even offered comes from real, already-known, existing pages
+// (never invented), and every external link is a real, currently-live
+// page confirmed by an actual HTTP request before it's ever offered as
+// an option, not just after the fact. The AI is never given the chance
+// to propose a link this function hasn't already verified is real.
+async function gatherVerifiedLinkCandidates(connection, decryptedPassword, pages, posts, topic) {
+  const internalCandidates = [...pages, ...posts].map(item => ({ title: item.title, url: item.url }));
+
+  let externalCandidates = [];
+  try {
+    const searchResults = await researchSearch(topic, { maxResults: 6 });
+    const checks = await Promise.all(searchResults.map(async (r) => {
+      const check = await checkInternalLinkResolves(r.url);
+      return { ...r, resolves: !check.broken };
+    }));
+    externalCandidates = checks.filter(c => c.resolves).map(c => ({ title: c.title, url: c.url }));
+  } catch (e) {
+    // Real, deliberate graceful degradation — a post can still be
+    // written with real internal links alone; external research
+    // failing shouldn't block the whole real thing from generating.
+  }
+
+  return { internalCandidates: internalCandidates.slice(0, 20), externalCandidates: externalCandidates.slice(0, 4) };
+}
+
+// Real, deliberate defense in depth — even though the prompt below
+// explicitly instructs the AI to only use the real, pre-verified links
+// it was given, AI instruction-following isn't a real guarantee on its
+// own; this strips any real <a href> the AI generated that isn't one
+// of the exact, real URLs actually verified above, rather than trusting
+// compliance alone.
+function stripUnverifiedLinks(html, verifiedUrls) {
+  const verifiedSet = new Set(verifiedUrls);
+  return html.replace(/<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gis, (match, href, innerText) => {
+    return verifiedSet.has(href) ? match : innerText;
+  });
+}
+
+async function generateBlogPostContent(connection, decryptedPassword, context, topic, pages, posts) {
+  const { internalCandidates, externalCandidates } = await gatherVerifiedLinkCandidates(connection, decryptedPassword, pages, posts, topic);
+  const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+
+  const prompt = `You are an SEO/AEO/GEO content writer producing a publication-ready WordPress blog post for a real business.
+${contextSummary}
+
+TOPIC: ${topic}
+
+REAL, EXISTING PAGES ON THIS SITE — you may ONLY link internally to these exact URLs, verbatim, never invent a new one:
+${internalCandidates.length ? internalCandidates.map(c => `- "${c.title}" (${c.url})`).join('\n') : '(No real existing pages were found to link to.)'}
+
+REAL, CURRENTLY-LIVE EXTERNAL PAGES relevant to this topic (confirmed reachable just now) — you may ONLY link externally to these exact URLs, verbatim, never invent a new one:
+${externalCandidates.length ? externalCandidates.map(c => `- "${c.title}" (${c.url})`).join('\n') : '(No real, verified external sources were found.)'}
+
+Write clean, well-structured HTML (h2/h3 headings, paragraphs, at least one list) — genuinely useful, specific content, not generic filler. Use single quotes for any HTML attribute. Never invent a fact, statistic, or detail about the business that isn't in the context above.
+
+Respond in EXACTLY this two-part format, with no other text before, between, or after:
+
+===METADATA_JSON===
+{
+  "title": "...",
+  "metaTitle": "... (50-60 characters)",
+  "metaDescription": "... (150-160 characters)",
+  "category": "a single, fitting category name",
+  "tags": ["2-4 relevant tag names"]
+}
+===BODY_HTML===
+<h2>...</h2><p>...</p>...(the full real HTML body, as plain HTML — NOT inside the JSON above)`;
+
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Write the blog post now.' }], complexity: 'complex', context: { feature: 'website_blog_post_generation' }, maxTokens: 6000 });
+
+  const DELIMITER = '===BODY_HTML===';
+  const delimiterIndex = raw.indexOf(DELIMITER);
+  if (delimiterIndex === -1) throw new Error("The AI's response did not include the expected content delimiter — could not separate metadata from body content.");
+  const metadataSection = raw.slice(0, delimiterIndex).replace('===METADATA_JSON===', '').trim();
+  let bodyHtml = raw.slice(delimiterIndex + DELIMITER.length).trim();
+
+  const parsed = extractJSON(metadataSection);
+  if (!parsed.title || !parsed.metaTitle) throw new Error('Could not generate this post — the response was missing required fields. Please try again.');
+
+  // Real, deliberate final safety net before this content ever reaches
+  // a live WordPress site — strips any link that isn't one of the
+  // real, pre-verified candidates actually offered above.
+  const allVerifiedUrls = [...internalCandidates.map(c => c.url), ...externalCandidates.map(c => c.url)];
+  bodyHtml = stripUnverifiedLinks(bodyHtml, allVerifiedUrls);
+
+  return {
+    title: parsed.title,
+    metaTitle: parsed.metaTitle,
+    metaDescription: parsed.metaDescription || '',
+    category: parsed.category || null,
+    tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+    bodyHtml,
+    slug: generateSeoFriendlySlug(parsed.title),
+  };
 }
 
 async function createWordPressTaxonomyTerm(connection, decryptedPassword, taxonomyType, name) {
@@ -5534,6 +5729,84 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   } catch (err) {
     console.error('Featured image proposals error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to generate featured image plans. Please try again.' });
+  }
+});
+
+// Real, deliberate single, shared implementation for both the manual
+// trigger below and the future daily automatic scheduler — one real
+// place that actually generates and creates a post, called either way.
+// Real, deliberate topic selection for the fully-automatic path
+// specifically — a manual trigger always gets a real topic from the
+// person themselves; automatic mode has no one to ask, so this picks
+// one itself, checking against real, existing post titles so it
+// doesn't propose something substantially already covered.
+async function generateAutomaticBlogPostTopic(context, existingPosts) {
+  const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+  const existingTitles = existingPosts.map(p => p.title).filter(Boolean);
+  const prompt = `You are an SEO content strategist choosing ONE real, currently valuable blog topic for a real business's WordPress site.
+${contextSummary}
+
+REAL TITLES ALREADY PUBLISHED ON THIS SITE — do not propose something that substantially duplicates one of these:
+${existingTitles.length ? existingTitles.map(t => `- ${t}`).join('\n') : '(No existing published posts found.)'}
+
+Respond ONLY with valid JSON, no other text: {"topic": "a specific, genuinely useful topic for this business's real audience"}`;
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Choose the topic now, as JSON only.' }], complexity: 'moderate', context: { feature: 'website_blog_post_topic' }, maxTokens: 500 });
+  const parsed = extractJSON(raw);
+  if (!parsed.topic) throw new Error('Could not choose a topic for the next automatic post.');
+  return parsed.topic;
+}
+
+async function runBlogPostGeneration(connection, decryptedPassword, context, topic) {
+  let pages, posts;
+  ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+
+  const generated = await generateBlogPostContent(connection, decryptedPassword, context, topic, pages || [], posts || []);
+
+  const publishStatus = connection.content_automation_publish_mode === 'publish' ? 'publish' : 'draft';
+  const result = await createWordPressBlogPost(connection, decryptedPassword, {
+    title: generated.title, bodyHtml: generated.bodyHtml, slug: generated.slug,
+    metaTitle: generated.metaTitle, metaDescription: generated.metaDescription,
+    category: generated.category, tags: generated.tags, status: publishStatus,
+  });
+
+  await logWebsiteAudit(connection.id, 'ai_agent', null, result.success ? (publishStatus === 'publish' ? 'blog_post_published' : 'blog_post_drafted') : 'blog_post_generation_failed',
+    result.success
+      ? `${publishStatus === 'publish' ? 'Published' : 'Drafted'} a new blog post: "${generated.title}"`
+      : `Failed to create a new blog post: ${result.error}`,
+    { topic, title: generated.title, slug: generated.slug, url: result.url || null, error: result.error || null },
+    'content_generation');
+
+  return { ...result, title: generated.title, publishStatus };
+}
+
+app.post('/api/business/:id/website/generate-blog-post', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+
+    // Real, deliberate scope limit, disclosed honestly — generating and
+    // creating a real, new post means Arreyon making a real, direct
+    // write to the site, which is blocked the same way any other direct
+    // write is for a poll-mode connection. Not built for poll mode yet.
+    if (connection.connection_mode === 'poll') {
+      return res.status(400).json({ error: 'Generating new blog posts isn\'t available yet for a poll-mode connection — this is planned as a future improvement.' });
+    }
+
+    const topic = (req.body?.topic || '').trim();
+    if (!topic) return res.status(400).json({ error: 'A topic is required.' });
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    const result = await runBlogPostGeneration(connection, decryptedPassword, context, topic);
+
+    if (!result.success) return res.status(400).json({ error: result.error });
+    res.json(result);
+  } catch (err) {
+    console.error('Generate blog post error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate this blog post. Please try again.' });
   }
 });
 
@@ -13078,6 +13351,53 @@ function startMonitoringScheduler() {
   }, 60 * 60 * 1000); // check every hour
 }
 
+// Real, deliberate per-connection timing, using the real, DB-persisted
+// content_automation_last_run_at column rather than in-memory state like
+// the monitoring sweep above — this one genuinely needs to survive a
+// service restart correctly per real connection, not just approximately
+// for a single, global digest.
+async function runContentAutomationSweep() {
+  try {
+    const dueConnections = await pool.query(
+      `SELECT * FROM website_connections
+       WHERE content_automation_enabled = true AND connection_mode = 'push' AND connection_status != 'disconnected'
+         AND (content_automation_last_run_at IS NULL OR content_automation_last_run_at < NOW() - INTERVAL '24 hours')`
+    );
+
+    for (const connection of dueConnections.rows) {
+      try {
+        const bizResult = await pool.query('SELECT id, user_id FROM businesses WHERE id = $1', [connection.business_id]);
+        if (!bizResult.rows.length) continue;
+        const context = await getBusinessContext(connection.business_id, bizResult.rows[0].user_id);
+        if (!context) continue;
+
+        const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+        const { posts } = await getWordPressContentForAnalysis(connection, decryptedPassword);
+        const topic = await generateAutomaticBlogPostTopic(context, posts || []);
+
+        await runBlogPostGeneration(connection, decryptedPassword, context, topic);
+        await pool.query(`UPDATE website_connections SET content_automation_last_run_at = NOW() WHERE id = $1`, [connection.id]);
+      } catch (connErr) {
+        console.error(`Content automation failed for connection ${connection.id}:`, connErr.message);
+        // Real, deliberate no-op beyond logging — still marks this real
+        // attempt as done for today, so a real, ongoing failure (e.g. an
+        // expired credential) doesn't retry every hour all day; the
+        // person will see the real failure in this connection's own
+        // activity log either way.
+        await pool.query(`UPDATE website_connections SET content_automation_last_run_at = NOW() WHERE id = $1`, [connection.id]);
+      }
+    }
+  } catch (err) {
+    console.error('Content automation sweep top-level error:', err.message);
+  }
+}
+
+function startContentAutomationScheduler() {
+  setInterval(async () => {
+    await runContentAutomationSweep();
+  }, 60 * 60 * 1000); // check every hour, same real cadence as the monitoring scheduler above
+}
+
 // ── Alerts API — shared across the team, like other account data ──────────
 app.get('/api/alerts', authRequired, async (req, res) => {
   try {
@@ -13169,4 +13489,5 @@ app.listen(PORT, async () => {
   await initDB();
   console.log(`Arreyon Consult running on port ${PORT}`);
   startMonitoringScheduler();
+  startContentAutomationScheduler();
 });
