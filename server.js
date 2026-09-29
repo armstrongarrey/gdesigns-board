@@ -4304,8 +4304,9 @@ app.post('/api/business/:id/website/verify', authRequired, async (req, res) => {
 const VALID_PERMISSION_LEVELS = ['read_only', 'draft', 'approval_required', 'managed'];
 const VALID_AUTOMATION_MODES = ['manual', 'automatic'];
 const VALID_PUBLISH_MODES = ['draft', 'publish'];
+const VALID_CONTENT_AUTOMATION_FREQUENCIES = ['daily', 'weekly', 'monthly'];
 app.put('/api/business/:id/website/permissions', authRequired, async (req, res) => {
-  const { permissionLevel, automationMode, contentAutomationEnabled, contentAutomationPublishMode } = req.body;
+  const { permissionLevel, automationMode, contentAutomationEnabled, contentAutomationPublishMode, contentAutomationFrequency } = req.body;
   if (permissionLevel && !VALID_PERMISSION_LEVELS.includes(permissionLevel)) {
     return res.status(400).json({ error: 'Invalid permission level' });
   }
@@ -4315,12 +4316,15 @@ app.put('/api/business/:id/website/permissions', authRequired, async (req, res) 
   if (contentAutomationPublishMode && !VALID_PUBLISH_MODES.includes(contentAutomationPublishMode)) {
     return res.status(400).json({ error: 'Invalid publish mode' });
   }
+  if (contentAutomationFrequency && !VALID_CONTENT_AUTOMATION_FREQUENCIES.includes(contentAutomationFrequency)) {
+    return res.status(400).json({ error: 'Invalid content automation frequency' });
+  }
   try {
     const account = await resolveAccount(req.userId);
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
-    const connResult = await pool.query('SELECT id, permission_level, automation_mode, content_automation_enabled, content_automation_publish_mode FROM website_connections WHERE business_id = $1', [req.params.id]);
+    const connResult = await pool.query('SELECT id, permission_level, automation_mode, content_automation_enabled, content_automation_publish_mode, content_automation_frequency FROM website_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
     const connection = connResult.rows[0];
 
@@ -4328,10 +4332,11 @@ app.put('/api/business/:id/website/permissions', authRequired, async (req, res) 
     const newAutomationMode = automationMode || connection.automation_mode;
     const newContentAutomationEnabled = contentAutomationEnabled !== undefined ? !!contentAutomationEnabled : connection.content_automation_enabled;
     const newContentAutomationPublishMode = contentAutomationPublishMode || connection.content_automation_publish_mode;
+    const newContentAutomationFrequency = contentAutomationFrequency || connection.content_automation_frequency;
 
     await pool.query(
-      'UPDATE website_connections SET permission_level = $1, automation_mode = $2, content_automation_enabled = $3, content_automation_publish_mode = $4 WHERE id = $5',
-      [newPermissionLevel, newAutomationMode, newContentAutomationEnabled, newContentAutomationPublishMode, connection.id]
+      'UPDATE website_connections SET permission_level = $1, automation_mode = $2, content_automation_enabled = $3, content_automation_publish_mode = $4, content_automation_frequency = $5 WHERE id = $6',
+      [newPermissionLevel, newAutomationMode, newContentAutomationEnabled, newContentAutomationPublishMode, newContentAutomationFrequency, connection.id]
     );
 
     if (newPermissionLevel !== connection.permission_level || newAutomationMode !== connection.automation_mode) {
@@ -4339,13 +4344,13 @@ app.put('/api/business/:id/website/permissions', authRequired, async (req, res) 
         `Permission level set to "${newPermissionLevel}", automation mode set to "${newAutomationMode}"`,
         { previousPermissionLevel: connection.permission_level, newPermissionLevel, previousAutomationMode: connection.automation_mode, newAutomationMode }, 'connection');
     }
-    if (newContentAutomationEnabled !== connection.content_automation_enabled || newContentAutomationPublishMode !== connection.content_automation_publish_mode) {
+    if (newContentAutomationEnabled !== connection.content_automation_enabled || newContentAutomationPublishMode !== connection.content_automation_publish_mode || newContentAutomationFrequency !== connection.content_automation_frequency) {
       await logWebsiteAudit(connection.id, 'user', req.userId, 'content_automation_changed',
-        `Automatic content creation ${newContentAutomationEnabled ? 'enabled' : 'disabled'}, publish mode set to "${newContentAutomationPublishMode}"`,
-        { previousEnabled: connection.content_automation_enabled, newContentAutomationEnabled, previousPublishMode: connection.content_automation_publish_mode, newContentAutomationPublishMode }, 'content_generation');
+        `Automatic content creation ${newContentAutomationEnabled ? 'enabled' : 'disabled'}, publish mode set to "${newContentAutomationPublishMode}", frequency set to "${newContentAutomationFrequency}"`,
+        { previousEnabled: connection.content_automation_enabled, newContentAutomationEnabled, previousPublishMode: connection.content_automation_publish_mode, newContentAutomationPublishMode, previousFrequency: connection.content_automation_frequency, newContentAutomationFrequency }, 'content_generation');
     }
 
-    res.json({ success: true, permissionLevel: newPermissionLevel, automationMode: newAutomationMode, contentAutomationEnabled: newContentAutomationEnabled, contentAutomationPublishMode: newContentAutomationPublishMode });
+    res.json({ success: true, permissionLevel: newPermissionLevel, automationMode: newAutomationMode, contentAutomationEnabled: newContentAutomationEnabled, contentAutomationPublishMode: newContentAutomationPublishMode, contentAutomationFrequency: newContentAutomationFrequency });
   } catch (e) {
     console.error('Website permissions update error:', e.message);
     res.status(500).json({ error: 'Failed to update permissions' });
@@ -13358,10 +13363,18 @@ function startMonitoringScheduler() {
 // for a single, global digest.
 async function runContentAutomationSweep() {
   try {
+    // Real, deliberate per-connection interval — each site's own chosen
+    // frequency (daily/weekly/monthly) decides when it's genuinely due,
+    // rather than one fixed interval applied to every connection.
     const dueConnections = await pool.query(
       `SELECT * FROM website_connections
        WHERE content_automation_enabled = true AND connection_mode = 'push' AND connection_status != 'disconnected'
-         AND (content_automation_last_run_at IS NULL OR content_automation_last_run_at < NOW() - INTERVAL '24 hours')`
+         AND (
+           content_automation_last_run_at IS NULL
+           OR (content_automation_frequency = 'weekly' AND content_automation_last_run_at < NOW() - INTERVAL '7 days')
+           OR (content_automation_frequency = 'monthly' AND content_automation_last_run_at < NOW() - INTERVAL '30 days')
+           OR (content_automation_frequency NOT IN ('weekly', 'monthly') AND content_automation_last_run_at < NOW() - INTERVAL '24 hours')
+         )`
     );
 
     for (const connection of dueConnections.rows) {
