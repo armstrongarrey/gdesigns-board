@@ -1938,10 +1938,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
         <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px">
           <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:8px" data-i18n="web.generate_post_now_title">Generate a Blog Post Now</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
             <input type="text" id="websiteBlogPostTopic" data-i18n-placeholder="web.generate_post_topic_placeholder" placeholder="e.g. 5 tips for small business SEO" style="flex:1;min-width:200px">
             <button class="btn-primary" onclick="generateBlogPostNow()" id="websiteGeneratePostBtn" data-i18n="web.generate_post_button">Generate &amp; Create</button>
           </div>
+          <button class="btn-secondary" onclick="suggestBlogPostTopics()" id="websiteSuggestTopicsBtn" data-i18n="web.suggest_topics_button" style="font-size:11.5px;padding:6px 12px">Suggest Topics</button>
+          <div id="websiteTopicSuggestions" style="margin-top:10px"></div>
         </div>
 
         <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -7848,6 +7850,53 @@ async function generateBlogPostNow() {
     btn.disabled = false;
     btn.textContent = t('web.generate_post_button');
   }
+}
+
+async function suggestBlogPostTopics() {
+  const btn = document.getElementById('websiteSuggestTopicsBtn');
+  const contentEl = document.getElementById('websiteTopicSuggestions');
+  btn.disabled = true;
+  btn.textContent = t('web.suggesting_topics');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/topic-suggestions`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080;padding:8px 0">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+      return;
+    }
+    if (!data.topics || !data.topics.length) {
+      contentEl.innerHTML = `<div style="font-size:12px;color:var(--muted);padding:8px 0">${t('web.no_topics_found')}</div>`;
+      return;
+    }
+    // Real, deliberate index-based lookup, not the topic text embedded
+    // directly in the onclick attribute — a real topic can genuinely
+    // contain a real double quote (e.g. a quoted term), which would
+    // otherwise break the surrounding HTML attribute outright. A plain
+    // integer index needs no escaping at all.
+    currentTopicSuggestions = data.topics;
+    contentEl.innerHTML = data.topics.map((topic, i) => `
+      <div onclick="useTopicSuggestion(${i})" style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(topic.topic)}</div>
+          <span style="font-size:9px;font-weight:700;color:var(--purple-light);background:rgba(139,92,246,.15);padding:2px 6px;border-radius:4px;white-space:nowrap;text-transform:uppercase">${escapeHtml(topic.searchIntent || '')}</span>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">${t('web.focus_keyword')}: ${escapeHtml(topic.focusKeyword || '')}</div>
+        <div style="font-size:11.5px;color:var(--text2);margin-top:4px">${escapeHtml(topic.rationale || '')}</div>
+      </div>`).join('');
+  } catch (e) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080;padding:8px 0">${t('board.connection_error')}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.suggest_topics_button');
+  }
+}
+
+let currentTopicSuggestions = [];
+function useTopicSuggestion(index) {
+  const topic = currentTopicSuggestions[index];
+  if (!topic) return;
+  document.getElementById('websiteBlogPostTopic').value = topic.topic;
+  document.getElementById('websiteTopicSuggestions').innerHTML = '';
 }
 
 async function loadWebsiteActions() {
