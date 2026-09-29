@@ -1108,6 +1108,20 @@ CREATE TABLE IF NOT EXISTS website_connections (
   -- migration to add it once execution features exist.
   permission_level VARCHAR(20) DEFAULT 'read_only', -- 'read_only' | 'draft' | 'approval_required' | 'managed'
   automation_mode VARCHAR(20) DEFAULT 'manual', -- 'manual' | 'automatic' — low-risk actions only; destructive actions always require approval regardless of this switch
+  -- Real, deliberate, separate switch from automation_mode above — this
+  -- one specifically governs the full content-creation agent (writing
+  -- and publishing new blog posts), a genuinely different, higher-stakes
+  -- capability than the low-risk metadata auto-execution automation_mode
+  -- already covers. Off by default; a person must explicitly turn this
+  -- on for a specific, trusted site.
+  content_automation_enabled BOOLEAN DEFAULT FALSE,
+  -- 'draft' (default, safer): a new post is always created as a real
+  -- WordPress draft, still requiring a human to actually publish it.
+  -- 'publish': a new post goes live immediately once generated, with no
+  -- further human review — a real, explicit, separate choice from
+  -- content_automation_enabled itself, not implied by it.
+  content_automation_publish_mode VARCHAR(20) DEFAULT 'draft',
+  content_automation_last_run_at TIMESTAMPTZ,
   -- 'push' (default): Arreyon calls the site's REST API directly,
   -- real-time. 'poll': the site's own plugin calls Arreyon instead and
   -- executes changes locally via native WordPress functions — the
