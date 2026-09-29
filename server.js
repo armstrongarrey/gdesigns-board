@@ -5761,6 +5761,50 @@ Respond ONLY with valid JSON, no other text: {"topic": "a specific, genuinely us
   return parsed.topic;
 }
 
+// Real, deliberate research-grounded topic discovery — a real, current
+// web search for what's actually being asked/discussed in this real
+// industry right now, not just AI general knowledge alone, the same
+// real "grounded in live reality" discipline as the SEO proposals'
+// live-research option. A person browses and picks one, rather than
+// having to think of and type a topic themselves every time.
+async function suggestBlogPostTopics(context, existingPosts, count = 5) {
+  const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+  const existingTitles = existingPosts.map(p => p.title).filter(Boolean);
+  const industry = context?.business?.industry || '';
+
+  let researchNotes = '';
+  try {
+    const searchQuery = industry ? `${industry} trends questions 2026` : `${context?.business?.name || 'small business'} industry trends 2026`;
+    const results = await researchSearch(searchQuery, { maxResults: 6 });
+    if (results.length) {
+      researchNotes = `\nREAL, CURRENT SEARCH RESULTS ON WHAT'S BEING DISCUSSED IN THIS REAL INDUSTRY RIGHT NOW (use these to ground genuinely current, real topic ideas, not just general knowledge):\n${results.map(r => `- "${r.title}": ${r.snippet ? r.snippet.slice(0, 150) : ''}`).join('\n')}\n`;
+    }
+  } catch (e) {
+    // Real, deliberate graceful degradation — topic suggestions can
+    // still be generated from real business context alone if the real
+    // research step fails for any reason.
+  }
+
+  const prompt = `You are an SEO/AEO/GEO content strategist proposing real, currently valuable blog topic ideas for a real business's WordPress site.
+${contextSummary}
+${researchNotes}
+REAL TITLES ALREADY PUBLISHED ON THIS SITE — do not propose something that substantially duplicates one of these:
+${existingTitles.length ? existingTitles.map(t => `- ${t}`).join('\n') : '(No existing published posts found.)'}
+
+Propose ${count} real, specific topic ideas — each one genuinely useful for this business's real audience, optimized for:
+- SEO (real, realistic search demand for a business at this scale, not hyper-competitive global terms)
+- AEO (answer-engine/AI-assistant citation potential — a clear, directly-answerable core question)
+- GEO (generative-engine visibility — specific, well-structured, genuinely citable content, not generic filler)
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{"topics": [{"topic": "...", "focusKeyword": "...", "searchIntent": "informational|commercial|transactional|navigational", "rationale": "1 sentence on why this is a genuinely good, currently relevant opportunity for this specific business"}]}`;
+
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Propose the topics now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_blog_post_topic_suggestions' }, maxTokens: 2000 });
+  const parsed = extractJSON(raw);
+  if (!Array.isArray(parsed.topics)) throw new Error('Could not generate topic suggestions — the response was missing required data. Please try again.');
+  return parsed.topics;
+}
+
 async function runBlogPostGeneration(connection, decryptedPassword, context, topic) {
   let pages, posts;
   ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
@@ -5783,6 +5827,37 @@ async function runBlogPostGeneration(connection, decryptedPassword, context, top
 
   return { ...result, title: generated.title, publishStatus };
 }
+
+app.post('/api/business/:id/website/topic-suggestions', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+
+    let posts = [];
+    try {
+      const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+      const content = await getWordPressContentForAnalysis(connection, decryptedPassword);
+      posts = content.posts || [];
+    } catch (e) {
+      // Real, deliberate graceful degradation — topic suggestions are
+      // still genuinely useful without a real, existing-posts list to
+      // check against (just a slightly higher chance of proposing
+      // something already covered), rather than failing outright,
+      // including the real, honest pendingPoll case for a poll-mode
+      // site whose content hasn't been reported back yet.
+    }
+
+    const topics = await suggestBlogPostTopics(context, posts);
+    res.json({ topics });
+  } catch (err) {
+    console.error('Topic suggestions error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate topic suggestions. Please try again.' });
+  }
+});
 
 app.post('/api/business/:id/website/generate-blog-post', authRequired, async (req, res) => {
   try {
