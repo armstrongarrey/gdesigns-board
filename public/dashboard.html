@@ -1908,6 +1908,36 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <a href="/api/website-tools/seo-rest-bridge-plugin.zip" download style="color:var(--purple-light)" data-i18n="web.seo_plugin_download_zip">↓ Download (.zip) — install via WordPress admin: Plugins → Add New → Upload Plugin</a>
         </div>
 
+        <!-- AUTOMATIC CONTENT CREATION — a genuinely different, higher-stakes
+             capability from the metadata-only automation above: the AI
+             writing and, if enabled, publishing whole new blog posts on its
+             own, daily, with no per-post approval. Off by default, and kept
+             visually distinct from the permissions grid above for exactly
+             that reason. -->
+        <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px;border:1px solid rgba(239,68,68,.25)">
+          <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.content_automation_title">Automatic Content Creation</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.content_automation_warning">When enabled, the AI writes and creates a new blog post on this site once a day, without per-post approval. This never modifies an existing page or post's URL.</div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer;margin-bottom:10px">
+            <input type="checkbox" id="websiteContentAutomationEnabled" onchange="updateWebsitePermissions()" style="width:auto">
+            <span data-i18n="web.content_automation_enable">Automatically write and create new blog posts daily</span>
+          </label>
+          <div id="websiteContentAutomationPublishRow" style="display:none;margin-left:24px">
+            <label style="font-size:11px;color:var(--muted)" data-i18n="web.content_automation_publish_label">When a new post is ready</label>
+            <select class="form-input" id="websiteContentAutomationPublishMode" onchange="updateWebsitePermissions()" style="font-size:12.5px;max-width:280px">
+              <option value="draft" data-i18n="web.content_automation_save_draft">Save as draft (I publish manually)</option>
+              <option value="publish" data-i18n="web.content_automation_auto_publish">Publish immediately, no review</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px">
+          <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:8px" data-i18n="web.generate_post_now_title">Generate a Blog Post Now</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input type="text" id="websiteBlogPostTopic" data-i18n-placeholder="web.generate_post_topic_placeholder" placeholder="e.g. 5 tips for small business SEO" style="flex:1;min-width:200px">
+            <button class="btn-primary" onclick="generateBlogPostNow()" id="websiteGeneratePostBtn" data-i18n="web.generate_post_button">Generate &amp; Create</button>
+          </div>
+        </div>
+
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn-secondary" onclick="verifyWebsiteConnection()" id="websiteRefreshBtn" data-i18n="web.refresh">Refresh</button>
           <button class="btn-secondary" onclick="disconnectWebsite()" style="color:#ef4444" data-i18n="web.disconnect">Disconnect</button>
@@ -7281,6 +7311,9 @@ function renderWebsiteStatusCard(connection) {
 
   document.getElementById('websitePermissionLevel').value = connection.permission_level || 'read_only';
   document.getElementById('websiteAutomationMode').value = connection.automation_mode || 'manual';
+  document.getElementById('websiteContentAutomationEnabled').checked = !!connection.content_automation_enabled;
+  document.getElementById('websiteContentAutomationPublishMode').value = connection.content_automation_publish_mode || 'draft';
+  document.getElementById('websiteContentAutomationPublishRow').style.display = connection.content_automation_enabled ? 'block' : 'none';
 
   const errEl = document.getElementById('websiteStatusError');
   if (connection.last_error && ['error', 'needs_attention', 'auth_expired'].includes(connection.connection_status)) {
@@ -7764,15 +7797,48 @@ function renderWebsiteIntelligenceContent(intelligence, generatedAt) {
 async function updateWebsitePermissions() {
   const permissionLevel = document.getElementById('websitePermissionLevel').value;
   const automationMode = document.getElementById('websiteAutomationMode').value;
+  const contentAutomationEnabled = document.getElementById('websiteContentAutomationEnabled').checked;
+  const contentAutomationPublishMode = document.getElementById('websiteContentAutomationPublishMode').value;
+  document.getElementById('websiteContentAutomationPublishRow').style.display = contentAutomationEnabled ? 'block' : 'none';
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/permissions`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permissionLevel, automationMode })
+      body: JSON.stringify({ permissionLevel, automationMode, contentAutomationEnabled, contentAutomationPublishMode })
     });
     if (res.ok) showToast(t('toast.saved'), 'success');
     else showToast(t('board.connection_error'), 'error');
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
+  }
+}
+
+async function generateBlogPostNow() {
+  const topicInput = document.getElementById('websiteBlogPostTopic');
+  const topic = topicInput.value.trim();
+  if (!topic) {
+    showToast(t('web.topic_required'), 'error');
+    return;
+  }
+  const btn = document.getElementById('websiteGeneratePostBtn');
+  btn.disabled = true;
+  btn.textContent = t('web.generating_post');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/generate-blog-post`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t(data.publishStatus === 'publish' ? 'web.post_published_toast' : 'web.post_drafted_toast').replace('{title}', data.title), 'success');
+    topicInput.value = '';
+    loadWebsiteActivityLog();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.generate_post_button');
   }
 }
 
@@ -8247,6 +8313,7 @@ const ACTIVITY_LOG_FEATURES = [
   { key: 'duplicate_titles', labelKey: 'web.fix_duplicate_titles' },
   { key: 'broken_links', labelKey: 'web.broken_links_title' },
   { key: 'featured_images', labelKey: 'web.action_type_featured_image' },
+  { key: 'content_generation', labelKey: 'web.content_automation_title' },
   { key: 'intelligence', labelKey: 'web.intelligence_title' },
   { key: 'connection', labelKey: 'web.feature_connection' },
   { key: 'general', labelKey: 'web.feature_general' },
