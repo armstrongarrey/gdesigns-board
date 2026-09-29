@@ -1942,6 +1942,10 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <input type="text" id="websiteBlogPostTopic" data-i18n-placeholder="web.generate_post_topic_placeholder" placeholder="e.g. 5 tips for small business SEO" style="flex:1;min-width:200px">
             <button class="btn-primary" onclick="generateBlogPostNow()" id="websiteGeneratePostBtn" data-i18n="web.generate_post_button">Generate &amp; Create</button>
           </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;margin-bottom:10px">
+            <input type="checkbox" id="websiteGenerateFeaturedImage" checked style="width:auto">
+            <span data-i18n="web.also_generate_featured_image">Also generate a featured image</span>
+          </label>
           <button class="btn-secondary" onclick="suggestBlogPostTopics()" id="websiteSuggestTopicsBtn" data-i18n="web.suggest_topics_button" style="font-size:11.5px;padding:6px 12px">Suggest Topics</button>
           <div id="websiteTopicSuggestions" style="margin-top:10px"></div>
         </div>
@@ -2035,6 +2039,18 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           </div>
         </div>
         <div id="websiteActivityLogContent"></div>
+      </div>
+
+      <!-- GENERATED POSTS — the real, local record of every post created via
+           the content-creation agent, so it's visible, editable, and
+           publishable from within Arreyon, not only by visiting the
+           connected site directly. -->
+      <div id="websiteGeneratedPostsSection" style="display:none;margin-top:28px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.generated_posts_title">Generated Blog Posts</div>
+          <button class="btn-secondary" onclick="loadWebsiteGeneratedPosts()" data-i18n="web.refresh">Refresh</button>
+        </div>
+        <div id="websiteGeneratedPostsContent"></div>
       </div>
 
       <!-- PROPOSED CHANGES — the approval workflow. Preview, Approve,
@@ -7249,6 +7265,7 @@ async function loadWebsiteBusinesses() {
       document.getElementById('websiteBrokenLinksSection').style.display = 'none';
       document.getElementById('websiteMediaSection').style.display = 'none';
       document.getElementById('websiteActivityLogSection').style.display = 'none';
+      document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return;
     }
@@ -7291,6 +7308,7 @@ function onWebsiteBusinessSelectChange() {
     document.getElementById('websiteBrokenLinksSection').style.display = 'none';
     document.getElementById('websiteMediaSection').style.display = 'none';
     document.getElementById('websiteActivityLogSection').style.display = 'none';
+    document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
     document.getElementById('websiteActionsSection').style.display = 'none';
     resetWebsiteConnectForm();
     return;
@@ -7360,6 +7378,7 @@ async function loadWebsiteSection() {
       document.getElementById('websiteBrokenLinksSection').style.display = 'none';
       document.getElementById('websiteMediaSection').style.display = 'none';
       document.getElementById('websiteActivityLogSection').style.display = 'none';
+      document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return false;
     }
@@ -7371,11 +7390,13 @@ async function loadWebsiteSection() {
     document.getElementById('websiteBrokenLinksSection').style.display = 'block';
     document.getElementById('websiteMediaSection').style.display = 'block';
     document.getElementById('websiteActivityLogSection').style.display = 'block';
+    document.getElementById('websiteGeneratedPostsSection').style.display = 'block';
     document.getElementById('websiteActionsSection').style.display = 'block';
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
     loadWebsiteTaxonomy();
     loadWebsiteActivityLog();
+    loadWebsiteGeneratedPosts();
     loadWebsiteActions();
     return true;
   } catch (e) {
@@ -7829,12 +7850,13 @@ async function generateBlogPostNow() {
     showToast(t('web.topic_required'), 'error');
     return;
   }
+  const generateFeaturedImage = document.getElementById('websiteGenerateFeaturedImage').checked;
   const btn = document.getElementById('websiteGeneratePostBtn');
   btn.disabled = true;
   btn.textContent = t('web.generating_post');
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/generate-blog-post`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic, generateFeaturedImage }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -7844,6 +7866,7 @@ async function generateBlogPostNow() {
     showToast(t(data.publishStatus === 'publish' ? 'web.post_published_toast' : 'web.post_drafted_toast').replace('{title}', data.title), 'success');
     topicInput.value = '';
     loadWebsiteActivityLog();
+    loadWebsiteGeneratedPosts();
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   } finally {
@@ -7897,6 +7920,120 @@ function useTopicSuggestion(index) {
   if (!topic) return;
   document.getElementById('websiteBlogPostTopic').value = topic.topic;
   document.getElementById('websiteTopicSuggestions').innerHTML = '';
+}
+
+// ── GENERATED POSTS ──────────────────────────────────────────────────────
+let currentGeneratedPosts = [];
+
+async function loadWebsiteGeneratedPosts() {
+  const contentEl = document.getElementById('websiteGeneratedPostsContent');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/generated-posts`);
+    const data = await res.json();
+    if (!res.ok) {
+      contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080;padding:12px 0">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+      return;
+    }
+    currentGeneratedPosts = data.posts || [];
+    renderGeneratedPostsList();
+  } catch (e) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080;padding:12px 0">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderGeneratedPostsList() {
+  const contentEl = document.getElementById('websiteGeneratedPostsContent');
+  if (!currentGeneratedPosts.length) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${t('web.no_generated_posts')}</div>`;
+    return;
+  }
+  contentEl.innerHTML = renderCollapsibleItems(currentGeneratedPosts, (post) => {
+    const isDraft = post.status !== 'publish';
+    return `
+    <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+        <div style="min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(post.title)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">${timeAgo(post.created_at)} · <a href="${escapeHtml(post.wp_url)}" target="_blank" style="color:var(--purple-light)">${t('web.view_on_site')}</a></div>
+        </div>
+        <span style="font-size:9px;font-weight:700;color:${isDraft ? '#f59e0b' : '#22c55e'};background:${isDraft ? 'rgba(245,158,11,.15)' : 'rgba(34,197,94,.15)'};padding:2px 8px;border-radius:10px;white-space:nowrap;text-transform:uppercase">${t(isDraft ? 'web.status_draft' : 'web.status_published')}</span>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn-ghost" onclick="toggleEditGeneratedPost('${post.id}')" style="font-size:11.5px;padding:5px 10px" data-i18n="web.edit_button">Edit</button>
+        ${isDraft ? `<button class="btn-primary" onclick="publishGeneratedPost('${post.id}')" style="font-size:11.5px;padding:5px 10px" data-i18n="web.publish_button">Publish</button>` : ''}
+      </div>
+      <div id="editForm-${post.id}" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <label style="font-size:11px;color:var(--muted)" data-i18n="web.field_title">Title</label>
+        <input type="text" id="edit-title-${post.id}" value="${escapeHtml(post.title)}" style="width:100%;margin-bottom:8px">
+        <label style="font-size:11px;color:var(--muted)" data-i18n="web.field_meta_title">Meta Title</label>
+        <input type="text" id="edit-metaTitle-${post.id}" value="${escapeHtml(post.meta_title || '')}" style="width:100%;margin-bottom:8px">
+        <label style="font-size:11px;color:var(--muted)" data-i18n="web.field_meta_description">Meta Description</label>
+        <input type="text" id="edit-metaDescription-${post.id}" value="${escapeHtml(post.meta_description || '')}" style="width:100%;margin-bottom:8px">
+        <label style="font-size:11px;color:var(--muted)" data-i18n="web.field_focus_keyword">Focus Keyword</label>
+        <input type="text" id="edit-focusKeyword-${post.id}" value="${escapeHtml(post.focus_keyword || '')}" style="width:100%;margin-bottom:8px">
+        <label style="font-size:11px;color:var(--muted)" data-i18n="web.field_category">Category</label>
+        <input type="text" id="edit-category-${post.id}" value="${escapeHtml(post.category || '')}" style="width:100%;margin-bottom:8px">
+        <label style="font-size:11px;color:var(--muted)" data-i18n="web.field_tags">Tags</label>
+        <input type="text" id="edit-tags-${post.id}" value="${escapeHtml((post.tags || []).join(', '))}" style="width:100%;margin-bottom:8px" data-i18n-placeholder="web.tags_comma_separated" placeholder="comma, separated, tags">
+        <label style="font-size:11px;color:var(--muted)" data-i18n="web.field_body_html">Body (HTML)</label>
+        <textarea id="edit-bodyHtml-${post.id}" rows="10" style="width:100%;font-family:monospace;font-size:11.5px;margin-bottom:10px">${escapeHtml(post.body_html)}</textarea>
+        <button class="btn-primary" onclick="saveGeneratedPostEdit('${post.id}')" id="saveBtn-${post.id}" data-i18n="web.save_changes_button">Save Changes</button>
+      </div>
+    </div>`;
+  }, 5, 'generatedPosts');
+}
+
+function toggleEditGeneratedPost(postId) {
+  const form = document.getElementById(`editForm-${postId}`);
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+async function saveGeneratedPostEdit(postId) {
+  const btn = document.getElementById(`saveBtn-${postId}`);
+  btn.disabled = true;
+  btn.textContent = t('web.saving');
+  try {
+    const payload = {
+      title: document.getElementById(`edit-title-${postId}`).value,
+      metaTitle: document.getElementById(`edit-metaTitle-${postId}`).value,
+      metaDescription: document.getElementById(`edit-metaDescription-${postId}`).value,
+      focusKeyword: document.getElementById(`edit-focusKeyword-${postId}`).value,
+      category: document.getElementById(`edit-category-${postId}`).value,
+      tags: document.getElementById(`edit-tags-${postId}`).value.split(',').map(s => s.trim()).filter(Boolean),
+      bodyHtml: document.getElementById(`edit-bodyHtml-${postId}`).value,
+    };
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/generated-posts/${postId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('toast.saved'), 'success');
+    loadWebsiteGeneratedPosts();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.save_changes_button');
+  }
+}
+
+async function publishGeneratedPost(postId) {
+  if (!confirm(t('web.confirm_publish'))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/generated-posts/${postId}/publish`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.published_toast'), 'success');
+    loadWebsiteGeneratedPosts();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function loadWebsiteActions() {
