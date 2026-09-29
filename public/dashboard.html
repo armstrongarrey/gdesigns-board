@@ -1916,12 +1916,18 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
              that reason. -->
         <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px;border:1px solid rgba(239,68,68,.25)">
           <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.content_automation_title">Automatic Content Creation</div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.content_automation_warning">When enabled, the AI writes and creates a new blog post on this site once a day, without per-post approval. This never modifies an existing page or post's URL.</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.content_automation_warning">When enabled, the AI writes and creates a new blog post on this site on the schedule you choose below, without per-post approval. This never modifies an existing page or post's URL.</div>
           <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer;margin-bottom:10px">
             <input type="checkbox" id="websiteContentAutomationEnabled" onchange="updateWebsitePermissions()" style="width:auto">
-            <span data-i18n="web.content_automation_enable">Automatically write and create new blog posts daily</span>
+            <span data-i18n="web.content_automation_enable">Automatically write and create new blog posts</span>
           </label>
           <div id="websiteContentAutomationPublishRow" style="display:none;margin-left:24px">
+            <label style="font-size:11px;color:var(--muted)" data-i18n="web.content_automation_frequency_label">How often</label>
+            <select class="form-input" id="websiteContentAutomationFrequency" onchange="updateWebsitePermissions()" style="font-size:12.5px;max-width:280px;margin-bottom:10px">
+              <option value="daily" data-i18n="web.frequency_daily">Daily</option>
+              <option value="weekly" data-i18n="web.frequency_weekly">Weekly</option>
+              <option value="monthly" data-i18n="web.frequency_monthly">Monthly</option>
+            </select>
             <label style="font-size:11px;color:var(--muted)" data-i18n="web.content_automation_publish_label">When a new post is ready</label>
             <select class="form-input" id="websiteContentAutomationPublishMode" onchange="updateWebsitePermissions()" style="font-size:12.5px;max-width:280px">
               <option value="draft" data-i18n="web.content_automation_save_draft">Save as draft (I publish manually)</option>
@@ -7313,6 +7319,7 @@ function renderWebsiteStatusCard(connection) {
   document.getElementById('websiteAutomationMode').value = connection.automation_mode || 'manual';
   document.getElementById('websiteContentAutomationEnabled').checked = !!connection.content_automation_enabled;
   document.getElementById('websiteContentAutomationPublishMode').value = connection.content_automation_publish_mode || 'draft';
+  document.getElementById('websiteContentAutomationFrequency').value = connection.content_automation_frequency || 'daily';
   document.getElementById('websiteContentAutomationPublishRow').style.display = connection.content_automation_enabled ? 'block' : 'none';
 
   const errEl = document.getElementById('websiteStatusError');
@@ -7799,11 +7806,12 @@ async function updateWebsitePermissions() {
   const automationMode = document.getElementById('websiteAutomationMode').value;
   const contentAutomationEnabled = document.getElementById('websiteContentAutomationEnabled').checked;
   const contentAutomationPublishMode = document.getElementById('websiteContentAutomationPublishMode').value;
+  const contentAutomationFrequency = document.getElementById('websiteContentAutomationFrequency').value;
   document.getElementById('websiteContentAutomationPublishRow').style.display = contentAutomationEnabled ? 'block' : 'none';
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/permissions`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permissionLevel, automationMode, contentAutomationEnabled, contentAutomationPublishMode })
+      body: JSON.stringify({ permissionLevel, automationMode, contentAutomationEnabled, contentAutomationPublishMode, contentAutomationFrequency })
     });
     if (res.ok) showToast(t('toast.saved'), 'success');
     else showToast(t('board.connection_error'), 'error');
