@@ -1224,6 +1224,37 @@ CREATE TABLE IF NOT EXISTS website_actions (
 CREATE INDEX IF NOT EXISTS idx_website_actions_connection ON website_actions(website_connection_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_website_actions_pending ON website_actions(website_connection_id, approval_status) WHERE approval_status = 'pending';
 
+-- Real, deliberate local record of every post the SEO Agent has actually
+-- created on WordPress — distinct from website_actions (which tracks
+-- proposed CHANGES to something that already exists) since a generated
+-- blog post is a genuinely new, already-created real thing from the
+-- moment it's made, not a pending proposal. Lets a generated post be
+-- seen, edited, and published from within Arreyon itself, not only by
+-- visiting the connected site directly.
+CREATE TABLE IF NOT EXISTS website_generated_posts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  website_connection_id UUID REFERENCES website_connections(id) ON DELETE CASCADE,
+  wp_post_id INTEGER NOT NULL,
+  topic TEXT,
+  title TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  body_html TEXT NOT NULL,
+  meta_title TEXT,
+  meta_description TEXT,
+  focus_keyword TEXT,
+  category TEXT,
+  tags JSONB,
+  featured_image_generated BOOLEAN DEFAULT FALSE,
+  -- Real, mirrored status — kept in sync with the real, live WordPress
+  -- post's own real status on every real read/edit/publish here, never
+  -- treated as more authoritative than what WordPress itself reports.
+  status VARCHAR(20) DEFAULT 'draft', -- 'draft' | 'publish'
+  wp_url TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_website_generated_posts_connection ON website_generated_posts(website_connection_id, created_at DESC);
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Arreyon Connect plugin — connection-code handshake (Option 2). WordPress
 -- initiates here (the reverse of the existing paste-a-credential flow):
