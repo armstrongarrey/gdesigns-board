@@ -4917,7 +4917,7 @@ async function generateBlogPostContent(connection, decryptedPassword, context, t
   const { internalCandidates, externalCandidates } = await gatherVerifiedLinkCandidates(connection, decryptedPassword, pages, posts, topic);
   const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
 
-  const prompt = `You are an SEO/AEO/GEO content writer producing a publication-ready WordPress blog post for a real business.
+  const prompt = `You are a senior human copywriter and SEO/AEO/GEO strategist, ghostwriting a genuinely excellent, publication-ready blog post for a real business — the kind of post an actual industry expert would write, not something that reads as AI-generated. This needs to be good enough to realistically compete for page-one ranking on Google and to be cited directly by AI answer engines (ChatGPT, Perplexity, AI Overviews).
 ${contextSummary}
 
 TOPIC: ${topic}
@@ -4928,7 +4928,23 @@ ${internalCandidates.length ? internalCandidates.map(c => `- "${c.title}" (${c.u
 REAL, CURRENTLY-LIVE EXTERNAL PAGES relevant to this topic (confirmed reachable just now) — you may ONLY link externally to these exact URLs, verbatim, never invent a new one:
 ${externalCandidates.length ? externalCandidates.map(c => `- "${c.title}" (${c.url})`).join('\n') : '(No real, verified external sources were found.)'}
 
-Write clean, well-structured HTML (h2/h3 headings, paragraphs, at least one list) — genuinely useful, specific content, not generic filler. Use single quotes for any HTML attribute. Never invent a fact, statistic, or detail about the business that isn't in the context above.
+CRITICAL RULES — read carefully, these are non-negotiable:
+
+1. NEVER invent, name, or reference any specific third-party business, company, brand, or product as an example or case study — real or fictional — unless it was explicitly named in the business context above. This includes inventing plausible-sounding local business names. If you want to illustrate a point, describe a generic, unnamed scenario instead (e.g. "a boutique owner juggling dozens of daily inquiries" — never "Dermia Skincare handles dozens of inquiries").
+
+2. NEVER invent a fact, statistic, number, or specific claim about the business itself that isn't stated in the context above.
+
+3. Do NOT create a "Further Reading," "Additional Resources," "Sources," or any other closing list of links. Every internal or external link must be woven naturally into a sentence, inline, exactly where it adds real value to that specific sentence — never listed separately, and never more than 3-4 links total in the whole post.
+
+4. Do NOT use a checklist-with-checkmark-emoji summary (✅) at the end, or any emoji at all. Do not open with meta-commentary about the post itself ("This guide will show you...", "In this article, we'll cover..."). Do not close with a generic "In conclusion" or "Final thoughts" wrap-up that just restates what was already said.
+
+5. Vary your sentence structure and paragraph length like a real writer would. Avoid repeating the same transitional phrase or sentence pattern more than once (e.g. don't link to other posts with the identical phrasing "read our guide on X" / "see our article on Y" / "explore our Z" three times in a row — use different, natural phrasing each time, or better, fewer links total).
+
+6. Write with genuine specificity and confident expertise grounded ONLY in the real context given — concrete, real details beat vague generalities, but a real detail beats an invented one every time. If you don't have enough real specifics for a claim, write more generally rather than fabricating a specific-sounding one.
+
+7. Where it genuinely fits the topic, include one short, naturally-integrated question-and-answer moment addressing a real, specific question someone would actually search for — this helps AI answer engines cite the post directly. Don't force this if it doesn't fit naturally.
+
+Structure: clear H2/H3 headings, genuinely useful paragraphs, real HTML (single quotes for any attribute), and a list only where a list is genuinely the clearest format (a real sequence of steps, a real set of options) — not as decoration.
 
 Respond in EXACTLY this two-part format, with no other text before, between, or after:
 
