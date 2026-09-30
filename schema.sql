@@ -1255,6 +1255,29 @@ CREATE TABLE IF NOT EXISTS website_generated_posts (
 );
 CREATE INDEX IF NOT EXISTS idx_website_generated_posts_connection ON website_generated_posts(website_connection_id, created_at DESC);
 
+-- Real, deliberate single record per audit cycle — ties together
+-- Website Intelligence, SEO proposals, taxonomy proposals, duplicate-title
+-- proposals, and broken-link detection into one real, timestamped report,
+-- rather than the person having to piece it together from separate
+-- feature-by-feature results. The individual real actions this run
+-- generates still land in website_actions and website_audit_log as
+-- always — this table is the aggregate summary of one real run, not a
+-- replacement for either.
+CREATE TABLE IF NOT EXISTS website_audit_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  website_connection_id UUID REFERENCES website_connections(id) ON DELETE CASCADE,
+  triggered_by VARCHAR(20) NOT NULL, -- 'manual' | 'automatic'
+  status VARCHAR(20) DEFAULT 'running', -- 'running' | 'completed' | 'failed'
+  issues_found_count INTEGER DEFAULT 0,
+  auto_fixed_count INTEGER DEFAULT 0,
+  pending_approval_count INTEGER DEFAULT 0,
+  findings_summary JSONB, -- structured breakdown by category, for the report view
+  error_message TEXT,
+  started_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_website_audit_runs_connection ON website_audit_runs(website_connection_id, started_at DESC);
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Arreyon Connect plugin — connection-code handshake (Option 2). WordPress
 -- initiates here (the reverse of the existing paste-a-credential flow):
