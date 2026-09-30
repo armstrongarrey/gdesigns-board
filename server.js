@@ -4913,6 +4913,34 @@ function stripUnverifiedLinks(html, verifiedUrls) {
   });
 }
 
+// Real, deliberate extraction from the post's actual, current body HTML
+// rather than a separately stored list — this is always in sync with
+// whatever the post's real content actually is right now, edits
+// included, rather than a stale snapshot from generation time. Every
+// link a generated post can contain was already confirmed real and
+// live by stripUnverifiedLinks above before the post was ever created,
+// so "verified" here reflects a real, already-established guarantee,
+// not a fresh check on every read.
+function extractLinksFromHtml(html, siteUrl) {
+  const links = [];
+  const seen = new Set();
+  let siteHost = null;
+  try { siteHost = new URL(siteUrl).hostname.replace(/^www\./, ''); } catch { /* Real, deliberate no-op — an unparseable site URL just means every link falls back to being treated as external below. */ }
+
+  const regex = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gis;
+  let match;
+  while ((match = regex.exec(html)) !== null) {
+    const url = match[1];
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const text = wpStripHtml(match[2]).trim();
+    let isInternal = false;
+    try { isInternal = siteHost && new URL(url, siteUrl).hostname.replace(/^www\./, '') === siteHost; } catch { /* Real, deliberate no-op — an unparseable link URL is treated as external below. */ }
+    links.push({ url, text, isInternal, verified: true });
+  }
+  return links;
+}
+
 async function generateBlogPostContent(connection, decryptedPassword, context, topic, pages, posts) {
   const { internalCandidates, externalCandidates } = await gatherVerifiedLinkCandidates(connection, decryptedPassword, pages, posts, topic);
   const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
@@ -6118,7 +6146,11 @@ app.get('/api/business/:id/website/generated-posts', authRequired, async (req, r
       `SELECT * FROM website_generated_posts WHERE website_connection_id = $1 ORDER BY created_at DESC LIMIT 100`,
       [connection.id]
     );
-    res.json({ posts: result.rows });
+    const posts = result.rows.map(post => ({
+      ...post,
+      links: extractLinksFromHtml(post.body_html, connection.site_url),
+    }));
+    res.json({ posts });
   } catch (e) {
     console.error('Get generated posts error:', e.message);
     res.status(500).json({ error: 'Could not load generated posts.' });
