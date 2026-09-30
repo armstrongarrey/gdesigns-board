@@ -1916,7 +1916,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
              that reason. -->
         <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px;border:1px solid rgba(239,68,68,.25)">
           <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.content_automation_title">Automatic Content Creation</div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.content_automation_warning">When enabled, the AI writes and creates a new blog post on this site on the schedule you choose below, without per-post approval. This never modifies an existing page or post's URL.</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.content_automation_warning">When enabled, the AI audits and fixes existing SEO issues, then writes and creates a new blog post, on the schedule you choose below — low-risk fixes follow your Automation Mode setting above, and a new post never modifies an existing page or post's URL.</div>
           <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer;margin-bottom:10px">
             <input type="checkbox" id="websiteContentAutomationEnabled" onchange="updateWebsitePermissions()" style="width:auto">
             <span data-i18n="web.content_automation_enable">Automatically write and create new blog posts</span>
@@ -1964,6 +1964,18 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <button class="btn-primary" onclick="generateWebsiteIntelligence()" id="websiteGenerateBtn" data-i18n="web.generate_button">Analyze Website</button>
         </div>
         <div id="websiteIntelligenceContent"></div>
+      </div>
+
+      <!-- RUN AUDIT & OPTIMIZE — the single, aggregated action tying together
+           SEO proposals, categories/tags, duplicate titles, and broken-link
+           detection into one real, timestamped run with a found/fixed
+           report, rather than four separate feature clicks. -->
+      <div id="websiteAuditRunSection" style="display:none;margin-top:28px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.audit_run_title">Run Audit &amp; Optimize</div>
+          <button class="btn-primary" onclick="runWebsiteAudit()" id="websiteRunAuditBtn" data-i18n="web.run_audit_button">Run Audit &amp; Optimize</button>
+        </div>
+        <div id="websiteAuditRunContent"></div>
       </div>
 
       <!-- CATEGORIES & TAGS — read the site's real, existing taxonomy and
@@ -7266,6 +7278,7 @@ async function loadWebsiteBusinesses() {
       document.getElementById('websiteMediaSection').style.display = 'none';
       document.getElementById('websiteActivityLogSection').style.display = 'none';
       document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
+      document.getElementById('websiteAuditRunSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return;
     }
@@ -7309,6 +7322,7 @@ function onWebsiteBusinessSelectChange() {
     document.getElementById('websiteMediaSection').style.display = 'none';
     document.getElementById('websiteActivityLogSection').style.display = 'none';
     document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
+    document.getElementById('websiteAuditRunSection').style.display = 'none';
     document.getElementById('websiteActionsSection').style.display = 'none';
     resetWebsiteConnectForm();
     return;
@@ -7379,6 +7393,7 @@ async function loadWebsiteSection() {
       document.getElementById('websiteMediaSection').style.display = 'none';
       document.getElementById('websiteActivityLogSection').style.display = 'none';
       document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
+      document.getElementById('websiteAuditRunSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return false;
     }
@@ -7391,12 +7406,14 @@ async function loadWebsiteSection() {
     document.getElementById('websiteMediaSection').style.display = 'block';
     document.getElementById('websiteActivityLogSection').style.display = 'block';
     document.getElementById('websiteGeneratedPostsSection').style.display = 'block';
+    document.getElementById('websiteAuditRunSection').style.display = 'block';
     document.getElementById('websiteActionsSection').style.display = 'block';
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
     loadWebsiteTaxonomy();
     loadWebsiteActivityLog();
     loadWebsiteGeneratedPosts();
+    loadWebsiteAuditRuns();
     loadWebsiteActions();
     return true;
   } catch (e) {
@@ -8034,6 +8051,78 @@ async function publishGeneratedPost(postId) {
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
+}
+
+// ── RUN AUDIT & OPTIMIZE ─────────────────────────────────────────────────
+const AUDIT_CATEGORY_LABELS = {
+  seoProposals: 'web.audit_category_seo',
+  taxonomy: 'web.audit_category_taxonomy',
+  duplicateTitles: 'web.audit_category_duplicate_titles',
+  brokenLinks: 'web.audit_category_broken_links',
+};
+
+async function runWebsiteAudit() {
+  const btn = document.getElementById('websiteRunAuditBtn');
+  btn.disabled = true;
+  btn.textContent = t('web.running_audit');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/run-audit`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.audit_complete_toast').replace('{found}', data.issuesFound).replace('{fixed}', data.autoFixed).replace('{pending}', data.pendingApproval), 'success');
+    loadWebsiteAuditRuns();
+    loadWebsiteActions();
+    loadWebsiteActivityLog();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.run_audit_button');
+  }
+}
+
+async function loadWebsiteAuditRuns() {
+  const contentEl = document.getElementById('websiteAuditRunContent');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/audit-runs`);
+    const data = await res.json();
+    if (!res.ok) {
+      contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080;padding:8px 0">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+      return;
+    }
+    renderAuditRunsList(data.runs || []);
+  } catch (e) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080;padding:8px 0">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderAuditRunsList(runs) {
+  const contentEl = document.getElementById('websiteAuditRunContent');
+  if (!runs.length) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_audit_runs')}</div>`;
+    return;
+  }
+  contentEl.innerHTML = renderCollapsibleItems(runs, (run) => {
+    const fullTimestamp = new Date(run.started_at).toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' });
+    const findings = run.findings_summary || {};
+    const categoryRows = Object.entries(findings).filter(([, v]) => v && !v.pendingPoll).map(([key, v]) => {
+      const label = v.label || t(AUDIT_CATEGORY_LABELS[key] || 'web.feature_general');
+      if (v.error) return `<div style="font-size:11.5px;color:#ff8080">${escapeHtml(label)}: ${escapeHtml(v.error)}</div>`;
+      return `<div style="font-size:11.5px;color:var(--text2)">${escapeHtml(label)}: ${t('web.audit_found_fixed_line').replace('{found}', v.found).replace('{fixed}', v.fixed).replace('{pending}', v.pending)}${v.note ? ` <span style="color:var(--muted)">(${escapeHtml(v.note)})</span>` : ''}</div>`;
+    }).join('');
+    return `
+    <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <div style="font-size:12px;color:var(--muted)">${escapeHtml(fullTimestamp)} · ${t(run.triggered_by === 'automatic' ? 'web.triggered_automatic' : 'web.triggered_manual')}</div>
+        <span style="font-size:9px;font-weight:700;color:${run.status === 'completed' ? '#22c55e' : run.status === 'failed' ? '#ff8080' : '#f59e0b'};text-transform:uppercase">${escapeHtml(run.status)}</span>
+      </div>
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin:6px 0">${t('web.audit_summary_line').replace('{found}', run.issues_found_count).replace('{fixed}', run.auto_fixed_count).replace('{pending}', run.pending_approval_count)}</div>
+      <div style="margin-top:4px">${categoryRows}</div>
+    </div>`;
+  }, 5, 'auditRuns');
 }
 
 async function loadWebsiteActions() {
