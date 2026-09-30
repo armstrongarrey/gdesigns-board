@@ -4948,6 +4948,14 @@ CRITICAL RULES — read carefully, these are non-negotiable:
 
 9. Choose ONE real, specific, genuinely valuable focus keyword or phrase for this exact topic — the phrase a real person would actually type into a search engine for this. That exact keyword (or a very close natural variant) MUST appear in: the title itself, the meta title, the meta description, the first paragraph of the body, and at least one more time naturally later in the body. It must always read as a natural sentence a real writer would write — never forced, repeated unnaturally, or stuffed in where it doesn't fit grammatically.
 
+10. Readability is as important as accuracy — this must read easily for a general audience, not a dense, hard-to-follow wall of text. Follow all of these:
+- Keep most sentences short to medium (aim for well under 20 words each). If a sentence has more than one comma-separated clause, consider splitting it into two sentences instead.
+- Keep paragraphs short: 2-4 sentences at most. A paragraph covering more than one idea should be split.
+- Use a new H2 or H3 subheading every 2-4 paragraphs, even within a single topic, so the page is easy to scan rather than a long unbroken section.
+- Prefer plain, everyday words over formal or complex ones wherever a simpler word means the same thing (e.g. "use" not "utilize", "helps" not "facilitates", "start" not "commence").
+- Prefer active voice ("the app sends a message") over passive voice ("a message is sent by the app") in the large majority of sentences.
+- One clear idea per sentence and per paragraph — never stack multiple unrelated points together just to save space.
+
 Structure: clear H2/H3 headings, genuinely useful paragraphs, real HTML (single quotes for any attribute), and a list only where a list is genuinely the clearest format (a real sequence of steps, a real set of options) — not as decoration. The title itself (which becomes this post's H1 and its URL slug) must be the one place the focus keyword appears most naturally and prominently.
 
 Respond in EXACTLY this two-part format, with no other text before, between, or after:
@@ -5561,10 +5569,10 @@ app.post('/api/business/:id/website/tags', authRequired, (req, res) => handleCre
 // same real logic drifting apart over time. userId is optional — null
 // for an automatic/scheduled run, since there's no real person to
 // attribute it to in that case.
-async function runTaxonomyProposalGeneration(connection, decryptedPassword, context, userId = null) {
+async function runTaxonomyProposalGeneration(connection, decryptedPassword, context, userId = null, preloadedContent = null) {
   let posts, categories, tags;
   try {
-    ({ posts, categories, tags } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+    ({ posts, categories, tags } = preloadedContent || await getWordPressContentForAnalysis(connection, decryptedPassword));
   } catch (e) {
     if (e.pendingPoll) return { pendingPoll: true, message: e.message, proposals: [] };
     if (e.message.includes('401')) {
@@ -5876,6 +5884,26 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 // together from four separate feature clicks. A failure in any one
 // category doesn't abort the rest — the run reports what it could,
 // including any category that genuinely failed.
+// Real, deliberate human-readable description of one actual change —
+// built directly from the real previous_state/proposed_change on a
+// website_actions row, so the report shows real specifics (what the
+// title changed from and to, which category/tags were assigned) rather
+// than just a bare action-type label.
+function describeActionChange(action) {
+  const change = action.edited_change || action.proposed_change || {};
+  const previous = action.previous_state || {};
+  if (change.metaTitle) return `Meta title: "${previous.title || 'none'}" → "${change.metaTitle}"`;
+  if (change.metaDescription) return `Meta description: ${previous.metaDescription ? 'updated' : 'added'} → "${change.metaDescription}"`;
+  if (change.category || change.tags) {
+    const parts = [];
+    if (change.category) parts.push(`Category set to "${change.category}"`);
+    if (Array.isArray(change.tags) && change.tags.length) parts.push(`Tags added: ${change.tags.join(', ')}`);
+    return parts.join('; ');
+  }
+  if (change.imagePrompt) return 'Featured image generated';
+  return action.action_type;
+}
+
 async function runFullWebsiteAudit(connection, decryptedPassword, context, triggeredBy, userId = null) {
   const runInsert = await pool.query(
     `INSERT INTO website_audit_runs (website_connection_id, triggered_by, status) VALUES ($1, $2, 'running') RETURNING id`,
@@ -5885,11 +5913,41 @@ async function runFullWebsiteAudit(connection, decryptedPassword, context, trigg
 
   const findings = {};
   let issuesFound = 0, autoFixed = 0, pendingApproval = 0;
+  // Real, deliberate per-page/post grouping, built alongside the
+  // per-category summary — a person reading a report naturally thinks
+  // "what happened to THIS page", not just "how many total taxonomy
+  // fixes happened somewhere on the site".
+  const byPage = new Map(); // targetUrl -> { title, url, changes: [] }
+
+  const addToPageView = (action, status) => {
+    if (!byPage.has(action.target_url)) byPage.set(action.target_url, { title: action.target_title, url: action.target_url, changes: [] });
+    byPage.get(action.target_url).changes.push({ description: describeActionChange(action), status });
+  };
+
+  // Real, deliberate single fetch, shared across every category below —
+  // each category previously fetched this same real WordPress content
+  // independently, meaning up to four full fetches in quick succession
+  // for one audit run, which is exactly what was triggering real 429
+  // rate-limit responses on more cautious hosting. Fetched once here,
+  // reused everywhere, so one audit run now touches WordPress's REST
+  // API roughly a quarter as often.
+  let preloadedContent = null;
+  try {
+    preloadedContent = await getWordPressContentForAnalysis(connection, decryptedPassword);
+  } catch (e) {
+    if (e.pendingPoll) {
+      await pool.query(`UPDATE website_audit_runs SET status = 'failed', error_message = $1, completed_at = NOW() WHERE id = $2`, [e.message, runId]);
+      return { runId, issuesFound: 0, autoFixed: 0, pendingApproval: 0, findings: {}, pendingPoll: true, message: e.message };
+    }
+    // Real, deliberate fall-through rather than aborting the whole run —
+    // each category below still tries its own real fetch if this
+    // shared one failed, the same real resilience as before this fix.
+  }
 
   const categories = [
-    { key: 'seoProposals', label: 'SEO title & description', run: () => runSeoProposalGeneration(connection, decryptedPassword, context, userId, false) },
-    { key: 'taxonomy', label: 'Categories & tags', run: () => runTaxonomyProposalGeneration(connection, decryptedPassword, context, userId) },
-    { key: 'duplicateTitles', label: 'Duplicate titles', run: () => runDuplicateTitleProposalGeneration(connection, decryptedPassword, context, userId) },
+    { key: 'seoProposals', label: 'SEO title & description', run: () => runSeoProposalGeneration(connection, decryptedPassword, context, userId, false, preloadedContent) },
+    { key: 'taxonomy', label: 'Categories & tags', run: () => runTaxonomyProposalGeneration(connection, decryptedPassword, context, userId, preloadedContent) },
+    { key: 'duplicateTitles', label: 'Duplicate titles', run: () => runDuplicateTitleProposalGeneration(connection, decryptedPassword, context, userId, preloadedContent) },
   ];
 
   for (const category of categories) {
@@ -5906,6 +5964,9 @@ async function runFullWebsiteAudit(connection, decryptedPassword, context, trigg
       autoFixed += fixed;
       pendingApproval += pending;
       findings[category.key] = { label: category.label, found, fixed, pending };
+      for (const action of (result.proposals || [])) {
+        addToPageView(action, action.execution_status === 'executed' ? 'fixed' : 'pending');
+      }
     } catch (e) {
       findings[category.key] = { label: category.label, error: e.message };
     }
@@ -5917,17 +5978,25 @@ async function runFullWebsiteAudit(connection, decryptedPassword, context, trigg
   // content, a genuinely different, higher-risk capability).
   if (connection.connection_mode !== 'poll') {
     try {
-      const linksResult = await runBrokenLinksCheck(connection, decryptedPassword);
+      const linksResult = await runBrokenLinksCheck(connection, decryptedPassword, preloadedContent);
       issuesFound += linksResult.brokenLinks.length;
       findings.brokenLinks = { label: 'Broken internal links', found: linksResult.brokenLinks.length, fixed: 0, pending: linksResult.brokenLinks.length, note: 'Detected, not yet auto-fixable — fixing requires editing real page content.' };
+      for (const broken of linksResult.brokenLinks) {
+        for (const referrer of (broken.foundOn || [])) {
+          if (!byPage.has(referrer.url)) byPage.set(referrer.url, { title: referrer.title, url: referrer.url, changes: [] });
+          byPage.get(referrer.url).changes.push({ description: `Broken link found: ${broken.url}`, status: 'pending' });
+        }
+      }
     } catch (e) {
       findings.brokenLinks = { label: 'Broken internal links', error: e.message };
     }
   }
 
+  const findingsByPage = [...byPage.values()];
+
   await pool.query(
     `UPDATE website_audit_runs SET status = 'completed', issues_found_count = $1, auto_fixed_count = $2, pending_approval_count = $3, findings_summary = $4, completed_at = NOW() WHERE id = $5`,
-    [issuesFound, autoFixed, pendingApproval, JSON.stringify(findings), runId]
+    [issuesFound, autoFixed, pendingApproval, JSON.stringify({ ...findings, byPage: findingsByPage }), runId]
   );
 
   await logWebsiteAudit(connection.id, triggeredBy === 'automatic' ? 'system' : 'user', userId,
@@ -5935,7 +6004,7 @@ async function runFullWebsiteAudit(connection, decryptedPassword, context, trigg
     `Audit run completed: ${issuesFound} issue(s) found, ${autoFixed} auto-fixed, ${pendingApproval} awaiting approval`,
     { runId, issuesFound, autoFixed, pendingApproval }, 'general');
 
-  return { runId, issuesFound, autoFixed, pendingApproval, findings };
+  return { runId, issuesFound, autoFixed, pendingApproval, findings, findingsByPage };
 }
 
 app.post('/api/business/:id/website/run-audit', authRequired, async (req, res) => {
@@ -5969,6 +6038,30 @@ app.get('/api/business/:id/website/audit-runs', authRequired, async (req, res) =
   } catch (e) {
     console.error('Get audit runs error:', e.message);
     res.status(500).json({ error: 'Could not load audit history.' });
+  }
+});
+
+app.delete('/api/business/:id/website/audit-runs', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+
+    const { ids, all } = req.body || {};
+    if (Array.isArray(ids) && ids.length) {
+      const result = await pool.query(
+        `DELETE FROM website_audit_runs WHERE website_connection_id = $1 AND id = ANY($2::uuid[]) RETURNING id`,
+        [connection.id, ids]
+      );
+      return res.json({ success: true, clearedCount: result.rows.length });
+    }
+    if (all === true) {
+      const result = await pool.query(`DELETE FROM website_audit_runs WHERE website_connection_id = $1 RETURNING id`, [connection.id]);
+      return res.json({ success: true, clearedCount: result.rows.length });
+    }
+    res.status(400).json({ error: 'Specify which runs to clear: ids or all.' });
+  } catch (e) {
+    console.error('Clear audit runs error:', e.message);
+    res.status(500).json({ error: 'Could not clear audit history.' });
   }
 });
 
@@ -6218,10 +6311,10 @@ app.post('/api/business/:id/website/generate-blog-post', authRequired, async (re
   }
 });
 
-async function runBrokenLinksCheck(connection, decryptedPassword) {
+async function runBrokenLinksCheck(connection, decryptedPassword, preloadedContent = null) {
   let pages, posts;
   try {
-    ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+    ({ pages, posts } = preloadedContent || await getWordPressContentForAnalysis(connection, decryptedPassword));
   } catch (e) {
     if (e.message.includes('401')) {
       await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
@@ -6281,10 +6374,10 @@ app.post('/api/business/:id/website/broken-links', authRequired, async (req, res
   }
 });
 
-async function runDuplicateTitleProposalGeneration(connection, decryptedPassword, context, userId = null) {
+async function runDuplicateTitleProposalGeneration(connection, decryptedPassword, context, userId = null, preloadedContent = null) {
   let pages, posts;
   try {
-    ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+    ({ pages, posts } = preloadedContent || await getWordPressContentForAnalysis(connection, decryptedPassword));
   } catch (e) {
     if (e.pendingPoll) return { pendingPoll: true, message: e.message, proposals: [] };
     if (e.message.includes('401')) {
@@ -6413,10 +6506,10 @@ app.post('/api/business/:id/website/duplicate-title-proposals', authRequired, as
   }
 });
 
-async function runSeoProposalGeneration(connection, decryptedPassword, context, userId = null, useLiveResearch = false) {
+async function runSeoProposalGeneration(connection, decryptedPassword, context, userId = null, useLiveResearch = false, preloadedContent = null) {
   let pages, posts;
   try {
-    ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+    ({ pages, posts } = preloadedContent || await getWordPressContentForAnalysis(connection, decryptedPassword));
   } catch (e) {
     if (e.pendingPoll) return { pendingPoll: true, message: e.message, proposals: [] };
     if (e.message.includes('401')) {
