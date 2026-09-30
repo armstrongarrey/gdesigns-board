@@ -4944,7 +4944,11 @@ CRITICAL RULES — read carefully, these are non-negotiable:
 
 7. Where it genuinely fits the topic, include one short, naturally-integrated question-and-answer moment addressing a real, specific question someone would actually search for — this helps AI answer engines cite the post directly. Don't force this if it doesn't fit naturally.
 
-Structure: clear H2/H3 headings, genuinely useful paragraphs, real HTML (single quotes for any attribute), and a list only where a list is genuinely the clearest format (a real sequence of steps, a real set of options) — not as decoration.
+8. Punctuation must read as professionally edited, not AI-generated. Do NOT use em dashes (—) or double hyphens as a stylistic device — use a period, comma, colon, or semicolon instead, whichever actually fits the sentence grammatically. Only standard punctuation: periods, commas, colons, semicolons, question marks, parentheses, and a single hyphen only inside a genuinely hyphenated word. No emoji anywhere.
+
+9. Choose ONE real, specific, genuinely valuable focus keyword or phrase for this exact topic — the phrase a real person would actually type into a search engine for this. That exact keyword (or a very close natural variant) MUST appear in: the title itself, the meta title, the meta description, the first paragraph of the body, and at least one more time naturally later in the body. It must always read as a natural sentence a real writer would write — never forced, repeated unnaturally, or stuffed in where it doesn't fit grammatically.
+
+Structure: clear H2/H3 headings, genuinely useful paragraphs, real HTML (single quotes for any attribute), and a list only where a list is genuinely the clearest format (a real sequence of steps, a real set of options) — not as decoration. The title itself (which becomes this post's H1 and its URL slug) must be the one place the focus keyword appears most naturally and prominently.
 
 Respond in EXACTLY this two-part format, with no other text before, between, or after:
 
@@ -4976,6 +4980,13 @@ Respond in EXACTLY this two-part format, with no other text before, between, or 
   // real, pre-verified candidates actually offered above.
   const allVerifiedUrls = [...internalCandidates.map(c => c.url), ...externalCandidates.map(c => c.url)];
   bodyHtml = stripUnverifiedLinks(bodyHtml, allVerifiedUrls);
+
+  // Real, deliberate defense-in-depth, the same discipline as the link
+  // stripping above — the prompt's own punctuation rule does most of
+  // the work, but a stray em dash or double hyphen the AI still slips
+  // in gets replaced with a comma here, a safe, grammatically sound
+  // substitute in the overwhelming majority of real em-dash usage.
+  bodyHtml = bodyHtml.replace(/\s*[—–]\s*|\s+--\s+/g, ', ').replace(/,\s*,/g, ',').replace(/,\s*\./g, '.');
 
   return {
     title: parsed.title,
@@ -5735,7 +5746,7 @@ PAGES/POSTS WITH NO FEATURED IMAGE:
 ${candidatesSummary}
 
 For EACH numbered item above, based on its actual content, write:
-- A detailed, specific, professional image-generation prompt (describe a real, concrete scene/composition/style — never generic stock-photo phrasing like "business people shaking hands"; ground it in what this specific piece is actually about). Never request any real, identifiable person, brand logo, or copyrighted character.
+- A detailed, specific, photorealistic image-generation prompt (describe a real, concrete scene/composition, shot like a genuine editorial or stock photograph — never an illustration, cartoon, drawing, clipart, or 3D render; never generic stock-photo phrasing like "business people shaking hands"; ground it in what this specific piece is actually about). Never request any real, identifiable person, brand logo, or copyrighted character.
 - A short, descriptive image title (a few words).
 - Accessible alt text (one concise sentence describing what the image shows, for real screen-reader users, not for SEO keyword stuffing).
 
@@ -5973,7 +5984,10 @@ async function runBlogPostGeneration(connection, decryptedPassword, context, top
   // call — keeps this one real, optional feature from adding both
   // extra real cost and extra real latency for what's meant to be a
   // simple, sensible default illustration.
-  const imagePrompt = `A professional, editorial-style illustration representing the concept of: ${generated.title}. Clean, modern, suitable for a business blog. Do not include any real, identifiable people, logos, or text.`;
+  // Real, deliberate photographic framing — "illustration" as a prompt
+  // word reliably produces cartoon/drawn-style output from image models;
+  // a real business blog needs a real-looking photo, not stylized art.
+  const imagePrompt = `A professional, photorealistic photograph representing the concept of: ${generated.title}. Real-world setting, natural lighting, shot like a genuine editorial or stock photograph — not an illustration, cartoon, drawing, clipart, or 3D render. Suitable for a business blog. Do not include any real, identifiable people, logos, or text.`;
 
   const result = await createWordPressBlogPost(connection, decryptedPassword, {
     title: generated.title, bodyHtml: generated.bodyHtml, slug: generated.slug,
@@ -5986,7 +6000,7 @@ async function runBlogPostGeneration(connection, decryptedPassword, context, top
     result.success
       ? `${publishStatus === 'publish' ? 'Published' : 'Drafted'} a new blog post: "${generated.title}"`
       : `Failed to create a new blog post: ${result.error}`,
-    { topic, title: generated.title, slug: generated.slug, url: result.url || null, error: result.error || null },
+    { topic, title: generated.title, slug: generated.slug, url: result.url || null, error: result.error || null, wpPostId: result.id || null },
     'content_generation');
 
   // Real, deliberate local record — this is what makes the post
@@ -6111,6 +6125,33 @@ app.post('/api/business/:id/website/generated-posts/:postId/publish', authRequir
   } catch (e) {
     console.error('Publish generated post error:', e.message);
     res.status(500).json({ error: 'Could not publish this post.' });
+  }
+});
+
+// Real, deliberate targeted clearing — once a post is published (or its
+// draft/update activity is no longer needed), the real log entries this
+// specific post generated (created, edited, published) can be cleared
+// in one action, rather than hunting for them one at a time in the
+// general Activity Log. Matched by this post's real wp_post_id, stored
+// in every one of its own log entries' details for exactly this reason.
+app.delete('/api/business/:id/website/generated-posts/:postId/log-entries', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+
+    const postResult = await pool.query('SELECT * FROM website_generated_posts WHERE id = $1 AND website_connection_id = $2', [req.params.postId, connection.id]);
+    if (!postResult.rows.length) return res.status(404).json({ error: 'Post not found.' });
+    const post = postResult.rows[0];
+
+    const result = await pool.query(
+      `DELETE FROM website_audit_log WHERE website_connection_id = $1 AND (details->>'wpPostId')::int = $2 RETURNING id`,
+      [connection.id, post.wp_post_id]
+    );
+
+    res.json({ success: true, clearedCount: result.rows.length });
+  } catch (e) {
+    console.error('Clear generated post log entries error:', e.message);
+    res.status(500).json({ error: 'Could not clear log entries for this post.' });
   }
 });
 
