@@ -5543,55 +5543,46 @@ async function handleCreateTaxonomyTerm(req, res, taxonomyType) {
 app.post('/api/business/:id/website/categories', authRequired, (req, res) => handleCreateTaxonomyTerm(req, res, 'category'));
 app.post('/api/business/:id/website/tags', authRequired, (req, res) => handleCreateTaxonomyTerm(req, res, 'tag'));
 
-app.post('/api/business/:id/website/taxonomy-proposals', authRequired, async (req, res) => {
+// Real, deliberate extraction — the exact same real logic the
+// "Suggest Categories & Tags" button has always run, now callable both
+// from that button's own route AND from the new, aggregated "Run Audit
+// & Optimize" action, rather than two real, separate copies of the
+// same real logic drifting apart over time. userId is optional — null
+// for an automatic/scheduled run, since there's no real person to
+// attribute it to in that case.
+async function runTaxonomyProposalGeneration(connection, decryptedPassword, context, userId = null) {
+  let posts, categories, tags;
   try {
-    const account = await resolveAccount(req.userId);
-    const context = await getBusinessContext(req.params.id, account.id);
-    if (!context) return res.status(404).json({ error: 'Business not found' });
-
-    const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
-    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
-    const connection = connResult.rows[0];
-    if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
-
-    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
-    let posts, categories, tags;
-    try {
-      ({ posts, categories, tags } = await getWordPressContentForAnalysis(connection, decryptedPassword));
-    } catch (e) {
-      if (e.pendingPoll) return res.status(202).json({ pendingPoll: true, message: e.message, proposals: [] });
-      if (e.message.includes('401')) {
-        await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
-        return res.status(400).json({ error: 'This Application Password is no longer valid. Please reconnect your website.' });
-      }
-      throw e;
+    ({ posts, categories, tags } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+  } catch (e) {
+    if (e.pendingPoll) return { pendingPoll: true, message: e.message, proposals: [] };
+    if (e.message.includes('401')) {
+      await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
+      throw new Error('This Application Password is no longer valid. Please reconnect your website.');
     }
-    categories = categories || [];
-    tags = tags || [];
+    throw e;
+  }
+  categories = categories || [];
+  tags = tags || [];
 
-    // Real, deliberate scope — pages don't support categories or tags
-    // at all in standard WordPress, so this only ever looks at posts.
-    // A post genuinely needs this when it has no real category beyond
-    // the default "Uncategorized" WordPress always assigns, or has no
-    // tags at all — a plain, measured gap, not an AI opinion.
-    const uncategorizedId = categories.find(c => c.name.toLowerCase() === 'uncategorized')?.id;
-    const candidates = (posts || []).filter(p => {
-      const hasRealCategory = (p.categoryIds || []).some(id => id !== uncategorizedId);
-      const hasTags = (p.tagIds || []).length > 0;
-      return !hasRealCategory || !hasTags;
-    });
+  const uncategorizedId = categories.find(c => c.name.toLowerCase() === 'uncategorized')?.id;
+  const candidates = (posts || []).filter(p => {
+    const hasRealCategory = (p.categoryIds || []).some(id => id !== uncategorizedId);
+    const hasTags = (p.tagIds || []).length > 0;
+    return !hasRealCategory || !hasTags;
+  });
 
-    if (!candidates.length) {
-      return res.json({ proposals: [], message: 'Every post already has a real category and at least one tag — nothing to propose right now.' });
-    }
+  if (!candidates.length) {
+    return { proposals: [], message: 'Every post already has a real category and at least one tag — nothing to propose right now.' };
+  }
 
-    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
-    const realCategoryNames = categories.map(c => c.name).filter(n => n.toLowerCase() !== 'uncategorized');
-    const realTagNames = tags.map(t => t.name);
-    const cappedCandidates = candidates.slice(0, 15);
-    const candidatesSummary = cappedCandidates.map((c, i) => `[${i}] "${c.title}" (${c.url})\n  Current category: ${(c.categoryIds || []).some(id => id !== uncategorizedId) ? 'has a real one already' : 'none (Uncategorized)'}\n  Current tags: ${(c.tagIds || []).length ? 'has tags already' : 'none'}\n  Content excerpt: ${c.bodyExcerpt}`).join('\n\n');
+  const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+  const realCategoryNames = categories.map(c => c.name).filter(n => n.toLowerCase() !== 'uncategorized');
+  const realTagNames = tags.map(t => t.name);
+  const cappedCandidates = candidates.slice(0, 15);
+  const candidatesSummary = cappedCandidates.map((c, i) => `[${i}] "${c.title}" (${c.url})\n  Current category: ${(c.categoryIds || []).some(id => id !== uncategorizedId) ? 'has a real one already' : 'none (Uncategorized)'}\n  Current tags: ${(c.tagIds || []).length ? 'has tags already' : 'none'}\n  Content excerpt: ${c.bodyExcerpt}`).join('\n\n');
 
-    const prompt = `You are an SEO Agent organizing a real business's WordPress blog into its existing category and tag structure. You must ONLY suggest what's genuinely missing for each post below — some already have a real category and just need tags, or vice versa; only fill in what's actually absent.
+  const prompt = `You are an SEO Agent organizing a real business's WordPress blog into its existing category and tag structure. You must ONLY suggest what's genuinely missing for each post below — some already have a real category and just need tags, or vice versa; only fill in what's actually absent.
 ${contextSummary}
 
 THIS SITE'S REAL, EXISTING CATEGORIES (strongly prefer reusing one of these — only suggest a genuinely new one if truly nothing fits):
@@ -5612,72 +5603,84 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   ]
 }`;
 
-    const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the category and tag proposals now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_taxonomy_proposals', userId: req.userId }, maxTokens: 4000 });
+  const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the category and tag proposals now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_taxonomy_proposals', userId }, maxTokens: 4000 });
 
-    let result;
-    try {
-      result = extractJSON(raw);
-    } catch (e) {
-      const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```');
-      console.error('Taxonomy proposals JSON parse failed:', e.message, '| Response length:', raw.length, '| Looks truncated:', looksTruncated);
-      throw new Error(`Could not generate category/tag proposals — the AI's response could not be read as valid data${looksTruncated ? ' (it appears to have been cut off before finishing — please try again)' : ' (please try again)'}.`);
-    }
-    if (!Array.isArray(result.proposals)) throw new Error(`Could not generate category/tag proposals — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
+  let result;
+  try {
+    result = extractJSON(raw);
+  } catch (e) {
+    const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```');
+    console.error('Taxonomy proposals JSON parse failed:', e.message, '| Response length:', raw.length, '| Looks truncated:', looksTruncated);
+    throw new Error(`Could not generate category/tag proposals — the AI's response could not be read as valid data${looksTruncated ? ' (it appears to have been cut off before finishing — please try again)' : ' (please try again)'}.`);
+  }
+  if (!Array.isArray(result.proposals)) throw new Error(`Could not generate category/tag proposals — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
 
-    // Real, deliberate low-risk classification — assigning an existing
-    // or a genuinely new category/tag never touches a post's actual,
-    // visible content, title, or meta fields; it's purely additive
-    // organizational metadata, the same real risk profile as a meta
-    // description change.
-    const autoExecuteEligible = connection.permission_level === 'managed' && connection.automation_mode === 'automatic';
+  const autoExecuteEligible = connection.permission_level === 'managed' && connection.automation_mode === 'automatic';
 
-    const insertedProposals = [];
-    for (const p of result.proposals) {
-      const candidate = cappedCandidates[p.index];
-      if (!candidate) continue;
-      if (!p.suggested_category && !(Array.isArray(p.suggested_tags) && p.suggested_tags.length)) continue;
+  const insertedProposals = [];
+  for (const p of result.proposals) {
+    const candidate = cappedCandidates[p.index];
+    if (!candidate) continue;
+    if (!p.suggested_category && !(Array.isArray(p.suggested_tags) && p.suggested_tags.length)) continue;
 
-      const proposedChange = {};
-      if (p.suggested_category) proposedChange.category = p.suggested_category;
-      if (Array.isArray(p.suggested_tags) && p.suggested_tags.length) proposedChange.tags = p.suggested_tags;
+    const proposedChange = {};
+    if (p.suggested_category) proposedChange.category = p.suggested_category;
+    if (Array.isArray(p.suggested_tags) && p.suggested_tags.length) proposedChange.tags = p.suggested_tags;
 
-      const inserted = await pool.query(
-        `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
-         VALUES ($1, 'seo_agent', 'assign_taxonomy', 'post', $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [connection.id, candidate.id, candidate.url, candidate.title, JSON.stringify({}), JSON.stringify(proposedChange), p.reasoning || null]
+    const inserted = await pool.query(
+      `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
+       VALUES ($1, 'seo_agent', 'assign_taxonomy', 'post', $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [connection.id, candidate.id, candidate.url, candidate.title, JSON.stringify({}), JSON.stringify(proposedChange), p.reasoning || null]
+    );
+    let action = inserted.rows[0];
+
+    if (autoExecuteEligible) {
+      await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
+      await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: assign_taxonomy for "${candidate.title}"`, { actionId: action.id }, 'taxonomy');
+
+      const execResult = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
+      const executionStatus = execResult.executed ? 'executed' : 'execution_failed';
+      const verificationStatus = execResult.executed ? (execResult.verified ? 'verified' : 'verification_failed') : null;
+
+      const updated = await pool.query(
+        `UPDATE website_actions SET approval_status = 'approved', execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
+        [executionStatus, verificationStatus, execResult.error || null, action.id]
       );
-      let action = inserted.rows[0];
+      action = updated.rows[0];
 
-      if (autoExecuteEligible) {
-        await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
-        await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: assign_taxonomy for "${candidate.title}"`, { actionId: action.id }, 'taxonomy');
-
-        const execResult = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
-        const executionStatus = execResult.executed ? 'executed' : 'execution_failed';
-        const verificationStatus = execResult.executed ? (execResult.verified ? 'verified' : 'verification_failed') : null;
-
-        const updated = await pool.query(
-          `UPDATE website_actions SET approval_status = 'approved', execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
-          [executionStatus, verificationStatus, execResult.error || null, action.id]
-        );
-        action = updated.rows[0];
-
-        await logWebsiteAudit(connection.id, 'system', null,
-          execResult.verified ? 'change_executed_and_verified' : 'change_execution_issue',
-          `Auto-executed assign_taxonomy for "${candidate.title}": ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
-          { actionId: action.id, executionStatus, verificationStatus, error: execResult.error }, 'taxonomy');
-      }
-
-      insertedProposals.push(action);
+      await logWebsiteAudit(connection.id, 'system', null,
+        execResult.verified ? 'change_executed_and_verified' : 'change_execution_issue',
+        `Auto-executed assign_taxonomy for "${candidate.title}": ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
+        { actionId: action.id, executionStatus, verificationStatus, error: execResult.error }, 'taxonomy');
     }
 
-    const autoExecutedCount = insertedProposals.filter(a => a.execution_status === 'executed').length;
-    const pendingCount = insertedProposals.length - autoExecutedCount;
-    await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
-      `SEO Agent generated ${insertedProposals.length} category/tag proposal(s)` + (autoExecutedCount ? ` — ${autoExecutedCount} auto-executed under Managed/Automatic settings, ${pendingCount} awaiting approval` : ' awaiting approval'),
-      { count: insertedProposals.length, autoExecutedCount, pendingCount }, 'taxonomy');
+    insertedProposals.push(action);
+  }
 
-    res.json({ proposals: insertedProposals });
+  const autoExecutedCount = insertedProposals.filter(a => a.execution_status === 'executed').length;
+  const pendingCount = insertedProposals.length - autoExecutedCount;
+  await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
+    `SEO Agent generated ${insertedProposals.length} category/tag proposal(s)` + (autoExecutedCount ? ` — ${autoExecutedCount} auto-executed under Managed/Automatic settings, ${pendingCount} awaiting approval` : ' awaiting approval'),
+    { count: insertedProposals.length, autoExecutedCount, pendingCount }, 'taxonomy');
+
+  return { proposals: insertedProposals, autoExecutedCount, pendingCount };
+}
+
+app.post('/api/business/:id/website/taxonomy-proposals', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+    const connection = connResult.rows[0];
+    if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    const result = await runTaxonomyProposalGeneration(connection, decryptedPassword, context, req.userId);
+    if (result.pendingPoll) return res.status(202).json(result);
+    res.json(result);
   } catch (err) {
     console.error('Taxonomy proposals error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to generate category/tag proposals. Please try again.' });
@@ -5853,6 +5856,110 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   if (!Array.isArray(parsed.topics)) throw new Error('Could not generate topic suggestions — the response was missing required data. Please try again.');
   return parsed.topics;
 }
+
+// Real, deliberate single aggregator — ties together every real
+// find-and-fix capability that already exists (categories/tags,
+// duplicate titles, SEO title/description, broken-link detection)
+// into one real, timestamped run, producing one honest "found X,
+// fixed Y, Z pending" summary rather than the person piecing this
+// together from four separate feature clicks. A failure in any one
+// category doesn't abort the rest — the run reports what it could,
+// including any category that genuinely failed.
+async function runFullWebsiteAudit(connection, decryptedPassword, context, triggeredBy, userId = null) {
+  const runInsert = await pool.query(
+    `INSERT INTO website_audit_runs (website_connection_id, triggered_by, status) VALUES ($1, $2, 'running') RETURNING id`,
+    [connection.id, triggeredBy]
+  );
+  const runId = runInsert.rows[0].id;
+
+  const findings = {};
+  let issuesFound = 0, autoFixed = 0, pendingApproval = 0;
+
+  const categories = [
+    { key: 'seoProposals', label: 'SEO title & description', run: () => runSeoProposalGeneration(connection, decryptedPassword, context, userId, false) },
+    { key: 'taxonomy', label: 'Categories & tags', run: () => runTaxonomyProposalGeneration(connection, decryptedPassword, context, userId) },
+    { key: 'duplicateTitles', label: 'Duplicate titles', run: () => runDuplicateTitleProposalGeneration(connection, decryptedPassword, context, userId) },
+  ];
+
+  for (const category of categories) {
+    try {
+      const result = await category.run();
+      if (result.pendingPoll) {
+        findings[category.key] = { pendingPoll: true, message: result.message };
+        continue;
+      }
+      const found = (result.proposals || []).length;
+      const fixed = result.autoExecutedCount || 0;
+      const pending = result.pendingCount || 0;
+      issuesFound += found;
+      autoFixed += fixed;
+      pendingApproval += pending;
+      findings[category.key] = { label: category.label, found, fixed, pending };
+    } catch (e) {
+      findings[category.key] = { label: category.label, error: e.message };
+    }
+  }
+
+  // Real, deliberate detection-only inclusion — a broken link is a
+  // real, found issue worth reporting in this same audit, even though
+  // fixing one isn't built yet (it would mean editing real body
+  // content, a genuinely different, higher-risk capability).
+  if (connection.connection_mode !== 'poll') {
+    try {
+      const linksResult = await runBrokenLinksCheck(connection, decryptedPassword);
+      issuesFound += linksResult.brokenLinks.length;
+      findings.brokenLinks = { label: 'Broken internal links', found: linksResult.brokenLinks.length, fixed: 0, pending: linksResult.brokenLinks.length, note: 'Detected, not yet auto-fixable — fixing requires editing real page content.' };
+    } catch (e) {
+      findings.brokenLinks = { label: 'Broken internal links', error: e.message };
+    }
+  }
+
+  await pool.query(
+    `UPDATE website_audit_runs SET status = 'completed', issues_found_count = $1, auto_fixed_count = $2, pending_approval_count = $3, findings_summary = $4, completed_at = NOW() WHERE id = $5`,
+    [issuesFound, autoFixed, pendingApproval, JSON.stringify(findings), runId]
+  );
+
+  await logWebsiteAudit(connection.id, triggeredBy === 'automatic' ? 'system' : 'user', userId,
+    'audit_run_completed',
+    `Audit run completed: ${issuesFound} issue(s) found, ${autoFixed} auto-fixed, ${pendingApproval} awaiting approval`,
+    { runId, issuesFound, autoFixed, pendingApproval }, 'general');
+
+  return { runId, issuesFound, autoFixed, pendingApproval, findings };
+}
+
+app.post('/api/business/:id/website/run-audit', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    const result = await runFullWebsiteAudit(connection, decryptedPassword, context, 'manual', req.userId);
+    res.json(result);
+  } catch (err) {
+    console.error('Run audit error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to run the audit. Please try again.' });
+  }
+});
+
+app.get('/api/business/:id/website/audit-runs', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    const result = await pool.query(
+      `SELECT * FROM website_audit_runs WHERE website_connection_id = $1 ORDER BY started_at DESC LIMIT 50`,
+      [connection.id]
+    );
+    res.json({ runs: result.rows });
+  } catch (e) {
+    console.error('Get audit runs error:', e.message);
+    res.status(500).json({ error: 'Could not load audit history.' });
+  }
+});
 
 async function runBlogPostGeneration(connection, decryptedPassword, context, topic, generateFeaturedImage = false) {
   let pages, posts;
@@ -6070,6 +6177,45 @@ app.post('/api/business/:id/website/generate-blog-post', authRequired, async (re
   }
 });
 
+async function runBrokenLinksCheck(connection, decryptedPassword) {
+  let pages, posts;
+  try {
+    ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+  } catch (e) {
+    if (e.message.includes('401')) {
+      await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
+      throw new Error('This Application Password is no longer valid. Please reconnect your website.');
+    }
+    throw e;
+  }
+
+  const allItems = [...pages.map(p => ({ ...p, isPost: false })), ...posts.map(p => ({ ...p, isPost: true }))];
+  const linkToReferrers = new Map();
+  for (const item of allItems) {
+    for (const link of item.internalLinks || []) {
+      if (!linkToReferrers.has(link)) linkToReferrers.set(link, []);
+      linkToReferrers.get(link).push({ title: item.title, url: item.url, isPost: item.isPost });
+    }
+  }
+
+  const uniqueLinks = [...linkToReferrers.keys()];
+  const cappedLinks = uniqueLinks.slice(0, 40);
+
+  const checks = await Promise.all(cappedLinks.map(async (link) => ({ link, ...(await checkInternalLinkResolves(link)) })));
+  const brokenLinks = checks.filter(c => c.broken).map(c => ({
+    url: c.link,
+    status: c.status,
+    error: c.error || null,
+    foundOn: linkToReferrers.get(c.link),
+  }));
+
+  await logWebsiteAudit(connection.id, 'ai_agent', null, 'broken_links_checked',
+    `Checked ${cappedLinks.length} unique internal link(s), found ${brokenLinks.length} broken`,
+    { checkedCount: cappedLinks.length, brokenCount: brokenLinks.length, totalUniqueLinks: uniqueLinks.length }, 'broken_links');
+
+  return { brokenLinks, checkedCount: cappedLinks.length, totalUniqueLinks: uniqueLinks.length };
+}
+
 app.post('/api/business/:id/website/broken-links', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
@@ -6081,132 +6227,55 @@ app.post('/api/business/:id/website/broken-links', authRequired, async (req, res
     const connection = connResult.rows[0];
     if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
 
-    // Real, deliberate scope limit, disclosed honestly rather than
-    // silently failing — checking a link means Arreyon making a real,
-    // direct HTTP request to the site's own URL, which is blocked the
-    // exact same way a direct read/write is for a poll-mode site (the
-    // reason it's in poll mode at all). Checking links from the site's
-    // own plugin instead (a real, viable path, since a server checking
-    // its own URLs isn't the same real thing Cloudflare blocks) isn't
-    // built yet.
     if (connection.connection_mode === 'poll') {
       return res.status(400).json({ error: 'Checking links directly isn\'t available yet for a poll-mode connection — this is planned as a future improvement.' });
     }
 
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
-    let pages, posts;
-    try {
-      ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
-    } catch (e) {
-      if (e.message.includes('401')) {
-        await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
-        return res.status(400).json({ error: 'This Application Password is no longer valid. Please reconnect your website.' });
-      }
-      throw e;
-    }
-
-    // Real, deliberate de-duplication before checking anything — the
-    // exact same broken link commonly appears in a site's navigation
-    // or footer across many pages; checking it once and reusing the
-    // real result everywhere it appears is both far faster and avoids
-    // hammering the site with repeat requests for the same real URL.
-    const allItems = [...pages.map(p => ({ ...p, isPost: false })), ...posts.map(p => ({ ...p, isPost: true }))];
-    const linkToReferrers = new Map();
-    for (const item of allItems) {
-      for (const link of item.internalLinks || []) {
-        if (!linkToReferrers.has(link)) linkToReferrers.set(link, []);
-        linkToReferrers.get(link).push({ title: item.title, url: item.url, isPost: item.isPost });
-      }
-    }
-
-    const uniqueLinks = [...linkToReferrers.keys()];
-    // Real, deliberate cap — keeps one check run bounded and fast even
-    // on a site with hundreds of real internal links; a person can
-    // simply run this again later to keep working through the rest.
-    const cappedLinks = uniqueLinks.slice(0, 40);
-
-    const checks = await Promise.all(cappedLinks.map(async (link) => ({ link, ...(await checkInternalLinkResolves(link)) })));
-    const brokenLinks = checks.filter(c => c.broken).map(c => ({
-      url: c.link,
-      status: c.status,
-      error: c.error || null,
-      foundOn: linkToReferrers.get(c.link),
-    }));
-
-    await logWebsiteAudit(connection.id, 'ai_agent', null, 'broken_links_checked',
-      `Checked ${cappedLinks.length} unique internal link(s), found ${brokenLinks.length} broken`,
-      { checkedCount: cappedLinks.length, brokenCount: brokenLinks.length, totalUniqueLinks: uniqueLinks.length }, 'broken_links');
-
-    res.json({
-      brokenLinks,
-      checkedCount: cappedLinks.length,
-      totalUniqueLinks: uniqueLinks.length,
-      message: brokenLinks.length ? null : 'No broken internal links were found among the ones checked.',
-    });
+    const result = await runBrokenLinksCheck(connection, decryptedPassword);
+    res.json({ ...result, message: result.brokenLinks.length ? null : 'No broken internal links were found among the ones checked.' });
   } catch (err) {
     console.error('Broken links check error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to check for broken links. Please try again.' });
   }
 });
 
-app.post('/api/business/:id/website/duplicate-title-proposals', authRequired, async (req, res) => {
+async function runDuplicateTitleProposalGeneration(connection, decryptedPassword, context, userId = null) {
+  let pages, posts;
   try {
-    const account = await resolveAccount(req.userId);
-    const context = await getBusinessContext(req.params.id, account.id);
-    if (!context) return res.status(404).json({ error: 'Business not found' });
-
-    const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
-    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
-    const connection = connResult.rows[0];
-    if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
-
-    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
-    let pages, posts;
-    try {
-      ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
-    } catch (e) {
-      if (e.pendingPoll) return res.status(202).json({ pendingPoll: true, message: e.message, proposals: [] });
-      if (e.message.includes('401')) {
-        await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
-        return res.status(400).json({ error: 'This Application Password is no longer valid. Please reconnect your website.' });
-      }
-      throw e;
+    ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+  } catch (e) {
+    if (e.pendingPoll) return { pendingPoll: true, message: e.message, proposals: [] };
+    if (e.message.includes('401')) {
+      await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
+      throw new Error('This Application Password is no longer valid. Please reconnect your website.');
     }
+    throw e;
+  }
 
-    // Real, deliberate group-by-effective-title — the real SEO title if
-    // one is set (what search engines and browser tabs actually show),
-    // falling back to the real page/post title when no SEO plugin
-    // title has been set at all. Two pages sharing the exact same
-    // title tag is a real, measurable SEO problem (search engines
-    // can't tell which one is the more authoritative result), not an
-    // AI opinion.
-    const allItems = [...pages.map(p => ({ ...p, isPost: false })), ...posts.map(p => ({ ...p, isPost: true }))];
-    const groups = new Map();
-    for (const item of allItems) {
-      const effectiveTitle = (item.metaTitle || item.title || '').trim().toLowerCase();
-      if (!effectiveTitle) continue;
-      if (!groups.has(effectiveTitle)) groups.set(effectiveTitle, []);
-      groups.get(effectiveTitle).push(item);
-    }
-    // Real, deliberate choice to keep the first item in each duplicate
-    // group untouched (its title is already fine on its own) and only
-    // propose a change for the rest — every other item in a group
-    // genuinely needs a real, different title, not an AI opinion.
-    const candidates = [];
-    for (const group of groups.values()) {
-      if (group.length < 2) continue;
-      for (const item of group.slice(1)) candidates.push(item);
-    }
+  const allItems = [...pages.map(p => ({ ...p, isPost: false })), ...posts.map(p => ({ ...p, isPost: true }))];
+  const groups = new Map();
+  for (const item of allItems) {
+    const effectiveTitle = (item.metaTitle || item.title || '').trim().toLowerCase();
+    if (!effectiveTitle) continue;
+    if (!groups.has(effectiveTitle)) groups.set(effectiveTitle, []);
+    groups.get(effectiveTitle).push(item);
+  }
+  const candidates = [];
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    for (const item of group.slice(1)) candidates.push(item);
+  }
 
-    if (!candidates.length) {
-      return res.json({ proposals: [], message: 'No duplicate page/post titles were found — nothing to propose right now.' });
-    }
+  if (!candidates.length) {
+    return { proposals: [], message: 'No duplicate page/post titles were found — nothing to propose right now.' };
+  }
 
-    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
-    const cappedCandidates = candidates.slice(0, 15);
-    const candidatesSummary = cappedCandidates.map((c, i) => `[${i}] ${c.isPost ? 'POST' : 'PAGE'}: currently titled "${c.metaTitle || c.title}" (${c.url}) — this exact title is also used by at least one other real page/post on this site.\n  Content excerpt: ${c.bodyExcerpt}`).join('\n\n');
+  const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+  const cappedCandidates = candidates.slice(0, 15);
+  const candidatesSummary = cappedCandidates.map((c, i) => `[${i}] ${c.isPost ? 'POST' : 'PAGE'}: currently titled "${c.metaTitle || c.title}" (${c.url}) — this exact title is also used by at least one other real page/post on this site.\n  Content excerpt: ${c.bodyExcerpt}`).join('\n\n');
 
-    const prompt = `You are an SEO Agent fixing a real, measured technical SEO problem: multiple pages/posts on this WordPress site share the exact same page title, which hurts search visibility since search engines can't tell which is the more authoritative result for that title.
+  const prompt = `You are an SEO Agent fixing a real, measured technical SEO problem: multiple pages/posts on this WordPress site share the exact same page title, which hurts search visibility since search engines can't tell which is the more authoritative result for that title.
 ${contextSummary}
 
 PAGES/POSTS SHARING A DUPLICATE TITLE WITH ANOTHER REAL PAGE ON THIS SITE:
@@ -6221,77 +6290,68 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   ]
 }`;
 
-    const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the duplicate-title fixes now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_duplicate_title_proposals', userId: req.userId }, maxTokens: 4000 });
+  const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the duplicate-title fixes now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_duplicate_title_proposals', userId }, maxTokens: 4000 });
 
-    let result;
-    try {
-      result = extractJSON(raw);
-    } catch (e) {
-      const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```');
-      console.error('Duplicate title proposals JSON parse failed:', e.message, '| Response length:', raw.length, '| Looks truncated:', looksTruncated);
-      throw new Error(`Could not generate duplicate-title fixes — the AI's response could not be read as valid data${looksTruncated ? ' (it appears to have been cut off before finishing — please try again)' : ' (please try again)'}.`);
-    }
-    if (!Array.isArray(result.proposals)) throw new Error(`Could not generate duplicate-title fixes — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
-
-    // Real, deliberate reuse — this is the exact same real action type,
-    // execution logic, and verification the SEO Agent's own title
-    // proposals already use; a duplicate-title fix is still, at
-    // bottom, a real meta title update, just triggered by a different,
-    // real, measured reason.
-    const autoExecuteEligible = connection.permission_level === 'managed' && connection.automation_mode === 'automatic';
-
-    const insertedProposals = [];
-    for (const p of result.proposals) {
-      const candidate = cappedCandidates[p.index];
-      if (!candidate || !p.suggested_title) continue;
-
-      const previousState = { title: candidate.metaTitle || candidate.title };
-      const proposedChange = { metaTitle: p.suggested_title };
-
-      const inserted = await pool.query(
-        `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
-         VALUES ($1, 'seo_agent', 'update_meta_title', $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [connection.id, candidate.isPost ? 'post' : 'page', candidate.id, candidate.url, candidate.title, JSON.stringify(previousState), JSON.stringify(proposedChange), p.reasoning || null]
-      );
-      let action = inserted.rows[0];
-
-      if (autoExecuteEligible) {
-        await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
-        await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: duplicate-title fix for "${candidate.title}"`, { actionId: action.id }, 'duplicate_titles');
-
-        const execResult = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
-        const executionStatus = execResult.executed ? 'executed' : 'execution_failed';
-        const verificationStatus = execResult.executed ? (execResult.verified ? 'verified' : 'verification_failed') : null;
-
-        const updated = await pool.query(
-          `UPDATE website_actions SET approval_status = 'approved', execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
-          [executionStatus, verificationStatus, execResult.error || null, action.id]
-        );
-        action = updated.rows[0];
-
-        await logWebsiteAudit(connection.id, 'system', null,
-          execResult.verified ? 'change_executed_and_verified' : 'change_execution_issue',
-          `Auto-executed duplicate-title fix for "${candidate.title}": ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
-          { actionId: action.id, executionStatus, verificationStatus, error: execResult.error }, 'duplicate_titles');
-      }
-
-      insertedProposals.push(action);
-    }
-
-    const autoExecutedCount = insertedProposals.filter(a => a.execution_status === 'executed').length;
-    const pendingCount = insertedProposals.length - autoExecutedCount;
-    await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
-      `SEO Agent generated ${insertedProposals.length} duplicate-title fix(es)` + (autoExecutedCount ? ` — ${autoExecutedCount} auto-executed under Managed/Automatic settings, ${pendingCount} awaiting approval` : ' awaiting approval'),
-      { count: insertedProposals.length, autoExecutedCount, pendingCount }, 'duplicate_titles');
-
-    res.json({ proposals: insertedProposals });
-  } catch (err) {
-    console.error('Duplicate title proposals error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate duplicate-title fixes. Please try again.' });
+  let result;
+  try {
+    result = extractJSON(raw);
+  } catch (e) {
+    const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```');
+    console.error('Duplicate title proposals JSON parse failed:', e.message, '| Response length:', raw.length, '| Looks truncated:', looksTruncated);
+    throw new Error(`Could not generate duplicate-title fixes — the AI's response could not be read as valid data${looksTruncated ? ' (it appears to have been cut off before finishing — please try again)' : ' (please try again)'}.`);
   }
-});
+  if (!Array.isArray(result.proposals)) throw new Error(`Could not generate duplicate-title fixes — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
 
-app.post('/api/business/:id/website/seo-proposals', authRequired, async (req, res) => {
+  const autoExecuteEligible = connection.permission_level === 'managed' && connection.automation_mode === 'automatic';
+
+  const insertedProposals = [];
+  for (const p of result.proposals) {
+    const candidate = cappedCandidates[p.index];
+    if (!candidate || !p.suggested_title) continue;
+
+    const previousState = { title: candidate.metaTitle || candidate.title };
+    const proposedChange = { metaTitle: p.suggested_title };
+
+    const inserted = await pool.query(
+      `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
+       VALUES ($1, 'seo_agent', 'update_meta_title', $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [connection.id, candidate.isPost ? 'post' : 'page', candidate.id, candidate.url, candidate.title, JSON.stringify(previousState), JSON.stringify(proposedChange), p.reasoning || null]
+    );
+    let action = inserted.rows[0];
+
+    if (autoExecuteEligible) {
+      await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
+      await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: duplicate-title fix for "${candidate.title}"`, { actionId: action.id }, 'duplicate_titles');
+
+      const execResult = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
+      const executionStatus = execResult.executed ? 'executed' : 'execution_failed';
+      const verificationStatus = execResult.executed ? (execResult.verified ? 'verified' : 'verification_failed') : null;
+
+      const updated = await pool.query(
+        `UPDATE website_actions SET approval_status = 'approved', execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
+        [executionStatus, verificationStatus, execResult.error || null, action.id]
+      );
+      action = updated.rows[0];
+
+      await logWebsiteAudit(connection.id, 'system', null,
+        execResult.verified ? 'change_executed_and_verified' : 'change_execution_issue',
+        `Auto-executed duplicate-title fix for "${candidate.title}": ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
+        { actionId: action.id, executionStatus, verificationStatus, error: execResult.error }, 'duplicate_titles');
+    }
+
+    insertedProposals.push(action);
+  }
+
+  const autoExecutedCount = insertedProposals.filter(a => a.execution_status === 'executed').length;
+  const pendingCount = insertedProposals.length - autoExecutedCount;
+  await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
+    `SEO Agent generated ${insertedProposals.length} duplicate-title fix(es)` + (autoExecutedCount ? ` — ${autoExecutedCount} auto-executed under Managed/Automatic settings, ${pendingCount} awaiting approval` : ' awaiting approval'),
+    { count: insertedProposals.length, autoExecutedCount, pendingCount }, 'duplicate_titles');
+
+  return { proposals: insertedProposals, autoExecutedCount, pendingCount };
+}
+
+app.post('/api/business/:id/website/duplicate-title-proposals', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
     const context = await getBusinessContext(req.params.id, account.id);
@@ -6303,74 +6363,63 @@ app.post('/api/business/:id/website/seo-proposals', authRequired, async (req, re
     if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
 
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
-    let pages, posts;
-    try {
-      ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
-    } catch (e) {
-      if (e.pendingPoll) {
-        return res.status(202).json({ pendingPoll: true, message: e.message, proposals: [] });
+    const result = await runDuplicateTitleProposalGeneration(connection, decryptedPassword, context, req.userId);
+    if (result.pendingPoll) return res.status(202).json(result);
+    res.json(result);
+  } catch (err) {
+    console.error('Duplicate title proposals error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate duplicate-title fixes. Please try again.' });
+  }
+});
+
+async function runSeoProposalGeneration(connection, decryptedPassword, context, userId = null, useLiveResearch = false) {
+  let pages, posts;
+  try {
+    ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+  } catch (e) {
+    if (e.pendingPoll) return { pendingPoll: true, message: e.message, proposals: [] };
+    if (e.message.includes('401')) {
+      await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
+      throw new Error('This Application Password is no longer valid. Please reconnect your website.');
+    }
+    throw e;
+  }
+
+  const genericTitlePattern = /^(home|untitled|page \d+|post \d+)$/i;
+  const candidates = [...pages, ...posts.map(p => ({ ...p, isPost: true }))].filter(item =>
+    !item.metaDescription || genericTitlePattern.test(item.title.trim())
+  );
+
+  if (!candidates.length) {
+    return { proposals: [], message: 'No meta title or description gaps were found — nothing to propose right now.' };
+  }
+
+  const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+  const cappedCandidates = candidates.slice(0, 15);
+
+  const researchCandidates = useLiveResearch ? cappedCandidates.slice(0, 8) : [];
+  const liveResearchByIndex = new Map();
+  if (useLiveResearch) {
+    await Promise.all(researchCandidates.map(async (c, i) => {
+      try {
+        const results = await researchSearch(c.title, { maxResults: 5 });
+        liveResearchByIndex.set(i, results);
+      } catch (e) {
+        // Real, deliberate graceful degradation — a failed search for
+        // one candidate shouldn't block proposals for the rest.
       }
-      if (e.message.includes('401')) {
-        await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
-        return res.status(400).json({ error: 'This Application Password is no longer valid. Please reconnect your website.' });
-      }
-      throw e;
-    }
+    }));
+  }
 
-    // Only pages/posts with a REAL, measured gap qualify — a missing meta
-    // description, or a title that's just the site/page name with no real
-    // content (a genuine weak-title heuristic, not an AI opinion at this
-    // filtering stage).
-    const genericTitlePattern = /^(home|untitled|page \d+|post \d+)$/i;
-    const candidates = [...pages, ...posts.map(p => ({ ...p, isPost: true }))].filter(item =>
-      !item.metaDescription || genericTitlePattern.test(item.title.trim())
-    );
+  const candidatesSummary = cappedCandidates.map((c, i) => {
+    const liveResearch = liveResearchByIndex.get(i);
+    const researchBlock = liveResearch && liveResearch.length
+      ? `\n  REAL, CURRENTLY-RANKING PAGES FOR THIS TOPIC (write something genuinely differentiated against these, not a copy):\n${liveResearch.map(r => `    - "${r.title}" (${r.url}): ${r.snippet ? r.snippet.slice(0, 150) : ''}`).join('\n')}`
+      : '';
+    return `[${i}] ${c.isPost ? 'POST' : 'PAGE'}: "${c.title}" (${c.url})\n  Current meta description: ${c.metaDescription ? `"${c.metaDescription}"` : 'MISSING'}\n  Content excerpt: ${c.bodyExcerpt}${researchBlock}`;
+  }).join('\n\n');
 
-    if (!candidates.length) {
-      return res.json({ proposals: [], message: 'No meta title or description gaps were found — nothing to propose right now.' });
-    }
-
-    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
-    // Capped once, at the source — both the prompt shown to the AI and the
-    // index lookup below reference this exact same list, so an index the
-    // AI returns can never accidentally resolve to a candidate it was
-    // never actually shown.
-    const cappedCandidates = candidates.slice(0, 15);
-
-    // Real, deliberate opt-in — grounding each suggestion in what's
-    // actually ranking right now for that topic (via Tavily, the same
-    // real search backend Market Context already uses) is a genuinely
-    // stronger, more competitive suggestion than one written from
-    // general AI knowledge alone, but it means one real, billed search
-    // per candidate — a real cost difference the person should choose,
-    // not something silently applied to every click. Capped tighter
-    // than the plain candidate list above for exactly that reason.
-    const useLiveResearch = !!req.body?.useLiveResearch;
-    const researchCandidates = useLiveResearch ? cappedCandidates.slice(0, 8) : [];
-    const liveResearchByIndex = new Map();
-    if (useLiveResearch) {
-      await Promise.all(researchCandidates.map(async (c, i) => {
-        try {
-          const results = await researchSearch(c.title, { maxResults: 5 });
-          liveResearchByIndex.set(i, results);
-        } catch (e) {
-          // Real, deliberate graceful degradation — a failed search for
-          // one candidate shouldn't block proposals for the rest; that
-          // candidate just falls back to being written without live
-          // grounding, same as when the option is off entirely.
-        }
-      }));
-    }
-
-    const candidatesSummary = cappedCandidates.map((c, i) => {
-      const liveResearch = liveResearchByIndex.get(i);
-      const researchBlock = liveResearch && liveResearch.length
-        ? `\n  REAL, CURRENTLY-RANKING PAGES FOR THIS TOPIC (write something genuinely differentiated against these, not a copy):\n${liveResearch.map(r => `    - "${r.title}" (${r.url}): ${r.snippet ? r.snippet.slice(0, 150) : ''}`).join('\n')}`
-        : '';
-      return `[${i}] ${c.isPost ? 'POST' : 'PAGE'}: "${c.title}" (${c.url})\n  Current meta description: ${c.metaDescription ? `"${c.metaDescription}"` : 'MISSING'}\n  Content excerpt: ${c.bodyExcerpt}${researchBlock}`;
-    }).join('\n\n');
-
-    const prompt = `You are an SEO Agent proposing meta title and description improvements for a real business's WordPress site. You must ONLY propose a change for pages that genuinely need one — every candidate listed below already has a real, measured gap (missing description or a generic title), so you don't need to invent reasons; you need to write GOOD, SPECIFIC suggestions grounded in the actual page content and the real business context.
+  const prompt = `You are an SEO Agent proposing meta title and description improvements for a real business's WordPress site. You must ONLY propose a change for pages that genuinely need one — every candidate listed below already has a real, measured gap (missing description or a generic title), so you don't need to invent reasons; you need to write GOOD, SPECIFIC suggestions grounded in the actual page content and the real business context.
 ${contextSummary}
 ${useLiveResearch ? '\nSome candidates below include real, currently-ranking pages for that same topic, found via a real, live web search just now — where present, write a title/description that is genuinely, specifically differentiated from those real competitors, not simply similar to them.\n' : ''}
 PAGES/POSTS NEEDING ATTENTION:
@@ -6385,78 +6434,87 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   ]
 }`;
 
-    const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the SEO proposals now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_seo_proposals', userId: req.userId }, maxTokens: 4000 });
+  const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the SEO proposals now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_seo_proposals', userId }, maxTokens: 4000 });
 
-    let result;
-    try {
-      result = extractJSON(raw);
-    } catch (e) {
-      const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```');
-      console.error('SEO proposals JSON parse failed:', e.message, '| Response length:', raw.length, '| Looks truncated:', looksTruncated);
-      throw new Error(`Could not generate SEO proposals — the AI's response could not be read as valid data${looksTruncated ? ' (it appears to have been cut off before finishing — please try again)' : ' (please try again)'}.`);
-    }
-    if (!Array.isArray(result.proposals)) throw new Error(`Could not generate SEO proposals — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
+  let result;
+  try {
+    result = extractJSON(raw);
+  } catch (e) {
+    const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```');
+    console.error('SEO proposals JSON parse failed:', e.message, '| Response length:', raw.length, '| Looks truncated:', looksTruncated);
+    throw new Error(`Could not generate SEO proposals — the AI's response could not be read as valid data${looksTruncated ? ' (it appears to have been cut off before finishing — please try again)' : ' (please try again)'}.`);
+  }
+  if (!Array.isArray(result.proposals)) throw new Error(`Could not generate SEO proposals — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
 
-    // Explicit risk classification, not an assumption — both current
-    // action types are non-destructive text changes. A future action type
-    // (e.g. deleting content, changing settings) must be added here
-    // deliberately as 'high' risk, never inherit 'low' by default, so
-    // Managed + Automatic can never auto-execute something destructive —
-    // that safety rule the spec requires stays true regardless of what
-    // later increments add.
-    const ACTION_RISK = { update_meta_title: 'low', update_meta_description: 'low' };
-    const autoExecuteEligible = connection.permission_level === 'managed' && connection.automation_mode === 'automatic';
+  const ACTION_RISK = { update_meta_title: 'low', update_meta_description: 'low' };
+  const autoExecuteEligible = connection.permission_level === 'managed' && connection.automation_mode === 'automatic';
 
-    const insertedProposals = [];
-    for (const p of result.proposals) {
-      const candidate = cappedCandidates[p.index];
-      if (!candidate) continue; // AI referenced an index outside the real candidate list — skip rather than guess
-      if (!p.suggested_title && !p.suggested_meta_description) continue; // nothing actually proposed for this one
+  const insertedProposals = [];
+  for (const p of result.proposals) {
+    const candidate = cappedCandidates[p.index];
+    if (!candidate) continue;
+    if (!p.suggested_title && !p.suggested_meta_description) continue;
 
-      const actionType = p.suggested_title ? 'update_meta_title' : 'update_meta_description';
-      const previousState = { title: candidate.title, metaDescription: candidate.metaDescription };
-      const proposedChange = {};
-      if (p.suggested_title) proposedChange.metaTitle = p.suggested_title;
-      if (p.suggested_meta_description) proposedChange.metaDescription = p.suggested_meta_description;
+    const actionType = p.suggested_title ? 'update_meta_title' : 'update_meta_description';
+    const previousState = { title: candidate.title, metaDescription: candidate.metaDescription };
+    const proposedChange = {};
+    if (p.suggested_title) proposedChange.metaTitle = p.suggested_title;
+    if (p.suggested_meta_description) proposedChange.metaDescription = p.suggested_meta_description;
 
-      const inserted = await pool.query(
-        `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
-         VALUES ($1, 'seo_agent', $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-        [connection.id, actionType, candidate.isPost ? 'post' : 'page', candidate.id, candidate.url, candidate.title, JSON.stringify(previousState), JSON.stringify(proposedChange), p.reasoning || null]
+    const inserted = await pool.query(
+      `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
+       VALUES ($1, 'seo_agent', $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [connection.id, actionType, candidate.isPost ? 'post' : 'page', candidate.id, candidate.url, candidate.title, JSON.stringify(previousState), JSON.stringify(proposedChange), p.reasoning || null]
+    );
+    let action = inserted.rows[0];
+
+    if (autoExecuteEligible && ACTION_RISK[actionType] === 'low') {
+      await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
+      await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: ${actionType} for "${candidate.title}"`, { actionId: action.id }, featureForActionType(actionType));
+
+      const execResult = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
+      const executionStatus = execResult.executed ? 'executed' : 'execution_failed';
+      const verificationStatus = execResult.executed ? (execResult.verified ? 'verified' : 'verification_failed') : null;
+
+      const updated = await pool.query(
+        `UPDATE website_actions SET approval_status = 'approved', execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
+        [executionStatus, verificationStatus, execResult.error || null, action.id]
       );
-      let action = inserted.rows[0];
+      action = updated.rows[0];
 
-      if (autoExecuteEligible && ACTION_RISK[actionType] === 'low') {
-        await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
-        await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: ${actionType} for "${candidate.title}"`, { actionId: action.id }, featureForActionType(actionType));
-
-        const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
-        const execResult = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
-        const executionStatus = execResult.executed ? 'executed' : 'execution_failed';
-        const verificationStatus = execResult.executed ? (execResult.verified ? 'verified' : 'verification_failed') : null;
-
-        const updated = await pool.query(
-          `UPDATE website_actions SET approval_status = 'approved', execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
-          [executionStatus, verificationStatus, execResult.error || null, action.id]
-        );
-        action = updated.rows[0];
-
-        await logWebsiteAudit(connection.id, 'system', null,
-          execResult.verified ? 'change_executed_and_verified' : 'change_execution_issue',
-          `Auto-executed ${actionType} for "${candidate.title}": ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
-          { actionId: action.id, executionStatus, verificationStatus, error: execResult.error }, featureForActionType(actionType));
-      }
-
-      insertedProposals.push(action);
+      await logWebsiteAudit(connection.id, 'system', null,
+        execResult.verified ? 'change_executed_and_verified' : 'change_execution_issue',
+        `Auto-executed ${actionType} for "${candidate.title}": ${executionStatus}, verification ${verificationStatus || 'n/a'}`,
+        { actionId: action.id, executionStatus, verificationStatus, error: execResult.error }, featureForActionType(actionType));
     }
 
-    const autoExecutedCount = insertedProposals.filter(a => a.execution_status === 'executed').length;
-    const pendingCount = insertedProposals.length - autoExecutedCount;
-    await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
-      `SEO Agent generated ${insertedProposals.length} proposal(s)` + (autoExecutedCount ? ` — ${autoExecutedCount} auto-executed under Managed/Automatic settings, ${pendingCount} awaiting approval` : ' awaiting approval'),
-      { count: insertedProposals.length, autoExecutedCount, pendingCount }, 'seo_proposals');
+    insertedProposals.push(action);
+  }
 
-    res.json({ proposals: insertedProposals });
+  const autoExecutedCount = insertedProposals.filter(a => a.execution_status === 'executed').length;
+  const pendingCount = insertedProposals.length - autoExecutedCount;
+  await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
+    `SEO Agent generated ${insertedProposals.length} proposal(s)` + (autoExecutedCount ? ` — ${autoExecutedCount} auto-executed under Managed/Automatic settings, ${pendingCount} awaiting approval` : ' awaiting approval'),
+    { count: insertedProposals.length, autoExecutedCount, pendingCount }, 'seo_proposals');
+
+  return { proposals: insertedProposals, autoExecutedCount, pendingCount };
+}
+
+app.post('/api/business/:id/website/seo-proposals', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+    const connection = connResult.rows[0];
+    if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    const result = await runSeoProposalGeneration(connection, decryptedPassword, context, req.userId, !!req.body?.useLiveResearch);
+    if (result.pendingPoll) return res.status(202).json(result);
+    res.json(result);
   } catch (err) {
     console.error('SEO proposals error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to generate SEO proposals. Please try again.' });
@@ -13640,6 +13698,13 @@ async function runContentAutomationSweep() {
         if (!context) continue;
 
         const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+
+        // Real, deliberate audit-and-fix step, now part of the same
+        // real, scheduled cycle as content creation — this is the
+        // "analyze, fix, and create content automatically" cycle as a
+        // real, single whole, not two separate, disconnected automations.
+        await runFullWebsiteAudit(connection, decryptedPassword, context, 'automatic', null);
+
         const { posts } = await getWordPressContentForAnalysis(connection, decryptedPassword);
         const topic = await generateAutomaticBlogPostTopic(context, posts || []);
 
