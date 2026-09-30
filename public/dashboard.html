@@ -8215,7 +8215,7 @@ async function loadWebsiteActions() {
   }
 }
 
-const WEBSITE_ACTION_TYPE_LABELS = { update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description', assign_taxonomy: 'web.action_type_taxonomy', generate_featured_image: 'web.action_type_featured_image' };
+const WEBSITE_ACTION_TYPE_LABELS = { update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description', assign_taxonomy: 'web.action_type_taxonomy', generate_featured_image: 'web.action_type_featured_image', remove_broken_link: 'web.action_type_broken_link' };
 
 // Renders each proposal with its real previous value alongside the AI's
 // suggestion (spec's explicit CURRENT/PROPOSED preview format), an
@@ -8259,12 +8259,16 @@ function renderWebsiteActionsContent(actions) {
         <div><span style="color:var(--muted)">${t('web.field_alt_text')}:</span> ${escapeHtml(change.altText || '')}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:6px;font-style:italic">${t('web.image_generated_on_approval')}</div>`;
     }
+    if (change.brokenUrl) {
+      return `<div><span style="color:var(--muted)">${t('web.field_broken_link')}:</span> ${escapeHtml(change.brokenUrl)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;font-style:italic">${t('web.broken_link_fix_description')}</div>`;
+    }
     return '';
   };
   const renderPreviousValue = (prev, change) => {
     if (change.title) return escapeHtml(prev.title || t('web.value_none'));
     if (change.metaDescription) return escapeHtml(prev.metaDescription || t('web.value_none'));
-    if (change.category || change.tags || change.imagePrompt) return t('web.value_none');
+    if (change.category || change.tags || change.imagePrompt || change.brokenUrl) return t('web.value_none');
     return '';
   };
   const editFieldFor = (action) => action.proposed_change.title ? 'title' : (action.proposed_change.metaDescription ? 'metaDescription' : null);
@@ -8610,13 +8614,14 @@ async function checkBrokenLinks() {
       return;
     }
     contentEl.innerHTML = `
-      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${t('web.links_checked_of').replace('{checked}', data.checkedCount).replace('{total}', data.totalUniqueLinks)}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${t('web.links_checked_of').replace('{checked}', data.checkedCount).replace('{total}', data.totalUniqueLinks)}${data.proposals && data.proposals.length ? ` · ${t('web.link_fixes_proposed').replace('{n}', data.proposals.length)}` : ''}</div>
       ${data.brokenLinks.map(b => `
         <div style="background:var(--bg3);border-radius:10px;padding:14px 16px;margin-bottom:10px;border-left:3px solid #ef4444">
           <div style="font-size:12.5px;font-weight:600;color:var(--text);margin-bottom:4px;word-break:break-all">${escapeHtml(b.url)}</div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${b.status ? t('web.link_status').replace('{status}', b.status) : escapeHtml(b.error || '')}</div>
           <div style="font-size:11px;color:var(--muted)">${t('web.found_on')}: ${b.foundOn.map(f => `${targetTypeBadge(f.isPost ? 'post' : 'page')}${escapeHtml(f.title)}`).join(', ')}</div>
         </div>`).join('')}`;
+    if (data.proposals && data.proposals.length) loadWebsiteActions();
   } catch (e) {
     contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
   } finally {
