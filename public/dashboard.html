@@ -1916,7 +1916,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
              that reason. -->
         <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px;border:1px solid rgba(239,68,68,.25)">
           <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.content_automation_title">Automatic Content Creation</div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.content_automation_warning">When enabled, the AI audits and fixes existing SEO issues, then writes and creates a new blog post, on the schedule you choose below — low-risk fixes follow your Automation Mode setting above, and a new post never modifies an existing page or post's URL.</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.content_automation_warning">When enabled, the AI refreshes Website Intelligence, audits and fixes existing SEO issues, then writes and creates a new blog post, on the schedule you choose below — low-risk fixes follow your Automation Mode setting above, and a new post never modifies an existing page or post's URL.</div>
           <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer;margin-bottom:10px">
             <input type="checkbox" id="websiteContentAutomationEnabled" onchange="updateWebsitePermissions()" style="width:auto">
             <span data-i18n="web.content_automation_enable">Automatically write and create new blog posts</span>
@@ -1940,6 +1940,10 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:8px" data-i18n="web.generate_post_now_title">Generate a Blog Post Now</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
             <input type="text" id="websiteBlogPostTopic" data-i18n-placeholder="web.generate_post_topic_placeholder" placeholder="e.g. 5 tips for small business SEO" style="flex:1;min-width:200px">
+            <select id="websiteGeneratePublishChoice" style="max-width:180px">
+              <option value="draft" data-i18n="web.content_automation_save_draft">Save as draft (I publish manually)</option>
+              <option value="publish" data-i18n="web.content_automation_auto_publish">Publish immediately, no review</option>
+            </select>
             <button class="btn-primary" onclick="generateBlogPostNow()" id="websiteGeneratePostBtn" data-i18n="web.generate_post_button">Generate &amp; Create</button>
           </div>
           <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;margin-bottom:10px">
@@ -1959,9 +1963,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <!-- WEBSITE INTELLIGENCE — read-only structure/SEO/content observations,
            with real measured counts kept visually distinct from AI assessment. -->
       <div id="websiteIntelligenceSection" style="display:none">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.intelligence_title">Website Intelligence</div>
-          <button class="btn-primary" onclick="generateWebsiteIntelligence()" id="websiteGenerateBtn" data-i18n="web.generate_button">Analyze Website</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn-ghost" onclick="clearWebsiteIntelligence()" data-i18n="web.clear_analysis_button">Clear Analysis</button>
+            <button class="btn-primary" onclick="generateWebsiteIntelligence()" id="websiteGenerateBtn" data-i18n="web.generate_button">Analyze Website</button>
+          </div>
         </div>
         <div id="websiteIntelligenceContent"></div>
       </div>
@@ -7289,7 +7296,12 @@ async function loadWebsiteBusinesses() {
     let savedId;
     try { savedId = localStorage.getItem('arreyon_website_business_id'); } catch (e) {}
     const stillExists = savedId && businesses.some(b => b.id === savedId);
-    currentWebsiteBusinessId = stillExists ? savedId : businesses[0].id;
+    // Real, deliberate preference for a business that's actually
+    // connected — falling back to plain businesses[0] regardless of
+    // connection status meant "Connect Website" could show even when
+    // a different business in the list genuinely has one.
+    const connectedBusiness = businesses.find(b => b.has_website_connection);
+    currentWebsiteBusinessId = stillExists ? savedId : (connectedBusiness ? connectedBusiness.id : businesses[0].id);
     select.value = currentWebsiteBusinessId;
 
     // The dropdown is revealed only if this default business already has
@@ -7663,6 +7675,23 @@ async function disconnectWebsite() {
   }
 }
 
+async function clearWebsiteIntelligence() {
+  if (!confirm(t('web.confirm_clear_analysis'))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/intelligence`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.analysis_cleared_toast'), 'success');
+    renderWebsiteIntelligenceContent(null, null);
+    loadWebsiteActivityLog();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
 async function generateWebsiteIntelligence() {
   const btn = document.getElementById('websiteGenerateBtn');
   const contentEl = document.getElementById('websiteIntelligenceContent');
@@ -7871,12 +7900,13 @@ async function generateBlogPostNow() {
     return;
   }
   const generateFeaturedImage = document.getElementById('websiteGenerateFeaturedImage').checked;
+  const publishStatus = document.getElementById('websiteGeneratePublishChoice').value;
   const btn = document.getElementById('websiteGeneratePostBtn');
   btn.disabled = true;
   btn.textContent = t('web.generating_post');
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/generate-blog-post`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic, generateFeaturedImage }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic, generateFeaturedImage, publishStatus }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -8002,9 +8032,11 @@ function renderGeneratedPostsList() {
               : `<span style="font-size:8.5px;font-weight:700;color:#22c55e;white-space:nowrap">✓ ${t('web.link_verified')}</span>`}
           </div>`).join('')}
       </div>` : ''}
-      <div style="display:flex;gap:8px;margin-top:10px">
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <a href="${escapeHtml(post.wp_url)}" target="_blank" class="btn-ghost" style="font-size:11.5px;padding:5px 10px;text-decoration:none;display:inline-block" data-i18n="web.view_full_post_button">View Full Post</a>
         <button class="btn-ghost" onclick="toggleEditGeneratedPost('${post.id}')" style="font-size:11.5px;padding:5px 10px" data-i18n="web.edit_button">Edit</button>
         ${isDraft ? `<button class="btn-primary" onclick="publishGeneratedPost('${post.id}')" style="font-size:11.5px;padding:5px 10px" data-i18n="web.publish_button">Publish</button>` : ''}
+        ${isDraft ? `<button class="btn-ghost" onclick="deleteGeneratedDraft('${post.id}')" style="font-size:11.5px;padding:5px 10px;color:#ef4444" data-i18n="web.delete_draft_button">Delete Draft</button>` : ''}
         <button class="btn-ghost" onclick="clearGeneratedPostLog('${post.id}')" style="font-size:11.5px;padding:5px 10px" data-i18n="web.clear_from_log_button">Clear from Log</button>
       </div>
       <div id="editForm-${post.id}" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
@@ -8092,6 +8124,22 @@ async function clearGeneratedPostLog(postId) {
     }
     showToast(t('web.entries_cleared').replace('{n}', data.clearedCount), 'success');
     loadWebsiteActivityLog();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+async function deleteGeneratedDraft(postId) {
+  if (!confirm(t('web.confirm_delete_draft'))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/generated-posts/${postId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.draft_deleted_toast'), 'success');
+    loadWebsiteGeneratedPosts();
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
