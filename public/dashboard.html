@@ -1971,9 +1971,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
            detection into one real, timestamped run with a found/fixed
            report, rather than four separate feature clicks. -->
       <div id="websiteAuditRunSection" style="display:none;margin-top:28px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.audit_run_title">Run Audit &amp; Optimize</div>
-          <button class="btn-primary" onclick="runWebsiteAudit()" id="websiteRunAuditBtn" data-i18n="web.run_audit_button">Run Audit &amp; Optimize</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn-ghost" onclick="clearAuditHistory()" data-i18n="web.clear_audit_history">Clear History</button>
+            <button class="btn-primary" onclick="runWebsiteAudit()" id="websiteRunAuditBtn" data-i18n="web.run_audit_button">Run Audit &amp; Optimize</button>
+          </div>
         </div>
         <div id="websiteAuditRunContent"></div>
       </div>
@@ -8094,11 +8097,38 @@ async function runWebsiteAudit() {
     loadWebsiteAuditRuns();
     loadWebsiteActions();
     loadWebsiteActivityLog();
+    // Real, deliberate auto-scroll — Proposed Changes sits well below
+    // several other sections on this page, and a report saying "14
+    // awaiting approval" is not useful if the person has no obvious way
+    // to find where those 14 actually are.
+    if (data.pendingApproval > 0) {
+      setTimeout(() => {
+        document.getElementById('websiteActionsSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 400);
+    }
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   } finally {
     btn.disabled = false;
     btn.textContent = t('web.run_audit_button');
+  }
+}
+
+async function clearAuditHistory() {
+  if (!confirm(t('web.confirm_clear_audit_history'))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/audit-runs`, {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: true }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.entries_cleared').replace('{n}', data.clearedCount), 'success');
+    loadWebsiteAuditRuns();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
   }
 }
 
@@ -8126,11 +8156,26 @@ function renderAuditRunsList(runs) {
   contentEl.innerHTML = renderCollapsibleItems(runs, (run) => {
     const fullTimestamp = new Date(run.started_at).toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' });
     const findings = run.findings_summary || {};
-    const categoryRows = Object.entries(findings).filter(([, v]) => v && !v.pendingPoll).map(([key, v]) => {
+    const categoryRows = Object.entries(findings).filter(([k, v]) => k !== 'byPage' && v && !v.pendingPoll).map(([key, v]) => {
       const label = v.label || t(AUDIT_CATEGORY_LABELS[key] || 'web.feature_general');
       if (v.error) return `<div style="font-size:11.5px;color:#ff8080">${escapeHtml(label)}: ${escapeHtml(v.error)}</div>`;
       return `<div style="font-size:11.5px;color:var(--text2)">${escapeHtml(label)}: ${t('web.audit_found_fixed_line').replace('{found}', v.found).replace('{fixed}', v.fixed).replace('{pending}', v.pending)}${v.note ? ` <span style="color:var(--muted)">(${escapeHtml(v.note)})</span>` : ''}</div>`;
     }).join('');
+
+    // Real, deliberate page-by-page breakdown — a person naturally
+    // thinks "what happened to THIS page", not just a total count per
+    // category; built directly from the real actions this run took.
+    const byPage = findings.byPage || [];
+    const pageRows = byPage.length ? renderCollapsibleItems(byPage, (page) => `
+      <div style="background:var(--bg2);border-radius:8px;padding:10px 12px;margin-top:6px">
+        <div style="font-size:12px;font-weight:600;color:var(--text)"><a href="${escapeHtml(page.url)}" target="_blank" style="color:var(--text)">${escapeHtml(page.title)}</a></div>
+        ${page.changes.map(c => `<div style="font-size:11.5px;color:var(--text2);margin-top:3px">${c.status === 'fixed' ? '✓' : '○'} ${escapeHtml(c.description)} <span style="font-size:9.5px;color:${c.status === 'fixed' ? '#22c55e' : '#f59e0b'};text-transform:uppercase">${t(c.status === 'fixed' ? 'web.status_fixed_label' : 'web.status_pending_label')}</span></div>`).join('')}
+      </div>`, 5, `auditPages-${run.id}`) : '';
+
+    const jumpToApprovals = run.pending_approval_count > 0
+      ? `<button class="btn-ghost" onclick="document.getElementById('websiteActionsSection')?.scrollIntoView({behavior:'smooth',block:'start'})" style="font-size:11px;padding:4px 10px;margin-top:8px" data-i18n="web.view_pending_approvals">View Pending Approvals</button>`
+      : '';
+
     return `
     <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
@@ -8139,6 +8184,8 @@ function renderAuditRunsList(runs) {
       </div>
       <div style="font-size:13px;font-weight:600;color:var(--text);margin:6px 0">${t('web.audit_summary_line').replace('{found}', run.issues_found_count).replace('{fixed}', run.auto_fixed_count).replace('{pending}', run.pending_approval_count)}</div>
       <div style="margin-top:4px">${categoryRows}</div>
+      ${jumpToApprovals}
+      ${pageRows}
     </div>`;
   }, 5, 'auditRuns');
 }
