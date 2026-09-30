@@ -6212,10 +6212,32 @@ app.get('/api/business/:id/website/generated-posts', authRequired, async (req, r
       `SELECT * FROM website_generated_posts WHERE website_connection_id = $1 ORDER BY created_at DESC LIMIT 100`,
       [connection.id]
     );
-    const posts = result.rows.map(post => ({
-      ...post,
-      links: extractLinksFromHtml(post.body_html, connection.site_url),
+
+    // Real, deliberate live re-check, not a stored, potentially stale
+    // value from whenever the post was generated — a link genuinely
+    // healthy back then can quietly rot later, and only a real,
+    // current check actually catches that. Capped to the most recent
+    // 20 posts so opening this panel doesn't fire off an unbounded
+    // number of real outbound checks; older posts still show, just
+    // without a live score.
+    const LIVE_CHECK_LIMIT = 20;
+    const posts = await Promise.all(result.rows.map(async (post, index) => {
+      const links = extractLinksFromHtml(post.body_html, connection.site_url);
+      if (index >= LIVE_CHECK_LIMIT || !links.length) {
+        return { ...post, links, linkHealthChecked: false, internalLinkScore: null, externalLinkScore: null };
+      }
+
+      const checked = await Promise.all(links.map(async (link) => {
+        const checkResult = await checkInternalLinkResolves(link.url);
+        return { ...link, currentlyPassing: !checkResult.broken };
+      }));
+      const scoreFor = (subset) => subset.length ? Math.round((subset.filter(l => l.currentlyPassing).length / subset.length) * 100) : null;
+      const internalLinkScore = scoreFor(checked.filter(l => l.isInternal));
+      const externalLinkScore = scoreFor(checked.filter(l => !l.isInternal));
+
+      return { ...post, links: checked, linkHealthChecked: true, internalLinkScore, externalLinkScore };
     }));
+
     res.json({ posts });
   } catch (e) {
     console.error('Get generated posts error:', e.message);
