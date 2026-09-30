@@ -2515,6 +2515,7 @@ function featureForActionType(actionType) {
   if (actionType === 'update_meta_title' || actionType === 'update_meta_description') return 'seo_proposals';
   if (actionType === 'assign_taxonomy' || actionType === 'create_category' || actionType === 'create_tag') return 'taxonomy';
   if (actionType === 'generate_featured_image') return 'featured_images';
+  if (actionType === 'remove_broken_link') return 'broken_links';
   return 'general';
 }
 
@@ -4493,11 +4494,22 @@ async function generateAIImage(prompt) {
 
 async function checkInternalLinkResolves(url) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  // Real, deliberate realistic browser User-Agent — many real,
+  // legitimate, high-quality sites reject requests that look like a
+  // bot (no User-Agent, or an obviously non-browser one), which would
+  // otherwise wrongly mark a genuinely good external source as broken
+  // and discard it before it ever had a chance to be offered as a link.
+  const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36', 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' };
   try {
-    let response = await fetch(url, { method: 'HEAD', signal: controller.signal, redirect: 'follow' });
-    if (response.status === 405 || response.status === 501) {
-      response = await fetch(url, { method: 'GET', signal: controller.signal, redirect: 'follow' });
+    let response = await fetch(url, { method: 'HEAD', signal: controller.signal, redirect: 'follow', headers });
+    // Real, deliberate GET retry beyond the original 405/501 cases — a
+    // real, non-trivial share of real sites reject HEAD requests
+    // outright (405, 403, or simply hang) while a real GET to the same
+    // real URL succeeds fine; a genuinely good source shouldn't be
+    // discarded just because it dislikes HEAD specifically.
+    if ([403, 405, 501].includes(response.status)) {
+      response = await fetch(url, { method: 'GET', signal: controller.signal, redirect: 'follow', headers });
     }
     const isLikelyBotProtection = [403, 429, 503].includes(response.status);
     return { broken: !response.ok && !isLikelyBotProtection, status: response.status };
@@ -4883,10 +4895,28 @@ async function createWordPressBlogPost(connection, decryptedPassword, postData) 
 async function gatherVerifiedLinkCandidates(connection, decryptedPassword, pages, posts, topic) {
   const internalCandidates = [...pages, ...posts].map(item => ({ title: item.title, url: item.url }));
 
+  // Real, deliberate wider net — a real, single search query sometimes
+  // returns nothing that survives real verification (a source down, a
+  // dead redirect, a bot-blocked page); a second, differently-phrased
+  // real query gives a real second chance rather than leaving external
+  // linking empty on a fixable miss.
   let externalCandidates = [];
   try {
-    const searchResults = await researchSearch(topic, { maxResults: 6 });
-    const checks = await Promise.all(searchResults.map(async (r) => {
+    const queries = [topic, `${topic} guide`];
+    const allResults = [];
+    for (const query of queries) {
+      try {
+        const results = await researchSearch(query, { maxResults: 8 });
+        allResults.push(...results);
+      } catch (e) { /* Real, deliberate no-op — one query failing still leaves the other a real chance. */ }
+      if (allResults.length >= 8) break; // Real, deliberate early exit — no need for a second real search once the first already found enough.
+    }
+    // Real, deliberate de-duplication before spending real verification
+    // requests checking the same real URL twice.
+    const seenUrls = new Set();
+    const uniqueResults = allResults.filter(r => !seenUrls.has(r.url) && seenUrls.add(r.url));
+
+    const checks = await Promise.all(uniqueResults.map(async (r) => {
       const check = await checkInternalLinkResolves(r.url);
       return { ...r, resolves: !check.broken };
     }));
@@ -4897,7 +4927,7 @@ async function gatherVerifiedLinkCandidates(connection, decryptedPassword, pages
     // failing shouldn't block the whole real thing from generating.
   }
 
-  return { internalCandidates: internalCandidates.slice(0, 20), externalCandidates: externalCandidates.slice(0, 4) };
+  return { internalCandidates: internalCandidates.slice(0, 20), externalCandidates: externalCandidates.slice(0, 5) };
 }
 
 // Real, deliberate defense in depth — even though the prompt below
@@ -4954,7 +4984,7 @@ REAL, EXISTING PAGES ON THIS SITE — you may ONLY link internally to these exac
 ${internalCandidates.length ? internalCandidates.map(c => `- "${c.title}" (${c.url})`).join('\n') : '(No real existing pages were found to link to.)'}
 
 REAL, CURRENTLY-LIVE EXTERNAL PAGES relevant to this topic (confirmed reachable just now) — you may ONLY link externally to these exact URLs, verbatim, never invent a new one:
-${externalCandidates.length ? externalCandidates.map(c => `- "${c.title}" (${c.url})`).join('\n') : '(No real, verified external sources were found.)'}
+${externalCandidates.length ? externalCandidates.map(c => `- "${c.title}" (${c.url})`).join('\n') + '\n\nAt least one of these real external sources genuinely belongs in this post — cite the single most relevant one naturally, at the point in the body where it genuinely supports what you\'re saying (e.g. backing up a claim, pointing to an authoritative reference). Do not skip this when a genuinely relevant option is listed above.' : '(No real, verified external sources were found for this specific topic — proceed without one rather than inventing something.)'}
 
 CRITICAL RULES — read carefully, these are non-negotiable:
 
@@ -5061,6 +5091,42 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
   const change = action.edited_change || action.proposed_change;
 
   try {
+    if (change.brokenUrl) {
+      // Real, deliberate conservative fix — never guesses a replacement
+      // URL (which risks linking to something factually wrong), never
+      // removes the surrounding sentence; only unlinks the one real,
+      // dead href, leaving its real, visible text in place as plain
+      // text. Re-reads the post's own real, current content right
+      // before editing, since it may have changed since this proposal
+      // was first made.
+      const readRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?context=edit&_fields=content`, { timeoutMs: 15000 });
+      if (!readRes.ok) return { executed: false, verified: false, error: `Could not read this post's current content (status ${readRes.status}).` };
+      const current = await readRes.json();
+      const currentHtml = current.content?.raw ?? current.content?.rendered ?? '';
+
+      const linkPattern = new RegExp(`<a\\s+[^>]*href=["']${change.brokenUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["'][^>]*>(.*?)<\\/a>`, 'gis');
+      if (!linkPattern.test(currentHtml)) {
+        return { executed: false, verified: false, error: 'This link is no longer present in the post\'s current content — it may have already been fixed or the content has changed.' };
+      }
+      linkPattern.lastIndex = 0;
+      const updatedHtml = currentHtml.replace(linkPattern, (match, innerText) => innerText);
+
+      const updateRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}`, {
+        method: 'POST', body: { content: updatedHtml }, timeoutMs: 20000,
+      });
+      if (!updateRes.ok) return { executed: false, verified: false, error: `WordPress rejected saving this change (status ${updateRes.status}).` };
+
+      // Real, deliberate immediate verification — reads the real,
+      // just-saved content back and confirms the real, specific broken
+      // href genuinely no longer appears in it.
+      const verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?context=edit&_fields=content`, { timeoutMs: 15000 });
+      if (!verifyRes.ok) return { executed: true, verified: false, error: 'The change was saved, but verification could not confirm it — please check the post manually.' };
+      const verifyData = await verifyRes.json();
+      const verifyHtml = verifyData.content?.raw ?? verifyData.content?.rendered ?? '';
+      if (!verifyHtml.includes(change.brokenUrl)) return { executed: true, verified: true };
+      return { executed: true, verified: false, error: 'The change was saved, but the broken link still appears to be present.' };
+    }
+
     if (change.imagePrompt) {
       // Real, deliberate real-cost step — this is the actual, billed
       // OpenAI call, only ever reached once a person has genuinely
@@ -5929,6 +5995,7 @@ function describeActionChange(action) {
     return parts.join('; ');
   }
   if (change.imagePrompt) return 'Featured image generated';
+  if (change.brokenUrl) return `Broken link removed: ${change.brokenUrl}`;
   return action.action_type;
 }
 
@@ -6000,20 +6067,19 @@ async function runFullWebsiteAudit(connection, decryptedPassword, context, trigg
     }
   }
 
-  // Real, deliberate detection-only inclusion — a broken link is a
-  // real, found issue worth reporting in this same audit, even though
-  // fixing one isn't built yet (it would mean editing real body
-  // content, a genuinely different, higher-risk capability).
+  // Real, deliberate consistent handling — broken links now produce
+  // real, approvable remove_broken_link proposals just like every
+  // other category above, not a separate, detection-only special case.
   if (connection.connection_mode !== 'poll') {
     try {
       const linksResult = await runBrokenLinksCheck(connection, decryptedPassword, preloadedContent);
-      issuesFound += linksResult.brokenLinks.length;
-      findings.brokenLinks = { label: 'Broken internal links', found: linksResult.brokenLinks.length, fixed: 0, pending: linksResult.brokenLinks.length, note: 'Detected, not yet auto-fixable — fixing requires editing real page content.' };
-      for (const broken of linksResult.brokenLinks) {
-        for (const referrer of (broken.foundOn || [])) {
-          if (!byPage.has(referrer.url)) byPage.set(referrer.url, { title: referrer.title, url: referrer.url, changes: [] });
-          byPage.get(referrer.url).changes.push({ description: `Broken link found: ${broken.url}`, status: 'pending' });
-        }
+      const found = linksResult.brokenLinks.length;
+      const pending = linksResult.pendingCount || 0;
+      issuesFound += found;
+      pendingApproval += pending;
+      findings.brokenLinks = { label: 'Broken internal links', found, fixed: 0, pending, note: pending < found ? 'Some occurrences exceeded this run\'s proposal cap — run the audit again to propose the rest.' : null };
+      for (const action of (linksResult.proposals || [])) {
+        addToPageView(action, 'pending');
       }
     } catch (e) {
       findings.brokenLinks = { label: 'Broken internal links', error: e.message };
@@ -6360,7 +6426,7 @@ async function runBrokenLinksCheck(connection, decryptedPassword, preloadedConte
   for (const item of allItems) {
     for (const link of item.internalLinks || []) {
       if (!linkToReferrers.has(link)) linkToReferrers.set(link, []);
-      linkToReferrers.get(link).push({ title: item.title, url: item.url, isPost: item.isPost });
+      linkToReferrers.get(link).push({ id: item.id, title: item.title, url: item.url, isPost: item.isPost });
     }
   }
 
@@ -6375,11 +6441,33 @@ async function runBrokenLinksCheck(connection, decryptedPassword, preloadedConte
     foundOn: linkToReferrers.get(c.link),
   }));
 
-  await logWebsiteAudit(connection.id, 'ai_agent', null, 'broken_links_checked',
-    `Checked ${cappedLinks.length} unique internal link(s), found ${brokenLinks.length} broken`,
-    { checkedCount: cappedLinks.length, brokenCount: brokenLinks.length, totalUniqueLinks: uniqueLinks.length }, 'broken_links');
+  // Real, deliberate real fix proposal for every real (broken link,
+  // page it appears on) pair — the same broken link on three different
+  // real pages genuinely needs three separate real content edits, one
+  // per real page, so each gets its own real, approvable proposal
+  // rather than one fix silently standing in for all of them. Capped
+  // at a sane total so one badly-broken shared nav/footer link across
+  // dozens of real pages doesn't flood the queue in a single run.
+  const insertedProposals = [];
+  const MAX_LINK_PROPOSALS = 30;
+  outer:
+  for (const broken of brokenLinks) {
+    for (const referrer of (broken.foundOn || [])) {
+      if (insertedProposals.length >= MAX_LINK_PROPOSALS) break outer;
+      const inserted = await pool.query(
+        `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
+         VALUES ($1, 'seo_agent', 'remove_broken_link', $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [connection.id, referrer.isPost ? 'post' : 'page', referrer.id, referrer.url, referrer.title, JSON.stringify({}), JSON.stringify({ brokenUrl: broken.url }), `This link no longer resolves (${broken.status || broken.error || 'unreachable'}) — removing it unlinks the text but keeps it in place, rather than leaving a dead link.`]
+      );
+      insertedProposals.push(inserted.rows[0]);
+    }
+  }
 
-  return { brokenLinks, checkedCount: cappedLinks.length, totalUniqueLinks: uniqueLinks.length };
+  await logWebsiteAudit(connection.id, 'ai_agent', null, 'broken_links_checked',
+    `Checked ${cappedLinks.length} unique internal link(s), found ${brokenLinks.length} broken, proposed ${insertedProposals.length} fix(es)`,
+    { checkedCount: cappedLinks.length, brokenCount: brokenLinks.length, totalUniqueLinks: uniqueLinks.length, proposedCount: insertedProposals.length }, 'broken_links');
+
+  return { brokenLinks, checkedCount: cappedLinks.length, totalUniqueLinks: uniqueLinks.length, proposals: insertedProposals, pendingCount: insertedProposals.length, autoExecutedCount: 0 };
 }
 
 app.post('/api/business/:id/website/broken-links', authRequired, async (req, res) => {
