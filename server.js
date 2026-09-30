@@ -4220,8 +4220,8 @@ app.get('/api/business/:id/website', authRequired, async (req, res) => {
 
     const result = await pool.query(
       `SELECT id, site_url, site_name, wp_version, wp_username, connection_status, last_verified_at, last_error,
-       permission_level, automation_mode, connected_at, website_intelligence, website_intelligence_fr,
-       website_intelligence_generated_at
+       permission_level, automation_mode, connection_mode, connected_at, website_intelligence, website_intelligence_fr,
+       website_intelligence_generated_at, content_automation_enabled, content_automation_publish_mode, content_automation_frequency
        FROM website_connections WHERE business_id = $1`,
       [req.params.id]
     );
@@ -4652,9 +4652,110 @@ class WebsiteContentPendingError extends Error {
 // free tier, the reason the connection is in poll mode at all), so
 // this content has to come from the site's own plugin reporting it
 // locally, the same real pattern already used for executing changes.
+// Real, deliberate small, shared helper — every real place that
+// changes a push-mode site's actual content calls this right after,
+// so the next real read never hands back a stale picture. A no-op for
+// poll-mode connections, which don't use this cache at all.
+async function invalidatePushModeCache(connection) {
+  if (connection.connection_mode === 'poll') return;
+  try { await pool.query(`UPDATE website_connections SET cached_wp_content = NULL, cached_wp_content_at = NULL WHERE id = $1`, [connection.id]); } catch (e) { /* Real, deliberate no-op — invalidation failing never blocks the real change that triggered it. */ }
+}
+
+// Real, deliberate standalone function for the automatic cycle
+// specifically — written fresh rather than extracted from the existing
+// manual /website/intelligence route, since a large exact-text
+// extraction of that route risked a failed edit; this duplicates the
+// same real prompt logic deliberately, trading a small amount of
+// duplication for not touching an already-working, tested route at all.
+async function runAutomaticWebsiteIntelligence(connection, decryptedPassword, businessName) {
+  const { pages, posts, totalPageCount, totalPostCount } = await getWordPressContentForAnalysis(connection, decryptedPassword);
+  if (!pages.length && !posts.length) return; // Real, deliberate no-op — nothing real to analyze yet, not a real failure.
+
+  const pagesSummary = pages.map(p => `PAGE: "${p.title}" (${p.url})\n  Word count: ${p.wordCount} | Headings: ${JSON.stringify(p.headings)} | Meta description: ${p.metaDescription ? `"${p.metaDescription}"` : 'NOT DETECTED'}\n  Excerpt: ${p.bodyExcerpt}`).join('\n\n');
+  const postsSummary = posts.map(p => `POST: "${p.title}" (${p.url}, ${p.date || ''})\n  Word count: ${p.wordCount} | Headings: ${JSON.stringify(p.headings)} | Meta description: ${p.metaDescription ? `"${p.metaDescription}"` : 'NOT DETECTED'}\n  Excerpt: ${p.bodyExcerpt}`).join('\n\n');
+
+  const prompt = `You are a website intelligence analyst reviewing a WordPress site for ${businessName || 'this business'}. You have been given REAL, MEASURED data fetched directly from the site's own content — word counts, heading structure, and meta description presence are all FACTS, not your opinion.
+
+MEASURED DATA — PAGES (${pages.length} of ${totalPageCount} total):
+${pagesSummary || 'None found.'}
+
+MEASURED DATA — POSTS (${posts.length} of ${totalPostCount} total):
+${postsSummary || 'None found.'}
+
+CRITICAL RULES:
+- Every issue must reference something ACTUALLY PRESENT in the measured data above — never invent a page, a number, or an issue not grounded in what's shown.
+- Do NOT invent a numeric "website score."
+- Thin content threshold: under 300 words is a genuine concern; do not flag naturally short pages as broken just for being short.
+- Limit output to AT MOST 15 seo_issues, 10 content_observations, and 8 recommendations, prioritizing the most significant findings.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "structure_summary": "2-3 sentences on what this site actually consists of",
+  "seo_issues": [{ "page_title": "exact title", "url": "exact url", "issue": "specific issue", "severity": "high" | "medium" | "low" }],
+  "content_observations": [{ "page_title": "exact title", "observation": "specific observation" }],
+  "recommendations": [{ "title": "short action title", "description": "1-2 sentences", "priority": "high" | "medium" | "low" }],
+  "data_limitations_note": "one honest sentence on what this analysis could NOT see"
+}`;
+
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Provide the Website Intelligence analysis now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_intelligence' }, maxTokens: 8000 });
+
+  let intelligence;
+  try {
+    intelligence = extractJSON(raw);
+  } catch (e) {
+    throw new Error(`Automatic Website Intelligence refresh failed to parse: ${e.message}`);
+  }
+  if (!Array.isArray(intelligence.seo_issues) || !Array.isArray(intelligence.recommendations)) {
+    throw new Error('Automatic Website Intelligence refresh returned incomplete data.');
+  }
+
+  intelligence.seo_issues = intelligence.seo_issues.slice(0, 15);
+  if (Array.isArray(intelligence.content_observations)) intelligence.content_observations = intelligence.content_observations.slice(0, 10);
+  intelligence.recommendations = intelligence.recommendations.slice(0, 8);
+  intelligence.measured = {
+    pageCount: totalPageCount, postCount: totalPostCount,
+    analyzedPageCount: pages.length, analyzedPostCount: posts.length,
+    pagesWithNoMetaDescription: pages.filter(p => !p.metaDescription).length,
+    postsWithNoMetaDescription: posts.filter(p => !p.metaDescription).length,
+    pagesUnder300Words: pages.filter(p => p.wordCount < 300).length,
+    postsUnder300Words: posts.filter(p => p.wordCount < 300).length,
+  };
+
+  await pool.query(
+    `UPDATE website_connections SET website_intelligence = $1, website_intelligence_fr = NULL, website_intelligence_generated_at = NOW() WHERE id = $2`,
+    [JSON.stringify(intelligence), connection.id]
+  );
+  await logWebsiteAudit(connection.id, 'ai_agent', null, 'intelligence_generated', `Automatically refreshed Website Intelligence (${pages.length} pages, ${posts.length} posts analyzed)`, { pageCount: pages.length, postCount: posts.length }, 'intelligence');
+}
+
 async function getWordPressContentForAnalysis(connection, decryptedPassword) {
   if (connection.connection_mode !== 'poll') {
-    return fetchWordPressContent(connection, decryptedPassword);
+    // Real, deliberate short cache, new for push mode — previously
+    // every single feature click did its own real, live fetch with no
+    // caching at all, so running several features back to back (an
+    // audit, then a manual link check) could mean several real, full
+    // fetches within a couple of minutes, which is exactly what was
+    // triggering real 429 rate-limit responses on more cautious
+    // hosting. Three minutes is short enough that a real, current
+    // clicked action still gets real, current data almost always,
+    // while absorbing exactly the rapid-fire pattern that was causing
+    // real trouble.
+    const PUSH_FRESH_MS = 3 * 60 * 1000;
+    if (connection.cached_wp_content && connection.cached_wp_content_at) {
+      const age = Date.now() - new Date(connection.cached_wp_content_at).getTime();
+      if (age < PUSH_FRESH_MS) {
+        return connection.cached_wp_content;
+      }
+    }
+    const fresh = await fetchWordPressContent(connection, decryptedPassword);
+    // Real, deliberate best-effort cache write — a failure to cache
+    // never blocks returning the real, already-fetched content itself.
+    try {
+      await pool.query(`UPDATE website_connections SET cached_wp_content = $1, cached_wp_content_at = NOW() WHERE id = $2`, [JSON.stringify(fresh), connection.id]);
+      connection.cached_wp_content = fresh;
+      connection.cached_wp_content_at = new Date().toISOString();
+    } catch (e) { /* Real, deliberate no-op — caching is a real optimization, not a real requirement for this call to succeed. */ }
+    return fresh;
   }
 
   // Real, deliberate freshness window — page/post content and their
@@ -5090,6 +5191,17 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
   const wpType = action.target_type === 'post' ? 'posts' : 'pages';
   const change = action.edited_change || action.proposed_change;
 
+  // Real, deliberate cache invalidation up front — this function is
+  // about to attempt a real change to the site's real content, so the
+  // short push-mode cache above must never hand out a stale picture on
+  // the very next read after this. Cleared before the attempt, not
+  // after, so even a failed attempt (which changed nothing) still just
+  // means one extra real fetch next time rather than any risk of
+  // stale data surviving a real, successful change.
+  if (connection.connection_mode !== 'poll') {
+    await invalidatePushModeCache(connection);
+  }
+
   try {
     if (change.brokenUrl) {
       // Real, deliberate conservative fix — never guesses a replacement
@@ -5323,6 +5435,27 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
 // already used for business-fact extraction elsewhere in the platform,
 // applied here because the spec is explicit that scores must never be
 // fabricated and measured data must stay visibly distinct from AI opinion.
+app.delete('/api/business/:id/website/intelligence', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+
+    await pool.query(
+      `UPDATE website_connections SET website_intelligence = NULL, website_intelligence_fr = NULL, website_intelligence_generated_at = NULL WHERE id = $1`,
+      [connection.id]
+    );
+    const logResult = await pool.query(
+      `DELETE FROM website_audit_log WHERE website_connection_id = $1 AND feature = 'intelligence' RETURNING id`,
+      [connection.id]
+    );
+
+    res.json({ success: true, clearedCount: logResult.rows.length });
+  } catch (e) {
+    console.error('Clear website intelligence error:', e.message);
+    res.status(500).json({ error: 'Could not clear the analysis history.' });
+  }
+});
+
 app.post('/api/business/:id/website/intelligence', authRequired, async (req, res) => {
   const language = req.body?.language === 'fr' ? 'fr' : 'en';
   try {
@@ -6159,13 +6292,19 @@ app.delete('/api/business/:id/website/audit-runs', authRequired, async (req, res
   }
 });
 
-async function runBlogPostGeneration(connection, decryptedPassword, context, topic, generateFeaturedImage = false) {
+async function runBlogPostGeneration(connection, decryptedPassword, context, topic, generateFeaturedImage = false, publishStatusOverride = null) {
   let pages, posts;
   ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
 
   const generated = await generateBlogPostContent(connection, decryptedPassword, context, topic, pages || [], posts || []);
 
-  const publishStatus = connection.content_automation_publish_mode === 'publish' ? 'publish' : 'draft';
+  // Real, deliberate per-generation override — a manual "Generate Now"
+  // click can choose draft or publish right there, distinct from
+  // content_automation_publish_mode, which only governs the real,
+  // unattended scheduled cycle where there's no person present to ask.
+  const publishStatus = publishStatusOverride === 'publish' || publishStatusOverride === 'draft'
+    ? publishStatusOverride
+    : (connection.content_automation_publish_mode === 'publish' ? 'publish' : 'draft');
   // Real, deliberate deterministic image prompt, built directly from
   // this real post's own real title/topic rather than a further AI
   // call — keeps this one real, optional feature from adding both
@@ -6182,6 +6321,14 @@ async function runBlogPostGeneration(connection, decryptedPassword, context, top
     category: generated.category, tags: generated.tags, status: publishStatus,
     generateFeaturedImage, imagePrompt,
   });
+
+  // Real, deliberate invalidation — a genuinely new real post now
+  // exists on the site; the next real analysis (audit, SEO proposals,
+  // topic suggestions checking for duplicates) needs to see it, not a
+  // real picture of the site from before it existed.
+  if (result.success && connection.connection_mode !== 'poll') {
+    await invalidatePushModeCache(connection);
+  }
 
   await logWebsiteAudit(connection.id, 'ai_agent', null, result.success ? (publishStatus === 'publish' ? 'blog_post_published' : 'blog_post_drafted') : 'blog_post_generation_failed',
     result.success
@@ -6221,10 +6368,37 @@ app.get('/api/business/:id/website/generated-posts', authRequired, async (req, r
     // number of real outbound checks; older posts still show, just
     // without a live score.
     const LIVE_CHECK_LIMIT = 20;
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
     const posts = await Promise.all(result.rows.map(async (post, index) => {
+      let currentStatus = post.status;
+      // Real, deliberate status re-sync, draft posts only — a person
+      // can always publish directly from their own WordPress editor
+      // instead of from here, and this local record would otherwise
+      // keep saying "draft" forever despite the real, live post
+      // already being published. Published posts need no re-check:
+      // going the other way (publish back to draft) isn't something
+      // this tool does, so there's nothing to catch by re-checking those.
+      if (post.status === 'draft' && index < LIVE_CHECK_LIMIT) {
+        try {
+          const statusRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/posts/${post.wp_post_id}?_fields=status`, { timeoutMs: 10000 });
+          if (statusRes.ok) {
+            const wpData = await statusRes.json();
+            if (wpData.status && wpData.status !== post.status) {
+              currentStatus = wpData.status;
+              await pool.query(`UPDATE website_generated_posts SET status = $1, updated_at = NOW() WHERE id = $2`, [wpData.status, post.id]);
+            }
+          }
+        } catch (e) {
+          // Real, deliberate no-op — a failed real-time status check
+          // just means this read shows the last known real status
+          // instead of the very latest; never worth failing the whole
+          // list over.
+        }
+      }
+
       const links = extractLinksFromHtml(post.body_html, connection.site_url);
       if (index >= LIVE_CHECK_LIMIT || !links.length) {
-        return { ...post, links, linkHealthChecked: false, internalLinkScore: null, externalLinkScore: null };
+        return { ...post, status: currentStatus, links, linkHealthChecked: false, internalLinkScore: null, externalLinkScore: null };
       }
 
       const checked = await Promise.all(links.map(async (link) => {
@@ -6235,7 +6409,7 @@ app.get('/api/business/:id/website/generated-posts', authRequired, async (req, r
       const internalLinkScore = scoreFor(checked.filter(l => l.isInternal));
       const externalLinkScore = scoreFor(checked.filter(l => !l.isInternal));
 
-      return { ...post, links: checked, linkHealthChecked: true, internalLinkScore, externalLinkScore };
+      return { ...post, status: currentStatus, links: checked, linkHealthChecked: true, internalLinkScore, externalLinkScore };
     }));
 
     res.json({ posts });
@@ -6305,6 +6479,7 @@ app.put('/api/business/:id/website/generated-posts/:postId', authRequired, async
     );
 
     await logWebsiteAudit(connection.id, 'user', req.userId, 'generated_post_edited', `Edited generated post: "${newTitle}"`, { postId: post.id, wpPostId: post.wp_post_id }, 'content_generation');
+    await invalidatePushModeCache(connection);
 
     res.json({ success: true });
   } catch (e) {
@@ -6333,11 +6508,52 @@ app.post('/api/business/:id/website/generated-posts/:postId/publish', authRequir
 
     await pool.query(`UPDATE website_generated_posts SET status = 'publish', updated_at = NOW() WHERE id = $1`, [post.id]);
     await logWebsiteAudit(connection.id, 'user', req.userId, 'generated_post_published', `Published: "${post.title}"`, { postId: post.id, wpPostId: post.wp_post_id }, 'content_generation');
+    await invalidatePushModeCache(connection);
 
     res.json({ success: true });
   } catch (e) {
     console.error('Publish generated post error:', e.message);
     res.status(500).json({ error: 'Could not publish this post.' });
+  }
+});
+
+// Real, deliberate draft-only scope — deleting an already-published,
+// genuinely live post is a much more consequential, real action than
+// discarding a draft nobody has seen yet; a person who wants that
+// should do it deliberately from WordPress itself, not a quick button
+// here. Moves the real WordPress post to trash (WordPress's own
+// default, recoverable behavior), not a permanent, unrecoverable delete.
+app.delete('/api/business/:id/website/generated-posts/:postId', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    if (connection.connection_mode === 'poll') {
+      return res.status(400).json({ error: 'Deleting a generated post isn\'t available yet for a poll-mode connection.' });
+    }
+
+    const postResult = await pool.query('SELECT * FROM website_generated_posts WHERE id = $1 AND website_connection_id = $2', [req.params.postId, connection.id]);
+    if (!postResult.rows.length) return res.status(404).json({ error: 'Post not found.' });
+    const post = postResult.rows[0];
+    if (post.status !== 'draft') {
+      return res.status(400).json({ error: 'Only a draft can be deleted here — an already-published post should be removed directly from WordPress.' });
+    }
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    const deleteRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/posts/${post.wp_post_id}`, {
+      method: 'DELETE', timeoutMs: 15000,
+    });
+    if (!deleteRes.ok && deleteRes.status !== 404) {
+      return res.status(400).json({ error: `WordPress rejected deleting this draft (status ${deleteRes.status}).` });
+    }
+
+    await pool.query('DELETE FROM website_generated_posts WHERE id = $1', [post.id]);
+    await logWebsiteAudit(connection.id, 'user', req.userId, 'generated_post_deleted', `Deleted draft: "${post.title}"`, { wpPostId: post.wp_post_id }, 'content_generation');
+    await invalidatePushModeCache(connection);
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Delete generated post error:', e.message);
+    res.status(500).json({ error: 'Could not delete this draft.' });
   }
 });
 
@@ -6419,9 +6635,10 @@ app.post('/api/business/:id/website/generate-blog-post', authRequired, async (re
     const topic = (req.body?.topic || '').trim();
     if (!topic) return res.status(400).json({ error: 'A topic is required.' });
     const generateFeaturedImage = !!req.body?.generateFeaturedImage;
+    const publishStatusOverride = req.body?.publishStatus === 'publish' ? 'publish' : (req.body?.publishStatus === 'draft' ? 'draft' : null);
 
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
-    const result = await runBlogPostGeneration(connection, decryptedPassword, context, topic, generateFeaturedImage);
+    const result = await runBlogPostGeneration(connection, decryptedPassword, context, topic, generateFeaturedImage, publishStatusOverride);
 
     if (!result.success) return res.status(400).json({ error: result.error });
     res.json(result);
@@ -12282,8 +12499,14 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
 app.get('/api/business', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
+    // Real, deliberate additive field — lets the Website tab default to
+    // a business that's actually connected, rather than blindly picking
+    // the first business in the list regardless of whether it has a
+    // real connection at all.
     const result = await pool.query(
-      'SELECT id, name, website, industry, created_at, updated_at FROM businesses WHERE user_id = $1 AND is_active = true ORDER BY updated_at DESC',
+      `SELECT b.id, b.name, b.website, b.industry, b.created_at, b.updated_at,
+       EXISTS(SELECT 1 FROM website_connections wc WHERE wc.business_id = b.id AND wc.connection_status != 'disconnected') AS has_website_connection
+       FROM businesses b WHERE b.user_id = $1 AND b.is_active = true ORDER BY b.updated_at DESC`,
       [account.id]
     );
     res.json({ businesses: result.rows });
@@ -13968,12 +14191,22 @@ async function runContentAutomationSweep() {
 
     for (const connection of dueConnections.rows) {
       try {
-        const bizResult = await pool.query('SELECT id, user_id FROM businesses WHERE id = $1', [connection.business_id]);
+        const bizResult = await pool.query('SELECT id, name, user_id FROM businesses WHERE id = $1', [connection.business_id]);
         if (!bizResult.rows.length) continue;
         const context = await getBusinessContext(connection.business_id, bizResult.rows[0].user_id);
         if (!context) continue;
 
         const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+
+        // Real, deliberate refresh order — analyze first, so the audit
+        // and content generation right after both work from a genuinely
+        // current picture rather than a stale one. A real failure here
+        // never blocks the rest of this real, scheduled cycle.
+        try {
+          await runAutomaticWebsiteIntelligence(connection, decryptedPassword, bizResult.rows[0].name);
+        } catch (intelErr) {
+          console.error(`Automatic Website Intelligence refresh failed for connection ${connection.id}:`, intelErr.message);
+        }
 
         // Real, deliberate audit-and-fix step, now part of the same
         // real, scheduled cycle as content creation — this is the
