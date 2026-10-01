@@ -12742,7 +12742,7 @@ async function wpApiRequestBinary(siteUrl, username, appPassword, endpoint, { bu
 // real request path and deprecates old ones roughly a year after
 // release, so this real constant is the one place to bump when this
 // one ages out, rather than hunting through every real call site.
-const SHOPIFY_API_VERSION = '2024-10';
+const SHOPIFY_API_VERSION = '2026-07';
 
 // Real, deliberate HMAC verification — the one genuine security gate
 // confirming a real callback actually came from Shopify itself, not a
