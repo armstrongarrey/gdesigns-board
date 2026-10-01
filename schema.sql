@@ -1318,6 +1318,49 @@ CREATE TABLE IF NOT EXISTS website_keyword_rankings (
 CREATE INDEX IF NOT EXISTS idx_website_keyword_rankings_connection ON website_keyword_rankings(website_connection_id, snapshot_date DESC);
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- SHOPIFY INTEGRATION — stage 1 (connect, read, create content with real SEO
+-- fields). Deliberately scoped to this foundation first, the same real
+-- incremental path the WordPress integration itself took, rather than
+-- attempting the full audit/proposal/automation richness WordPress has in
+-- one pass. One connection per real business, the same real shape as
+-- website_connections, since a Shopify store is the same real conceptual
+-- unit as a WordPress site.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS shopify_connections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE UNIQUE,
+  shop_domain VARCHAR(255) NOT NULL, -- e.g. 'mystore.myshopify.com'
+  access_token_encrypted TEXT NOT NULL,
+  scope VARCHAR(500),
+  blog_id BIGINT, -- the shop's default blog, resolved once at connect time
+  connection_status VARCHAR(20) DEFAULT 'connected', -- 'connected' | 'disconnected' | 'auth_expired'
+  connected_at TIMESTAMPTZ DEFAULT NOW(),
+  last_verified_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_shopify_connections_business ON shopify_connections(business_id);
+
+-- Real, deliberate local record, the same real reason website_generated_posts
+-- exists — so a real generated article is visible, editable, and trackable
+-- from within Arreyon, not only by visiting Shopify's own admin directly.
+CREATE TABLE IF NOT EXISTS shopify_generated_posts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  shopify_connection_id UUID REFERENCES shopify_connections(id) ON DELETE CASCADE,
+  shopify_article_id BIGINT NOT NULL,
+  topic TEXT,
+  title TEXT NOT NULL,
+  handle TEXT NOT NULL, -- Shopify's real equivalent of a WordPress slug
+  body_html TEXT NOT NULL,
+  meta_title TEXT,
+  meta_description TEXT,
+  tags TEXT,
+  status VARCHAR(20) DEFAULT 'draft', -- 'draft' | 'published' — mirrors Shopify's own real article.published state
+  article_url TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_shopify_generated_posts_connection ON shopify_generated_posts(shopify_connection_id, created_at DESC);
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Arreyon Connect plugin — connection-code handshake (Option 2). WordPress
 -- initiates here (the reverse of the existing paste-a-credential flow):
 -- Arreyon generates a short-lived code and shows it; the plugin, once the
