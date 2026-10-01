@@ -1988,6 +1988,21 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div id="websiteAuditRunContent"></div>
       </div>
 
+      <!-- AI VISIBILITY — the feedback loop the rest of the SEO/AEO/GEO work
+           never had: real queries actually sent to Perplexity, checking
+           whether this business is genuinely mentioned or cited. -->
+      <div id="websiteAiVisibilitySection" style="display:none;margin-top:28px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.ai_visibility_title">AI Visibility</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn-ghost" onclick="clearAiVisibilityHistory()" data-i18n="web.clear_history_button">Clear History</button>
+            <button class="btn-primary" onclick="runAiVisibilityCheck()" id="websiteAiVisibilityBtn" data-i18n="web.run_visibility_check_button">Check AI Visibility</button>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.ai_visibility_description">Sends real, realistic customer questions to Perplexity and checks whether this business is actually mentioned or cited in the answer — a direct check, not an estimate.</div>
+        <div id="websiteAiVisibilityContent"></div>
+      </div>
+
       <!-- CATEGORIES & TAGS — read the site's real, existing taxonomy and
            create a new one directly. Not part of the approval workflow
            below: creating a term doesn't touch any existing, live content,
@@ -7303,6 +7318,7 @@ async function loadWebsiteBusinesses() {
       document.getElementById('websiteActivityLogSection').style.display = 'none';
       document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
       document.getElementById('websiteAuditRunSection').style.display = 'none';
+      document.getElementById('websiteAiVisibilitySection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return;
     }
@@ -7353,6 +7369,7 @@ function onWebsiteBusinessSelectChange() {
     document.getElementById('websiteActivityLogSection').style.display = 'none';
     document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
     document.getElementById('websiteAuditRunSection').style.display = 'none';
+    document.getElementById('websiteAiVisibilitySection').style.display = 'none';
     document.getElementById('websiteActionsSection').style.display = 'none';
     resetWebsiteConnectForm();
     return;
@@ -7425,6 +7442,7 @@ async function loadWebsiteSection() {
       document.getElementById('websiteActivityLogSection').style.display = 'none';
       document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
       document.getElementById('websiteAuditRunSection').style.display = 'none';
+      document.getElementById('websiteAiVisibilitySection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return false;
     }
@@ -7439,6 +7457,7 @@ async function loadWebsiteSection() {
     document.getElementById('websiteActivityLogSection').style.display = 'block';
     document.getElementById('websiteGeneratedPostsSection').style.display = 'block';
     document.getElementById('websiteAuditRunSection').style.display = 'block';
+    document.getElementById('websiteAiVisibilitySection').style.display = 'block';
     document.getElementById('websiteActionsSection').style.display = 'block';
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
@@ -7447,6 +7466,7 @@ async function loadWebsiteSection() {
     loadWebsiteActivityLog();
     loadWebsiteGeneratedPosts();
     loadWebsiteAuditRuns();
+    loadAiVisibilityHistory();
     loadWebsiteActions();
     return true;
   } catch (e) {
@@ -8262,6 +8282,85 @@ async function clearAuditHistory() {
     }
     showToast(t('web.entries_cleared').replace('{n}', data.clearedCount), 'success');
     loadWebsiteAuditRuns();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+// ── AI VISIBILITY ────────────────────────────────────────────────────────
+async function runAiVisibilityCheck() {
+  const btn = document.getElementById('websiteAiVisibilityBtn');
+  btn.disabled = true;
+  btn.textContent = t('web.checking_visibility');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/ai-visibility/check`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.visibility_check_complete').replace('{mentioned}', data.mentionedCount).replace('{total}', data.checkedCount), 'success');
+    loadAiVisibilityHistory();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.run_visibility_check_button');
+  }
+}
+
+async function loadAiVisibilityHistory() {
+  const contentEl = document.getElementById('websiteAiVisibilityContent');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/ai-visibility/history`);
+    const data = await res.json();
+    if (!res.ok) {
+      contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+      return;
+    }
+    renderAiVisibilityHistory(data.checks || []);
+  } catch (e) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderAiVisibilityHistory(checks) {
+  const contentEl = document.getElementById('websiteAiVisibilityContent');
+  if (!checks.length) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_visibility_checks')}</div>`;
+    return;
+  }
+  const mentionedTotal = checks.filter(c => c.mentioned_by_name || c.cited_by_domain).length;
+  const summaryLine = `<div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:12px">${t('web.visibility_summary_line').replace('{mentioned}', mentionedTotal).replace('{total}', checks.length)}</div>`;
+
+  contentEl.innerHTML = summaryLine + renderCollapsibleItems(checks, (check) => {
+    const isVisible = check.mentioned_by_name || check.cited_by_domain;
+    const fullTimestamp = new Date(check.checked_at).toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' });
+    const citations = check.citations || [];
+    return `
+    <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px;border-left:3px solid ${isVisible ? '#22c55e' : '#ef4444'}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+        <div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(check.query)}</div>
+        <span style="font-size:9px;font-weight:700;color:${isVisible ? '#22c55e' : '#ef4444'};text-transform:uppercase;white-space:nowrap">${t(isVisible ? 'web.visibility_found' : 'web.visibility_not_found')}</span>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">${escapeHtml(fullTimestamp)}${check.mentioned_by_name ? ` · ${t('web.mentioned_by_name')}` : ''}${check.cited_by_domain ? ` · ${t('web.cited_as_source')}` : ''}</div>
+      ${check.answer_excerpt ? `<div style="font-size:11.5px;color:var(--text2);margin-top:6px;font-style:italic">"${escapeHtml(check.answer_excerpt.slice(0, 220))}${check.answer_excerpt.length > 220 ? '...' : ''}"</div>` : ''}
+      ${citations.length ? `<div style="font-size:10.5px;color:var(--muted);margin-top:6px">${t('web.sources_label')}: ${citations.slice(0, 3).map(u => escapeHtml(u)).join(', ')}</div>` : ''}
+    </div>`;
+  }, 5, 'aiVisibilityChecks');
+}
+
+async function clearAiVisibilityHistory() {
+  if (!confirm(t('web.confirm_clear_visibility_history'))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/ai-visibility/history`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.entries_cleared').replace('{n}', data.clearedCount), 'success');
+    loadAiVisibilityHistory();
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
