@@ -2625,11 +2625,69 @@ function arreyon_register_seo_rest_fields() {
             ]);
         }
     }
+
+    // Real, deliberate real schema-markup field — genuinely different
+    // storage need from the plain-text SEO fields above, since this
+    // real value is JSON, not a sentence, and sanitize_text_field
+    // would mangle real quotes/braces. This round-trips through
+    // json_decode/wp_json_encode instead: a real, valid JSON payload
+    // survives intact; anything malformed is silently cleared to an
+    // empty string rather than stored as broken, half-sanitized JSON.
+    register_post_meta('post', '_arreyon_faq_schema', [
+        'show_in_rest'      => true,
+        'single'            => true,
+        'type'              => 'string',
+        'sanitize_callback' => function ($value) {
+            $decoded = json_decode($value, true);
+            if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) return '';
+            return wp_json_encode($decoded);
+        },
+        'auth_callback' => function ($allowed, $meta_key, $post_id) {
+            return current_user_can('edit_post', $post_id);
+        },
+    ]);
 }
 // Runs after both WordPress core (priority 10) and every major SEO plugin
 // have registered their own post types and meta boxes, so this never
 // races a plugin that hasn't finished setting up its own fields yet.
 add_action('init', 'arreyon_register_seo_rest_fields', 20);
+
+// Real, deliberate site-wide setting, separate from the per-post FAQ
+// schema above — Organization/LocalBusiness schema describes the real
+// business itself, not any one page, so it belongs on every real page
+// of the site, stored once, not duplicated per post.
+add_action('rest_api_init', function () {
+    register_setting('general', 'arreyon_organization_schema', [
+        'show_in_rest'      => true,
+        'type'              => 'string',
+        'sanitize_callback' => function ($value) {
+            $decoded = json_decode($value, true);
+            if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) return '';
+            return wp_json_encode($decoded);
+        },
+        'default' => '',
+    ]);
+});
+
+// Real, deliberate single output point for both real schema types —
+// the FAQ schema for whichever single post is genuinely being viewed,
+// and the Organization schema on every real page, site-wide. Neither
+// ever touches post_content itself, so neither is ever at risk of
+// being stripped by unfiltered_html restrictions the way a real
+// <script> tag saved inside the post body could be on some real,
+// more locked-down WordPress installs (multisite especially).
+add_action('wp_head', function () {
+    if (is_singular('post')) {
+        $faq_schema = get_post_meta(get_the_ID(), '_arreyon_faq_schema', true);
+        if (!empty($faq_schema)) {
+            echo '<script type="application/ld+json">' . $faq_schema . '</script>';
+        }
+    }
+    $org_schema = get_option('arreyon_organization_schema', '');
+    if (!empty($org_schema)) {
+        echo '<script type="application/ld+json">' . $org_schema . '</script>';
+    }
+});
 
 // ============================================================================
 // AUTOMATIC CACHE REFRESH — the real, documented reason a raw meta write
@@ -4402,6 +4460,34 @@ function decodeHtmlEntities(str) {
 // never called anywhere that would change an existing post's real,
 // already-published URL, which stays fixed for its entire lifetime
 // once created, by design, not by convention.
+// Real, deliberate code-built schema, never AI-generated JSON — the
+// same discipline as the FAQ schema above, built directly from real
+// business fields rather than trusting free-form generation to
+// produce syntactically exact JSON-LD. Falls back to a plain
+// Organization type when there isn't enough real location data for a
+// genuine LocalBusiness entry, rather than fabricating an address.
+function buildOrganizationSchema(context, siteUrl) {
+  const business = context?.business || {};
+  if (!business.name) return null;
+
+  const hasLocation = business.city || business.region || business.country;
+  const schema = {
+    '@context': 'https://schema.org',
+    '@type': hasLocation ? 'LocalBusiness' : 'Organization',
+    name: business.name,
+    url: siteUrl,
+  };
+  if (hasLocation) {
+    schema.address = {
+      '@type': 'PostalAddress',
+      ...(business.city ? { addressLocality: business.city } : {}),
+      ...(business.region ? { addressRegion: business.region } : {}),
+      ...(business.country ? { addressCountry: business.country } : {}),
+    };
+  }
+  return schema;
+}
+
 function generateSeoFriendlySlug(title) {
   const slug = title
     .toLowerCase()
@@ -4904,7 +4990,7 @@ async function findOrCreateWordPressTerm(connection, decryptedPassword, taxonomy
 // post's real, already-published slug. The slug is set exactly once,
 // at creation, and WordPress itself owns making it unique thereafter.
 async function createWordPressBlogPost(connection, decryptedPassword, postData) {
-  const { title, bodyHtml, slug, metaTitle, metaDescription, focusKeyword, category, tags, status, generateFeaturedImage, imagePrompt } = postData;
+  const { title, bodyHtml, slug, metaTitle, metaDescription, focusKeyword, category, tags, status, generateFeaturedImage, imagePrompt, faqSchema } = postData;
 
   const categoryIds = [];
   if (category) {
@@ -4941,7 +5027,7 @@ async function createWordPressBlogPost(connection, decryptedPassword, postData) 
   // WordPress's own core title field (already set correctly above,
   // directly, as the real post title itself). Focus keyword follows
   // the same real, established multi-plugin meta pattern.
-  if (metaTitle || metaDescription || focusKeyword) {
+  if (metaTitle || metaDescription || focusKeyword || faqSchema) {
     await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/posts/${created.id}`, {
       method: 'POST',
       body: {
@@ -4949,6 +5035,10 @@ async function createWordPressBlogPost(connection, decryptedPassword, postData) 
           ...(metaTitle ? { _yoast_wpseo_title: metaTitle, rank_math_title: metaTitle } : {}),
           ...(metaDescription ? { _yoast_wpseo_metadesc: metaDescription, rank_math_description: metaDescription } : {}),
           ...(focusKeyword ? { _yoast_wpseo_focuskw: focusKeyword, rank_math_focus_keyword: focusKeyword } : {}),
+          // Real, deliberate separate field, read by the bridge plugin's
+          // own wp_head hook — never routed through any SEO plugin's own
+          // fields, since none of them expose a raw custom-schema field.
+          ...(faqSchema ? { _arreyon_faq_schema: JSON.stringify(faqSchema) } : {}),
         },
       },
       timeoutMs: 15000,
@@ -5101,7 +5191,7 @@ CRITICAL RULES — read carefully, these are non-negotiable:
 
 6. Write with genuine specificity and confident expertise grounded ONLY in the real context given — concrete, real details beat vague generalities, but a real detail beats an invented one every time. If you don't have enough real specifics for a claim, write more generally rather than fabricating a specific-sounding one.
 
-7. Where it genuinely fits the topic, include one short, naturally-integrated question-and-answer moment addressing a real, specific question someone would actually search for — this helps AI answer engines cite the post directly. Don't force this if it doesn't fit naturally.
+7. Where it genuinely fits the topic, include 1-3 short, naturally-integrated question-and-answer moments addressing real, specific questions someone would actually search for — this helps AI answer engines cite the post directly. Don't force this if it doesn't fit naturally; zero is fine for a topic where it genuinely doesn't.
 
 8. Punctuation must read as professionally edited, not AI-generated. Do NOT use em dashes (—) or double hyphens as a stylistic device — use a period, comma, colon, or semicolon instead, whichever actually fits the sentence grammatically. Only standard punctuation: periods, commas, colons, semicolons, question marks, parentheses, and a single hyphen only inside a genuinely hyphenated word. No emoji anywhere.
 
@@ -5126,7 +5216,8 @@ Respond in EXACTLY this two-part format, with no other text before, between, or 
   "metaDescription": "... (150-160 characters)",
   "focusKeyword": "the single primary keyword/phrase this post targets",
   "category": "a single, fitting category name",
-  "tags": ["2-4 relevant tag names"]
+  "tags": ["2-4 relevant tag names"],
+  "faqs": [{ "question": "the exact question as it appears in the body", "answer": "the exact answer text as it appears in the body, in plain text with no HTML tags" }]
 }
 ===BODY_HTML===
 <h2>...</h2><p>...</p>...(the full real HTML body, as plain HTML — NOT inside the JSON above)`;
@@ -5155,6 +5246,25 @@ Respond in EXACTLY this two-part format, with no other text before, between, or 
   // substitute in the overwhelming majority of real em-dash usage.
   bodyHtml = bodyHtml.replace(/\s*[—–]\s*|\s+--\s+/g, ', ').replace(/,\s*,/g, ',').replace(/,\s*\./g, '.');
 
+  // Real, deliberate real Schema.org FAQPage structure, built here in
+  // code from the AI's real, structured question/answer pairs — never
+  // asking the AI to hand-write JSON-LD itself, since a real schema
+  // block has to be syntactically exact, and building it from clean,
+  // separate fields is far more reliable than trusting free-form JSON
+  // generation to get every brace and quote right.
+  const validFaqs = Array.isArray(parsed.faqs)
+    ? parsed.faqs.filter(f => f && typeof f.question === 'string' && typeof f.answer === 'string' && f.question.trim() && f.answer.trim())
+    : [];
+  const faqSchema = validFaqs.length ? {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: validFaqs.map(f => ({
+      '@type': 'Question',
+      name: f.question.trim(),
+      acceptedAnswer: { '@type': 'Answer', text: f.answer.trim() },
+    })),
+  } : null;
+
   return {
     title: parsed.title,
     metaTitle: parsed.metaTitle,
@@ -5164,6 +5274,7 @@ Respond in EXACTLY this two-part format, with no other text before, between, or 
     tags: Array.isArray(parsed.tags) ? parsed.tags : [],
     bodyHtml,
     slug: generateSeoFriendlySlug(parsed.title),
+    faqSchema,
   };
 }
 
@@ -6319,7 +6430,7 @@ async function runBlogPostGeneration(connection, decryptedPassword, context, top
     title: generated.title, bodyHtml: generated.bodyHtml, slug: generated.slug,
     metaTitle: generated.metaTitle, metaDescription: generated.metaDescription, focusKeyword: generated.focusKeyword,
     category: generated.category, tags: generated.tags, status: publishStatus,
-    generateFeaturedImage, imagePrompt,
+    generateFeaturedImage, imagePrompt, faqSchema: generated.faqSchema,
   });
 
   // Real, deliberate invalidation — a genuinely new real post now
@@ -6350,6 +6461,56 @@ async function runBlogPostGeneration(connection, decryptedPassword, context, top
 
   return { ...result, title: generated.title, publishStatus };
 }
+
+app.post('/api/business/:id/website/organization-schema', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    if (connection.connection_mode === 'poll') {
+      return res.status(400).json({ error: 'Adding schema markup isn\'t available yet for a poll-mode connection.' });
+    }
+
+    const schema = buildOrganizationSchema(context, connection.site_url);
+    if (!schema) return res.status(400).json({ error: 'A business name is required before schema markup can be generated — add one on the business profile first.' });
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    const writeRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/settings', {
+      method: 'POST', body: { arreyon_organization_schema: JSON.stringify(schema) }, timeoutMs: 15000,
+    });
+    if (!writeRes.ok) {
+      return res.status(400).json({ error: `WordPress rejected saving this (status ${writeRes.status}) — this site's plugin may need updating to the latest version, which adds schema support.` });
+    }
+
+    await logWebsiteAudit(connection.id, 'user', req.userId, 'organization_schema_added', `Added ${schema['@type']} schema for "${schema.name}"`, { schemaType: schema['@type'] }, 'general');
+
+    res.json({ success: true, schema });
+  } catch (err) {
+    console.error('Organization schema error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to add schema markup. Please try again.' });
+  }
+});
+
+app.get('/api/business/:id/website/organization-schema', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    if (connection.connection_mode === 'poll') return res.json({ schema: null });
+
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    const readRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/settings', { timeoutMs: 10000 });
+    if (!readRes.ok) return res.json({ schema: null });
+    const settings = await readRes.json();
+    let schema = null;
+    try { schema = settings.arreyon_organization_schema ? JSON.parse(settings.arreyon_organization_schema) : null; } catch { /* Real, deliberate no-op — malformed stored data just reads back as none set. */ }
+    res.json({ schema });
+  } catch (e) {
+    res.json({ schema: null });
+  }
+});
 
 app.get('/api/business/:id/website/generated-posts', authRequired, async (req, res) => {
   try {
