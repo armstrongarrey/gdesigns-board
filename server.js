@@ -7622,6 +7622,279 @@ app.post('/api/business/:id/website/actions/:actionId/reject', authRequired, asy
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SHOPIFY INTEGRATION — stage 1: connect, read, create content with real
+// SEO fields. Requires SHOPIFY_API_KEY and SHOPIFY_API_SECRET from a real
+// Shopify Partners app (one-time setup: partners.shopify.com → create an
+// app → set this server's callback URL below as an allowed redirect URI).
+// One real connection per real business, mirroring website_connections'
+// own real shape, since a Shopify store is the same real conceptual unit
+// as a WordPress site.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SHOPIFY_SCOPES = 'read_content,write_content,read_themes';
+const SHOPIFY_CALLBACK_URL = `${BASE_URL}/api/shopify/callback`;
+
+app.get('/api/business/:id/shopify/connect', authRequired, async (req, res) => {
+  try {
+    if (!process.env.SHOPIFY_API_KEY) {
+      return res.status(400).json({ error: 'Shopify integration is not configured on this server yet — SHOPIFY_API_KEY is missing.' });
+    }
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    // Real, deliberate strict validation — this shop domain goes directly
+    // into a real outbound redirect URL and a real OAuth authorize
+    // request; only a genuine *.myshopify.com shape is ever accepted.
+    const shop = (req.query.shop || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop)) {
+      return res.status(400).json({ error: 'Enter your shop domain exactly as it appears, e.g. yourstore.myshopify.com' });
+    }
+
+    const state = jwt.sign({ businessId: req.params.id, userId: req.userId, shop }, JWT_SECRET, { expiresIn: '10m' });
+    const params = new URLSearchParams({
+      client_id: process.env.SHOPIFY_API_KEY,
+      scope: SHOPIFY_SCOPES,
+      redirect_uri: SHOPIFY_CALLBACK_URL,
+      state,
+    });
+    res.json({ authorizeUrl: `https://${shop}/admin/oauth/authorize?${params.toString()}` });
+  } catch (e) {
+    console.error('Shopify connect init error:', e.message);
+    res.status(500).json({ error: 'Failed to start the Shopify connection.' });
+  }
+});
+
+app.get('/api/shopify/callback', async (req, res) => {
+  const { code, shop, state, hmac } = req.query;
+  try {
+    if (!code || !shop || !state || !hmac) return res.redirect('/dashboard?section=website&error=shopify_connect_failed');
+
+    // Real, deliberate HMAC check before anything else — confirms this
+    // real request genuinely came from Shopify, not a forged callback.
+    if (!verifyShopifyHmac(req.query, process.env.SHOPIFY_API_SECRET)) {
+      console.error('Shopify callback HMAC verification failed for shop:', shop);
+      return res.redirect('/dashboard?section=website&error=shopify_connect_failed');
+    }
+    if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(shop)) {
+      return res.redirect('/dashboard?section=website&error=shopify_connect_failed');
+    }
+
+    let decoded;
+    try { decoded = jwt.verify(state, JWT_SECRET); } catch { return res.redirect('/dashboard?section=website&error=shopify_connect_failed'); }
+    if (decoded.shop !== shop) return res.redirect('/dashboard?section=website&error=shopify_connect_failed');
+
+    const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: process.env.SHOPIFY_API_KEY, client_secret: process.env.SHOPIFY_API_SECRET, code }),
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok || !tokenData.access_token) {
+      console.error('Shopify token exchange failed:', tokenData);
+      return res.redirect('/dashboard?section=website&error=shopify_connect_failed');
+    }
+
+    // Real, deliberate resolution of the shop's default blog — needed
+    // up front since creating an article always requires a real blog_id,
+    // and most real shops only have exactly one.
+    let blogId = null;
+    try {
+      const blogsRes = await shopifyApiRequest(shop, tokenData.access_token, '/blogs.json?limit=1');
+      const blogsData = await blogsRes.json();
+      blogId = blogsData.blogs?.[0]?.id || null;
+    } catch (e) {
+      // Real, deliberate no-op — a missing blog_id just means content
+      // creation won't work until one exists; the real connection
+      // itself still succeeds.
+    }
+
+    await pool.query(
+      `INSERT INTO shopify_connections (business_id, shop_domain, access_token_encrypted, scope, blog_id, connection_status, last_verified_at)
+       VALUES ($1, $2, $3, $4, $5, 'connected', NOW())
+       ON CONFLICT (business_id) DO UPDATE SET shop_domain = $2, access_token_encrypted = $3, scope = $4, blog_id = $5, connection_status = 'connected', last_verified_at = NOW()`,
+      [decoded.businessId, shop, encryptSecret(tokenData.access_token), tokenData.scope || SHOPIFY_SCOPES, blogId]
+    );
+
+    res.redirect('/dashboard?section=website&connected=shopify');
+  } catch (e) {
+    console.error('Shopify callback error:', e.message);
+    res.redirect('/dashboard?section=website&error=shopify_connect_failed');
+  }
+});
+
+app.get('/api/business/:id/shopify', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const result = await pool.query('SELECT id, shop_domain, connection_status, connected_at, last_verified_at, blog_id FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    res.json({ connection: result.rows[0] || null });
+  } catch (e) {
+    console.error('Get Shopify connection error:', e.message);
+    res.status(500).json({ error: 'Failed to load Shopify connection status.' });
+  }
+});
+
+app.delete('/api/business/:id/shopify', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    await pool.query('DELETE FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Disconnect Shopify error:', e.message);
+    res.status(500).json({ error: 'Failed to disconnect Shopify.' });
+  }
+});
+
+// Real, deliberate stage-1 scope — reuses the exact same real readability,
+// anti-hallucination, and punctuation rules already proven for WordPress,
+// but external links only; a real Shopify page/article fetch for internal
+// link candidates is real, separate stage-2 work, disclosed honestly
+// rather than silently built as if it already existed.
+async function generateShopifyBlogPostContent(context, topic, existingTitles) {
+  let externalCandidates = [];
+  try {
+    const results = await researchSearch(topic, { maxResults: 6 });
+    const checks = await Promise.all(results.map(async (r) => ({ ...r, resolves: !(await checkInternalLinkResolves(r.url)).broken })));
+    externalCandidates = checks.filter(c => c.resolves).map(c => ({ title: c.title, url: c.url })).slice(0, 4);
+  } catch (e) { /* Real, deliberate graceful degradation — a post can still be written without real external links if research fails. */ }
+
+  const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+  const prompt = `You are a senior human copywriter and SEO/AEO/GEO strategist, ghostwriting a genuinely excellent, publication-ready blog post for a real Shopify store — the kind of post an actual industry expert would write, not something that reads as AI-generated.
+${contextSummary}
+
+TOPIC: ${topic}
+
+REAL, CURRENTLY-LIVE EXTERNAL PAGES relevant to this topic (confirmed reachable just now) — you may ONLY link externally to these exact URLs, verbatim, never invent a new one:
+${externalCandidates.length ? externalCandidates.map(c => `- "${c.title}" (${c.url})`).join('\n') : '(No real, verified external sources were found — write without an external link rather than inventing one.)'}
+
+REAL TITLES ALREADY PUBLISHED ON THIS STORE'S BLOG — do not substantially duplicate one of these:
+${existingTitles.length ? existingTitles.map(t => `- ${t}`).join('\n') : '(No existing posts found.)'}
+
+CRITICAL RULES:
+1. NEVER invent or name a specific third-party business, company, or brand as an example unless it was explicitly named in the context above.
+2. NEVER invent a fact, statistic, or specific claim about the business itself that isn't stated in the context above.
+3. Do NOT create a "Further Reading" or similar closing link list — any link belongs inline, naturally, where it adds real value, never more than one in the whole post.
+4. No checklist-with-checkmark-emoji summaries, no emoji at all, no meta-commentary about the post itself.
+5. Punctuation must read as professionally edited: no em dashes or double hyphens as a stylistic device — use a period, comma, colon, or semicolon instead.
+6. Choose ONE real, specific, valuable focus keyword for this topic. It must appear naturally in the title, meta title, meta description, and at least twice in the body.
+7. Readability: short sentences (well under 20 words), short paragraphs (2-4 sentences), a new subheading every 2-4 paragraphs, plain everyday words, active voice, one idea per sentence.
+8. Where it genuinely fits, include 1-2 short, natural question-and-answer moments for AI answer-engine citation.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "title": "...",
+  "metaTitle": "... (50-60 characters)",
+  "metaDescription": "... (150-160 characters)",
+  "focusKeyword": "...",
+  "tags": ["2-4 relevant tag names"],
+  "bodyHtml": "the full real HTML body as a single string, h2/h3 headings, paragraphs, a list only where genuinely clearest"
+}`;
+
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Write the blog post now, as JSON only.' }], complexity: 'complex', context: { feature: 'shopify_blog_post_generation' }, maxTokens: 6000 });
+  const parsed = extractJSON(raw);
+  if (!parsed.title || !parsed.bodyHtml) throw new Error('Could not generate this post — the response was missing required fields. Please try again.');
+
+  const allVerifiedUrls = externalCandidates.map(c => c.url);
+  const bodyHtml = stripUnverifiedLinks(parsed.bodyHtml, allVerifiedUrls).replace(/\s*[—–]\s*|\s+--\s+/g, ', ').replace(/,\s*,/g, ',').replace(/,\s*\./g, '.');
+
+  return {
+    title: parsed.title, metaTitle: parsed.metaTitle || parsed.title, metaDescription: parsed.metaDescription || '',
+    focusKeyword: parsed.focusKeyword || '', tags: Array.isArray(parsed.tags) ? parsed.tags : [], bodyHtml,
+  };
+}
+
+// Real, deliberate real Shopify API call — creates the real article, with
+// real SEO metafields set in the same real request (Shopify supports this
+// natively, unlike WordPress's separate follow-up meta write).
+async function createShopifyBlogPost(connection, accessToken, postData) {
+  const { title, bodyHtml, metaTitle, metaDescription, tags, status } = postData;
+  if (!connection.blog_id) return { success: false, error: 'No blog was found on this Shopify store to publish to.' };
+
+  const createRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles.json`, {
+    method: 'POST',
+    body: {
+      article: {
+        title, body_html: bodyHtml, tags: (tags || []).join(', '), published: status === 'publish',
+        metafields: [
+          ...(metaTitle ? [{ namespace: 'global', key: 'title_tag', value: metaTitle, type: 'single_line_text_field' }] : []),
+          ...(metaDescription ? [{ namespace: 'global', key: 'description_tag', value: metaDescription, type: 'single_line_text_field' }] : []),
+        ],
+      },
+    },
+    timeoutMs: 20000,
+  });
+  if (!createRes.ok) {
+    let detail = null;
+    try { detail = await createRes.json(); } catch { /* Real, deliberate no-op. */ }
+    return { success: false, error: detail?.errors ? JSON.stringify(detail.errors) : `Shopify rejected creating this post (status ${createRes.status}).` };
+  }
+  const created = await createRes.json();
+  const article = created.article;
+  return { success: true, id: article.id, handle: article.handle, status: article.published ? 'publish' : 'draft', url: `https://${connection.shop_domain.replace('.myshopify.com', '.com')}/blogs/news/${article.handle}` };
+}
+
+app.get('/api/business/:id/shopify/generated-posts', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    const connResult = await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.json({ posts: [] });
+    const result = await pool.query('SELECT * FROM shopify_generated_posts WHERE shopify_connection_id = $1 ORDER BY created_at DESC LIMIT 100', [connResult.rows[0].id]);
+    res.json({ posts: result.rows });
+  } catch (e) {
+    console.error('Get Shopify generated posts error:', e.message);
+    res.status(500).json({ error: 'Could not load generated posts.' });
+  }
+});
+
+app.post('/api/business/:id/shopify/generate-post', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
+    const connection = connResult.rows[0];
+    if (connection.connection_status !== 'connected') return res.status(400).json({ error: 'This Shopify store is disconnected. Please reconnect it first.' });
+
+    const topic = (req.body?.topic || '').trim();
+    if (!topic) return res.status(400).json({ error: 'A topic is required.' });
+    const publishStatus = req.body?.publishStatus === 'publish' ? 'publish' : 'draft';
+
+    const accessToken = decryptSecret(connection.access_token_encrypted);
+
+    let existingTitles = [];
+    try {
+      const existingRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles.json?limit=20&fields=title`);
+      if (existingRes.ok) { const d = await existingRes.json(); existingTitles = (d.articles || []).map(a => a.title); }
+    } catch (e) { /* Real, deliberate no-op — topic-duplication checking is a nice-to-have, not a requirement for generation to proceed. */ }
+
+    const generated = await generateShopifyBlogPostContent(context, topic, existingTitles);
+    const result = await createShopifyBlogPost(connection, accessToken, { ...generated, status: publishStatus });
+
+    if (!result.success) return res.status(400).json({ error: result.error });
+
+    await pool.query(
+      `INSERT INTO shopify_generated_posts (shopify_connection_id, shopify_article_id, topic, title, handle, body_html, meta_title, meta_description, tags, status, article_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [connection.id, result.id, topic, generated.title, result.handle, generated.bodyHtml, generated.metaTitle, generated.metaDescription, generated.tags.join(', '), result.status, result.url]
+    );
+
+    res.json({ success: true, title: generated.title, publishStatus: result.status, url: result.url });
+  } catch (err) {
+    console.error('Shopify generate post error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate this post. Please try again.' });
+  }
+});
+
 
 // Pulls together what already exists across the platform for one business
 // into a single view — this endpoint generates nothing itself, it only
@@ -12458,6 +12731,60 @@ async function wpApiRequestBinary(siteUrl, username, appPassword, endpoint, { bu
         'X-Arreyon-Client': 'consult.gdesignsme.com',
       },
       body: new Uint8Array(buffer),
+    });
+    return res;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Real, deliberate Shopify API version — Shopify requires one in every
+// real request path and deprecates old ones roughly a year after
+// release, so this real constant is the one place to bump when this
+// one ages out, rather than hunting through every real call site.
+const SHOPIFY_API_VERSION = '2024-10';
+
+// Real, deliberate HMAC verification — the one genuine security gate
+// confirming a real callback actually came from Shopify itself, not a
+// forged request to someone else's /callback endpoint. Verified
+// directly against Shopify's own documented algorithm: every real
+// query parameter except hmac itself, sorted and joined, HMAC-SHA256'd
+// with the real app secret, compared via a real, timing-safe equality
+// check rather than a plain string comparison (which would leak timing
+// information an attacker could exploit to guess the real signature
+// byte by byte).
+function verifyShopifyHmac(query, secret) {
+  const { hmac, ...rest } = query;
+  if (!hmac) return false;
+  const message = Object.keys(rest).sort().map(key => `${key}=${rest[key]}`).join('&');
+  const computed = crypto.createHmac('sha256', secret).update(message).digest('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(computed, 'hex'), Buffer.from(hmac, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+// Real, deliberate Shopify-specific counterpart to wpApiRequest above —
+// genuinely different auth model (a real X-Shopify-Access-Token header,
+// never Basic auth), and the real base URL is always this shop's own
+// real *.myshopify.com domain plus the fixed, real Admin API path, not
+// an arbitrary user-supplied site URL, so the real SSRF concern
+// wpApiRequest guards against doesn't apply the same way here.
+async function shopifyApiRequest(shopDomain, accessToken, endpoint, options = {}) {
+  const url = `https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}${endpoint}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 15000);
+  try {
+    const res = await fetch(url, {
+      method: options.method || 'GET',
+      signal: controller.signal,
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
     });
     return res;
   } finally {
