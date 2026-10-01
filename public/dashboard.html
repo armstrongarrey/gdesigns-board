@@ -2003,6 +2003,18 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div id="websiteAiVisibilityContent"></div>
       </div>
 
+      <!-- KEYWORD RANKINGS — real, first-party data pulled directly from
+           Google Search Console's own API, never estimated or scraped.
+           Requires Search Console connected under Integrations. -->
+      <div id="websiteKeywordRankingsSection" style="display:none;margin-top:28px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.keyword_rankings_title">Keyword Rankings</div>
+          <button class="btn-primary" onclick="loadKeywordRankings()" id="websiteKeywordRankingsBtn" data-i18n="web.refresh">Refresh</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.keyword_rankings_description">Real position, clicks, and impressions per search query, straight from Google Search Console — the last 28 days. Requires Search Console connected under Integrations, pointed at this same site.</div>
+        <div id="websiteKeywordRankingsContent"></div>
+      </div>
+
       <!-- CATEGORIES & TAGS — read the site's real, existing taxonomy and
            create a new one directly. Not part of the approval workflow
            below: creating a term doesn't touch any existing, live content,
@@ -7319,6 +7331,7 @@ async function loadWebsiteBusinesses() {
       document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
       document.getElementById('websiteAuditRunSection').style.display = 'none';
       document.getElementById('websiteAiVisibilitySection').style.display = 'none';
+      document.getElementById('websiteKeywordRankingsSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return;
     }
@@ -7370,6 +7383,7 @@ function onWebsiteBusinessSelectChange() {
     document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
     document.getElementById('websiteAuditRunSection').style.display = 'none';
     document.getElementById('websiteAiVisibilitySection').style.display = 'none';
+    document.getElementById('websiteKeywordRankingsSection').style.display = 'none';
     document.getElementById('websiteActionsSection').style.display = 'none';
     resetWebsiteConnectForm();
     return;
@@ -7443,6 +7457,7 @@ async function loadWebsiteSection() {
       document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
       document.getElementById('websiteAuditRunSection').style.display = 'none';
       document.getElementById('websiteAiVisibilitySection').style.display = 'none';
+      document.getElementById('websiteKeywordRankingsSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return false;
     }
@@ -7458,6 +7473,7 @@ async function loadWebsiteSection() {
     document.getElementById('websiteGeneratedPostsSection').style.display = 'block';
     document.getElementById('websiteAuditRunSection').style.display = 'block';
     document.getElementById('websiteAiVisibilitySection').style.display = 'block';
+    document.getElementById('websiteKeywordRankingsSection').style.display = 'block';
     document.getElementById('websiteActionsSection').style.display = 'block';
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
@@ -7467,6 +7483,7 @@ async function loadWebsiteSection() {
     loadWebsiteGeneratedPosts();
     loadWebsiteAuditRuns();
     loadAiVisibilityHistory();
+    loadKeywordRankings();
     loadWebsiteActions();
     return true;
   } catch (e) {
@@ -8364,6 +8381,56 @@ async function clearAiVisibilityHistory() {
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
+}
+
+// ── KEYWORD RANKINGS ─────────────────────────────────────────────────────
+async function loadKeywordRankings() {
+  const contentEl = document.getElementById('websiteKeywordRankingsContent');
+  const btn = document.getElementById('websiteKeywordRankingsBtn');
+  btn.disabled = true;
+  contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.loading')}</div>`;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/keyword-rankings`);
+    const data = await res.json();
+    if (!res.ok) {
+      contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+      return;
+    }
+    renderKeywordRankings(data.rankings || []);
+  } catch (e) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderKeywordRankings(rankings) {
+  const contentEl = document.getElementById('websiteKeywordRankingsContent');
+  if (!rankings.length) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_keyword_data')}</div>`;
+    return;
+  }
+  // Real, deliberate sort — page-two opportunities first (the most
+  // actionable real signal), then by real impressions, so the most
+  // relevant real rows surface without needing to scroll past everything.
+  const sorted = [...rankings].sort((a, b) => (b.isPageTwoOpportunity - a.isPageTwoOpportunity) || (b.impressions - a.impressions));
+  const opportunityCount = rankings.filter(r => r.isPageTwoOpportunity).length;
+
+  const summaryLine = opportunityCount
+    ? `<div style="font-size:12.5px;color:#f59e0b;margin-bottom:12px;font-weight:600">${t('web.page_two_opportunities_line').replace('{n}', opportunityCount)}</div>`
+    : '';
+
+  contentEl.innerHTML = summaryLine + renderCollapsibleItems(sorted, (r) => `
+    <div style="background:var(--bg3);border-radius:8px;padding:10px 14px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:10px;${r.isPageTwoOpportunity ? 'border-left:3px solid #f59e0b' : ''}">
+      <div style="min-width:0">
+        <div style="font-size:12.5px;color:var(--text);font-weight:600">${escapeHtml(r.query)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">${r.clicks} ${t('web.clicks_label')} · ${r.impressions} ${t('web.impressions_label')} · ${r.ctr}% CTR</div>
+      </div>
+      <div style="text-align:right;white-space:nowrap">
+        <div style="font-size:14px;font-weight:700;color:${r.avgPosition <= 10 ? '#22c55e' : r.isPageTwoOpportunity ? '#f59e0b' : 'var(--text2)'}">#${r.avgPosition}</div>
+        ${r.isPageTwoOpportunity ? `<div style="font-size:9px;color:#f59e0b;text-transform:uppercase;font-weight:700">${t('web.opportunity_label')}</div>` : ''}
+      </div>
+    </div>`, 10, 'keywordRankings');
 }
 
 async function loadWebsiteAuditRuns() {
