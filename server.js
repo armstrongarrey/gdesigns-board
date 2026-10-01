@@ -6176,6 +6176,76 @@ Respond ONLY with valid JSON, no other text: {"topic": "a specific, genuinely us
 // real "grounded in live reality" discipline as the SEO proposals'
 // live-research option. A person browses and picks one, rather than
 // having to think of and type a topic themselves every time.
+// Real, deliberate realistic-customer-query generation — the actual
+// phrasing a real potential customer would type when looking for this
+// kind of business, not a generic SEO keyword. This is what gets
+// genuinely asked to Perplexity next, so it has to read like a real
+// person's real question, not a marketing phrase.
+async function generateAiVisibilityQueries(context, count = 5) {
+  const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+  const prompt = `You are researching how a real potential customer would actually ask an AI assistant (like Perplexity or ChatGPT) for a recommendation that this specific business could realistically appear in.
+${contextSummary}
+
+Write ${count} realistic questions a real potential customer would actually type into an AI assistant when looking for exactly this kind of business — natural, conversational phrasing a real person uses, not SEO keyword phrasing. Where real location context is available, include it naturally in some of the questions (e.g. "best X in [city]"), but don't force location into every one.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{"queries": ["realistic question 1", "realistic question 2"]}`;
+
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Provide the questions now, as JSON only.' }], complexity: 'moderate', context: { feature: 'website_ai_visibility_queries' }, maxTokens: 1000 });
+  const parsed = extractJSON(raw);
+  if (!Array.isArray(parsed.queries) || !parsed.queries.length) throw new Error('Could not generate real-world test questions for this check.');
+  return parsed.queries.slice(0, count);
+}
+
+// Real, deliberate direct test — actually sends the real query to
+// Perplexity's real sonar model, exactly as a real customer would
+// experience it, then checks the real, returned answer and real
+// citation list for this specific business's real name and real
+// domain. Never assumes or estimates; only records what Perplexity
+// genuinely returned for this exact real query, right now.
+async function runAiVisibilityCheck(connection, context) {
+  const businessName = (context?.business?.name || '').trim();
+  const siteUrl = connection.site_url || '';
+  let siteDomain = '';
+  try { siteDomain = new URL(siteUrl).hostname.replace(/^www\./, '').toLowerCase(); } catch { /* Real, deliberate no-op — an unparseable site URL just means domain-citation can never match, name-mention still can. */ }
+
+  const queries = await generateAiVisibilityQueries(context);
+  const results = [];
+
+  for (const query of queries) {
+    try {
+      const searchResults = await perplexitySearch(query);
+      const answerResult = searchResults.find(r => r.title === 'Perplexity research summary');
+      const answer = answerResult?.snippet || '';
+      const citations = searchResults.filter(r => r.url).map(r => r.url);
+
+      const mentionedByName = businessName.length > 2 && answer.toLowerCase().includes(businessName.toLowerCase());
+      const citedByDomain = siteDomain && citations.some(url => {
+        try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase() === siteDomain; } catch { return false; }
+      });
+
+      const inserted = await pool.query(
+        `INSERT INTO website_ai_visibility_checks (website_connection_id, query, mentioned_by_name, cited_by_domain, answer_excerpt, citations)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [connection.id, query, mentionedByName, citedByDomain, answer.slice(0, 2000), JSON.stringify(citations)]
+      );
+      results.push(inserted.rows[0]);
+    } catch (e) {
+      // Real, deliberate skip — one real query failing (a real
+      // Perplexity error, a real timeout) shouldn't block the rest of
+      // this real check from genuinely completing.
+      console.error(`AI visibility check failed for query "${query}":`, e.message);
+    }
+  }
+
+  const mentionedCount = results.filter(r => r.mentioned_by_name || r.cited_by_domain).length;
+  await logWebsiteAudit(connection.id, 'ai_agent', null, 'ai_visibility_checked',
+    `Checked AI visibility across ${results.length} real quer${results.length === 1 ? 'y' : 'ies'} — mentioned or cited in ${mentionedCount} of them`,
+    { checkedCount: results.length, mentionedCount }, 'general');
+
+  return { results, checkedCount: results.length, mentionedCount };
+}
+
 async function suggestBlogPostTopics(context, existingPosts, count = 5) {
   const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
   const existingTitles = existingPosts.map(p => p.title).filter(Boolean);
@@ -6461,6 +6531,51 @@ async function runBlogPostGeneration(connection, decryptedPassword, context, top
 
   return { ...result, title: generated.title, publishStatus };
 }
+
+app.post('/api/business/:id/website/ai-visibility/check', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    if (!context.business.name) return res.status(400).json({ error: 'A business name is required before an AI visibility check can run — add one on the business profile first.' });
+
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+
+    const result = await runAiVisibilityCheck(connection, context);
+    res.json(result);
+  } catch (err) {
+    console.error('AI visibility check error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to run the AI visibility check. Please try again.' });
+  }
+});
+
+app.get('/api/business/:id/website/ai-visibility/history', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    const result = await pool.query(
+      `SELECT * FROM website_ai_visibility_checks WHERE website_connection_id = $1 ORDER BY checked_at DESC LIMIT 100`,
+      [connection.id]
+    );
+    res.json({ checks: result.rows });
+  } catch (e) {
+    console.error('Get AI visibility history error:', e.message);
+    res.status(500).json({ error: 'Could not load AI visibility history.' });
+  }
+});
+
+app.delete('/api/business/:id/website/ai-visibility/history', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    const result = await pool.query(`DELETE FROM website_ai_visibility_checks WHERE website_connection_id = $1 RETURNING id`, [connection.id]);
+    res.json({ success: true, clearedCount: result.rows.length });
+  } catch (e) {
+    console.error('Clear AI visibility history error:', e.message);
+    res.status(500).json({ error: 'Could not clear AI visibility history.' });
+  }
+});
 
 app.post('/api/business/:id/website/organization-schema', authRequired, async (req, res) => {
   try {
