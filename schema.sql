@@ -1297,6 +1297,26 @@ CREATE TABLE IF NOT EXISTS website_ai_visibility_checks (
 );
 CREATE INDEX IF NOT EXISTS idx_website_ai_visibility_connection ON website_ai_visibility_checks(website_connection_id, checked_at DESC);
 
+-- Real, deliberate real keyword-level ranking data, pulled directly from
+-- Google's own Search Console API (never scraped, never estimated) —
+-- one row per real, actual search query Google itself reports this real
+-- site already appearing for, with its real position/clicks/impressions
+-- on the real snapshot date. Historical rows are kept (not overwritten)
+-- so a real trend can be shown over time.
+CREATE TABLE IF NOT EXISTS website_keyword_rankings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  website_connection_id UUID REFERENCES website_connections(id) ON DELETE CASCADE,
+  query TEXT NOT NULL,
+  clicks INTEGER DEFAULT 0,
+  impressions INTEGER DEFAULT 0,
+  ctr NUMERIC(6,3),
+  avg_position NUMERIC(6,2),
+  snapshot_date DATE NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(website_connection_id, query, snapshot_date)
+);
+CREATE INDEX IF NOT EXISTS idx_website_keyword_rankings_connection ON website_keyword_rankings(website_connection_id, snapshot_date DESC);
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Arreyon Connect plugin — connection-code handshake (Option 2). WordPress
 -- initiates here (the reverse of the existing paste-a-credential flow):
