@@ -2015,6 +2015,48 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div id="websiteKeywordRankingsContent"></div>
       </div>
 
+      <!-- SHOPIFY — stage 1 integration, deliberately separate from the
+           WordPress-specific blocks above rather than merged into one
+           generic "platform" system, since that unification is real,
+           separate future work. Shown independently of WordPress
+           connection state — a business can have one, both, or neither. -->
+      <div id="shopifySection" style="margin-top:32px;padding-top:28px;border-top:2px solid var(--border)">
+        <div class="section-title" style="font-size:16px;margin-bottom:4px" data-i18n="web.shopify_title">Shopify</div>
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px" data-i18n="web.shopify_subtitle">Connect a Shopify store to generate and publish blog content with real SEO fields — a separate, independent connection from WordPress above.</div>
+
+        <div id="shopifyConnectPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;text-align:center">
+          <div style="display:flex;gap:8px;max-width:360px;margin:0 auto 10px">
+            <input type="text" id="shopifyShopDomain" placeholder="yourstore.myshopify.com" style="flex:1">
+          </div>
+          <button class="btn-primary" onclick="connectShopify()" id="shopifyConnectBtn" data-i18n="web.connect_shopify_button">Connect Shopify</button>
+        </div>
+
+        <div id="shopifyConnectedWrap" style="display:none">
+          <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg2);border-radius:10px;padding:12px 16px;margin-bottom:16px">
+            <div>
+              <div style="font-size:12.5px;color:var(--text);font-weight:600" id="shopifyDomainLabel"></div>
+              <div style="font-size:11px;color:var(--muted)" data-i18n="web.status_connected">Connected</div>
+            </div>
+            <button class="btn-ghost" onclick="disconnectShopify()" data-i18n="web.disconnect_button">Disconnect</button>
+          </div>
+
+          <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:16px">
+            <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:8px" data-i18n="web.generate_post_now_title">Generate a Blog Post Now</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <input type="text" id="shopifyBlogPostTopic" data-i18n-placeholder="web.generate_post_topic_placeholder" placeholder="e.g. 5 tips for small business SEO" style="flex:1;min-width:200px">
+              <select id="shopifyPublishChoice" style="max-width:180px">
+                <option value="draft" data-i18n="web.content_automation_save_draft">Save as draft (I publish manually)</option>
+                <option value="publish" data-i18n="web.content_automation_auto_publish">Publish immediately, no review</option>
+              </select>
+              <button class="btn-primary" onclick="generateShopifyPost()" id="shopifyGenerateBtn" data-i18n="web.generate_post_button">Generate &amp; Create</button>
+            </div>
+          </div>
+
+          <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.generated_posts_title">Generated Blog Posts</div>
+          <div id="shopifyGeneratedPostsContent"></div>
+        </div>
+      </div>
+
       <!-- CATEGORIES & TAGS — read the site's real, existing taxonomy and
            create a new one directly. Not part of the approval workflow
            below: creating a term doesn't touch any existing, live content,
@@ -7298,6 +7340,132 @@ document.addEventListener('arreyon:langchange', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 let currentWebsiteBusinessId = null;
 
+// ── SHOPIFY ──────────────────────────────────────────────────────────────
+async function loadShopifyStatus() {
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify`);
+    const data = await res.json();
+    if (!res.ok || !data.connection) {
+      document.getElementById('shopifyConnectPrompt').style.display = 'block';
+      document.getElementById('shopifyConnectedWrap').style.display = 'none';
+      return;
+    }
+    document.getElementById('shopifyConnectPrompt').style.display = 'none';
+    document.getElementById('shopifyConnectedWrap').style.display = 'block';
+    document.getElementById('shopifyDomainLabel').textContent = data.connection.shop_domain;
+    loadShopifyGeneratedPosts();
+  } catch (e) {
+    document.getElementById('shopifyConnectPrompt').style.display = 'block';
+  }
+}
+
+async function connectShopify() {
+  const shop = document.getElementById('shopifyShopDomain').value.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop)) {
+    showToast(t('web.invalid_shopify_domain'), 'error');
+    return;
+  }
+  const btn = document.getElementById('shopifyConnectBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/connect?shop=${encodeURIComponent(shop)}`);
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      btn.disabled = false;
+      return;
+    }
+    // Real, deliberate full-page redirect — Shopify's own OAuth
+    // authorize screen must be navigated to directly, not opened via
+    // fetch, since the person has to actually approve the real
+    // installation on Shopify's own real page.
+    window.location.href = data.authorizeUrl;
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+    btn.disabled = false;
+  }
+}
+
+async function disconnectShopify() {
+  if (!confirm(t('web.confirm_disconnect_shopify'))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify`, { method: 'DELETE' });
+    if (!res.ok) {
+      showToast(t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.shopify_disconnected_toast'), 'success');
+    loadShopifyStatus();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+async function generateShopifyPost() {
+  const topicInput = document.getElementById('shopifyBlogPostTopic');
+  const topic = topicInput.value.trim();
+  if (!topic) {
+    showToast(t('web.topic_required'), 'error');
+    return;
+  }
+  const publishStatus = document.getElementById('shopifyPublishChoice').value;
+  const btn = document.getElementById('shopifyGenerateBtn');
+  btn.disabled = true;
+  btn.textContent = t('web.generating_post');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/generate-post`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ topic, publishStatus }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t(data.publishStatus === 'publish' ? 'web.post_published_toast' : 'web.post_drafted_toast').replace('{title}', data.title), 'success');
+    topicInput.value = '';
+    loadShopifyGeneratedPosts();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.generate_post_button');
+  }
+}
+
+async function loadShopifyGeneratedPosts() {
+  const contentEl = document.getElementById('shopifyGeneratedPostsContent');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/generated-posts`);
+    const data = await res.json();
+    if (!res.ok) {
+      contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+      return;
+    }
+    renderShopifyGeneratedPosts(data.posts || []);
+  } catch (e) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderShopifyGeneratedPosts(posts) {
+  const contentEl = document.getElementById('shopifyGeneratedPostsContent');
+  if (!posts.length) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_generated_posts')}</div>`;
+    return;
+  }
+  contentEl.innerHTML = renderCollapsibleItems(posts, (post) => {
+    const isDraft = post.status !== 'publish';
+    return `
+    <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(post.title)}</div>
+        <span style="font-size:9px;font-weight:700;color:${isDraft ? '#f59e0b' : '#22c55e'};background:${isDraft ? 'rgba(245,158,11,.15)' : 'rgba(34,197,94,.15)'};padding:2px 8px;border-radius:10px;white-space:nowrap;text-transform:uppercase">${t(isDraft ? 'web.status_draft' : 'web.status_published')}</span>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">${timeAgo(post.created_at)}${post.article_url ? ` · <a href="${escapeHtml(post.article_url)}" target="_blank" style="color:var(--purple-light)">${t('web.view_full_post_button')}</a>` : ''}</div>
+    </div>`;
+  }, 5, 'shopifyGeneratedPosts');
+}
+
 async function loadWebsiteBusinesses() {
   try {
     const res = await fetch('/api/business');
@@ -7346,6 +7514,12 @@ async function loadWebsiteBusinesses() {
     const connectedBusiness = businesses.find(b => b.has_website_connection);
     currentWebsiteBusinessId = stillExists ? savedId : (connectedBusiness ? connectedBusiness.id : businesses[0].id);
     select.value = currentWebsiteBusinessId;
+
+    // Real, deliberate independent load — Shopify's own connection state
+    // has nothing to do with whether WordPress is connected, so this
+    // always runs once a real business is selected, regardless of what
+    // loadWebsiteSection() below finds.
+    loadShopifyStatus();
 
     // The dropdown is revealed only if this default business already has
     // a real connection to show — genuinely useful at that point for
