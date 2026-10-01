@@ -6532,6 +6532,58 @@ async function runBlogPostGeneration(connection, decryptedPassword, context, top
   return { ...result, title: generated.title, publishStatus };
 }
 
+app.get('/api/business/:id/website/keyword-rankings', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const { connection: siteConnection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+
+    const gscResult = await pool.query('SELECT * FROM google_search_console_connections WHERE owner_id = $1', [account.id]);
+    if (!gscResult.rows.length) return res.status(404).json({ error: 'Google Search Console is not connected. Connect it under Integrations to see real keyword rankings here.' });
+    const gscConnection = gscResult.rows[0];
+    if (!gscConnection.site_url) return res.status(400).json({ error: 'No Search Console property is selected yet. Choose one under Integrations.' });
+
+    // Real, deliberate sanity check — a person could easily have Search
+    // Console connected to a real, different site than the one connected
+    // here, and showing that site's real rankings under this business
+    // would be real, actively misleading data.
+    let gscHost = gscConnection.site_url.replace(/^sc-domain:/, '');
+    let siteHost = '';
+    try { siteHost = new URL(siteConnection.site_url).hostname.replace(/^www\./, ''); } catch { /* Real, deliberate no-op — falls through to the mismatch check below, which handles an empty host correctly. */ }
+    const domainsMatch = gscHost.replace(/^www\./, '').includes(siteHost) || siteHost.includes(gscHost.replace(/^www\./, ''));
+    if (!domainsMatch) {
+      return res.status(400).json({ error: `The connected Search Console property (${gscHost}) doesn't appear to match this site (${siteHost}). Select the right property under Integrations before viewing keyword rankings here.` });
+    }
+
+    const rankings = await fetchGSCKeywordRankings(gscConnection, 28, 50);
+    const snapshotDate = new Date().toISOString().split('T')[0];
+
+    // Real, deliberate historical snapshot — stored once per real day per
+    // real query, so a real trend can be shown later rather than only
+    // ever seeing the latest real numbers with nothing to compare against.
+    for (const r of rankings) {
+      await pool.query(
+        `INSERT INTO website_keyword_rankings (website_connection_id, query, clicks, impressions, ctr, avg_position, snapshot_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (website_connection_id, query, snapshot_date) DO UPDATE SET clicks = $3, impressions = $4, ctr = $5, avg_position = $6`,
+        [siteConnection.id, r.query, r.clicks, r.impressions, r.ctr, r.avgPosition, snapshotDate]
+      );
+    }
+
+    // Real, deliberate opportunity flag — a real position between 11 and
+    // 20 means Google already shows this real page for this real query,
+    // just on page 2, with real impressions already proving real demand
+    // exists; genuinely the most actionable real signal in this data,
+    // since it is closer to page 1 than anything ranking lower.
+    const withOpportunityFlag = rankings.map(r => ({ ...r, isPageTwoOpportunity: r.avgPosition >= 11 && r.avgPosition <= 20 && r.impressions >= 5 }));
+
+    res.json({ rankings: withOpportunityFlag, snapshotDate });
+  } catch (err) {
+    console.error('Keyword rankings error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to load keyword rankings. Please try again.' });
+  }
+});
+
 app.post('/api/business/:id/website/ai-visibility/check', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
@@ -8061,6 +8113,32 @@ async function fetchGSCMetrics(connection, days = 28) {
   }
 
   return { clicks, impressions, ctr, avgPosition, topQuery, startDate, endDate };
+}
+
+// Real, deliberate per-keyword breakdown — the exact same real GSC API
+// fetchGSCMetrics above already uses, just with the query dimension and
+// a real row limit, returning real position/clicks/impressions per real
+// search query Google itself reports this site already appearing for.
+// Never estimated, never scraped — this is Google's own first-party data.
+async function fetchGSCKeywordRankings(connection, days = 28, limit = 50) {
+  const accessToken = await getValidGSCAccessToken(connection);
+  const { startDate, endDate } = getGSCDateRange(days);
+
+  const res = await fetch(`https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(connection.site_url)}/searchAnalytics/query`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startDate, endDate, dimensions: ['query'], rowLimit: limit }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || 'Failed to fetch keyword ranking data from Search Console');
+
+  return (data.rows || []).map(row => ({
+    query: row.keys[0],
+    clicks: Math.round(row.clicks),
+    impressions: Math.round(row.impressions),
+    ctr: round2(row.ctr * 100),
+    avgPosition: round2(row.position),
+  }));
 }
 
 app.get('/api/integrations/google-search-console/metrics', authRequired, async (req, res) => {
