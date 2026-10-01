@@ -1278,6 +1278,25 @@ CREATE TABLE IF NOT EXISTS website_audit_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_website_audit_runs_connection ON website_audit_runs(website_connection_id, started_at DESC);
 
+-- Real, deliberate AI-visibility tracking — each row is one real query
+-- actually sent to a real, search-grounded AI model (Perplexity's
+-- sonar), with its real answer and real citations checked for whether
+-- this specific business was actually mentioned or cited. This is the
+-- feedback loop the rest of the SEO/AEO/GEO work never had: writing
+-- content optimized for AI citation is one thing, actually checking
+-- whether it worked is another, and this is that check.
+CREATE TABLE IF NOT EXISTS website_ai_visibility_checks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  website_connection_id UUID REFERENCES website_connections(id) ON DELETE CASCADE,
+  query TEXT NOT NULL,
+  mentioned_by_name BOOLEAN DEFAULT FALSE,
+  cited_by_domain BOOLEAN DEFAULT FALSE,
+  answer_excerpt TEXT, -- the real, actual answer text returned, for a person to read in context
+  citations JSONB, -- the real list of URLs Perplexity actually cited for this query
+  checked_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_website_ai_visibility_connection ON website_ai_visibility_checks(website_connection_id, checked_at DESC);
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Arreyon Connect plugin — connection-code handshake (Option 2). WordPress
 -- initiates here (the reverse of the existing paste-a-credential flow):
