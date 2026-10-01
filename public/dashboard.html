@@ -2017,6 +2017,19 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
       </div>
 
+      <!-- SCHEMA MARKUP — Organization/LocalBusiness JSON-LD, site-wide, built
+           from real business profile data. Output via the bridge plugin's own
+           wp_head hook, never injected into post content, so it can never be
+           stripped by unfiltered_html restrictions on more locked-down sites. -->
+      <div id="websiteSchemaSection" style="display:none;margin-top:28px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.schema_title">Schema Markup</div>
+          <button class="btn-primary" onclick="generateOrganizationSchema()" id="websiteSchemaBtn" data-i18n="web.generate_schema_button">Generate Organization Schema</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.schema_description">Adds structured data describing your business to every page, and FAQ schema to new blog posts that include a natural Q&amp;A — both help AI search engines and Google understand and cite your site.</div>
+        <div id="websiteSchemaContent"></div>
+      </div>
+
       <!-- MEDIA LIBRARY — pure, read-only browsing of images already on the
            site, so existing images can be identified for reuse rather than
            generating or uploading a duplicate. No create/upload here. -->
@@ -7286,6 +7299,7 @@ async function loadWebsiteBusinesses() {
       document.getElementById('websiteTaxonomySection').style.display = 'none';
       document.getElementById('websiteBrokenLinksSection').style.display = 'none';
       document.getElementById('websiteMediaSection').style.display = 'none';
+      document.getElementById('websiteSchemaSection').style.display = 'none';
       document.getElementById('websiteActivityLogSection').style.display = 'none';
       document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
       document.getElementById('websiteAuditRunSection').style.display = 'none';
@@ -7335,6 +7349,7 @@ function onWebsiteBusinessSelectChange() {
     document.getElementById('websiteTaxonomySection').style.display = 'none';
     document.getElementById('websiteBrokenLinksSection').style.display = 'none';
     document.getElementById('websiteMediaSection').style.display = 'none';
+    document.getElementById('websiteSchemaSection').style.display = 'none';
     document.getElementById('websiteActivityLogSection').style.display = 'none';
     document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
     document.getElementById('websiteAuditRunSection').style.display = 'none';
@@ -7406,6 +7421,7 @@ async function loadWebsiteSection() {
       document.getElementById('websiteTaxonomySection').style.display = 'none';
       document.getElementById('websiteBrokenLinksSection').style.display = 'none';
       document.getElementById('websiteMediaSection').style.display = 'none';
+      document.getElementById('websiteSchemaSection').style.display = 'none';
       document.getElementById('websiteActivityLogSection').style.display = 'none';
       document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
       document.getElementById('websiteAuditRunSection').style.display = 'none';
@@ -7419,6 +7435,7 @@ async function loadWebsiteSection() {
     document.getElementById('websiteTaxonomySection').style.display = 'block';
     document.getElementById('websiteBrokenLinksSection').style.display = 'block';
     document.getElementById('websiteMediaSection').style.display = 'block';
+    document.getElementById('websiteSchemaSection').style.display = 'block';
     document.getElementById('websiteActivityLogSection').style.display = 'block';
     document.getElementById('websiteGeneratedPostsSection').style.display = 'block';
     document.getElementById('websiteAuditRunSection').style.display = 'block';
@@ -7426,6 +7443,7 @@ async function loadWebsiteSection() {
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
     loadWebsiteTaxonomy();
+    loadWebsiteSchema();
     loadWebsiteActivityLog();
     loadWebsiteGeneratedPosts();
     loadWebsiteAuditRuns();
@@ -7723,6 +7741,52 @@ async function generateWebsiteIntelligence() {
 const WEBSITE_SEVERITY_COLORS = { high: '#ef4444', medium: 'var(--gold)', low: 'var(--muted)' };
 
 // Renders the AI's assessment (seo_issues, content_observations,
+async function loadWebsiteSchema() {
+  const contentEl = document.getElementById('websiteSchemaContent');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/organization-schema`);
+    const data = await res.json();
+    renderWebsiteSchemaContent(data.schema);
+  } catch (e) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderWebsiteSchemaContent(schema) {
+  const contentEl = document.getElementById('websiteSchemaContent');
+  if (!schema) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:var(--muted)">${t('web.no_schema_yet')}</div>`;
+    return;
+  }
+  contentEl.innerHTML = `
+    <div style="background:var(--bg3);border-radius:10px;padding:12px 14px">
+      <div style="font-size:12px;color:var(--text)"><span style="color:var(--muted)">${t('web.schema_type_label')}:</span> ${escapeHtml(schema['@type'] || '')}</div>
+      <div style="font-size:12px;color:var(--text);margin-top:3px"><span style="color:var(--muted)">${t('web.schema_name_label')}:</span> ${escapeHtml(schema.name || '')}</div>
+      ${schema.address ? `<div style="font-size:12px;color:var(--text);margin-top:3px"><span style="color:var(--muted)">${t('web.schema_address_label')}:</span> ${[schema.address.addressLocality, schema.address.addressRegion, schema.address.addressCountry].filter(Boolean).map(escapeHtml).join(', ')}</div>` : ''}
+    </div>`;
+}
+
+async function generateOrganizationSchema() {
+  const btn = document.getElementById('websiteSchemaBtn');
+  btn.disabled = true;
+  btn.textContent = t('web.generating_schema');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/organization-schema`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.schema_added_toast'), 'success');
+    renderWebsiteSchemaContent(data.schema);
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.generate_schema_button');
+  }
+}
+
 async function loadWebsiteTaxonomy() {
   const catList = document.getElementById('websiteCategoriesList');
   const tagList = document.getElementById('websiteTagsList');
