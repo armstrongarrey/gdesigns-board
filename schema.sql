@@ -1361,6 +1361,29 @@ CREATE TABLE IF NOT EXISTS shopify_generated_posts (
 CREATE INDEX IF NOT EXISTS idx_shopify_generated_posts_connection ON shopify_generated_posts(shopify_connection_id, created_at DESC);
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- BACKLINK OPPORTUNITIES — real, external, legitimately earnable links:
+-- real directories, real guest-post-friendly blogs, and real existing brand
+-- mentions that don't yet link back. Arreyon finds where a real link could
+-- honestly be earned; it never creates the link itself or exchanges links
+-- between clients here — that is the separate, explicitly opt-in reciprocal
+-- system. Scoped to the business directly, not a specific CMS connection,
+-- since a backlink points at the business's own site regardless of which
+-- platform (WordPress, Shopify, or none yet) it runs on.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS backlink_opportunities (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  opportunity_type VARCHAR(20) NOT NULL, -- 'directory' | 'guest_post' | 'unlinked_mention'
+  title TEXT NOT NULL,
+  url TEXT NOT NULL,
+  description TEXT,
+  status VARCHAR(20) DEFAULT 'new', -- 'new' | 'contacted' | 'acquired' | 'dismissed'
+  found_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(business_id, url)
+);
+CREATE INDEX IF NOT EXISTS idx_backlink_opportunities_business ON backlink_opportunities(business_id, found_at DESC);
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Arreyon Connect plugin — connection-code handshake (Option 2). WordPress
 -- initiates here (the reverse of the existing paste-a-credential flow):
 -- Arreyon generates a short-lived code and shows it; the plugin, once the
