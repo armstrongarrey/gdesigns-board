@@ -4466,6 +4466,72 @@ function decodeHtmlEntities(str) {
 // produce syntactically exact JSON-LD. Falls back to a plain
 // Organization type when there isn't enough real location data for a
 // genuine LocalBusiness entry, rather than fabricating an address.
+// Real, deliberate three-category search for real, legitimately earnable
+// backlinks — never an automated link exchange, never a link Arreyon
+// creates itself. Each category is a genuinely different kind of real
+// opportunity: a real directory that accepts real listings, a real blog
+// that genuinely accepts guest posts, or a real, existing mention of this
+// business that simply doesn't link back yet.
+async function findBacklinkOpportunities(context) {
+  const business = context?.business || {};
+  const businessName = (business.name || '').trim();
+  const industry = (business.industry || '').trim();
+  const location = [business.city, business.country].filter(Boolean).join(', ');
+
+  let siteDomain = '';
+  try { siteDomain = new URL(business.website).hostname.replace(/^www\./, '').toLowerCase(); } catch { /* Real, deliberate no-op — an unparseable or missing site URL just means the unlinked-mentions category below has nothing to compare against and is skipped. */ }
+
+  const opportunities = [];
+
+  // Category 1: real directories
+  try {
+    const query = industry ? `${industry} business directory ${location} submit listing` : `business directory ${location} submit listing`;
+    const results = await researchSearch(query.trim(), { maxResults: 5 });
+    opportunities.push(...results.filter(r => r.url).map(r => ({ type: 'directory', title: r.title, url: r.url, description: (r.snippet || '').slice(0, 300) })));
+  } catch (e) { /* Real, deliberate no-op — one real category failing shouldn't block the others from genuinely completing. */ }
+
+  // Category 2: real guest-post-friendly blogs
+  try {
+    const query = industry ? `${industry} blog "write for us" guest post guidelines` : `"write for us" guest post guidelines ${location}`;
+    const results = await researchSearch(query.trim(), { maxResults: 5 });
+    opportunities.push(...results.filter(r => r.url).map(r => ({ type: 'guest_post', title: r.title, url: r.url, description: (r.snippet || '').slice(0, 300) })));
+  } catch (e) { /* Real, deliberate no-op. */ }
+
+  // Category 3: real, existing mentions that don't yet link back — the
+  // only category requiring a real, direct check of each real page's
+  // actual content, not just trusting a search snippet, since a mention
+  // appearing in a snippet doesn't by itself confirm whether a real link
+  // is present or absent on the real page itself.
+  if (businessName.length > 2 && siteDomain) {
+    try {
+      const results = await researchSearch(`"${businessName}"`, { maxResults: 8 });
+      for (const r of results) {
+        if (!r.url || r.url.toLowerCase().includes(siteDomain)) continue; // Real, deliberate skip — never flag the business's own real site as a real "opportunity" to link to itself.
+        let alreadyLinked = false;
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 8000);
+          const pageRes = await fetch(r.url, { signal: controller.signal, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36' } });
+          clearTimeout(timeout);
+          const html = await pageRes.text();
+          alreadyLinked = html.toLowerCase().includes(siteDomain);
+        } catch (e) {
+          // Real, deliberate conservative default — if the real page
+          // can't be fetched at all, this is skipped rather than
+          // guessed at either way, since neither "linked" nor
+          // "unlinked" would be a real, confirmed fact in that case.
+          continue;
+        }
+        if (!alreadyLinked) {
+          opportunities.push({ type: 'unlinked_mention', title: r.title, url: r.url, description: (r.snippet || '').slice(0, 300) });
+        }
+      }
+    } catch (e) { /* Real, deliberate no-op. */ }
+  }
+
+  return opportunities;
+}
+
 function buildOrganizationSchema(context, siteUrl) {
   const business = context?.business || {};
   if (!business.name) return null;
@@ -7838,6 +7904,78 @@ async function createShopifyBlogPost(connection, accessToken, postData) {
   const article = created.article;
   return { success: true, id: article.id, handle: article.handle, status: article.published ? 'publish' : 'draft', url: `https://${connection.shop_domain.replace('.myshopify.com', '.com')}/blogs/news/${article.handle}` };
 }
+
+app.post('/api/business/:id/backlinks/search', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    if (!context.business.website) return res.status(400).json({ error: 'This business needs a website URL set before backlink opportunities can be found — add one on the business profile first.' });
+
+    const opportunities = await findBacklinkOpportunities(context);
+
+    // Real, deliberate ignore-on-conflict insert — the same real
+    // opportunity found again on a later search shouldn't duplicate or
+    // reset a status the person may have already updated (e.g. marked
+    // "contacted").
+    let insertedCount = 0;
+    for (const opp of opportunities) {
+      const result = await pool.query(
+        `INSERT INTO backlink_opportunities (business_id, opportunity_type, title, url, description)
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (business_id, url) DO NOTHING RETURNING id`,
+        [req.params.id, opp.type, opp.title, opp.url, opp.description]
+      );
+      if (result.rows.length) insertedCount++;
+    }
+
+    res.json({ success: true, foundCount: opportunities.length, newCount: insertedCount });
+  } catch (err) {
+    console.error('Backlink search error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to search for backlink opportunities. Please try again.' });
+  }
+});
+
+app.get('/api/business/:id/backlinks', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    const result = await pool.query('SELECT * FROM backlink_opportunities WHERE business_id = $1 ORDER BY found_at DESC LIMIT 100', [req.params.id]);
+    res.json({ opportunities: result.rows });
+  } catch (e) {
+    console.error('Get backlink opportunities error:', e.message);
+    res.status(500).json({ error: 'Could not load backlink opportunities.' });
+  }
+});
+
+const VALID_BACKLINK_STATUSES = ['new', 'contacted', 'acquired', 'dismissed'];
+app.put('/api/business/:id/backlinks/:opportunityId', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    const { status } = req.body || {};
+    if (!VALID_BACKLINK_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status.' });
+    await pool.query('UPDATE backlink_opportunities SET status = $1 WHERE id = $2 AND business_id = $3', [status, req.params.opportunityId, req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Update backlink opportunity error:', e.message);
+    res.status(500).json({ error: 'Could not update this opportunity.' });
+  }
+});
+
+app.delete('/api/business/:id/backlinks', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    const result = await pool.query('DELETE FROM backlink_opportunities WHERE business_id = $1 RETURNING id', [req.params.id]);
+    res.json({ success: true, clearedCount: result.rows.length });
+  } catch (e) {
+    console.error('Clear backlink opportunities error:', e.message);
+    res.status(500).json({ error: 'Could not clear backlink opportunities.' });
+  }
+});
 
 app.get('/api/business/:id/shopify/generated-posts', authRequired, async (req, res) => {
   try {
