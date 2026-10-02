@@ -1786,7 +1786,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
            ever visible at a time now. -->
       <div style="display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0">
         <button type="button" onclick="switchPlatformTab('wordpress')" id="platformTabWordPress" style="background:none;border:none;border-bottom:2px solid var(--purple);color:var(--text);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_wordpress">WordPress</button>
-        <button type="button" onclick="switchPlatformTab('shopify')" id="platformTabShopify" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer" data-i18n="web.platform_tab_shopify">Shopify</button>
+        <button type="button" onclick="switchPlatformTab('shopify')" id="platformTabShopify" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_shopify">Shopify</button>
+        <button type="button" onclick="switchPlatformTab('backlinks')" id="platformTabBacklinks" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer" data-i18n="web.platform_tab_backlinks">Backlinks</button>
       </div>
 
       <!-- EMPTY STATE — spec section 25: explicit about what Arreyon will
@@ -2066,6 +2067,24 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.generated_posts_title">Generated Blog Posts</div>
           <div id="shopifyGeneratedPostsContent"></div>
         </div>
+      </div>
+
+      <!-- BACKLINKS — real, legitimately earnable opportunities only: real
+           directories, real guest-post-friendly blogs, real existing brand
+           mentions that don't yet link back. Never an automated link
+           exchange, never a link Arreyon creates on its own. Platform-
+           agnostic, so it gets its own tab rather than living inside
+           WordPress or Shopify specifically. -->
+      <div id="backlinksSection" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:8px">
+          <div class="section-title" style="font-size:16px;margin-bottom:0" data-i18n="web.backlinks_title">Backlink Opportunities</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn-ghost" onclick="clearBacklinkOpportunities()" data-i18n="web.clear_history_button">Clear History</button>
+            <button class="btn-primary" onclick="searchBacklinkOpportunities()" id="backlinksSearchBtn" data-i18n="web.find_opportunities_button">Find Opportunities</button>
+          </div>
+        </div>
+        <div style="font-size:11.5px;color:var(--muted);margin:8px 0 16px" data-i18n="web.backlinks_description">Finds real, legitimately earnable opportunities — business directories, blogs that accept guest posts, and existing mentions of this business that don't yet link back. Arreyon never creates these links automatically; each one is yours to pursue.</div>
+        <div id="backlinksContent"></div>
       </div>
 
       <!-- CATEGORIES & TAGS — read the site's real, existing taxonomy and
@@ -7365,30 +7384,128 @@ const WORDPRESS_TAB_ELEMENT_IDS = [
   'websiteGeneratedPostsSection', 'websiteActionsSection',
 ];
 
-function switchPlatformTab(platform) {
-  const wpTab = document.getElementById('platformTabWordPress');
-  const shopifyTab = document.getElementById('platformTabShopify');
-  const shopifySectionEl = document.getElementById('shopifySection');
+// Real, deliberate scalable structure — three tabs now, and any future
+// platform (Webflow, Wix) just adds one more real entry here rather than
+// another real branch in an ever-growing if/else chain.
+const PLATFORM_TABS = {
+  wordpress: { tabId: 'platformTabWordPress', sectionId: null },
+  shopify: { tabId: 'platformTabShopify', sectionId: 'shopifySection' },
+  backlinks: { tabId: 'platformTabBacklinks', sectionId: 'backlinksSection' },
+};
 
-  if (platform === 'shopify') {
-    WORDPRESS_TAB_ELEMENT_IDS.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
-    shopifySectionEl.style.display = 'block';
-    shopifyTab.style.borderBottomColor = 'var(--purple)';
-    shopifyTab.style.color = 'var(--text)';
-    wpTab.style.borderBottomColor = 'transparent';
-    wpTab.style.color = 'var(--muted)';
-  } else {
-    shopifySectionEl.style.display = 'none';
+function switchPlatformTab(platform) {
+  Object.entries(PLATFORM_TABS).forEach(([key, config]) => {
+    const tabBtn = document.getElementById(config.tabId);
+    const isActive = key === platform;
+    tabBtn.style.borderBottomColor = isActive ? 'var(--purple)' : 'transparent';
+    tabBtn.style.color = isActive ? 'var(--text)' : 'var(--muted)';
+    if (config.sectionId) {
+      document.getElementById(config.sectionId).style.display = isActive ? 'block' : 'none';
+    }
+  });
+
+  if (platform === 'wordpress') {
     // Real, deliberate re-run of the real, existing, authoritative
     // WordPress visibility logic — rather than trying to remember and
     // restore each element's own prior real state here, this just asks
     // the function that already correctly knows (based on real
     // connection status) which real elements should show.
     loadWebsiteSection();
-    wpTab.style.borderBottomColor = 'var(--purple)';
-    wpTab.style.color = 'var(--text)';
-    shopifyTab.style.borderBottomColor = 'transparent';
-    shopifyTab.style.color = 'var(--muted)';
+  } else {
+    WORDPRESS_TAB_ELEMENT_IDS.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+  }
+
+  if (platform === 'backlinks') loadBacklinkOpportunities();
+}
+
+// ── BACKLINK OPPORTUNITIES ───────────────────────────────────────────────
+const BACKLINK_TYPE_LABELS = { directory: 'web.backlink_type_directory', guest_post: 'web.backlink_type_guest_post', unlinked_mention: 'web.backlink_type_unlinked_mention' };
+
+async function searchBacklinkOpportunities() {
+  const btn = document.getElementById('backlinksSearchBtn');
+  btn.disabled = true;
+  btn.textContent = t('web.searching_backlinks');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/backlinks/search`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.backlinks_found_toast').replace('{new}', data.newCount).replace('{total}', data.foundCount), 'success');
+    loadBacklinkOpportunities();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.find_opportunities_button');
+  }
+}
+
+async function loadBacklinkOpportunities() {
+  const contentEl = document.getElementById('backlinksContent');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/backlinks`);
+    const data = await res.json();
+    if (!res.ok) {
+      contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+      return;
+    }
+    renderBacklinkOpportunities(data.opportunities || []);
+  } catch (e) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderBacklinkOpportunities(opportunities) {
+  const contentEl = document.getElementById('backlinksContent');
+  if (!opportunities.length) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_backlink_opportunities')}</div>`;
+    return;
+  }
+  contentEl.innerHTML = renderCollapsibleItems(opportunities, (opp) => `
+    <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+        <div style="min-width:0">
+          <span style="font-size:8.5px;font-weight:700;color:var(--purple-light);background:rgba(139,92,246,.15);padding:2px 6px;border-radius:8px;text-transform:uppercase">${t(BACKLINK_TYPE_LABELS[opp.opportunity_type] || opp.opportunity_type)}</span>
+          <div style="font-size:12.5px;font-weight:600;color:var(--text);margin-top:4px">${escapeHtml(opp.title)}</div>
+          <a href="${escapeHtml(opp.url)}" target="_blank" style="font-size:11px;color:var(--purple-light);word-break:break-all">${escapeHtml(opp.url)}</a>
+          ${opp.description ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">${escapeHtml(opp.description)}</div>` : ''}
+        </div>
+        <select onchange="updateBacklinkStatus('${opp.id}', this.value)" style="font-size:11px;padding:4px 8px;width:auto;flex-shrink:0">
+          <option value="new" ${opp.status === 'new' ? 'selected' : ''}>${t('web.backlink_status_new')}</option>
+          <option value="contacted" ${opp.status === 'contacted' ? 'selected' : ''}>${t('web.backlink_status_contacted')}</option>
+          <option value="acquired" ${opp.status === 'acquired' ? 'selected' : ''}>${t('web.backlink_status_acquired')}</option>
+          <option value="dismissed" ${opp.status === 'dismissed' ? 'selected' : ''}>${t('web.backlink_status_dismissed')}</option>
+        </select>
+      </div>
+    </div>`, 10, 'backlinkOpportunities');
+}
+
+async function updateBacklinkStatus(opportunityId, status) {
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/backlinks/${opportunityId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
+    });
+    if (!res.ok) showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+async function clearBacklinkOpportunities() {
+  if (!confirm(t('web.confirm_clear_backlinks'))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/backlinks`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.entries_cleared').replace('{n}', data.clearedCount), 'success');
+    loadBacklinkOpportunities();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
   }
 }
 
