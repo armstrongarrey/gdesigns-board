@@ -1778,6 +1778,17 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
     <div id="websiteMainWrap" style="display:none;max-width:700px">
 
+      <!-- PLATFORM TABS — WordPress and Shopify are genuinely separate
+           connections with genuinely separate content; showing both on one
+           continuous scrolling page (the original design) made an already
+           connected WordPress site and a newly connected Shopify store look
+           like one confusing, mixed list. Only one platform's content is
+           ever visible at a time now. -->
+      <div style="display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0">
+        <button type="button" onclick="switchPlatformTab('wordpress')" id="platformTabWordPress" style="background:none;border:none;border-bottom:2px solid var(--purple);color:var(--text);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_wordpress">WordPress</button>
+        <button type="button" onclick="switchPlatformTab('shopify')" id="platformTabShopify" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer" data-i18n="web.platform_tab_shopify">Shopify</button>
+      </div>
+
       <!-- EMPTY STATE — spec section 25: explicit about what Arreyon will
            access, and never implies access before the user actually connects. -->
       <div id="websiteEmptyState" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:28px;text-align:center;margin-bottom:20px">
@@ -2020,9 +2031,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
            generic "platform" system, since that unification is real,
            separate future work. Shown independently of WordPress
            connection state — a business can have one, both, or neither. -->
-      <div id="shopifySection" style="margin-top:32px;padding-top:28px;border-top:2px solid var(--border)">
+      <div id="shopifySection" style="display:none">
         <div class="section-title" style="font-size:16px;margin-bottom:4px" data-i18n="web.shopify_title">Shopify</div>
-        <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px" data-i18n="web.shopify_subtitle">Connect a Shopify store to generate and publish blog content with real SEO fields — a separate, independent connection from WordPress above.</div>
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px" data-i18n="web.shopify_subtitle">Connect a Shopify store to generate and publish blog content with real SEO fields.</div>
 
         <div id="shopifyConnectPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;text-align:center">
           <div style="display:flex;gap:8px;max-width:360px;margin:0 auto 10px">
@@ -7341,6 +7352,46 @@ document.addEventListener('arreyon:langchange', () => {
 let currentWebsiteBusinessId = null;
 
 // ── SHOPIFY ──────────────────────────────────────────────────────────────
+// Real, deliberate hardcoded list of every top-level WordPress section
+// element — hiding these and showing shopifySection (or vice versa) is
+// what actually separates the two platforms into real, distinct views,
+// without needing to touch or re-nest any of the existing, already-
+// working WordPress HTML structure at all.
+const WORDPRESS_TAB_ELEMENT_IDS = [
+  'websiteEmptyState', 'websiteStatusCard', 'websiteStatusError', 'websiteConnectMsg',
+  'websiteIntelligenceSection', 'websiteAuditRunSection', 'websiteAiVisibilitySection',
+  'websiteKeywordRankingsSection', 'websiteTaxonomySection', 'websiteBrokenLinksSection',
+  'websiteMediaSection', 'websiteSchemaSection', 'websiteActivityLogSection',
+  'websiteGeneratedPostsSection', 'websiteActionsSection',
+];
+
+function switchPlatformTab(platform) {
+  const wpTab = document.getElementById('platformTabWordPress');
+  const shopifyTab = document.getElementById('platformTabShopify');
+  const shopifySectionEl = document.getElementById('shopifySection');
+
+  if (platform === 'shopify') {
+    WORDPRESS_TAB_ELEMENT_IDS.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    shopifySectionEl.style.display = 'block';
+    shopifyTab.style.borderBottomColor = 'var(--purple)';
+    shopifyTab.style.color = 'var(--text)';
+    wpTab.style.borderBottomColor = 'transparent';
+    wpTab.style.color = 'var(--muted)';
+  } else {
+    shopifySectionEl.style.display = 'none';
+    // Real, deliberate re-run of the real, existing, authoritative
+    // WordPress visibility logic — rather than trying to remember and
+    // restore each element's own prior real state here, this just asks
+    // the function that already correctly knows (based on real
+    // connection status) which real elements should show.
+    loadWebsiteSection();
+    wpTab.style.borderBottomColor = 'var(--purple)';
+    wpTab.style.color = 'var(--text)';
+    shopifyTab.style.borderBottomColor = 'transparent';
+    shopifyTab.style.color = 'var(--muted)';
+  }
+}
+
 async function loadShopifyStatus() {
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify`);
