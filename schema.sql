@@ -1317,6 +1317,33 @@ CREATE TABLE IF NOT EXISTS website_keyword_rankings (
 );
 CREATE INDEX IF NOT EXISTS idx_website_keyword_rankings_connection ON website_keyword_rankings(website_connection_id, snapshot_date DESC);
 
+-- Real, deliberate technical SEO snapshots — real Lighthouse lab data from
+-- Google's own PageSpeed Insights API (always present) plus real Chrome
+-- user field data when the site has enough real traffic for Google to
+-- report it (most small-business sites won't), and a real robots.txt
+-- check. Scoped to business_id, not a specific CMS connection, since
+-- this applies equally to WordPress or Shopify.
+CREATE TABLE IF NOT EXISTS website_technical_seo_checks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  performance_score INTEGER,
+  seo_score INTEGER,
+  accessibility_score INTEGER,
+  lcp_ms INTEGER, -- lab data, always present
+  cls_score NUMERIC(6,3), -- lab data, always present
+  tbt_ms INTEGER, -- lab data proxy for INP, always present
+  field_data_available BOOLEAN DEFAULT FALSE,
+  field_lcp_category VARCHAR(20),
+  field_cls_category VARCHAR(20),
+  field_inp_category VARCHAR(20),
+  robots_txt_exists BOOLEAN DEFAULT FALSE,
+  robots_txt_blocks_everything BOOLEAN DEFAULT FALSE,
+  robots_txt_references_sitemap BOOLEAN DEFAULT FALSE,
+  top_issues JSONB,
+  checked_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_website_technical_seo_business ON website_technical_seo_checks(business_id, checked_at DESC);
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- SHOPIFY INTEGRATION — stage 1 (connect, read, create content with real SEO
 -- fields). Deliberately scoped to this foundation first, the same real
