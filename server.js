@@ -8056,7 +8056,8 @@ app.get('/api/business/:id/shopify', authRequired, async (req, res) => {
 
     const result = await pool.query(
       `SELECT id, shop_domain, connection_status, connected_at, last_verified_at, blog_id, website_intelligence, website_intelligence_generated_at,
-              content_automation_enabled, content_automation_publish_mode, content_automation_frequency, content_automation_last_run_at
+              content_automation_enabled, content_automation_publish_mode, content_automation_frequency, content_automation_last_run_at,
+              content_automation_last_run_status, content_automation_last_run_error
        FROM shopify_connections WHERE business_id = $1`,
       [req.params.id]
     );
@@ -16330,10 +16331,16 @@ async function runContentAutomationSweep() {
           }
         }
 
-        await pool.query(`UPDATE shopify_connections SET content_automation_last_run_at = NOW() WHERE id = $1`, [connection.id]);
+        await pool.query(
+          `UPDATE shopify_connections SET content_automation_last_run_at = NOW(), content_automation_last_run_status = 'success', content_automation_last_run_error = NULL WHERE id = $1`,
+          [connection.id]
+        );
       } catch (connErr) {
         console.error(`Shopify content automation failed for connection ${connection.id}:`, connErr.message);
-        await pool.query(`UPDATE shopify_connections SET content_automation_last_run_at = NOW() WHERE id = $1`, [connection.id]);
+        await pool.query(
+          `UPDATE shopify_connections SET content_automation_last_run_at = NOW(), content_automation_last_run_status = 'failed', content_automation_last_run_error = $2 WHERE id = $1`,
+          [connection.id, (connErr.message || 'Unknown error').slice(0, 500)]
+        );
       }
     }
   } catch (err) {
