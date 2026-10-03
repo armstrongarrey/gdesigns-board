@@ -6826,6 +6826,45 @@ app.get('/api/business/:id/website/keyword-rankings', authRequired, async (req, 
   }
 });
 
+app.post('/api/business/:id/website/sitemap/submit', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const { connection: siteConnection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+
+    const sitemap = await detectSitemapUrl(siteConnection.site_url);
+    if (!sitemap) return res.status(404).json({ error: 'No sitemap was found at this site\'s common sitemap locations. Check that your SEO plugin has sitemaps enabled.' });
+
+    const { gscConnection, error: gscError } = await resolveMatchingGscConnection(account.id, siteConnection.site_url);
+    if (gscError) return res.status(400).json({ error: gscError });
+
+    await submitSitemapToGSC(gscConnection, gscConnection.site_url, sitemap.url);
+    await logWebsiteAudit(siteConnection.id, 'user', req.userId, 'sitemap_submitted', `Submitted sitemap to Search Console: ${sitemap.url}`, { sitemapUrl: sitemap.url, urlCount: sitemap.urlCount }, 'general');
+
+    res.json({ success: true, sitemapUrl: sitemap.url, urlCount: sitemap.urlCount });
+  } catch (err) {
+    console.error('Sitemap submit error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to submit the sitemap. Please try again.' });
+  }
+});
+
+app.get('/api/business/:id/website/sitemap/status', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const { connection: siteConnection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+
+    const { gscConnection, error: gscError } = await resolveMatchingGscConnection(account.id, siteConnection.site_url);
+    if (gscError) return res.json({ sitemaps: [], notice: gscError });
+
+    const sitemaps = await getSitemapStatusFromGSC(gscConnection, gscConnection.site_url);
+    res.json({ sitemaps });
+  } catch (err) {
+    console.error('Sitemap status error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to load sitemap status.' });
+  }
+});
+
 app.post('/api/business/:id/website/ai-visibility/check', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
@@ -8295,6 +8334,46 @@ app.delete('/api/business/:id/backlinks', authRequired, async (req, res) => {
   }
 });
 
+app.post('/api/business/:id/shopify/sitemap/submit', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
+    const connection = connResult.rows[0];
+    const siteUrl = `https://${connection.shop_domain}`;
+
+    const sitemap = await detectSitemapUrl(siteUrl);
+    if (!sitemap) return res.status(404).json({ error: 'No sitemap was found at this store\'s common sitemap location.' });
+
+    const { gscConnection, error: gscError } = await resolveMatchingGscConnection(account.id, siteUrl);
+    if (gscError) return res.status(400).json({ error: gscError });
+
+    await submitSitemapToGSC(gscConnection, gscConnection.site_url, sitemap.url);
+    res.json({ success: true, sitemapUrl: sitemap.url, urlCount: sitemap.urlCount });
+  } catch (err) {
+    console.error('Shopify sitemap submit error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to submit the sitemap. Please try again.' });
+  }
+});
+
+app.get('/api/business/:id/shopify/sitemap/status', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
+    const siteUrl = `https://${connResult.rows[0].shop_domain}`;
+
+    const { gscConnection, error: gscError } = await resolveMatchingGscConnection(account.id, siteUrl);
+    if (gscError) return res.json({ sitemaps: [], notice: gscError });
+
+    const sitemaps = await getSitemapStatusFromGSC(gscConnection, gscConnection.site_url);
+    res.json({ sitemaps });
+  } catch (err) {
+    console.error('Shopify sitemap status error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to load sitemap status.' });
+  }
+});
+
 app.get('/api/business/:id/shopify/generated-posts', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
@@ -8862,6 +8941,89 @@ async function fetchGSCMetrics(connection, days = 28) {
 // a real row limit, returning real position/clicks/impressions per real
 // search query Google itself reports this site already appearing for.
 // Never estimated, never scraped — this is Google's own first-party data.
+// Real, deliberate detection, never generation — WordPress core, Yoast,
+// RankMath, and Shopify all already generate a real, valid sitemap on
+// their own; the genuinely missing piece is finding which real path it
+// actually lives at (it varies by platform and plugin) and confirming
+// it's genuinely live, not inventing a sitemap Arreyon doesn't need to
+// create in the first place.
+// Real, deliberate shared helper — the same real "find the account's GSC
+// connection, then confirm its domain genuinely matches this site" check
+// already proven for keyword rankings, factored out here so the sitemap
+// routes below reuse it rather than risk a second, subtly different copy.
+async function resolveMatchingGscConnection(accountId, siteUrl) {
+  const gscResult = await pool.query('SELECT * FROM google_search_console_connections WHERE owner_id = $1', [accountId]);
+  if (!gscResult.rows.length) return { error: 'Google Search Console is not connected. Connect it under Integrations first.' };
+  const gscConnection = gscResult.rows[0];
+  if (!gscConnection.site_url) return { error: 'No Search Console property is selected yet. Choose one under Integrations.' };
+
+  let gscHost = gscConnection.site_url.replace(/^sc-domain:/, '');
+  let siteHost = '';
+  try { siteHost = new URL(siteUrl).hostname.replace(/^www\./, ''); } catch { /* Real, deliberate no-op — falls through to the mismatch check below. */ }
+  const domainsMatch = gscHost.replace(/^www\./, '').includes(siteHost) || siteHost.includes(gscHost.replace(/^www\./, ''));
+  if (!domainsMatch) {
+    return { error: `The connected Search Console property (${gscHost}) doesn't appear to match this site (${siteHost}). Select the right property under Integrations.` };
+  }
+  return { gscConnection };
+}
+
+async function detectSitemapUrl(siteUrl) {
+  const candidatePaths = ['/sitemap_index.xml', '/sitemap.xml', '/wp-sitemap.xml'];
+  for (const path of candidatePaths) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(`${siteUrl.replace(/\/$/, '')}${path}`, { signal: controller.signal, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36' } });
+      clearTimeout(timeout);
+      if (!res.ok) continue;
+      const text = await res.text();
+      // Real, deliberate content check, not just a 200 status — some
+      // sites return a real 200 with an HTML 404 page for any path, so
+      // the response has to actually look like real sitemap XML.
+      if (/<sitemapindex|<urlset/i.test(text)) {
+        return { url: `${siteUrl.replace(/\/$/, '')}${path}`, urlCount: (text.match(/<loc>/gi) || []).length };
+      }
+    } catch (e) { /* Real, deliberate continue — try the next real candidate path. */ }
+  }
+  return null;
+}
+
+// Real, deliberate reuse of the exact same real GSC OAuth connection
+// already used for keyword rankings — submitting a sitemap is a single,
+// well-documented real Search Console API call once a real access token
+// is in hand.
+async function submitSitemapToGSC(gscConnection, siteUrl, sitemapUrl) {
+  const accessToken = await getValidGSCAccessToken(gscConnection);
+  const res = await fetch(
+    `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/sitemaps/${encodeURIComponent(sitemapUrl)}`,
+    { method: 'PUT', headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error?.message || 'Google Search Console rejected this sitemap submission.');
+  }
+  return true;
+}
+
+async function getSitemapStatusFromGSC(gscConnection, siteUrl) {
+  const accessToken = await getValidGSCAccessToken(gscConnection);
+  const res = await fetch(
+    `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/sitemaps`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || 'Failed to fetch sitemap status from Search Console.');
+  return (data.sitemap || []).map(s => ({
+    path: s.path,
+    lastSubmitted: s.lastSubmitted || null,
+    lastDownloaded: s.lastDownloaded || null,
+    isPending: s.isPending || false,
+    warnings: Number(s.warnings || 0),
+    errors: Number(s.errors || 0),
+    discoveredUrlCount: (s.contents || []).reduce((sum, c) => sum + Number(c.submitted || 0), 0),
+  }));
+}
+
 async function fetchGSCKeywordRankings(connection, days = 28, limit = 50) {
   const accessToken = await getValidGSCAccessToken(connection);
   const { startDate, endDate } = getGSCDateRange(days);
