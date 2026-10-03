@@ -8054,7 +8054,12 @@ app.get('/api/business/:id/shopify', authRequired, async (req, res) => {
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
-    const result = await pool.query('SELECT id, shop_domain, connection_status, connected_at, last_verified_at, blog_id, website_intelligence, website_intelligence_generated_at FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    const result = await pool.query(
+      `SELECT id, shop_domain, connection_status, connected_at, last_verified_at, blog_id, website_intelligence, website_intelligence_generated_at,
+              content_automation_enabled, content_automation_publish_mode, content_automation_frequency, content_automation_last_run_at
+       FROM shopify_connections WHERE business_id = $1`,
+      [req.params.id]
+    );
     res.json({ connection: result.rows[0] || null });
   } catch (e) {
     console.error('Get Shopify connection error:', e.message);
@@ -8170,6 +8175,34 @@ app.delete('/api/business/:id/shopify/intelligence', authRequired, async (req, r
   } catch (e) {
     console.error('Clear Shopify intelligence error:', e.message);
     res.status(500).json({ error: 'Could not clear the analysis.' });
+  }
+});
+
+const VALID_SHOPIFY_FREQUENCIES = ['daily', 'weekly', 'monthly'];
+const VALID_SHOPIFY_PUBLISH_MODES = ['draft', 'publish'];
+app.put('/api/business/:id/shopify/automation', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const { contentAutomationEnabled, contentAutomationPublishMode, contentAutomationFrequency } = req.body || {};
+    if (contentAutomationFrequency && !VALID_SHOPIFY_FREQUENCIES.includes(contentAutomationFrequency)) return res.status(400).json({ error: 'Invalid frequency.' });
+    if (contentAutomationPublishMode && !VALID_SHOPIFY_PUBLISH_MODES.includes(contentAutomationPublishMode)) return res.status(400).json({ error: 'Invalid publish mode.' });
+
+    const result = await pool.query(
+      `UPDATE shopify_connections SET
+         content_automation_enabled = COALESCE($1, content_automation_enabled),
+         content_automation_publish_mode = COALESCE($2, content_automation_publish_mode),
+         content_automation_frequency = COALESCE($3, content_automation_frequency)
+       WHERE business_id = $4 RETURNING *`,
+      [contentAutomationEnabled, contentAutomationPublishMode, contentAutomationFrequency, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
+    res.json({ success: true, connection: result.rows[0] });
+  } catch (e) {
+    console.error('Update Shopify automation error:', e.message);
+    res.status(500).json({ error: 'Could not update automation settings.' });
   }
 });
 
@@ -16226,6 +16259,81 @@ async function runContentAutomationSweep() {
         // person will see the real failure in this connection's own
         // activity log either way.
         await pool.query(`UPDATE website_connections SET content_automation_last_run_at = NOW() WHERE id = $1`, [connection.id]);
+      }
+    }
+
+    // Real, deliberate same real per-connection interval logic as
+    // WordPress above, just against Shopify's own real connections —
+    // one real sweep, one real schedule, covering both real platforms.
+    const dueShopifyConnections = await pool.query(
+      `SELECT * FROM shopify_connections
+       WHERE content_automation_enabled = true AND connection_status = 'connected'
+         AND (
+           content_automation_last_run_at IS NULL
+           OR (content_automation_frequency = 'weekly' AND content_automation_last_run_at < NOW() - INTERVAL '7 days')
+           OR (content_automation_frequency = 'monthly' AND content_automation_last_run_at < NOW() - INTERVAL '30 days')
+           OR (content_automation_frequency NOT IN ('weekly', 'monthly') AND content_automation_last_run_at < NOW() - INTERVAL '24 hours')
+         )`
+    );
+
+    for (const connection of dueShopifyConnections.rows) {
+      try {
+        const bizResult = await pool.query('SELECT id, name, user_id FROM businesses WHERE id = $1', [connection.business_id]);
+        if (!bizResult.rows.length) continue;
+        const context = await getBusinessContext(connection.business_id, bizResult.rows[0].user_id);
+        if (!context) continue;
+
+        const accessToken = decryptSecret(connection.access_token_encrypted);
+
+        try {
+          await runShopifyWebsiteIntelligence(connection, accessToken, bizResult.rows[0].name);
+        } catch (intelErr) {
+          console.error(`Automatic Shopify Website Intelligence refresh failed for connection ${connection.id}:`, intelErr.message);
+        }
+
+        try {
+          await runShopifyAudit(connection, accessToken, context, null);
+        } catch (auditErr) {
+          console.error(`Automatic Shopify audit failed for connection ${connection.id}:`, auditErr.message);
+        }
+
+        let existingTitles = [];
+        try {
+          if (connection.blog_id) {
+            const existingRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles.json?limit=20&fields=title`);
+            if (existingRes.ok) { const d = await existingRes.json(); existingTitles = (d.articles || []).map(a => a.title); }
+          }
+        } catch (e) { /* Real, deliberate no-op — topic generation can proceed without this. */ }
+
+        const topic = await generateAutomaticBlogPostTopic(context, existingTitles.map(title => ({ title })));
+        let internalCandidates = [];
+        try { internalCandidates = await getShopifyContentForAnalysis(connection, accessToken); } catch (e) { /* Real, deliberate no-op. */ }
+
+        const generated = await generateShopifyBlogPostContent(context, topic, existingTitles, internalCandidates);
+        const publishStatus = connection.content_automation_publish_mode === 'publish' ? 'publish' : 'draft';
+        const result = await createShopifyBlogPost(connection, accessToken, { ...generated, status: publishStatus });
+
+        if (result.success) {
+          await pool.query(
+            `INSERT INTO shopify_generated_posts (shopify_connection_id, shopify_article_id, topic, title, handle, body_html, meta_title, meta_description, tags, status, article_url)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            [connection.id, result.id, topic, generated.title, result.handle, generated.bodyHtml, generated.metaTitle, generated.metaDescription, generated.tags.join(', '), result.status, result.url]
+          );
+          if (generated.reciprocalCandidate && generated.bodyHtml.includes(generated.reciprocalCandidate.url)) {
+            try {
+              await pool.query(
+                `INSERT INTO reciprocal_links_placed (from_business_id, to_business_id, from_post_title, from_post_url, to_url, relevance_reason)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [connection.business_id, generated.reciprocalCandidate.businessId, generated.title, result.url || null, generated.reciprocalCandidate.url, generated.reciprocalCandidate.reason]
+              );
+            } catch (e) { console.error('Failed to record reciprocal link placement (Shopify automatic):', e.message); }
+          }
+        }
+
+        await pool.query(`UPDATE shopify_connections SET content_automation_last_run_at = NOW() WHERE id = $1`, [connection.id]);
+      } catch (connErr) {
+        console.error(`Shopify content automation failed for connection ${connection.id}:`, connErr.message);
+        await pool.query(`UPDATE shopify_connections SET content_automation_last_run_at = NOW() WHERE id = $1`, [connection.id]);
       }
     }
   } catch (err) {
