@@ -7347,15 +7347,17 @@ app.post('/api/business/:id/content-automation-rule', authRequired, async (req, 
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
-    const { platform, startDate, endDate, slots } = req.body || {};
+    const { platform, startDate, endDate, frequencyPeriod, postsPerPeriod, hoursBetweenPosts, startTime, publishMode } = req.body || {};
     if (!VALID_CALENDAR_PLATFORMS.includes(platform)) return res.status(400).json({ error: 'Invalid platform.' });
     if (!startDate || !endDate || isNaN(new Date(startDate).getTime()) || isNaN(new Date(endDate).getTime())) return res.status(400).json({ error: 'A valid start and end date are required.' });
     if (new Date(endDate) < new Date(startDate)) return res.status(400).json({ error: 'The end date must be on or after the start date.' });
-    if (!Array.isArray(slots) || !slots.length) return res.status(400).json({ error: 'At least one scheduled time is required.' });
-    for (const slot of slots) {
-      if (!slot.timeOfDay || !/^\d{2}:\d{2}(:\d{2})?$/.test(slot.timeOfDay)) return res.status(400).json({ error: 'Each scheduled time must be a valid time.' });
-      if (!['draft', 'publish'].includes(slot.publishMode)) return res.status(400).json({ error: 'Each scheduled time needs a valid action (draft or publish).' });
-    }
+    if (!['daily', 'weekly', 'monthly'].includes(frequencyPeriod)) return res.status(400).json({ error: 'Invalid frequency period.' });
+    const postsCount = parseInt(postsPerPeriod, 10);
+    if (!Number.isInteger(postsCount) || postsCount < 1 || postsCount > 20) return res.status(400).json({ error: 'Posts per period must be a number between 1 and 20.' });
+    const hoursGap = parseInt(hoursBetweenPosts, 10);
+    if (!Number.isInteger(hoursGap) || hoursGap < 1) return res.status(400).json({ error: 'Hours between posts must be a positive number.' });
+    if (!startTime || !/^\d{2}:\d{2}(:\d{2})?$/.test(startTime)) return res.status(400).json({ error: 'A valid start time is required.' });
+    if (!['draft', 'publish'].includes(publishMode)) return res.status(400).json({ error: 'A valid action (draft or publish) is required.' });
 
     if (platform === 'wordpress') {
       const conn = await pool.query(`SELECT id FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [req.params.id]);
@@ -7373,17 +7375,11 @@ app.post('/api/business/:id/content-automation-rule', authRequired, async (req, 
     }
 
     const ruleResult = await pool.query(
-      `INSERT INTO content_automation_rules (business_id, platform, start_date, end_date) VALUES ($1, $2, $3, $4) RETURNING *`,
-      [req.params.id, platform, startDate, endDate]
+      `INSERT INTO content_automation_rules (business_id, platform, start_date, end_date, frequency_period, posts_per_period, hours_between_posts, start_time, publish_mode)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [req.params.id, platform, startDate, endDate, frequencyPeriod, postsCount, hoursGap, startTime, publishMode]
     );
     const rule = ruleResult.rows[0];
-
-    for (const slot of slots) {
-      await pool.query(
-        `INSERT INTO content_automation_rule_slots (rule_id, time_of_day, publish_mode) VALUES ($1, $2, $3)`,
-        [rule.id, slot.timeOfDay, slot.publishMode]
-      );
-    }
 
     const createdCount = await generateCalendarEntriesFromRule(rule.id);
     res.json({ success: true, rule, createdCount });
@@ -7395,16 +7391,14 @@ app.post('/api/business/:id/content-automation-rule', authRequired, async (req, 
 
 app.get('/api/business/:id/content-automation-rule', authRequired, async (req, res) => {
   try {
+    // Real, deliberate direct select — every field a real rule needs to
+    // describe itself now lives on the rule's own real row, no separate
+    // real slots table to join against anymore.
     const rulesResult = await pool.query(
       `SELECT * FROM content_automation_rules WHERE business_id = $1 AND enabled = TRUE AND end_date >= CURRENT_DATE ORDER BY created_at DESC`,
       [req.params.id]
     );
-    const rules = [];
-    for (const rule of rulesResult.rows) {
-      const slots = await pool.query('SELECT time_of_day, publish_mode FROM content_automation_rule_slots WHERE rule_id = $1 ORDER BY time_of_day', [rule.id]);
-      rules.push({ ...rule, slots: slots.rows });
-    }
-    res.json({ rules });
+    res.json({ rules: rulesResult.rows });
   } catch (e) {
     console.error('Get content automation rules error:', e.message);
     res.status(500).json({ error: 'Could not load automation rules.' });
@@ -16527,14 +16521,15 @@ async function runContentAutomationSweep() {
 // run time, it just produces real rows the exact same sweep below
 // already knows how to process, whether they came from a rule or from
 // a person adding one entry by hand.
+// Real, deliberate direct-control model — a real person sets how many
+// real posts per real period and how many real hours apart, as two
+// genuinely independent numbers, rather than hand-picking each real
+// clock time individually. One real action (draft or publish) applies
+// to every real post this rule ever creates.
 async function generateCalendarEntriesFromRule(ruleId) {
   const ruleResult = await pool.query('SELECT * FROM content_automation_rules WHERE id = $1', [ruleId]);
   if (!ruleResult.rows.length) throw new Error('Automation rule not found.');
   const rule = ruleResult.rows[0];
-
-  const slotsResult = await pool.query('SELECT * FROM content_automation_rule_slots WHERE rule_id = $1 ORDER BY time_of_day', [ruleId]);
-  const slots = slotsResult.rows;
-  if (!slots.length) throw new Error('This rule has no scheduled times yet.');
 
   // Real, deliberate clean slate for this real rule's own future, still-
   // pending entries only — never touches a real entry that already ran
@@ -16547,22 +16542,57 @@ async function generateCalendarEntriesFromRule(ruleId) {
 
   const startDate = new Date(rule.start_date);
   const endDate = new Date(rule.end_date);
+  const todayStr = new Date().toISOString().split('T')[0];
+  const [startHour, startMinute] = (rule.start_time || '09:00:00').split(':').map(Number);
   let createdCount = 0;
 
-  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-    const dateStr = d.toISOString().split('T')[0];
-    // Real, deliberate skip of any real day already in the past — a
-    // rule covering a range that starts before today should never
-    // backfill real entries for days that have already happened.
-    if (dateStr < new Date().toISOString().split('T')[0]) continue;
+  // Real, deliberate original day-of-month captured once — needed for
+  // the monthly case below, since naively calling setMonth() repeatedly
+  // on an already-advanced date compounds real drift (Jan 31 -> Feb
+  // overflows to Mar 3 -> next call advances from Mar 3, not Jan 31,
+  // drifting further every single real month after that).
+  const originalDayOfMonth = startDate.getDate();
 
-    for (const slot of slots) {
-      await pool.query(
-        `INSERT INTO content_calendar_entries (business_id, platform, scheduled_date, scheduled_time, automation_rule_id, publish_mode, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'scheduled')`,
-        [rule.business_id, rule.platform, dateStr, slot.time_of_day, rule.id, slot.publish_mode]
-      );
-      createdCount++;
+  // Real, deliberate one batch-occurrence per real period — every real
+  // day for 'daily', every real 7th day for 'weekly', and for 'monthly'
+  // each real occurrence computed fresh from the real original start
+  // date plus N months, clamped to that target month's real, actual
+  // last day rather than letting a short month overflow into the next.
+  let monthsElapsed = 0;
+  let occurrence = new Date(startDate);
+  while (occurrence <= endDate) {
+    const occurrenceDateStr = occurrence.toISOString().split('T')[0];
+    // Real, deliberate skip of any real occurrence already in the past.
+    if (occurrenceDateStr >= todayStr) {
+      for (let i = 0; i < rule.posts_per_period; i++) {
+        const postTime = new Date(occurrence);
+        postTime.setHours(startHour, startMinute, 0, 0);
+        postTime.setHours(postTime.getHours() + i * rule.hours_between_posts);
+
+        const postDateStr = postTime.toISOString().split('T')[0];
+        const postTimeStr = postTime.toTimeString().slice(0, 8);
+
+        await pool.query(
+          `INSERT INTO content_calendar_entries (business_id, platform, scheduled_date, scheduled_time, automation_rule_id, publish_mode, status)
+           VALUES ($1, $2, $3, $4, $5, $6, 'scheduled')`,
+          [rule.business_id, rule.platform, postDateStr, postTimeStr, rule.id, rule.publish_mode]
+        );
+        createdCount++;
+      }
+    }
+
+    if (rule.frequency_period === 'weekly') {
+      occurrence.setDate(occurrence.getDate() + 7);
+    } else if (rule.frequency_period === 'monthly') {
+      monthsElapsed++;
+      // Real, deliberate fresh computation from the real original date
+      // every time — never compounding drift from a prior iteration.
+      const target = new Date(startDate.getFullYear(), startDate.getMonth() + monthsElapsed, 1);
+      const lastDayOfTargetMonth = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+      target.setDate(Math.min(originalDayOfMonth, lastDayOfTargetMonth));
+      occurrence = target;
+    } else {
+      occurrence.setDate(occurrence.getDate() + 1); // 'daily'
     }
   }
   return createdCount;
