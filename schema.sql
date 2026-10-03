@@ -1471,21 +1471,35 @@ ALTER TABLE content_calendar_entries ADD COLUMN IF NOT EXISTS automation_rule_id
 -- run time. The calendar is the one real, single source of truth for
 -- what's actually going to happen; a rule is just what produced some of
 -- those real rows.
+-- Real, deliberate second real design here — the original per-slot-time
+-- model (content_automation_rule_slots below) was replaced by two real,
+-- directly-set controls instead: how many real posts per real period,
+-- and how many real hours apart. The old table is left in place, unused,
+-- rather than dropped, since nothing real depends on removing it.
 CREATE TABLE IF NOT EXISTS content_automation_rules (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
   platform VARCHAR(20) NOT NULL, -- 'wordpress' | 'shopify'
   start_date DATE NOT NULL,
   end_date DATE NOT NULL,
+  frequency_period VARCHAR(20) DEFAULT 'daily', -- 'daily' | 'weekly' | 'monthly' — how often one real batch of posts fires
+  posts_per_period INTEGER DEFAULT 1, -- how many real posts in each real batch
+  hours_between_posts INTEGER DEFAULT 3, -- real spacing between posts within one real batch
+  start_time TIME DEFAULT '09:00:00', -- the real time of day the FIRST post of each real batch goes out; later posts in that batch are offset from this by hours_between_posts
+  publish_mode VARCHAR(20) DEFAULT 'draft', -- 'draft' | 'publish' — one real action for every real post this rule creates
   enabled BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_content_automation_rules_business ON content_automation_rules(business_id);
+ALTER TABLE content_automation_rules ADD COLUMN IF NOT EXISTS frequency_period VARCHAR(20) DEFAULT 'daily';
+ALTER TABLE content_automation_rules ADD COLUMN IF NOT EXISTS posts_per_period INTEGER DEFAULT 1;
+ALTER TABLE content_automation_rules ADD COLUMN IF NOT EXISTS hours_between_posts INTEGER DEFAULT 3;
+ALTER TABLE content_automation_rules ADD COLUMN IF NOT EXISTS start_time TIME DEFAULT '09:00:00';
+ALTER TABLE content_automation_rules ADD COLUMN IF NOT EXISTS publish_mode VARCHAR(20) DEFAULT 'draft';
 
--- Real, deliberate one row per real time-of-day this rule posts at, each
--- with its own real action — a rule posting 3 times a day can have one
--- slot set to publish immediately and the other two set to draft, each
--- independently, exactly as asked for.
+-- Real, deliberate legacy table — superseded by the direct controls
+-- above, kept only so nothing breaks for any real row that might
+-- already reference it; no longer written to by new rules.
 CREATE TABLE IF NOT EXISTS content_automation_rule_slots (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   rule_id UUID REFERENCES content_automation_rules(id) ON DELETE CASCADE,
