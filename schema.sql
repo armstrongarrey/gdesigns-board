@@ -1377,11 +1377,13 @@ CREATE TABLE IF NOT EXISTS backlink_opportunities (
   title TEXT NOT NULL,
   url TEXT NOT NULL,
   description TEXT,
+  contact_email TEXT, -- a real email found on the real page itself, when one genuinely exists — never guessed or invented
   status VARCHAR(20) DEFAULT 'new', -- 'new' | 'contacted' | 'acquired' | 'dismissed'
   found_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(business_id, url)
 );
 CREATE INDEX IF NOT EXISTS idx_backlink_opportunities_business ON backlink_opportunities(business_id, found_at DESC);
+ALTER TABLE backlink_opportunities ADD COLUMN IF NOT EXISTS contact_email TEXT;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- RECIPROCAL LINK NETWORK — the explicitly opt-in system, genuinely
