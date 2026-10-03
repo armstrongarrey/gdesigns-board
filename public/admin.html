@@ -143,6 +143,9 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     <button class="nav-item" onclick="showSection('team-members')" id="nav-team-members">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 1 0-16 0"/></svg><span data-i18n="admin.nav_team_members">Team Members</span>
     </button>
+    <button class="nav-item" onclick="showSection('partner-network')" id="nav-partner-network">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><span data-i18n="admin.nav_partner_network">Partner Network</span>
+    </button>
     <button class="nav-item" onclick="showSection('usage')" id="nav-usage">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg><span data-i18n="admin.nav_usage">AI Usage</span>
     </button>
@@ -220,6 +223,21 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
         <div class="table-header"><div class="table-title" data-i18n="admin.all_team_members">All Team Members</div><button class="btn-primary" onclick="loadAdminTeamMembers()" data-i18n="admin.refresh">Refresh</button></div>
         <table><thead><tr><th data-i18n="admin.th_account_owner">Account Owner</th><th data-i18n="admin.th_owner_plan">Owner Plan</th><th data-i18n="admin.th_member_email">Member Email</th><th data-i18n="admin.th_status">Status</th><th data-i18n="admin.th_permissions">Permissions</th><th data-i18n="admin.th_invited">Invited</th><th data-i18n="admin.th_joined">Joined</th></tr></thead>
         <tbody id="allTeamMembers"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)" data-i18n="admin.loading">Loading...</td></tr></tbody></table>
+      </div>
+    </div>
+
+    <!-- PARTNER NETWORK -->
+    <div class="section-view" id="section-partner-network">
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px" data-i18n="admin.partner_network_desc">Every reciprocal link ever placed between any two businesses on the platform, across every account — the one place a match between unrelated agencies' clients can be seen and, if needed, stopped.</p>
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-label" data-i18n="admin.stat_opted_in">Opted-In Businesses</div><div class="stat-val" id="statOptedIn">—</div><div class="stat-sub" data-i18n="admin.stat_platform_wide">platform-wide</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="admin.stat_total_placements">Total Links Placed</div><div class="stat-val" id="statTotalPlacements">—</div><div class="stat-sub" data-i18n="admin.stat_all_time">all time</div></div>
+        <div class="stat-card"><div class="stat-label" data-i18n="admin.stat_recent_placements">Recent Activity</div><div class="stat-val" id="statRecentPlacements">—</div><div class="stat-sub" data-i18n="admin.stat_last_30">last 30 days</div></div>
+      </div>
+      <div class="table-wrap">
+        <div class="table-header"><div class="table-title" data-i18n="admin.all_placements">All Placements</div><button class="btn-primary" onclick="loadPartnerNetworkPlacements()" data-i18n="admin.refresh">Refresh</button></div>
+        <table><thead><tr><th data-i18n="admin.th_from_business">From</th><th data-i18n="admin.th_to_business">To</th><th data-i18n="admin.th_post">Post</th><th data-i18n="admin.th_reason">Reason</th><th data-i18n="admin.th_date">Date</th><th data-i18n="admin.th_action">Action</th></tr></thead>
+        <tbody id="allPlacements"><tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)" data-i18n="admin.loading">Loading...</td></tr></tbody></table>
       </div>
     </div>
 
@@ -414,10 +432,11 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const nav = document.getElementById('nav-' + name);
   if (nav) nav.classList.add('active');
-  const titleKeys = {overview:'admin.nav_overview',payments:'admin.nav_payments',users:'admin.nav_users','team-members':'admin.nav_team_members',usage:'admin.nav_usage',cms:'admin.nav_cms',announcements:'admin.nav_announcements',coupons:'admin.nav_coupons'};
+  const titleKeys = {overview:'admin.nav_overview',payments:'admin.nav_payments',users:'admin.nav_users','team-members':'admin.nav_team_members','partner-network':'admin.nav_partner_network',usage:'admin.nav_usage',cms:'admin.nav_cms',announcements:'admin.nav_announcements',coupons:'admin.nav_coupons'};
   document.getElementById('topbarTitle').textContent = titleKeys[name] ? t(titleKeys[name]) : name;
   if (name === 'usage') loadUsageStats();
   if (name === 'team-members') loadAdminTeamMembers();
+  if (name === 'partner-network') { loadPartnerNetworkOverview(); loadPartnerNetworkPlacements(); }
 }
 
 // ── AI USAGE DASHBOARD ────────────────────────────────────────────────────
@@ -592,6 +611,43 @@ async function loadAdminTeamMembers() {
         <td style="font-size:11px">${m.joined_at ? new Date(m.joined_at).toLocaleDateString('en-GB') : '—'}</td>
       </tr>`;
     }).join('') : `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">${t('admin.no_team_members')}</td></tr>`;
+  } catch(e) {}
+}
+
+// ── PARTNER NETWORK ──────────────────────────────────────────────────────
+async function loadPartnerNetworkOverview() {
+  try {
+    const res = await fetch('/api/admin/partner-network/overview');
+    const data = await res.json();
+    document.getElementById('statOptedIn').textContent = data.optedInBusinessCount ?? '—';
+    document.getElementById('statTotalPlacements').textContent = data.totalPlacements ?? '—';
+    document.getElementById('statRecentPlacements').textContent = data.placementsLast30Days ?? '—';
+  } catch(e) {}
+}
+
+async function loadPartnerNetworkPlacements() {
+  try {
+    const res = await fetch('/api/admin/partner-network/placements');
+    const { placements } = await res.json();
+    const tbody = document.getElementById('allPlacements');
+    tbody.innerHTML = (placements||[]).length ? placements.map(p => `
+      <tr>
+        <td>${p.from_business_name}<div style="font-size:11px;color:var(--muted)">${p.from_account_email}</div></td>
+        <td>${p.to_business_name}<div style="font-size:11px;color:var(--muted)">${p.to_account_email}</div></td>
+        <td style="font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.from_post_title || '—'}</td>
+        <td style="font-size:11px;color:var(--muted2);max-width:220px">${p.relevance_reason || '—'}</td>
+        <td style="font-size:11px">${new Date(p.placed_at).toLocaleDateString('en-GB')}</td>
+        <td class="td-actions"><button class="btn-danger" onclick="forceOptOutBusiness('${p.from_business_id}', '${(p.from_business_name||'').replace(/'/g,"\\'")}')">${t('admin.force_opt_out')}</button></td>
+      </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">${t('admin.no_placements')}</td></tr>`;
+  } catch(e) {}
+}
+
+async function forceOptOutBusiness(businessId, businessName) {
+  if (!confirm(tf('admin.confirm_force_opt_out', { name: businessName }))) return;
+  try {
+    const res = await fetch(`/api/admin/partner-network/force-opt-out/${businessId}`, { method: 'POST' });
+    const data = await res.json();
+    if (data.success) { loadPartnerNetworkOverview(); loadPartnerNetworkPlacements(); }
   } catch(e) {}
 }
 
