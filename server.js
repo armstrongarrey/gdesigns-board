@@ -8054,11 +8054,48 @@ app.get('/api/business/:id/shopify', authRequired, async (req, res) => {
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
-    const result = await pool.query('SELECT id, shop_domain, connection_status, connected_at, last_verified_at, blog_id FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    const result = await pool.query('SELECT id, shop_domain, connection_status, connected_at, last_verified_at, blog_id, website_intelligence, website_intelligence_generated_at FROM shopify_connections WHERE business_id = $1', [req.params.id]);
     res.json({ connection: result.rows[0] || null });
   } catch (e) {
     console.error('Get Shopify connection error:', e.message);
     res.status(500).json({ error: 'Failed to load Shopify connection status.' });
+  }
+});
+
+app.post('/api/business/:id/shopify/intelligence', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id, name FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
+    const connection = connResult.rows[0];
+    const accessToken = decryptSecret(connection.access_token_encrypted);
+
+    const intelligence = await runShopifyWebsiteIntelligence(connection, accessToken, biz.rows[0].name);
+    if (!intelligence) return res.status(400).json({ error: 'No pages or articles were found to analyze yet.' });
+
+    res.json({ success: true, intelligence });
+  } catch (err) {
+    console.error('Shopify intelligence error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate Website Intelligence. Please try again.' });
+  }
+});
+
+app.delete('/api/business/:id/shopify/intelligence', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    await pool.query(
+      `UPDATE shopify_connections SET website_intelligence = NULL, website_intelligence_fr = NULL, website_intelligence_generated_at = NULL WHERE business_id = $1`,
+      [req.params.id]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Clear Shopify intelligence error:', e.message);
+    res.status(500).json({ error: 'Could not clear the analysis.' });
   }
 });
 
@@ -8127,6 +8164,135 @@ async function getShopifyContentForAnalysis(connection, accessToken) {
   // never trusting a constructed URL just because the pieces look right.
   const verified = await Promise.all(candidates.map(async (c) => ({ ...c, resolves: !(await checkInternalLinkResolves(c.url)).broken })));
   return verified.filter(c => c.resolves).slice(0, 15);
+}
+
+// Real, deliberate word-count and real meta-tag presence check, the
+// richer analysis Website Intelligence needs beyond what the internal-
+// link candidates above require. Capped to a reasonable real sample
+// (8 articles, 8 pages) since each real meta-tag check is its own real
+// API call — unbounded would mean dozens of real requests for a single
+// on-demand analysis.
+async function getShopifyContentForIntelligence(connection, accessToken) {
+  const storeUrl = `https://${connection.shop_domain.replace('.myshopify.com', '.com')}`;
+  let blogHandle = 'news';
+  try {
+    if (connection.blog_id) {
+      const blogRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}.json`);
+      if (blogRes.ok) { const d = await blogRes.json(); blogHandle = d.blog?.handle || blogHandle; }
+    }
+  } catch (e) { /* Real, deliberate fallback. */ }
+
+  // Real, deliberate single metafields lookup per real resource — the
+  // only way Shopify's REST API exposes a real article's or page's own
+  // real title_tag/description_tag values.
+  async function fetchMetaDescription(resourceType, resourceId) {
+    try {
+      const res = await shopifyApiRequest(connection.shop_domain, accessToken, `/${resourceType}/${resourceId}/metafields.json`);
+      if (!res.ok) return null;
+      const d = await res.json();
+      const metafield = (d.metafields || []).find(m => m.namespace === 'global' && m.key === 'description_tag');
+      return metafield?.value || null;
+    } catch (e) { return null; }
+  }
+
+  function wordCount(html) {
+    return (html || '').replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length;
+  }
+  function excerpt(html) {
+    return (html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
+  }
+
+  const items = [];
+  let totalArticleCount = 0, totalPageCount = 0;
+
+  try {
+    if (connection.blog_id) {
+      const countRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles/count.json`);
+      if (countRes.ok) { const d = await countRes.json(); totalArticleCount = d.count || 0; }
+      const articlesRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles.json?limit=8&fields=id,title,handle,body_html`);
+      if (articlesRes.ok) {
+        const d = await articlesRes.json();
+        for (const a of (d.articles || [])) {
+          const metaDescription = await fetchMetaDescription('articles', a.id);
+          items.push({ type: 'post', title: a.title, url: `${storeUrl}/blogs/${blogHandle}/${a.handle}`, wordCount: wordCount(a.body_html), bodyExcerpt: excerpt(a.body_html), metaDescription });
+        }
+      }
+    }
+  } catch (e) { /* Real, deliberate no-op — proceeds with whatever was found. */ }
+
+  try {
+    const pageCountRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/pages/count.json`);
+    if (pageCountRes.ok) { const d = await pageCountRes.json(); totalPageCount = d.count || 0; }
+    const pagesRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/pages.json?limit=8&fields=id,title,handle,body_html`);
+    if (pagesRes.ok) {
+      const d = await pagesRes.json();
+      for (const p of (d.pages || [])) {
+        const metaDescription = await fetchMetaDescription('pages', p.id);
+        items.push({ type: 'page', title: p.title, url: `${storeUrl}/pages/${p.handle}`, wordCount: wordCount(p.body_html), bodyExcerpt: excerpt(p.body_html), metaDescription });
+      }
+    }
+  } catch (e) { /* Real, deliberate no-op. */ }
+
+  return { items, totalArticleCount, totalPageCount };
+}
+
+// Real, deliberate same structure and same critical rules as the
+// WordPress version — the real measured data changes (it's Shopify's
+// own real pages/articles now), but the same real discipline applies:
+// every issue has to reference something actually present in that data.
+async function runShopifyWebsiteIntelligence(connection, accessToken, businessName) {
+  const { items, totalArticleCount, totalPageCount } = await getShopifyContentForIntelligence(connection, accessToken);
+  if (!items.length) return;
+
+  const itemsSummary = items.map(i => `${i.type.toUpperCase()}: "${i.title}" (${i.url})\n  Word count: ${i.wordCount} | Meta description: ${i.metaDescription ? `"${i.metaDescription}"` : 'NOT DETECTED'}\n  Excerpt: ${i.bodyExcerpt}`).join('\n\n');
+
+  const prompt = `You are a website intelligence analyst reviewing a Shopify store for ${businessName || 'this business'}. You have been given REAL, MEASURED data fetched directly from the store's own content — word counts and meta description presence are FACTS, not your opinion.
+
+MEASURED DATA (${items.length} of ${totalArticleCount + totalPageCount} total pages/articles):
+${itemsSummary}
+
+CRITICAL RULES:
+- Every issue must reference something ACTUALLY PRESENT in the measured data above — never invent a page, a number, or an issue not grounded in what's shown.
+- Do NOT invent a numeric "website score."
+- Thin content threshold: under 300 words is a genuine concern; do not flag naturally short pages as broken just for being short.
+- Limit output to AT MOST 15 seo_issues, 10 content_observations, and 8 recommendations, prioritizing the most significant findings.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "structure_summary": "2-3 sentences on what this store's content actually consists of",
+  "seo_issues": [{ "page_title": "exact title", "url": "exact url", "issue": "specific issue", "severity": "high" | "medium" | "low" }],
+  "content_observations": [{ "page_title": "exact title", "observation": "specific observation" }],
+  "recommendations": [{ "title": "short action title", "description": "1-2 sentences", "priority": "high" | "medium" | "low" }],
+  "data_limitations_note": "one honest sentence on what this analysis could NOT see"
+}`;
+
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Provide the Website Intelligence analysis now, as JSON only.' }], complexity: 'complex', context: { feature: 'shopify_website_intelligence' }, maxTokens: 8000 });
+
+  let intelligence;
+  try {
+    intelligence = extractJSON(raw);
+  } catch (e) {
+    throw new Error(`Website Intelligence failed to parse: ${e.message}`);
+  }
+  if (!Array.isArray(intelligence.seo_issues) || !Array.isArray(intelligence.recommendations)) {
+    throw new Error('Website Intelligence returned incomplete data.');
+  }
+
+  intelligence.seo_issues = intelligence.seo_issues.slice(0, 15);
+  if (Array.isArray(intelligence.content_observations)) intelligence.content_observations = intelligence.content_observations.slice(0, 10);
+  intelligence.recommendations = intelligence.recommendations.slice(0, 8);
+  intelligence.measured = {
+    pageCount: totalPageCount, postCount: totalArticleCount,
+    analyzedPageCount: items.filter(i => i.type === 'page').length, analyzedPostCount: items.filter(i => i.type === 'post').length,
+    pagesWithNoMetaDescription: items.filter(i => !i.metaDescription).length,
+    pagesUnder300Words: items.filter(i => i.wordCount < 300).length,
+  };
+
+  await pool.query(
+    `UPDATE shopify_connections SET website_intelligence = $1, website_intelligence_fr = NULL, website_intelligence_generated_at = NOW() WHERE id = $2`,
+    [JSON.stringify(intelligence), connection.id]
+  );
+  return intelligence;
 }
 
 async function generateShopifyBlogPostContent(context, topic, existingTitles, internalCandidates = []) {
