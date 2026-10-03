@@ -1384,6 +1384,38 @@ CREATE TABLE IF NOT EXISTS backlink_opportunities (
 CREATE INDEX IF NOT EXISTS idx_backlink_opportunities_business ON backlink_opportunities(business_id, found_at DESC);
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- RECIPROCAL LINK NETWORK — the explicitly opt-in system, genuinely
+-- separate from the external-opportunity finder above. A real link from
+-- one real client's content to another real client's site only ever
+-- happens when BOTH real businesses have explicitly opted in — never one-
+-- sided, never silent, never automatic for a business that hasn't agreed.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS reciprocal_network_opt_ins (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE UNIQUE,
+  opted_in BOOLEAN DEFAULT FALSE,
+  opted_in_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Real, deliberate record of every real link actually placed — the audit
+-- trail that lets a business see exactly who has ever linked to them and
+-- who they have ever linked to, and what lets the matching logic enforce
+-- a real cap rather than linking the same two real businesses repeatedly.
+CREATE TABLE IF NOT EXISTS reciprocal_links_placed (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  to_business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  from_post_title TEXT,
+  from_post_url TEXT,
+  to_url TEXT NOT NULL,
+  relevance_reason TEXT, -- the real, specific reason the AI judged this pairing genuinely relevant, kept for a real person to review, not just trusted blindly
+  placed_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_reciprocal_links_from ON reciprocal_links_placed(from_business_id, placed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reciprocal_links_to ON reciprocal_links_placed(to_business_id, placed_at DESC);
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Arreyon Connect plugin — connection-code handshake (Option 2). WordPress
 -- initiates here (the reverse of the existing paste-a-credential flow):
 -- Arreyon generates a short-lived code and shows it; the plugin, once the
