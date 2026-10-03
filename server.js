@@ -6826,6 +6826,49 @@ app.get('/api/business/:id/website/keyword-rankings', authRequired, async (req, 
   }
 });
 
+app.post('/api/business/:id/website/technical-seo/check', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const { connection: siteConnection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+
+    const [vitals, robots] = await Promise.all([
+      checkCoreWebVitals(siteConnection.site_url),
+      checkRobotsTxt(siteConnection.site_url),
+    ]);
+
+    const inserted = await pool.query(
+      `INSERT INTO website_technical_seo_checks
+       (business_id, performance_score, seo_score, accessibility_score, lcp_ms, cls_score, tbt_ms,
+        field_data_available, field_lcp_category, field_cls_category, field_inp_category,
+        robots_txt_exists, robots_txt_blocks_everything, robots_txt_references_sitemap, top_issues)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+      [req.params.id, vitals.performanceScore, vitals.seoScore, vitals.accessibilityScore, vitals.lcpMs, vitals.clsScore, vitals.tbtMs,
+       vitals.fieldDataAvailable, vitals.fieldLcpCategory, vitals.fieldClsCategory, vitals.fieldInpCategory,
+       robots.exists, robots.blocksEverything, robots.referencesSitemap, JSON.stringify(vitals.topIssues)]
+    );
+
+    await logWebsiteAudit(siteConnection.id, 'user', req.userId, 'technical_seo_checked',
+      `Ran a technical SEO check — performance ${vitals.performanceScore}, SEO ${vitals.seoScore}`,
+      { performanceScore: vitals.performanceScore }, 'general');
+
+    res.json({ success: true, check: inserted.rows[0] });
+  } catch (err) {
+    console.error('Technical SEO check error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to run the technical SEO check. Please try again.' });
+  }
+});
+
+app.get('/api/business/:id/website/technical-seo/history', authRequired, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM website_technical_seo_checks WHERE business_id = $1 ORDER BY checked_at DESC LIMIT 20', [req.params.id]);
+    res.json({ checks: result.rows });
+  } catch (e) {
+    console.error('Get technical SEO history error:', e.message);
+    res.status(500).json({ error: 'Could not load technical SEO history.' });
+  }
+});
+
 app.post('/api/business/:id/website/sitemap/submit', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
@@ -8334,6 +8377,32 @@ app.delete('/api/business/:id/backlinks', authRequired, async (req, res) => {
   }
 });
 
+app.post('/api/business/:id/shopify/technical-seo/check', authRequired, async (req, res) => {
+  try {
+    const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
+    const siteUrl = `https://${connResult.rows[0].shop_domain}`;
+
+    const [vitals, robots] = await Promise.all([checkCoreWebVitals(siteUrl), checkRobotsTxt(siteUrl)]);
+
+    const inserted = await pool.query(
+      `INSERT INTO website_technical_seo_checks
+       (business_id, performance_score, seo_score, accessibility_score, lcp_ms, cls_score, tbt_ms,
+        field_data_available, field_lcp_category, field_cls_category, field_inp_category,
+        robots_txt_exists, robots_txt_blocks_everything, robots_txt_references_sitemap, top_issues)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+      [req.params.id, vitals.performanceScore, vitals.seoScore, vitals.accessibilityScore, vitals.lcpMs, vitals.clsScore, vitals.tbtMs,
+       vitals.fieldDataAvailable, vitals.fieldLcpCategory, vitals.fieldClsCategory, vitals.fieldInpCategory,
+       robots.exists, robots.blocksEverything, robots.referencesSitemap, JSON.stringify(vitals.topIssues)]
+    );
+
+    res.json({ success: true, check: inserted.rows[0] });
+  } catch (err) {
+    console.error('Shopify technical SEO check error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to run the technical SEO check. Please try again.' });
+  }
+});
+
 app.post('/api/business/:id/shopify/sitemap/submit', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
@@ -8965,6 +9034,75 @@ async function resolveMatchingGscConnection(accountId, siteUrl) {
     return { error: `The connected Search Console property (${gscHost}) doesn't appear to match this site (${siteHost}). Select the right property under Integrations.` };
   }
   return { gscConnection };
+}
+
+// Real, deliberate lab-data-first design — Google's real Lighthouse lab
+// data is always present in a real response; real Chrome field data
+// (loadingExperience) only appears when a real site has enough real
+// traffic for Google to report it, which most small-business sites
+// genuinely won't. Building around field data alone would make this
+// real feature useless for exactly the sites Arreyon serves.
+async function checkCoreWebVitals(siteUrl) {
+  const apiKey = process.env.PAGESPEED_API_KEY;
+  const params = new URLSearchParams({ url: siteUrl, strategy: 'mobile', category: 'PERFORMANCE' });
+  params.append('category', 'SEO');
+  params.append('category', 'ACCESSIBILITY');
+  if (apiKey) params.append('key', apiKey);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 55000); // Real, deliberate generous timeout — a real Lighthouse audit commonly takes 15-30+ real seconds; a real, typical API timeout would cut this off mid-run.
+  let res;
+  try {
+    res = await fetch(`https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params.toString()}`, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || 'Google PageSpeed Insights could not analyze this site.');
+
+  const audits = data.lighthouseResult?.audits || {};
+  const categories = data.lighthouseResult?.categories || {};
+  const fieldMetrics = data.loadingExperience?.metrics || null;
+
+  return {
+    performanceScore: categories.performance?.score != null ? Math.round(categories.performance.score * 100) : null,
+    seoScore: categories.seo?.score != null ? Math.round(categories.seo.score * 100) : null,
+    accessibilityScore: categories.accessibility?.score != null ? Math.round(categories.accessibility.score * 100) : null,
+    lcpMs: audits['largest-contentful-paint']?.numericValue != null ? Math.round(audits['largest-contentful-paint'].numericValue) : null,
+    clsScore: audits['cumulative-layout-shift']?.numericValue != null ? round2(audits['cumulative-layout-shift'].numericValue) : null,
+    tbtMs: audits['total-blocking-time']?.numericValue != null ? Math.round(audits['total-blocking-time'].numericValue) : null,
+    fieldDataAvailable: !!fieldMetrics,
+    fieldLcpCategory: fieldMetrics?.LARGEST_CONTENTFUL_PAINT_MS?.category || null,
+    fieldClsCategory: fieldMetrics?.CUMULATIVE_LAYOUT_SHIFT_SCORE?.category || null,
+    fieldInpCategory: fieldMetrics?.INTERACTION_TO_NEXT_PAINT?.category || null,
+    // Real, deliberate top-3 opportunities only — Lighthouse can return
+    // dozens of real audits; a real, overwhelming wall of every possible
+    // issue helps no one decide what to actually fix first.
+    topIssues: Object.values(audits)
+      .filter(a => a.score !== null && a.score < 0.9 && a.title && a.scoreDisplayMode === 'binary')
+      .sort((a, b) => (a.score || 0) - (b.score || 0))
+      .slice(0, 3)
+      .map(a => a.title),
+  };
+}
+
+async function checkRobotsTxt(siteUrl) {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(`${siteUrl.replace(/\/$/, '')}/robots.txt`, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!res.ok) return { exists: false, blocksEverything: false, referencesSitemap: false };
+    const text = await res.text();
+    // Real, deliberate check for a real, literal "Disallow: /" under a
+    // real wildcard user-agent block — the one real robots.txt pattern
+    // that would genuinely block all of Google's crawling.
+    const blocksEverything = /user-agent:\s*\*[\s\S]{0,200}?disallow:\s*\/\s*$/im.test(text);
+    const referencesSitemap = /^sitemap:/im.test(text);
+    return { exists: true, blocksEverything, referencesSitemap };
+  } catch (e) {
+    return { exists: false, blocksEverything: false, referencesSitemap: false };
+  }
 }
 
 async function detectSitemapUrl(siteUrl) {
