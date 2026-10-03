@@ -2041,6 +2041,19 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div id="websiteSitemapContent"></div>
       </div>
 
+      <!-- TECHNICAL SEO — real Google Lighthouse lab data, not an estimate.
+           Field (real-user) data is shown only when Google actually has
+           enough real traffic to report it, which most small-business
+           sites won't — lab data is the reliable, always-present metric. -->
+      <div id="websiteTechnicalSeoSection" style="display:none;margin-top:28px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.technical_seo_title">Technical SEO</div>
+          <button class="btn-primary" onclick="runTechnicalSeoCheck('website')" id="websiteTechnicalSeoBtn" data-i18n="web.run_technical_check_button">Run Check</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin:8px 0 12px" data-i18n="web.technical_seo_description">Real Core Web Vitals from Google's own Lighthouse engine, plus a robots.txt check for anything blocking search engines. Can take up to a minute to run.</div>
+        <div id="websiteTechnicalSeoContent"></div>
+      </div>
+
       <!-- SHOPIFY — stage 1 integration, deliberately separate from the
            WordPress-specific blocks above rather than merged into one
            generic "platform" system, since that unification is real,
@@ -2088,6 +2101,15 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             </div>
             <div style="font-size:11px;color:var(--muted);margin:8px 0 12px" data-i18n="web.shopify_sitemap_description">Finds your store's existing sitemap (generated automatically by Shopify) and submits it to Google Search Console.</div>
             <div id="shopifySitemapContent"></div>
+          </div>
+
+          <div style="margin-top:24px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div class="section-title" style="margin-bottom:0;font-size:14px" data-i18n="web.technical_seo_title">Technical SEO</div>
+              <button class="btn-primary" onclick="runTechnicalSeoCheck('shopify')" id="shopifyTechnicalSeoBtn" data-i18n="web.run_technical_check_button">Run Check</button>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin:8px 0 12px" data-i18n="web.technical_seo_description">Real Core Web Vitals from Google's own Lighthouse engine, plus a robots.txt check for anything blocking search engines. Can take up to a minute to run.</div>
+            <div id="shopifyTechnicalSeoContent"></div>
           </div>
         </div>
       </div>
@@ -7428,7 +7450,7 @@ let currentWebsiteBusinessId = null;
 const WORDPRESS_TAB_ELEMENT_IDS = [
   'websiteEmptyState', 'websiteStatusCard', 'websiteStatusError', 'websiteConnectMsg',
   'websiteIntelligenceSection', 'websiteAuditRunSection', 'websiteAiVisibilitySection',
-  'websiteKeywordRankingsSection', 'websiteSitemapSection', 'websiteTaxonomySection', 'websiteBrokenLinksSection',
+  'websiteKeywordRankingsSection', 'websiteSitemapSection', 'websiteTechnicalSeoSection', 'websiteTaxonomySection', 'websiteBrokenLinksSection',
   'websiteMediaSection', 'websiteSchemaSection', 'websiteActivityLogSection',
   'websiteGeneratedPostsSection', 'websiteActionsSection',
 ];
@@ -7707,6 +7729,7 @@ async function loadShopifyStatus() {
     document.getElementById('shopifyDomainLabel').textContent = data.connection.shop_domain;
     loadShopifyGeneratedPosts();
     loadShopifySitemapStatus();
+    loadTechnicalSeoHistory('shopify');
   } catch (e) {
     document.getElementById('shopifyConnectPrompt').style.display = 'block';
   }
@@ -7886,6 +7909,7 @@ async function loadWebsiteBusinesses() {
       document.getElementById('websiteAiVisibilitySection').style.display = 'none';
       document.getElementById('websiteKeywordRankingsSection').style.display = 'none';
       document.getElementById('websiteSitemapSection').style.display = 'none';
+      document.getElementById('websiteTechnicalSeoSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return;
     }
@@ -7945,6 +7969,7 @@ function onWebsiteBusinessSelectChange() {
     document.getElementById('websiteAiVisibilitySection').style.display = 'none';
     document.getElementById('websiteKeywordRankingsSection').style.display = 'none';
     document.getElementById('websiteSitemapSection').style.display = 'none';
+    document.getElementById('websiteTechnicalSeoSection').style.display = 'none';
     document.getElementById('websiteActionsSection').style.display = 'none';
     resetWebsiteConnectForm();
     return;
@@ -8020,6 +8045,7 @@ async function loadWebsiteSection() {
       document.getElementById('websiteAiVisibilitySection').style.display = 'none';
       document.getElementById('websiteKeywordRankingsSection').style.display = 'none';
       document.getElementById('websiteSitemapSection').style.display = 'none';
+      document.getElementById('websiteTechnicalSeoSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return false;
     }
@@ -8037,6 +8063,7 @@ async function loadWebsiteSection() {
     document.getElementById('websiteAiVisibilitySection').style.display = 'block';
     document.getElementById('websiteKeywordRankingsSection').style.display = 'block';
     document.getElementById('websiteSitemapSection').style.display = 'block';
+    document.getElementById('websiteTechnicalSeoSection').style.display = 'block';
     document.getElementById('websiteActionsSection').style.display = 'block';
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
@@ -8048,6 +8075,7 @@ async function loadWebsiteSection() {
     loadAiVisibilityHistory();
     loadKeywordRankings();
     loadWebsiteSitemapStatus();
+    loadTechnicalSeoHistory('website');
     loadWebsiteActions();
     return true;
   } catch (e) {
@@ -8968,6 +8996,96 @@ async function submitWebsiteSitemap() {
     btn.disabled = false;
     btn.textContent = t('web.submit_sitemap_button');
   }
+}
+
+// ── TECHNICAL SEO (shared across WordPress and Shopify) ──────────────────
+function technicalSeoScoreColor(score) {
+  if (score == null) return 'var(--muted)';
+  if (score >= 90) return '#22c55e';
+  if (score >= 50) return '#f59e0b';
+  return '#ef4444';
+}
+
+async function runTechnicalSeoCheck(platform) {
+  const btn = document.getElementById(`${platform}TechnicalSeoBtn`);
+  btn.disabled = true;
+  btn.textContent = t('web.running_technical_check');
+  try {
+    const apiPath = platform === 'shopify' ? 'shopify/technical-seo/check' : 'website/technical-seo/check';
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${apiPath}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.technical_check_complete_toast'), 'success');
+    loadTechnicalSeoHistory(platform);
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.run_technical_check_button');
+  }
+}
+
+async function loadTechnicalSeoHistory(platform) {
+  const contentEl = document.getElementById(`${platform}TechnicalSeoContent`);
+  try {
+    // Real, deliberate shared history endpoint — business-scoped, not
+    // platform-scoped, so the same real check history shows regardless
+    // of which platform's button actually ran it.
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/technical-seo/history`);
+    const data = await res.json();
+    renderTechnicalSeoHistory(contentEl, data.checks || []);
+  } catch (e) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderTechnicalSeoHistory(contentEl, checks) {
+  if (!checks.length) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:var(--muted)">${t('web.no_technical_checks')}</div>`;
+    return;
+  }
+  const latest = checks[0];
+  const scores = [
+    { label: t('web.performance_score_label'), value: latest.performance_score },
+    { label: t('web.seo_score_label'), value: latest.seo_score },
+    { label: t('web.accessibility_score_label'), value: latest.accessibility_score },
+  ];
+
+  let html = `<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">`;
+  html += scores.map(s => `
+    <div style="flex:1;min-width:90px;background:var(--bg3);border-radius:10px;padding:12px;text-align:center">
+      <div style="font-size:22px;font-weight:700;color:${technicalSeoScoreColor(s.value)}">${s.value ?? '—'}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:2px">${s.label}</div>
+    </div>`).join('');
+  html += `</div>`;
+
+  html += `<div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+    <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${t('web.core_web_vitals_label')} (${t('web.lab_data_label')})</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text)">
+      <div>LCP: <strong>${latest.lcp_ms != null ? (latest.lcp_ms / 1000).toFixed(1) + 's' : '—'}</strong></div>
+      <div>CLS: <strong>${latest.cls_score ?? '—'}</strong></div>
+      <div>TBT: <strong>${latest.tbt_ms != null ? latest.tbt_ms + 'ms' : '—'}</strong></div>
+    </div>
+    ${latest.field_data_available ? `<div style="font-size:10px;color:var(--muted);margin-top:8px">${t('web.field_data_label')}: LCP ${latest.field_lcp_category || '—'} · CLS ${latest.field_cls_category || '—'} · INP ${latest.field_inp_category || '—'}</div>` : `<div style="font-size:10px;color:var(--muted);margin-top:8px">${t('web.no_field_data_note')}</div>`}
+  </div>`;
+
+  if (latest.robots_txt_blocks_everything) {
+    html += `<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#ef4444">${t('web.robots_blocks_everything_warning')}</div>`;
+  } else if (latest.robots_txt_exists) {
+    html += `<div style="font-size:11px;color:var(--muted);margin-bottom:12px">${t('web.robots_ok_note')}${latest.robots_txt_references_sitemap ? ` · ${t('web.robots_references_sitemap_note')}` : ''}</div>`;
+  }
+
+  const topIssues = latest.top_issues || [];
+  if (topIssues.length) {
+    html += `<div style="font-size:11px;color:var(--muted);margin-bottom:6px">${t('web.top_issues_label')}</div>`;
+    html += topIssues.map(issue => `<div style="font-size:12px;color:var(--text2);padding:6px 10px;background:var(--bg3);border-radius:6px;margin-bottom:4px">${escapeHtml(issue)}</div>`).join('');
+  }
+
+  html += `<div style="font-size:10px;color:var(--muted);margin-top:10px">${t('web.last_checked_label')}: ${timeAgo(latest.checked_at)}</div>`;
+  contentEl.innerHTML = html;
 }
 
 async function loadWebsiteSitemapStatus() {
