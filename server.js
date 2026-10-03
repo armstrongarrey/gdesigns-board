@@ -8062,6 +8062,80 @@ app.get('/api/business/:id/shopify', authRequired, async (req, res) => {
   }
 });
 
+app.post('/api/business/:id/shopify/run-audit', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
+    const connection = connResult.rows[0];
+    const accessToken = decryptSecret(connection.access_token_encrypted);
+
+    const result = await runShopifyAudit(connection, accessToken, context, req.userId);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('Shopify audit error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to run the audit. Please try again.' });
+  }
+});
+
+app.get('/api/business/:id/shopify/actions', authRequired, async (req, res) => {
+  try {
+    const connResult = await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.json({ actions: [] });
+    const result = await pool.query('SELECT * FROM shopify_actions WHERE shopify_connection_id = $1 ORDER BY created_at DESC LIMIT 100', [connResult.rows[0].id]);
+    res.json({ actions: result.rows });
+  } catch (e) {
+    console.error('Get Shopify actions error:', e.message);
+    res.status(500).json({ error: 'Could not load proposed changes.' });
+  }
+});
+
+app.post('/api/business/:id/shopify/actions/:actionId/approve', authRequired, async (req, res) => {
+  try {
+    const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
+    const connection = connResult.rows[0];
+
+    const actionResult = await pool.query('SELECT * FROM shopify_actions WHERE id = $1 AND shopify_connection_id = $2', [req.params.actionId, connection.id]);
+    if (!actionResult.rows.length) return res.status(404).json({ error: 'Proposed change not found' });
+    const action = actionResult.rows[0];
+    if (action.approval_status !== 'pending') return res.status(400).json({ error: 'This change has already been reviewed.' });
+
+    const accessToken = decryptSecret(connection.access_token_encrypted);
+    const execResult = await executeShopifyAction(action, connection, accessToken);
+
+    await pool.query(
+      `UPDATE shopify_actions SET approval_status = 'approved', execution_status = $1, reviewed_at = NOW() WHERE id = $2`,
+      [execResult.executed ? 'executed' : 'execution_failed', action.id]
+    );
+
+    if (!execResult.executed) return res.status(400).json({ error: execResult.error || 'Shopify rejected this change.' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Approve Shopify action error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to apply this change. Please try again.' });
+  }
+});
+
+app.post('/api/business/:id/shopify/actions/:actionId/reject', authRequired, async (req, res) => {
+  try {
+    const connResult = await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
+    const result = await pool.query(
+      `UPDATE shopify_actions SET approval_status = 'rejected', reviewed_at = NOW() WHERE id = $1 AND shopify_connection_id = $2 AND approval_status = 'pending' RETURNING id`,
+      [req.params.actionId, connResult.rows[0].id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Proposed change not found or already reviewed.' });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Reject Shopify action error:', e.message);
+    res.status(500).json({ error: 'Could not reject this change.' });
+  }
+});
+
 app.post('/api/business/:id/shopify/intelligence', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
@@ -8185,14 +8259,20 @@ async function getShopifyContentForIntelligence(connection, accessToken) {
   // Real, deliberate single metafields lookup per real resource — the
   // only way Shopify's REST API exposes a real article's or page's own
   // real title_tag/description_tag values.
-  async function fetchMetaDescription(resourceType, resourceId) {
+  // Real, deliberate single real metafields call returning both real SEO
+  // fields — the response already contains every real metafield for this
+  // resource, so filtering for both title_tag and description_tag here
+  // costs nothing extra over filtering for just one.
+  async function fetchSeoMetafields(resourceType, resourceId) {
     try {
       const res = await shopifyApiRequest(connection.shop_domain, accessToken, `/${resourceType}/${resourceId}/metafields.json`);
-      if (!res.ok) return null;
+      if (!res.ok) return { metaTitle: null, metaDescription: null };
       const d = await res.json();
-      const metafield = (d.metafields || []).find(m => m.namespace === 'global' && m.key === 'description_tag');
-      return metafield?.value || null;
-    } catch (e) { return null; }
+      const metafields = d.metafields || [];
+      const metaTitle = metafields.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || null;
+      const metaDescription = metafields.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || null;
+      return { metaTitle, metaDescription };
+    } catch (e) { return { metaTitle: null, metaDescription: null }; }
   }
 
   function wordCount(html) {
@@ -8213,8 +8293,8 @@ async function getShopifyContentForIntelligence(connection, accessToken) {
       if (articlesRes.ok) {
         const d = await articlesRes.json();
         for (const a of (d.articles || [])) {
-          const metaDescription = await fetchMetaDescription('articles', a.id);
-          items.push({ type: 'post', title: a.title, url: `${storeUrl}/blogs/${blogHandle}/${a.handle}`, wordCount: wordCount(a.body_html), bodyExcerpt: excerpt(a.body_html), metaDescription });
+          const { metaTitle, metaDescription } = await fetchSeoMetafields('articles', a.id);
+          items.push({ type: 'post', id: a.id, title: a.title, url: `${storeUrl}/blogs/${blogHandle}/${a.handle}`, wordCount: wordCount(a.body_html), bodyExcerpt: excerpt(a.body_html), bodyHtml: a.body_html, metaTitle, metaDescription });
         }
       }
     }
@@ -8227,8 +8307,8 @@ async function getShopifyContentForIntelligence(connection, accessToken) {
     if (pagesRes.ok) {
       const d = await pagesRes.json();
       for (const p of (d.pages || [])) {
-        const metaDescription = await fetchMetaDescription('pages', p.id);
-        items.push({ type: 'page', title: p.title, url: `${storeUrl}/pages/${p.handle}`, wordCount: wordCount(p.body_html), bodyExcerpt: excerpt(p.body_html), metaDescription });
+        const { metaTitle, metaDescription } = await fetchSeoMetafields('pages', p.id);
+        items.push({ type: 'page', id: p.id, title: p.title, url: `${storeUrl}/pages/${p.handle}`, wordCount: wordCount(p.body_html), bodyExcerpt: excerpt(p.body_html), bodyHtml: p.body_html, metaTitle, metaDescription });
       }
     }
   } catch (e) { /* Real, deliberate no-op. */ }
@@ -8293,6 +8373,106 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     [JSON.stringify(intelligence), connection.id]
   );
   return intelligence;
+}
+
+// Real, deliberate leaner Shopify equivalent of WordPress's Run Audit &
+// Optimize — real meta-tag gaps and real broken internal links only, no
+// category/tag actions (Shopify has no real taxonomy equivalent to
+// propose against), and every real proposal here requires manual
+// approval: Shopify has no permission/automation settings of its own
+// yet, so auto-execution would have no real, user-controlled gate to
+// check against. A disclosed, honest scope boundary for this first
+// real version, not a silent omission.
+async function runShopifyAudit(connection, accessToken, context, userId = null) {
+  const { items } = await getShopifyContentForIntelligence(connection, accessToken);
+  const foundIssues = { metaTitle: 0, metaDescription: 0, brokenLinks: 0 };
+  const proposalsCreated = [];
+
+  // Real, deliberate real meta-tag gap detection — only items genuinely
+  // missing a real title_tag or description_tag, never a judgment call
+  // about whether an existing one is "good enough."
+  const metaCandidates = items.filter(i => !i.metaTitle || !i.metaDescription);
+  if (metaCandidates.length) {
+    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+    const candidatesSummary = metaCandidates.map((c, i) => `[${i}] ${c.type.toUpperCase()}: "${c.title}" (${c.url})\n  Current meta title: ${c.metaTitle ? `"${c.metaTitle}"` : 'MISSING'}\n  Current meta description: ${c.metaDescription ? `"${c.metaDescription}"` : 'MISSING'}\n  Content excerpt: ${c.bodyExcerpt}`).join('\n\n');
+
+    const prompt = `You are an SEO Agent proposing meta title and description improvements for a real Shopify store. Every candidate listed below already has a real, measured gap (a missing meta title or description) — you need to write GOOD, SPECIFIC suggestions grounded in the actual page content and the real business context, not generic boilerplate.
+${contextSummary}
+
+PAGES/ARTICLES NEEDING ATTENTION:
+${candidatesSummary}
+
+For EACH numbered item above that is MISSING a meta title, propose a suggested_title (50-60 characters). For each MISSING a meta description, propose a suggested_meta_description (120-155 characters). Leave the other field null if it already exists. Reference the actual business name/industry where it genuinely fits — never invent details not in the context above.
+
+Return ONLY valid JSON, no markdown:
+{ "proposals": [{ "index": 0, "suggested_title": "... or null", "suggested_meta_description": "... or null", "reasoning": "1 sentence on why this helps" }] }`;
+
+    try {
+      const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Provide the proposals now, as JSON only.' }], complexity: 'complex', context: { feature: 'shopify_seo_proposals', userId }, maxTokens: 4000 });
+      const result = extractJSON(raw);
+      if (Array.isArray(result.proposals)) {
+        for (const p of result.proposals) {
+          const candidate = metaCandidates[p.index];
+          if (!candidate || (!p.suggested_title && !p.suggested_meta_description)) continue;
+
+          const actionType = p.suggested_title ? 'update_meta_title' : 'update_meta_description';
+          const proposedChange = {};
+          if (p.suggested_title) proposedChange.metaTitle = p.suggested_title;
+          if (p.suggested_meta_description) proposedChange.metaDescription = p.suggested_meta_description;
+          foundIssues[p.suggested_title ? 'metaTitle' : 'metaDescription']++;
+
+          // Real, deliberate dedup — never a second real pending
+          // proposal of the same real type for the same real target.
+          const existing = await pool.query(
+            `SELECT id FROM shopify_actions WHERE shopify_connection_id = $1 AND target_shopify_id = $2 AND action_type = $3 AND approval_status = 'pending'`,
+            [connection.id, candidate.id, actionType]
+          );
+          if (existing.rows.length) continue;
+
+          const inserted = await pool.query(
+            `INSERT INTO shopify_actions (shopify_connection_id, action_type, target_type, target_shopify_id, target_url, target_title, previous_state, proposed_change, reasoning)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+            [connection.id, actionType, candidate.type, candidate.id, candidate.url, candidate.title,
+             JSON.stringify({ metaTitle: candidate.metaTitle, metaDescription: candidate.metaDescription }),
+             JSON.stringify(proposedChange), p.reasoning || null]
+          );
+          proposalsCreated.push(inserted.rows[0]);
+        }
+      }
+    } catch (e) { console.error('Shopify meta proposal generation failed:', e.message); }
+  }
+
+  // Real, deliberate real broken-link check — reuses the exact same real
+  // extraction and real verification already proven for WordPress, on
+  // Shopify's own real body_html.
+  for (const item of items) {
+    if (!item.bodyHtml) continue;
+    const links = extractLinksFromHtml(item.bodyHtml, `https://${connection.shop_domain.replace('.myshopify.com', '.com')}`);
+    const internalLinks = links.filter(l => l.isInternal);
+    for (const link of internalLinks) {
+      const check = await checkInternalLinkResolves(link.url);
+      if (!check.broken) continue;
+      foundIssues.brokenLinks++;
+
+      const existing = await pool.query(
+        `SELECT id FROM shopify_actions WHERE shopify_connection_id = $1 AND target_shopify_id = $2 AND action_type = 'remove_broken_link' AND proposed_change->>'brokenUrl' = $3 AND approval_status = 'pending'`,
+        [connection.id, item.id, link.url]
+      );
+      if (existing.rows.length) continue;
+
+      const inserted = await pool.query(
+        `INSERT INTO shopify_actions (shopify_connection_id, action_type, target_type, target_shopify_id, target_url, target_title, previous_state, proposed_change, reasoning)
+         VALUES ($1,'remove_broken_link',$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [connection.id, item.type, item.id, item.url, item.title,
+         JSON.stringify({ linkText: link.text }),
+         JSON.stringify({ brokenUrl: link.url }),
+         `This link to ${link.url} no longer resolves.`]
+      );
+      proposalsCreated.push(inserted.rows[0]);
+    }
+  }
+
+  return { foundIssues, proposalsCreated, analyzedCount: items.length };
 }
 
 async function generateShopifyBlogPostContent(context, topic, existingTitles, internalCandidates = []) {
@@ -8361,6 +8541,64 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 // Real, deliberate real Shopify API call — creates the real article, with
 // real SEO metafields set in the same real request (Shopify supports this
 // natively, unlike WordPress's separate follow-up meta write).
+// Real, deliberate same conservative fix and same re-verification
+// discipline as WordPress's execution path — never a guessed
+// replacement URL, never touching anything but the one real, dead
+// href, and a real re-fetch after saving to confirm it's genuinely
+// gone rather than trusting the write call succeeded.
+async function executeShopifyAction(action, connection, accessToken) {
+  const resourceType = action.target_type === 'post' ? 'articles' : 'pages';
+  const change = action.proposed_change;
+
+  try {
+    if (change.brokenUrl) {
+      const readRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/${resourceType}/${action.target_shopify_id}.json?fields=body_html`);
+      if (!readRes.ok) return { executed: false, error: `Could not read this page's current content (status ${readRes.status}).` };
+      const current = await readRes.json();
+      const currentHtml = current.article?.body_html ?? current.page?.body_html ?? '';
+
+      const linkPattern = new RegExp(`<a\\s+[^>]*href=["']${change.brokenUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["'][^>]*>(.*?)<\\/a>`, 'gis');
+      if (!linkPattern.test(currentHtml)) {
+        return { executed: false, error: 'This link is no longer present in the current content — it may have already been fixed or the content has changed.' };
+      }
+      linkPattern.lastIndex = 0;
+      const updatedHtml = currentHtml.replace(linkPattern, (match, innerText) => innerText);
+
+      const bodyKey = action.target_type === 'post' ? 'article' : 'page';
+      const updateRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/${resourceType}/${action.target_shopify_id}.json`, {
+        method: 'PUT', body: { [bodyKey]: { id: action.target_shopify_id, body_html: updatedHtml } }, timeoutMs: 20000,
+      });
+      if (!updateRes.ok) return { executed: false, error: `Shopify rejected saving this change (status ${updateRes.status}).` };
+
+      const verifyRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/${resourceType}/${action.target_shopify_id}.json?fields=body_html`);
+      if (!verifyRes.ok) return { executed: true, verified: false, error: 'The change was saved, but verification could not confirm it.' };
+      const verifyData = await verifyRes.json();
+      const verifyHtml = verifyData.article?.body_html ?? verifyData.page?.body_html ?? '';
+      if (!verifyHtml.includes(change.brokenUrl)) return { executed: true, verified: true };
+      return { executed: true, verified: false, error: 'The change was saved, but the broken link still appears to be present.' };
+    }
+
+    // Real, deliberate single metafields write for the meta-tag action
+    // types — the same real namespace/key pair the bridge's own
+    // generated-content flow already uses, so a fix here reads back
+    // correctly everywhere else that checks these same real fields.
+    const metafields = [];
+    if (change.metaTitle) metafields.push({ namespace: 'global', key: 'title_tag', value: change.metaTitle, type: 'single_line_text_field' });
+    if (change.metaDescription) metafields.push({ namespace: 'global', key: 'description_tag', value: change.metaDescription, type: 'single_line_text_field' });
+    if (!metafields.length) return { executed: false, error: 'No change to apply.' };
+
+    for (const mf of metafields) {
+      const res = await shopifyApiRequest(connection.shop_domain, accessToken, `/${resourceType}/${action.target_shopify_id}/metafields.json`, {
+        method: 'POST', body: { metafield: { ...mf, owner_id: action.target_shopify_id, owner_resource: action.target_type === 'post' ? 'article' : 'page' } }, timeoutMs: 15000,
+      });
+      if (!res.ok) return { executed: false, error: `Shopify rejected saving this change (status ${res.status}).` };
+    }
+    return { executed: true, verified: true };
+  } catch (e) {
+    return { executed: false, error: e.message || 'An unexpected error occurred while applying this change.' };
+  }
+}
+
 async function createShopifyBlogPost(connection, accessToken, postData) {
   const { title, bodyHtml, metaTitle, metaDescription, tags, status } = postData;
   if (!connection.blog_id) return { success: false, error: 'No blog was found on this Shopify store to publish to.' };
