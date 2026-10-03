@@ -2104,6 +2104,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             </div>
             <button class="btn-primary" onclick="togglePartnerNetworkOptIn()" id="partnerNetworkToggleBtn"></button>
           </div>
+          <div id="partnerNetworkSizeNote" style="display:none;font-size:11.5px;color:var(--purple-light);margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"></div>
         </div>
 
         <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.links_given_title">Links Given</div>
@@ -7582,7 +7583,7 @@ async function loadPartnerNetworkStatus() {
       return;
     }
     partnerNetworkOptedIn = data.optedIn;
-    renderPartnerNetworkOptInCard(data.optedIn, data.optedInAt);
+    renderPartnerNetworkOptInCard(data.optedIn, data.optedInAt, data.networkSize);
     renderPartnerNetworkLinks('partnerNetworkGivenContent', data.linksGiven || [], 'to_business_name', 'web.no_links_given');
     renderPartnerNetworkLinks('partnerNetworkReceivedContent', data.linksReceived || [], 'from_business_name', 'web.no_links_received');
   } catch (e) {
@@ -7590,7 +7591,7 @@ async function loadPartnerNetworkStatus() {
   }
 }
 
-function renderPartnerNetworkOptInCard(optedIn, optedInAt) {
+function renderPartnerNetworkOptInCard(optedIn, optedInAt, networkSize) {
   document.getElementById('partnerNetworkStatusLabel').textContent = t(optedIn ? 'web.partner_network_opted_in' : 'web.partner_network_opted_out');
   document.getElementById('partnerNetworkStatusDetail').textContent = optedIn
     ? t('web.partner_network_opted_in_detail').replace('{date}', new Date(optedInAt).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US'))
@@ -7598,6 +7599,19 @@ function renderPartnerNetworkOptInCard(optedIn, optedInAt) {
   const btn = document.getElementById('partnerNetworkToggleBtn');
   btn.textContent = t(optedIn ? 'web.opt_out_button' : 'web.opt_in_button');
   btn.className = optedIn ? 'btn-ghost' : 'btn-primary';
+
+  // Real, deliberate trust signal shown before opting in — a real,
+  // current count of other real businesses already in the network,
+  // never a stale or made-up figure. Not shown once already opted in,
+  // since "Links Given"/"Links Received" below already tell that story
+  // in a way that matters more at that point.
+  const sizeEl = document.getElementById('partnerNetworkSizeNote');
+  if (!optedIn && networkSize > 0) {
+    sizeEl.textContent = tf('web.network_size_note', { n: networkSize });
+    sizeEl.style.display = 'block';
+  } else {
+    sizeEl.style.display = 'none';
+  }
 }
 
 async function togglePartnerNetworkOptIn() {
