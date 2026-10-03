@@ -1393,6 +1393,30 @@ CREATE TABLE IF NOT EXISTS shopify_generated_posts (
 );
 CREATE INDEX IF NOT EXISTS idx_shopify_generated_posts_connection ON shopify_generated_posts(shopify_connection_id, created_at DESC);
 
+-- Real, deliberate parallel to website_actions, never a forced reuse of it —
+-- Shopify's own real IDs, own real resource types (article | page, no
+-- WordPress-style category/tag taxonomy actions, since Shopify has no real
+-- equivalent), and a deliberately leaner approval flow: propose, approve,
+-- execute, reject. No re-verification or manual-confirm states yet — a
+-- disclosed, honest scope boundary for this first real version.
+CREATE TABLE IF NOT EXISTS shopify_actions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  shopify_connection_id UUID REFERENCES shopify_connections(id) ON DELETE CASCADE,
+  action_type VARCHAR(50) NOT NULL, -- 'update_meta_title' | 'update_meta_description' | 'remove_broken_link'
+  target_type VARCHAR(20) NOT NULL, -- 'article' | 'page'
+  target_shopify_id BIGINT NOT NULL,
+  target_url TEXT,
+  target_title TEXT,
+  previous_state JSONB,
+  proposed_change JSONB NOT NULL,
+  reasoning TEXT,
+  approval_status VARCHAR(20) DEFAULT 'pending', -- 'pending' | 'approved' | 'rejected'
+  execution_status VARCHAR(20) DEFAULT 'not_executed', -- 'not_executed' | 'executed' | 'execution_failed'
+  reviewed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_shopify_actions_connection ON shopify_actions(shopify_connection_id, created_at DESC);
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- BACKLINK OPPORTUNITIES — real, external, legitimately earnable links:
 -- real directories, real guest-post-friendly blogs, and real existing brand
