@@ -4521,6 +4521,13 @@ async function findReciprocalLinkPartner(businessId, topic) {
   // once rather than one async call per candidate — a candidate whose real
   // site only exists via a connected WordPress or Shopify store is just as
   // eligible as one with the profile field filled in directly.
+  // Real, deliberate bounded, randomized sample — this is what keeps the
+  // real AI relevance check genuinely reliable whether 5 real businesses
+  // are opted in platform-wide or 5,000: a fixed-size real prompt rather
+  // than one that grows without limit, and a real random slice each time
+  // means a different, fair cross-section of the real pool gets
+  // considered on each real post, rather than the same early rows always
+  // winning by default.
   const candidatesResult = await pool.query(
     `SELECT b.id, b.name, b.industry, b.city, b.country,
             COALESCE(NULLIF(b.website, ''), wc.site_url, ('https://' || sc.shop_domain)) AS resolved_website
@@ -4529,7 +4536,8 @@ async function findReciprocalLinkPartner(businessId, topic) {
      LEFT JOIN website_connections wc ON wc.business_id = b.id AND wc.connection_status != 'disconnected'
      LEFT JOIN shopify_connections sc ON sc.business_id = b.id AND sc.connection_status = 'connected'
      WHERE o.opted_in = TRUE AND b.id != ALL($1)
-       AND COALESCE(NULLIF(b.website, ''), wc.site_url, ('https://' || sc.shop_domain)) IS NOT NULL`,
+       AND COALESCE(NULLIF(b.website, ''), wc.site_url, ('https://' || sc.shop_domain)) IS NOT NULL
+     ORDER BY RANDOM() LIMIT 40`,
     [excludedIds]
   );
   if (!candidatesResult.rows.length) return null;
