@@ -1417,6 +1417,21 @@ CREATE TABLE IF NOT EXISTS reciprocal_links_placed (
 CREATE INDEX IF NOT EXISTS idx_reciprocal_links_from ON reciprocal_links_placed(from_business_id, placed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reciprocal_links_to ON reciprocal_links_placed(to_business_id, placed_at DESC);
 
+-- Real, deliberate reporting path — the one thing a business could do
+-- before now was wait for you to notice a bad match yourself; this lets
+-- the business on either side of a real placement flag it directly,
+-- closing the real gap the admin oversight panel alone couldn't close.
+CREATE TABLE IF NOT EXISTS reciprocal_link_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  placement_id UUID REFERENCES reciprocal_links_placed(id) ON DELETE CASCADE,
+  reported_by_business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  reason TEXT,
+  status VARCHAR(20) DEFAULT 'open', -- 'open' | 'resolved'
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_reciprocal_link_reports_placement ON reciprocal_link_reports(placement_id);
+CREATE INDEX IF NOT EXISTS idx_reciprocal_link_reports_status ON reciprocal_link_reports(status, created_at DESC);
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Arreyon Connect plugin — connection-code handshake (Option 2). WordPress
 -- initiates here (the reverse of the existing paste-a-credential flow):
