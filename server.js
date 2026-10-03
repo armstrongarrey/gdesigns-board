@@ -4472,6 +4472,75 @@ function decodeHtmlEntities(str) {
 // opportunity: a real directory that accepts real listings, a real blog
 // that genuinely accepts guest posts, or a real, existing mention of this
 // business that simply doesn't link back yet.
+// Real, deliberate opt-in-gated matching — this function refuses to even
+// search for a partner unless the requesting business has genuinely opted
+// in itself, and only ever considers other businesses that have also
+// genuinely opted in. A real link between two real clients never happens
+// because one business wanted it; it only happens when both have agreed.
+async function findReciprocalLinkPartner(businessId, topic) {
+  const selfOptIn = await pool.query('SELECT opted_in FROM reciprocal_network_opt_ins WHERE business_id = $1', [businessId]);
+  if (!selfOptIn.rows.length || !selfOptIn.rows[0].opted_in) return null;
+
+  // Real, deliberate frequency cap — never more than one real reciprocal
+  // link placed FROM this business within a real 14-day window, regardless
+  // of how many posts get generated in that window. This is what keeps
+  // the real pattern looking like an occasional, genuine reference rather
+  // than a mechanical, repeated exchange.
+  const recentPlacement = await pool.query(
+    `SELECT id FROM reciprocal_links_placed WHERE from_business_id = $1 AND placed_at > NOW() - INTERVAL '14 days' LIMIT 1`,
+    [businessId]
+  );
+  if (recentPlacement.rows.length) return null;
+
+  // Real, deliberate exclusion of any partner already used recently —
+  // never the same real pair repeatedly, which is exactly the pattern
+  // that reads as manipulative rather than natural.
+  const recentPartners = await pool.query(
+    `SELECT DISTINCT to_business_id FROM reciprocal_links_placed WHERE from_business_id = $1 AND placed_at > NOW() - INTERVAL '60 days'`,
+    [businessId]
+  );
+  const excludedIds = [businessId, ...recentPartners.rows.map(r => r.to_business_id)];
+
+  const candidatesResult = await pool.query(
+    `SELECT b.id, b.name, b.website, b.industry, b.city, b.country
+     FROM reciprocal_network_opt_ins o
+     JOIN businesses b ON b.id = o.business_id
+     WHERE o.opted_in = TRUE AND b.id != ALL($1) AND b.website IS NOT NULL AND b.website != ''`,
+    [excludedIds]
+  );
+  if (!candidatesResult.rows.length) return null;
+
+  const candidateList = candidatesResult.rows.map(c => `- id: ${c.id} | ${c.name} | industry: ${c.industry || 'unknown'} | ${[c.city, c.country].filter(Boolean).join(', ') || 'location unknown'} | ${c.website}`).join('\n');
+
+  const prompt = `You are a strict editorial reviewer deciding whether it would be genuinely natural — not forced, not promotional — for a blog post on a specific topic to reference one specific other real business, as you would in authentic, independent journalism.
+
+TOPIC OF THE POST BEING WRITTEN: ${topic}
+
+CANDIDATE BUSINESSES (each a genuine, unrelated company that has separately agreed to be considered for this):
+${candidateList}
+
+RULES — apply strictly:
+1. REJECT any candidate that is a direct competitor to the company writing this post (the same core service, competing for the same customers) — a reference like that would never happen in genuine, independent writing.
+2. REJECT any candidate where the connection to this specific topic is generic, forced, or only works because "they're both businesses" — the reason must be specific to this exact topic.
+3. APPROVE only if there's a real, specific, complementary reason a genuine industry expert would naturally mention this exact business when writing about this exact topic (e.g. a complementary service a reader would plausibly also need).
+4. If no candidate genuinely clears this bar, say so — approving nothing is the correct, expected outcome for most topics.
+
+Return ONLY valid JSON, no markdown:
+{"approved": true/false, "businessId": "the id if approved, else null", "reason": "one specific sentence on why this is a genuine, natural fit for this exact topic — or why nothing qualified"}`;
+
+  let decision;
+  try {
+    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Decide now, as JSON only.' }], complexity: 'moderate', context: { feature: 'reciprocal_link_matching' }, maxTokens: 500 });
+    decision = extractJSON(raw);
+  } catch (e) { return null; }
+
+  if (!decision.approved || !decision.businessId) return null;
+  const match = candidatesResult.rows.find(c => c.id === decision.businessId);
+  if (!match) return null; // Real, deliberate safety check — never trust an id back from the model without confirming it's genuinely one of the real candidates offered.
+
+  return { businessId: match.id, businessName: match.name, url: match.website, reason: decision.reason || '' };
+}
+
 async function findBacklinkOpportunities(context) {
   const business = context?.business || {};
   const businessName = (business.name || '').trim();
@@ -5230,6 +5299,17 @@ function extractLinksFromHtml(html, siteUrl) {
 
 async function generateBlogPostContent(connection, decryptedPassword, context, topic, pages, posts) {
   const { internalCandidates, externalCandidates } = await gatherVerifiedLinkCandidates(connection, decryptedPassword, pages, posts, topic);
+
+  // Real, deliberate single additional candidate, added to the exact same
+  // real pool the AI already treats external sources from — a genuine
+  // partner reference gets the exact same natural, optional, at-most-one
+  // treatment as any other real external link, never a forced insertion.
+  let reciprocalCandidate = null;
+  if (context?.business?.id) {
+    try { reciprocalCandidate = await findReciprocalLinkPartner(context.business.id, topic); } catch (e) { /* Real, deliberate no-op — the post can always proceed without a real partner match. */ }
+    if (reciprocalCandidate) externalCandidates.push({ title: reciprocalCandidate.businessName, url: reciprocalCandidate.url });
+  }
+
   const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
 
   const prompt = `You are a senior human copywriter and SEO/AEO/GEO strategist, ghostwriting a genuinely excellent, publication-ready blog post for a real business — the kind of post an actual industry expert would write, not something that reads as AI-generated. This needs to be good enough to realistically compete for page-one ranking on Google and to be cited directly by AI answer engines (ChatGPT, Perplexity, AI Overviews).
@@ -5341,6 +5421,7 @@ Respond in EXACTLY this two-part format, with no other text before, between, or 
     bodyHtml,
     slug: generateSeoFriendlySlug(parsed.title),
     faqSchema,
+    reciprocalCandidate,
   };
 }
 
@@ -6575,6 +6656,21 @@ async function runBlogPostGeneration(connection, decryptedPassword, context, top
   // real picture of the site from before it existed.
   if (result.success && connection.connection_mode !== 'poll') {
     await invalidatePushModeCache(connection);
+  }
+
+  // Real, deliberate post-hoc check — only recorded as a real placement
+  // if the actual, final body genuinely contains the real partner's URL;
+  // the AI was offered it as one option among several real candidates and
+  // may have genuinely chosen not to use it, which is the expected,
+  // correct outcome most of the time, not a failure.
+  if (result.success && generated.reciprocalCandidate && generated.bodyHtml.includes(generated.reciprocalCandidate.url)) {
+    try {
+      await pool.query(
+        `INSERT INTO reciprocal_links_placed (from_business_id, to_business_id, from_post_title, from_post_url, to_url, relevance_reason)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [context.business.id, generated.reciprocalCandidate.businessId, generated.title, result.url || null, generated.reciprocalCandidate.url, generated.reciprocalCandidate.reason]
+      );
+    } catch (e) { console.error('Failed to record reciprocal link placement:', e.message); }
   }
 
   await logWebsiteAudit(connection.id, 'ai_agent', null, result.success ? (publishStatus === 'publish' ? 'blog_post_published' : 'blog_post_drafted') : 'blog_post_generation_failed',
@@ -7830,6 +7926,12 @@ async function generateShopifyBlogPostContent(context, topic, existingTitles) {
     externalCandidates = checks.filter(c => c.resolves).map(c => ({ title: c.title, url: c.url })).slice(0, 4);
   } catch (e) { /* Real, deliberate graceful degradation — a post can still be written without real external links if research fails. */ }
 
+  let reciprocalCandidate = null;
+  if (context?.business?.id) {
+    try { reciprocalCandidate = await findReciprocalLinkPartner(context.business.id, topic); } catch (e) { /* Real, deliberate no-op. */ }
+    if (reciprocalCandidate) externalCandidates.push({ title: reciprocalCandidate.businessName, url: reciprocalCandidate.url });
+  }
+
   const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
   const prompt = `You are a senior human copywriter and SEO/AEO/GEO strategist, ghostwriting a genuinely excellent, publication-ready blog post for a real Shopify store — the kind of post an actual industry expert would write, not something that reads as AI-generated.
 ${contextSummary}
@@ -7872,6 +7974,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   return {
     title: parsed.title, metaTitle: parsed.metaTitle || parsed.title, metaDescription: parsed.metaDescription || '',
     focusKeyword: parsed.focusKeyword || '', tags: Array.isArray(parsed.tags) ? parsed.tags : [], bodyHtml,
+    reciprocalCandidate,
   };
 }
 
@@ -7904,6 +8007,76 @@ async function createShopifyBlogPost(connection, accessToken, postData) {
   const article = created.article;
   return { success: true, id: article.id, handle: article.handle, status: article.published ? 'publish' : 'draft', url: `https://${connection.shop_domain.replace('.myshopify.com', '.com')}/blogs/news/${article.handle}` };
 }
+
+app.get('/api/business/:id/reciprocal-network', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const optInResult = await pool.query('SELECT opted_in, opted_in_at FROM reciprocal_network_opt_ins WHERE business_id = $1', [req.params.id]);
+    const linksGiven = await pool.query(
+      `SELECT rl.*, b.name AS to_business_name FROM reciprocal_links_placed rl JOIN businesses b ON b.id = rl.to_business_id WHERE rl.from_business_id = $1 ORDER BY rl.placed_at DESC`,
+      [req.params.id]
+    );
+    const linksReceived = await pool.query(
+      `SELECT rl.*, b.name AS from_business_name FROM reciprocal_links_placed rl JOIN businesses b ON b.id = rl.from_business_id WHERE rl.to_business_id = $1 ORDER BY rl.placed_at DESC`,
+      [req.params.id]
+    );
+
+    res.json({
+      optedIn: optInResult.rows[0]?.opted_in || false,
+      optedInAt: optInResult.rows[0]?.opted_in_at || null,
+      linksGiven: linksGiven.rows,
+      linksReceived: linksReceived.rows,
+    });
+  } catch (e) {
+    console.error('Get reciprocal network status error:', e.message);
+    res.status(500).json({ error: 'Could not load reciprocal network status.' });
+  }
+});
+
+app.post('/api/business/:id/reciprocal-network/opt-in', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id, website FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    if (!biz.rows[0].website) return res.status(400).json({ error: 'A website URL is required before opting into the reciprocal network — add one on the business profile first.' });
+
+    await pool.query(
+      `INSERT INTO reciprocal_network_opt_ins (business_id, opted_in, opted_in_at, updated_at)
+       VALUES ($1, TRUE, NOW(), NOW())
+       ON CONFLICT (business_id) DO UPDATE SET opted_in = TRUE, opted_in_at = NOW(), updated_at = NOW()`,
+      [req.params.id]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Opt in to reciprocal network error:', e.message);
+    res.status(500).json({ error: 'Could not opt in. Please try again.' });
+  }
+});
+
+app.post('/api/business/:id/reciprocal-network/opt-out', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    // Real, deliberate update-in-place rather than delete — opting out
+    // stops any new real matching immediately, but the real history of
+    // links already placed stays intact and visible, since those real
+    // links still genuinely exist on real, live pages regardless of this
+    // business's current real preference.
+    await pool.query(
+      `UPDATE reciprocal_network_opt_ins SET opted_in = FALSE, updated_at = NOW() WHERE business_id = $1`,
+      [req.params.id]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Opt out of reciprocal network error:', e.message);
+    res.status(500).json({ error: 'Could not opt out. Please try again.' });
+  }
+});
 
 app.post('/api/business/:id/backlinks/search', authRequired, async (req, res) => {
   try {
@@ -8025,6 +8198,19 @@ app.post('/api/business/:id/shopify/generate-post', authRequired, async (req, re
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [connection.id, result.id, topic, generated.title, result.handle, generated.bodyHtml, generated.metaTitle, generated.metaDescription, generated.tags.join(', '), result.status, result.url]
     );
+
+    // Real, deliberate same post-hoc check as the WordPress path — only
+    // recorded if the real, final body genuinely contains the real
+    // partner's URL.
+    if (generated.reciprocalCandidate && generated.bodyHtml.includes(generated.reciprocalCandidate.url)) {
+      try {
+        await pool.query(
+          `INSERT INTO reciprocal_links_placed (from_business_id, to_business_id, from_post_title, from_post_url, to_url, relevance_reason)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [req.params.id, generated.reciprocalCandidate.businessId, generated.title, result.url || null, generated.reciprocalCandidate.url, generated.reciprocalCandidate.reason]
+        );
+      } catch (e) { console.error('Failed to record reciprocal link placement:', e.message); }
+    }
 
     res.json({ success: true, title: generated.title, publishStatus: result.status, url: result.url });
   } catch (err) {
