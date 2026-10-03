@@ -1365,12 +1365,20 @@ CREATE TABLE IF NOT EXISTS shopify_connections (
   last_verified_at TIMESTAMPTZ,
   website_intelligence JSONB,
   website_intelligence_fr JSONB,
-  website_intelligence_generated_at TIMESTAMPTZ
+  website_intelligence_generated_at TIMESTAMPTZ,
+  content_automation_enabled BOOLEAN DEFAULT FALSE,
+  content_automation_publish_mode VARCHAR(20) DEFAULT 'draft', -- 'draft' (safer, default) | 'publish'
+  content_automation_frequency VARCHAR(20) DEFAULT 'daily', -- 'daily' | 'weekly' | 'monthly'
+  content_automation_last_run_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_shopify_connections_business ON shopify_connections(business_id);
 ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS website_intelligence JSONB;
 ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS website_intelligence_fr JSONB;
 ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS website_intelligence_generated_at TIMESTAMPTZ;
+ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS content_automation_enabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS content_automation_publish_mode VARCHAR(20) DEFAULT 'draft';
+ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS content_automation_frequency VARCHAR(20) DEFAULT 'daily';
+ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS content_automation_last_run_at TIMESTAMPTZ;
 
 -- Real, deliberate local record, the same real reason website_generated_posts
 -- exists — so a real generated article is visible, editable, and trackable
