@@ -1435,6 +1435,32 @@ CREATE TABLE IF NOT EXISTS shopify_actions (
 CREATE INDEX IF NOT EXISTS idx_shopify_actions_connection ON shopify_actions(shopify_connection_id, created_at DESC);
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- CONTENT CALENDAR — planning several specific future posts on specific
+-- real dates, genuinely separate from the automatic daily/weekly cycle
+-- (which picks its own topic each time it runs). A real topic here is
+-- optional: left blank, the real daily sweep below picks one the same
+-- way the automatic cycle already does. Scoped to business_id, not a
+-- specific CMS connection, since one real calendar covers whichever
+-- platform each entry is actually for.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS content_calendar_entries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  platform VARCHAR(20) NOT NULL, -- 'wordpress' | 'shopify'
+  scheduled_date DATE NOT NULL,
+  topic TEXT, -- NULL means "pick a topic automatically on the day", same as the automatic cycle already does
+  publish_mode VARCHAR(20) DEFAULT 'draft', -- 'draft' | 'publish'
+  status VARCHAR(20) DEFAULT 'scheduled', -- 'scheduled' | 'generated' | 'failed' | 'cancelled'
+  generated_title TEXT,
+  generated_url TEXT,
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  processed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_content_calendar_business ON content_calendar_entries(business_id, scheduled_date);
+CREATE INDEX IF NOT EXISTS idx_content_calendar_due ON content_calendar_entries(status, scheduled_date);
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- BACKLINK OPPORTUNITIES — real, external, legitimately earnable links:
 -- real directories, real guest-post-friendly blogs, and real existing brand
 -- mentions that don't yet link back. Arreyon finds where a real link could
