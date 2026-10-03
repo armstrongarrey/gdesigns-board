@@ -2130,6 +2130,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
                 <option value="draft" data-i18n="web.content_automation_save_draft">Save as draft (I publish manually)</option>
                 <option value="publish" data-i18n="web.content_automation_auto_publish">Publish immediately, no review</option>
               </select>
+              <div id="shopifyAutomationStatus" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);font-size:11px"></div>
             </div>
           </div>
 
@@ -7785,6 +7786,7 @@ async function loadShopifyStatus() {
     document.getElementById('shopifyContentAutomationPublishMode').value = data.connection.content_automation_publish_mode || 'draft';
     document.getElementById('shopifyContentAutomationFrequency').value = data.connection.content_automation_frequency || 'daily';
     document.getElementById('shopifyContentAutomationPublishRow').style.display = data.connection.content_automation_enabled ? 'block' : 'none';
+    renderShopifyAutomationStatus(data.connection);
     renderWebsiteIntelligenceContent(data.connection.website_intelligence, data.connection.website_intelligence_generated_at, 'shopifyIntelligenceContent');
     loadShopifyActions();
     loadShopifyGeneratedPosts();
@@ -8776,6 +8778,37 @@ async function updateWebsitePermissions() {
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
+}
+
+// Real, deliberate visible outcome of the real, last automatic attempt,
+// plus a real, computed estimate of when the next one is actually due —
+// the one piece of visibility that was missing before: whether
+// automation genuinely ran, whether it worked, and roughly when to
+// expect the next one, without needing to guess or wait and see.
+function renderShopifyAutomationStatus(connection) {
+  const statusEl = document.getElementById('shopifyAutomationStatus');
+  if (!connection.content_automation_enabled) { statusEl.innerHTML = ''; return; }
+
+  const lastRunAt = connection.content_automation_last_run_at;
+  const lastStatus = connection.content_automation_last_run_status;
+  const lastError = connection.content_automation_last_run_error;
+
+  let html = '';
+  if (!lastRunAt) {
+    html = `<span style="color:var(--muted)">${t('web.automation_never_run_yet')}</span>`;
+  } else {
+    const lastRunDate = new Date(lastRunAt);
+    const intervalMs = connection.content_automation_frequency === 'weekly' ? 7 * 86400000 : connection.content_automation_frequency === 'monthly' ? 30 * 86400000 : 86400000;
+    const nextDue = new Date(lastRunDate.getTime() + intervalMs);
+    const statusColor = lastStatus === 'failed' ? '#ef4444' : '#22c55e';
+    const statusLabel = lastStatus === 'failed' ? t('web.automation_last_run_failed') : t('web.automation_last_run_success');
+    html = `<div><span style="color:${statusColor};font-weight:600">${statusLabel}</span> <span style="color:var(--muted)">(${timeAgo(lastRunAt)})</span></div>`;
+    if (lastStatus === 'failed' && lastError) {
+      html += `<div style="color:#ef4444;margin-top:3px">${escapeHtml(lastError)}</div>`;
+    }
+    html += `<div style="color:var(--muted);margin-top:3px">${t('web.automation_next_due')}: ${nextDue.toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' })}</div>`;
+  }
+  statusEl.innerHTML = html;
 }
 
 async function updateShopifyAutomation() {
