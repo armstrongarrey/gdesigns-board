@@ -1930,7 +1930,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
              a rule or added by hand. -->
         <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px;border:1px solid rgba(239,68,68,.25)">
           <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.content_automation_title">Automatic Content Creation</div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.rule_builder_description">Set a date range and one or more times of day to post — each time can have its own action (save as draft, or publish immediately). Arreyon writes the actual posts ahead of schedule on the calendar below.</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.rule_builder_description">Set a date range, how many posts per day/week/month, and how many hours apart. Arreyon writes the actual posts ahead of schedule on the calendar below.</div>
 
           <div id="websiteActiveRulesContent" style="margin-bottom:12px"></div>
 
@@ -1944,8 +1944,35 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <input type="date" id="websiteRuleEndDate">
             </div>
           </div>
-          <div id="websiteRuleSlotsContainer" style="margin-bottom:8px"></div>
-          <button class="btn-ghost" onclick="addRuleSlotRow('website')" style="font-size:11px;padding:5px 10px;margin-bottom:10px" data-i18n="web.add_time_button">+ Add another time</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+            <div>
+              <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_period_label">Repeat</label><br>
+              <select id="websiteRuleFrequencyPeriod">
+                <option value="daily" data-i18n="web.frequency_daily">Daily</option>
+                <option value="weekly" data-i18n="web.frequency_weekly">Weekly</option>
+                <option value="monthly" data-i18n="web.frequency_monthly">Monthly</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_posts_per_period_label">Posts each time</label><br>
+              <input type="number" id="websiteRulePostsPerPeriod" value="1" min="1" max="20" style="max-width:90px">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_hours_between_label">Hours apart</label><br>
+              <input type="number" id="websiteRuleHoursBetween" value="3" min="1" style="max-width:90px">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_first_post_time_label">First post at</label><br>
+              <input type="time" id="websiteRuleStartTime" value="09:00">
+            </div>
+          </div>
+          <div style="margin-bottom:10px">
+            <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_action_label">Action for every post this creates</label><br>
+            <select id="websiteRulePublishMode" style="max-width:280px">
+              <option value="draft" data-i18n="web.content_automation_save_draft">Save as draft (I publish manually)</option>
+              <option value="publish" data-i18n="web.content_automation_auto_publish">Publish immediately, no review</option>
+            </select>
+          </div>
           <div>
             <button class="btn-primary" onclick="createAutomationRule('website')" id="websiteCreateRuleBtn" data-i18n="web.start_automation_button">Start Automation</button>
           </div>
@@ -7746,40 +7773,17 @@ async function cancelContentCalendarEntry(entryId) {
 }
 
 // ── AUTOMATION RULE BUILDER (shared across WordPress and Shopify) ───────
-let ruleSlotCounters = { website: 0, shopify: 0 };
-
-function addRuleSlotRow(platform) {
-  const container = document.getElementById(`${platform}RuleSlotsContainer`);
-  const idx = ruleSlotCounters[platform]++;
-  const row = document.createElement('div');
-  row.id = `${platform}RuleSlot-${idx}`;
-  row.style.cssText = 'display:flex;gap:8px;margin-bottom:6px;align-items:center';
-  row.innerHTML = `
-    <input type="time" class="rule-slot-time" value="09:00" style="max-width:120px">
-    <select class="rule-slot-mode" style="max-width:220px">
-      <option value="draft">${t('web.content_automation_save_draft')}</option>
-      <option value="publish">${t('web.content_automation_auto_publish')}</option>
-    </select>
-    <button class="btn-ghost" onclick="document.getElementById('${platform}RuleSlot-${idx}').remove()" style="font-size:11px;padding:3px 8px">${t('web.remove_button')}</button>
-  `;
-  container.appendChild(row);
-}
-
 async function createAutomationRule(platform) {
   const startDate = document.getElementById(`${platform}RuleStartDate`).value;
   const endDate = document.getElementById(`${platform}RuleEndDate`).value;
-  const container = document.getElementById(`${platform}RuleSlotsContainer`);
-  const slots = [...container.children].map(row => ({
-    timeOfDay: row.querySelector('.rule-slot-time').value,
-    publishMode: row.querySelector('.rule-slot-mode').value,
-  }));
+  const frequencyPeriod = document.getElementById(`${platform}RuleFrequencyPeriod`).value;
+  const postsPerPeriod = document.getElementById(`${platform}RulePostsPerPeriod`).value;
+  const hoursBetweenPosts = document.getElementById(`${platform}RuleHoursBetween`).value;
+  const startTime = document.getElementById(`${platform}RuleStartTime`).value;
+  const publishMode = document.getElementById(`${platform}RulePublishMode`).value;
 
   if (!startDate || !endDate) {
     showToast(t('web.rule_dates_required'), 'error');
-    return;
-  }
-  if (!slots.length) {
-    showToast(t('web.rule_slot_required'), 'error');
     return;
   }
 
@@ -7788,7 +7792,7 @@ async function createAutomationRule(platform) {
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-automation-rule`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform: platform === 'shopify' ? 'shopify' : 'wordpress', startDate, endDate, slots }),
+      body: JSON.stringify({ platform: platform === 'shopify' ? 'shopify' : 'wordpress', startDate, endDate, frequencyPeriod, postsPerPeriod, hoursBetweenPosts, startTime, publishMode }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -7796,9 +7800,6 @@ async function createAutomationRule(platform) {
       return;
     }
     showToast(tf('web.rule_created_toast', { count: data.createdCount }), 'success');
-    container.innerHTML = '';
-    ruleSlotCounters[platform] = 0;
-    addRuleSlotRow(platform);
     loadActiveRules(platform);
     loadContentCalendar(platform);
   } catch (e) {
@@ -7815,14 +7816,19 @@ async function loadActiveRules(platform) {
     const data = await res.json();
     const rules = (data.rules || []).filter(r => r.platform === (platform === 'shopify' ? 'shopify' : 'wordpress'));
     if (!rules.length) { contentEl.innerHTML = ''; return; }
-    contentEl.innerHTML = rules.map(rule => `
+    contentEl.innerHTML = rules.map(rule => {
+      const periodLabel = t(`web.frequency_${rule.frequency_period}`);
+      const actionLabel = rule.publish_mode === 'publish' ? t('web.content_automation_auto_publish') : t('web.content_automation_save_draft');
+      const summary = tf('web.rule_summary_line', { count: rule.posts_per_period, period: periodLabel.toLowerCase(), hours: rule.hours_between_posts, time: rule.start_time.slice(0, 5) });
+      return `
       <div style="background:var(--bg2);border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
         <div>
           <div style="font-size:12px;color:var(--text);font-weight:600">${rule.start_date} → ${rule.end_date}</div>
-          <div style="font-size:11px;color:var(--muted)">${rule.slots.map(s => `${s.time_of_day.slice(0,5)} (${s.publish_mode === 'publish' ? t('web.content_automation_auto_publish') : t('web.content_automation_save_draft')})`).join(' · ')}</div>
+          <div style="font-size:11px;color:var(--muted)">${summary} · ${actionLabel}</div>
         </div>
         <button class="btn-ghost" onclick="cancelAutomationRule('${rule.id}', '${platform}')" style="font-size:11px;padding:4px 10px">${t('web.stop_automation_button')}</button>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch (e) { /* Real, deliberate no-op — the create form above still works even if this list fails to load. */ }
 }
 
@@ -8309,7 +8315,6 @@ async function loadWebsiteSection() {
     loadTechnicalSeoHistory('website');
     loadActiveRules('website');
     loadContentCalendar('website');
-    if (!document.getElementById('websiteRuleSlotsContainer').children.length) addRuleSlotRow('website');
     loadWebsiteActions();
     return true;
   } catch (e) {
