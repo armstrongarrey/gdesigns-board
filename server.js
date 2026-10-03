@@ -8080,7 +8080,56 @@ app.delete('/api/business/:id/shopify', authRequired, async (req, res) => {
 // but external links only; a real Shopify page/article fetch for internal
 // link candidates is real, separate stage-2 work, disclosed honestly
 // rather than silently built as if it already existed.
-async function generateShopifyBlogPostContent(context, topic, existingTitles) {
+// Real, deliberate same verification discipline as WordPress's internal
+// candidates — a real page or article is only ever offered as a link
+// candidate once its real URL has actually been checked to resolve, not
+// constructed and assumed. This is what internal links for Shopify were
+// explicitly missing when the Shopify integration first shipped.
+async function getShopifyContentForAnalysis(connection, accessToken) {
+  const candidates = [];
+  const storeUrl = `https://${connection.shop_domain.replace('.myshopify.com', '.com')}`;
+
+  // Real, deliberate real blog handle lookup — a Shopify store's blog is
+  // not always named "news"; assuming that would silently construct
+  // real, broken links for any store that renamed or added a blog.
+  let blogHandle = 'news';
+  try {
+    if (connection.blog_id) {
+      const blogRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}.json`);
+      if (blogRes.ok) { const d = await blogRes.json(); blogHandle = d.blog?.handle || blogHandle; }
+    }
+  } catch (e) { /* Real, deliberate fallback to the default handle — verification below still catches a wrong guess. */ }
+
+  try {
+    if (connection.blog_id) {
+      const articlesRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles.json?limit=20&fields=title,handle`);
+      if (articlesRes.ok) {
+        const d = await articlesRes.json();
+        for (const a of (d.articles || [])) {
+          candidates.push({ title: a.title, url: `${storeUrl}/blogs/${blogHandle}/${a.handle}` });
+        }
+      }
+    }
+  } catch (e) { /* Real, deliberate no-op — proceeds with whatever real candidates were found. */ }
+
+  try {
+    const pagesRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/pages.json?limit=20&fields=title,handle`);
+    if (pagesRes.ok) {
+      const d = await pagesRes.json();
+      for (const p of (d.pages || [])) {
+        candidates.push({ title: p.title, url: `${storeUrl}/pages/${p.handle}` });
+      }
+    }
+  } catch (e) { /* Real, deliberate no-op. */ }
+
+  // Real, deliberate live verification of every real candidate — the
+  // same real discipline WordPress's internal candidates already use,
+  // never trusting a constructed URL just because the pieces look right.
+  const verified = await Promise.all(candidates.map(async (c) => ({ ...c, resolves: !(await checkInternalLinkResolves(c.url)).broken })));
+  return verified.filter(c => c.resolves).slice(0, 15);
+}
+
+async function generateShopifyBlogPostContent(context, topic, existingTitles, internalCandidates = []) {
   let externalCandidates = [];
   try {
     const results = await researchSearch(topic, { maxResults: 6 });
@@ -8100,6 +8149,9 @@ ${contextSummary}
 
 TOPIC: ${topic}
 
+REAL, EXISTING PAGES AND ARTICLES ON THIS STORE — you may ONLY link internally to these exact URLs, verbatim, never invent a new one:
+${internalCandidates.length ? internalCandidates.map(c => `- "${c.title}" (${c.url})`).join('\n') : '(No real existing pages were found to link to.)'}
+
 REAL, CURRENTLY-LIVE EXTERNAL PAGES relevant to this topic (confirmed reachable just now) — you may ONLY link externally to these exact URLs, verbatim, never invent a new one:
 ${externalCandidates.length ? externalCandidates.map(c => `- "${c.title}" (${c.url})`).join('\n') : '(No real, verified external sources were found — write without an external link rather than inventing one.)'}
 
@@ -8109,7 +8161,7 @@ ${existingTitles.length ? existingTitles.map(t => `- ${t}`).join('\n') : '(No ex
 CRITICAL RULES:
 1. NEVER invent or name a specific third-party business, company, or brand as an example unless it was explicitly named in the context above.
 2. NEVER invent a fact, statistic, or specific claim about the business itself that isn't stated in the context above.
-3. Do NOT create a "Further Reading" or similar closing link list — any link belongs inline, naturally, where it adds real value, never more than one in the whole post.
+3. Do NOT create a "Further Reading" or similar closing link list — every internal or external link must be woven naturally into a sentence, inline, exactly where it adds real value, never listed separately, and never more than 3-4 links total in the whole post.
 4. No checklist-with-checkmark-emoji summaries, no emoji at all, no meta-commentary about the post itself.
 5. Punctuation must read as professionally edited: no em dashes or double hyphens as a stylistic device — use a period, comma, colon, or semicolon instead.
 6. Choose ONE real, specific, valuable focus keyword for this topic. It must appear naturally in the title, meta title, meta description, and at least twice in the body.
@@ -8130,7 +8182,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   const parsed = extractJSON(raw);
   if (!parsed.title || !parsed.bodyHtml) throw new Error('Could not generate this post — the response was missing required fields. Please try again.');
 
-  const allVerifiedUrls = externalCandidates.map(c => c.url);
+  const allVerifiedUrls = [...internalCandidates.map(c => c.url), ...externalCandidates.map(c => c.url)];
   const bodyHtml = stripUnverifiedLinks(parsed.bodyHtml, allVerifiedUrls).replace(/\s*[—–]\s*|\s+--\s+/g, ', ').replace(/,\s*,/g, ',').replace(/,\s*\./g, '.');
 
   return {
@@ -8481,7 +8533,10 @@ app.post('/api/business/:id/shopify/generate-post', authRequired, async (req, re
       if (existingRes.ok) { const d = await existingRes.json(); existingTitles = (d.articles || []).map(a => a.title); }
     } catch (e) { /* Real, deliberate no-op — topic-duplication checking is a nice-to-have, not a requirement for generation to proceed. */ }
 
-    const generated = await generateShopifyBlogPostContent(context, topic, existingTitles);
+    let internalCandidates = [];
+    try { internalCandidates = await getShopifyContentForAnalysis(connection, accessToken); } catch (e) { /* Real, deliberate no-op — a post can still be written without internal links if this fails. */ }
+
+    const generated = await generateShopifyBlogPostContent(context, topic, existingTitles, internalCandidates);
     const result = await createShopifyBlogPost(connection, accessToken, { ...generated, status: publishStatus });
 
     if (!result.success) return res.status(400).json({ error: result.error });
