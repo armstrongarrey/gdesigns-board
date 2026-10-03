@@ -7337,6 +7337,92 @@ app.delete('/api/business/:id/content-schedule/:entryId', authRequired, async (r
   }
 });
 
+app.post('/api/business/:id/content-automation-rule', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const { platform, startDate, endDate, slots } = req.body || {};
+    if (!VALID_CALENDAR_PLATFORMS.includes(platform)) return res.status(400).json({ error: 'Invalid platform.' });
+    if (!startDate || !endDate || isNaN(new Date(startDate).getTime()) || isNaN(new Date(endDate).getTime())) return res.status(400).json({ error: 'A valid start and end date are required.' });
+    if (new Date(endDate) < new Date(startDate)) return res.status(400).json({ error: 'The end date must be on or after the start date.' });
+    if (!Array.isArray(slots) || !slots.length) return res.status(400).json({ error: 'At least one scheduled time is required.' });
+    for (const slot of slots) {
+      if (!slot.timeOfDay || !/^\d{2}:\d{2}(:\d{2})?$/.test(slot.timeOfDay)) return res.status(400).json({ error: 'Each scheduled time must be a valid time.' });
+      if (!['draft', 'publish'].includes(slot.publishMode)) return res.status(400).json({ error: 'Each scheduled time needs a valid action (draft or publish).' });
+    }
+
+    if (platform === 'wordpress') {
+      const conn = await pool.query(`SELECT id FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [req.params.id]);
+      if (!conn.rows.length) return res.status(400).json({ error: 'No WordPress site is connected for this business yet.' });
+    } else {
+      const conn = await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+      if (!conn.rows.length) return res.status(400).json({ error: 'No Shopify store is connected for this business yet.' });
+    }
+
+    const ruleResult = await pool.query(
+      `INSERT INTO content_automation_rules (business_id, platform, start_date, end_date) VALUES ($1, $2, $3, $4) RETURNING *`,
+      [req.params.id, platform, startDate, endDate]
+    );
+    const rule = ruleResult.rows[0];
+
+    for (const slot of slots) {
+      await pool.query(
+        `INSERT INTO content_automation_rule_slots (rule_id, time_of_day, publish_mode) VALUES ($1, $2, $3)`,
+        [rule.id, slot.timeOfDay, slot.publishMode]
+      );
+    }
+
+    const createdCount = await generateCalendarEntriesFromRule(rule.id);
+    res.json({ success: true, rule, createdCount });
+  } catch (e) {
+    console.error('Create content automation rule error:', e.message);
+    res.status(500).json({ error: 'Could not create this automation rule.' });
+  }
+});
+
+app.get('/api/business/:id/content-automation-rule', authRequired, async (req, res) => {
+  try {
+    const rulesResult = await pool.query(
+      `SELECT * FROM content_automation_rules WHERE business_id = $1 AND enabled = TRUE AND end_date >= CURRENT_DATE ORDER BY created_at DESC`,
+      [req.params.id]
+    );
+    const rules = [];
+    for (const rule of rulesResult.rows) {
+      const slots = await pool.query('SELECT time_of_day, publish_mode FROM content_automation_rule_slots WHERE rule_id = $1 ORDER BY time_of_day', [rule.id]);
+      rules.push({ ...rule, slots: slots.rows });
+    }
+    res.json({ rules });
+  } catch (e) {
+    console.error('Get content automation rules error:', e.message);
+    res.status(500).json({ error: 'Could not load automation rules.' });
+  }
+});
+
+app.delete('/api/business/:id/content-automation-rule/:ruleId', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const ruleResult = await pool.query('UPDATE content_automation_rules SET enabled = FALSE WHERE id = $1 AND business_id = $2 RETURNING id', [req.params.ruleId, req.params.id]);
+    if (!ruleResult.rows.length) return res.status(404).json({ error: 'Automation rule not found.' });
+
+    // Real, deliberate cleanup of this real rule's own future, still-
+    // pending entries only — a real post that's already been generated
+    // or has already failed stays exactly as it is in the real history.
+    const deleted = await pool.query(
+      `DELETE FROM content_calendar_entries WHERE automation_rule_id = $1 AND status = 'scheduled' AND scheduled_date >= CURRENT_DATE RETURNING id`,
+      [req.params.ruleId]
+    );
+    res.json({ success: true, removedCount: deleted.rows.length });
+  } catch (e) {
+    console.error('Delete content automation rule error:', e.message);
+    res.status(500).json({ error: 'Could not stop this automation rule.' });
+  }
+});
+
 app.post('/api/business/:id/website/generate-blog-post', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
@@ -16423,10 +16509,63 @@ async function runContentAutomationSweep() {
 // entry someone actually scheduled for a real, specific date, once,
 // never repeating for the same entry regardless of how often this
 // itself runs (status moves off 'scheduled' the moment it's handled).
+// Real, deliberate one-time expansion of a real rule into real calendar
+// rows — every real day in the range, crossed with every real time slot,
+// each carrying its own real action. This is what makes the calendar the
+// single real source of truth: a rule never gets separately checked at
+// run time, it just produces real rows the exact same sweep below
+// already knows how to process, whether they came from a rule or from
+// a person adding one entry by hand.
+async function generateCalendarEntriesFromRule(ruleId) {
+  const ruleResult = await pool.query('SELECT * FROM content_automation_rules WHERE id = $1', [ruleId]);
+  if (!ruleResult.rows.length) throw new Error('Automation rule not found.');
+  const rule = ruleResult.rows[0];
+
+  const slotsResult = await pool.query('SELECT * FROM content_automation_rule_slots WHERE rule_id = $1 ORDER BY time_of_day', [ruleId]);
+  const slots = slotsResult.rows;
+  if (!slots.length) throw new Error('This rule has no scheduled times yet.');
+
+  // Real, deliberate clean slate for this real rule's own future, still-
+  // pending entries only — never touches a real entry that already ran
+  // (generated or failed) or one a person added manually, since this
+  // rule never created those.
+  await pool.query(
+    `DELETE FROM content_calendar_entries WHERE automation_rule_id = $1 AND status = 'scheduled' AND scheduled_date >= CURRENT_DATE`,
+    [ruleId]
+  );
+
+  const startDate = new Date(rule.start_date);
+  const endDate = new Date(rule.end_date);
+  let createdCount = 0;
+
+  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+    const dateStr = d.toISOString().split('T')[0];
+    // Real, deliberate skip of any real day already in the past — a
+    // rule covering a range that starts before today should never
+    // backfill real entries for days that have already happened.
+    if (dateStr < new Date().toISOString().split('T')[0]) continue;
+
+    for (const slot of slots) {
+      await pool.query(
+        `INSERT INTO content_calendar_entries (business_id, platform, scheduled_date, scheduled_time, automation_rule_id, publish_mode, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'scheduled')`,
+        [rule.business_id, rule.platform, dateStr, slot.time_of_day, rule.id, slot.publish_mode]
+      );
+      createdCount++;
+    }
+  }
+  return createdCount;
+}
+
 async function runContentCalendarSweep() {
   try {
     const dueEntries = await pool.query(
-      `SELECT * FROM content_calendar_entries WHERE status = 'scheduled' AND scheduled_date <= CURRENT_DATE`
+      // Real, deliberate real timestamp comparison — a real entry is due
+      // once its real scheduled date AND time have actually arrived, not
+      // just its date; this is the one change that makes specific
+      // posting times genuinely mean something rather than being stored
+      // but never actually checked.
+      `SELECT * FROM content_calendar_entries WHERE status = 'scheduled' AND (scheduled_date + scheduled_time) <= NOW()`
     );
 
     for (const entry of dueEntries.rows) {
