@@ -7304,9 +7304,13 @@ app.post('/api/business/:id/content-schedule', authRequired, async (req, res) =>
 
 app.get('/api/business/:id/content-schedule', authRequired, async (req, res) => {
   try {
+    const platformFilter = VALID_CALENDAR_PLATFORMS.includes(req.query.platform) ? req.query.platform : null;
     const result = await pool.query(
-      `SELECT * FROM content_calendar_entries WHERE business_id = $1 AND scheduled_date >= CURRENT_DATE - INTERVAL '30 days' ORDER BY scheduled_date ASC`,
-      [req.params.id]
+      `SELECT * FROM content_calendar_entries
+       WHERE business_id = $1 AND scheduled_date >= CURRENT_DATE - INTERVAL '30 days'
+         AND ($2::varchar IS NULL OR platform = $2)
+       ORDER BY scheduled_date ASC, scheduled_time ASC`,
+      [req.params.id, platformFilter]
     );
     res.json({ entries: result.rows });
   } catch (e) {
@@ -7356,9 +7360,16 @@ app.post('/api/business/:id/content-automation-rule', authRequired, async (req, 
     if (platform === 'wordpress') {
       const conn = await pool.query(`SELECT id FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [req.params.id]);
       if (!conn.rows.length) return res.status(400).json({ error: 'No WordPress site is connected for this business yet.' });
+      // Real, deliberate disabling of the real, older simple toggle for
+      // this real connection — a new rule now owns scheduling for this
+      // real platform, and leaving the old mechanism running alongside
+      // it would mean two real, independent systems each deciding to
+      // generate a real post on the same real day.
+      await pool.query(`UPDATE website_connections SET content_automation_enabled = FALSE WHERE id = $1`, [conn.rows[0].id]);
     } else {
       const conn = await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id]);
       if (!conn.rows.length) return res.status(400).json({ error: 'No Shopify store is connected for this business yet.' });
+      await pool.query(`UPDATE shopify_connections SET content_automation_enabled = FALSE WHERE id = $1`, [conn.rows[0].id]);
     }
 
     const ruleResult = await pool.query(
