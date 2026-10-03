@@ -618,18 +618,37 @@ async function loadAdminTeamMembers() {
 async function loadPartnerNetworkOverview() {
   try {
     const res = await fetch('/api/admin/partner-network/overview');
+    if (!res.ok) {
+      // Real, deliberate visible failure — a stuck "—" with no
+      // explanation is indistinguishable from "nothing happened yet,"
+      // which is exactly the confusing state this is meant to prevent.
+      const errText = res.status === 404 ? `Route not found (${res.status}) — is the latest server.js actually deployed?` : `Request failed (${res.status})`;
+      document.getElementById('statOptedIn').textContent = 'Error';
+      document.getElementById('statTotalPlacements').textContent = 'Error';
+      document.getElementById('statRecentPlacements').textContent = 'Error';
+      console.error('Partner Network overview load failed:', errText);
+      return;
+    }
     const data = await res.json();
     document.getElementById('statOptedIn').textContent = data.optedInBusinessCount ?? '—';
     document.getElementById('statTotalPlacements').textContent = data.totalPlacements ?? '—';
     document.getElementById('statRecentPlacements').textContent = data.placementsLast30Days ?? '—';
-  } catch(e) {}
+  } catch(e) {
+    document.getElementById('statOptedIn').textContent = 'Error';
+    console.error('Partner Network overview load error:', e.message);
+  }
 }
 
 async function loadPartnerNetworkPlacements() {
+  const tbody = document.getElementById('allPlacements');
   try {
     const res = await fetch('/api/admin/partner-network/placements');
+    if (!res.ok) {
+      const errText = res.status === 404 ? `Route not found (${res.status}) — is the latest server.js actually deployed?` : `Request failed (${res.status})`;
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--red)">${errText}</td></tr>`;
+      return;
+    }
     const { placements } = await res.json();
-    const tbody = document.getElementById('allPlacements');
     tbody.innerHTML = (placements||[]).length ? placements.map(p => `
       <tr>
         <td>${p.from_business_name}<div style="font-size:11px;color:var(--muted)">${p.from_account_email}</div></td>
@@ -639,7 +658,10 @@ async function loadPartnerNetworkPlacements() {
         <td style="font-size:11px">${new Date(p.placed_at).toLocaleDateString('en-GB')}</td>
         <td class="td-actions"><button class="btn-danger" onclick="forceOptOutBusiness('${p.from_business_id}', '${(p.from_business_name||'').replace(/'/g,"\\'")}')">${t('admin.force_opt_out')}</button></td>
       </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">${t('admin.no_placements')}</td></tr>`;
-  } catch(e) {}
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--red)">${e.message}</td></tr>`;
+    console.error('Partner Network placements load error:', e.message);
+  }
 }
 
 async function forceOptOutBusiness(businessId, businessName) {
