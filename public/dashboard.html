@@ -7646,8 +7646,29 @@ function renderPartnerNetworkLinks(containerId, links, partnerNameField, emptyKe
       <div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(link[partnerNameField])}</div>
       <div style="font-size:11px;color:var(--muted);margin-top:3px">${t('web.in_post_label')}: ${escapeHtml(link.from_post_title || '')}${link.from_post_url ? ` · <a href="${escapeHtml(link.from_post_url)}" target="_blank" style="color:var(--purple-light)">${t('web.view_full_post_button')}</a>` : ''}</div>
       ${link.relevance_reason ? `<div style="font-size:11px;color:var(--text2);margin-top:4px;font-style:italic">"${escapeHtml(link.relevance_reason)}"</div>` : ''}
-      <div style="font-size:10px;color:var(--muted);margin-top:4px">${timeAgo(link.placed_at)}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+        <div style="font-size:10px;color:var(--muted)">${timeAgo(link.placed_at)}</div>
+        <button class="btn-ghost" onclick="reportPartnerNetworkPlacement('${link.id}')" style="font-size:10px;padding:3px 8px">${t('web.report_placement_button')}</button>
+      </div>
     </div>`, 5, containerId);
+}
+
+async function reportPartnerNetworkPlacement(placementId) {
+  const reason = prompt(t('web.report_placement_prompt'));
+  if (reason === null) return; // Real, deliberate cancel — prompt() returns null only when the person explicitly cancels, never on an empty submission.
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/reciprocal-network/report/${placementId}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.report_submitted_toast'), 'success');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function loadShopifyStatus() {
