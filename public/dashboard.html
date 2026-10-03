@@ -7499,6 +7499,7 @@ function renderBacklinkOpportunities(opportunities) {
           <div style="font-size:12.5px;font-weight:600;color:var(--text);margin-top:4px">${escapeHtml(opp.title)}</div>
           <a href="${escapeHtml(opp.url)}" target="_blank" style="font-size:11px;color:var(--purple-light);word-break:break-all">${escapeHtml(opp.url)}</a>
           ${opp.description ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">${escapeHtml(opp.description)}</div>` : ''}
+          ${opp.contact_email ? `<div style="font-size:10.5px;color:var(--muted);margin-top:3px">${t('web.contact_found_label')}: ${escapeHtml(opp.contact_email)}</div>` : ''}
         </div>
         <select onchange="updateBacklinkStatus('${opp.id}', this.value)" style="font-size:11px;padding:4px 8px;width:auto;flex-shrink:0">
           <option value="new" ${opp.status === 'new' ? 'selected' : ''}>${t('web.backlink_status_new')}</option>
@@ -7507,6 +7508,8 @@ function renderBacklinkOpportunities(opportunities) {
           <option value="dismissed" ${opp.status === 'dismissed' ? 'selected' : ''}>${t('web.backlink_status_dismissed')}</option>
         </select>
       </div>
+      <button class="btn-ghost" onclick="draftBacklinkOutreachEmail('${opp.id}', this)" style="margin-top:8px;font-size:11px;padding:5px 10px">${t('web.draft_email_button')}</button>
+      <div id="backlinkDraft-${opp.id}" style="margin-top:8px"></div>
     </div>`, 10, 'backlinkOpportunities');
 }
 
@@ -7518,6 +7521,36 @@ async function updateBacklinkStatus(opportunityId, status) {
     if (!res.ok) showToast(t('board.connection_error'), 'error');
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
+  }
+}
+
+async function draftBacklinkOutreachEmail(opportunityId, btn) {
+  btn.disabled = true;
+  btn.textContent = t('web.drafting_email');
+  const draftEl = document.getElementById(`backlinkDraft-${opportunityId}`);
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/backlinks/${opportunityId}/draft-email`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    // Real, deliberate mailto: link — opens in the person's own email
+    // client, from their own real address, with them making the final
+    // call on whether to edit or send. Nothing is ever sent from here.
+    const mailtoUrl = `mailto:${encodeURIComponent(data.contactEmail || '')}?subject=${encodeURIComponent(data.subject)}&body=${encodeURIComponent(data.body)}`;
+    draftEl.innerHTML = `
+      <div style="background:var(--bg2);border-radius:8px;padding:10px 12px;border:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">${t('web.subject_label')}: <span style="color:var(--text)">${escapeHtml(data.subject)}</span></div>
+        <div style="font-size:11.5px;color:var(--text2);white-space:pre-wrap;margin-bottom:8px">${escapeHtml(data.body)}</div>
+        <a href="${mailtoUrl}" class="btn-primary" style="display:inline-block;text-decoration:none;font-size:11px;padding:6px 12px">${t('web.open_in_email_button')}</a>
+        ${!data.contactEmail ? `<div style="font-size:10px;color:var(--muted);margin-top:6px">${t('web.no_contact_found_note')}</div>` : ''}
+      </div>`;
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.draft_email_button');
   }
 }
 
