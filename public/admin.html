@@ -672,15 +672,24 @@ async function loadPartnerNetworkPlacements() {
       return;
     }
     const { placements } = await res.json();
-    tbody.innerHTML = (placements||[]).length ? placements.map(p => `
-      <tr>
+    tbody.innerHTML = (placements||[]).length ? placements.map(p => {
+      const isReported = p.open_report_count > 0;
+      return `
+      <tr style="${isReported ? 'background:rgba(239,68,68,.06)' : ''}">
         <td>${p.from_business_name}<div style="font-size:11px;color:var(--muted)">${p.from_account_email}</div></td>
         <td>${p.to_business_name}<div style="font-size:11px;color:var(--muted)">${p.to_account_email}</div></td>
         <td style="font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.from_post_title || '—'}</td>
-        <td style="font-size:11px;color:var(--muted2);max-width:220px">${p.relevance_reason || '—'}</td>
+        <td style="font-size:11px;color:var(--muted2);max-width:220px">
+          ${p.relevance_reason || '—'}
+          ${isReported ? `<div style="margin-top:4px"><span class="badge" style="background:rgba(239,68,68,.15);color:var(--red)">${t('admin.reported_badge')}</span><div style="font-size:11px;color:var(--red);margin-top:3px">${p.open_report_reasons}</div></div>` : ''}
+        </td>
         <td style="font-size:11px">${new Date(p.placed_at).toLocaleDateString('en-GB')}</td>
-        <td class="td-actions"><button class="btn-danger" onclick="forceOptOutBusiness('${p.from_business_id}', '${(p.from_business_name||'').replace(/'/g,"\\'")}')">${t('admin.force_opt_out')}</button></td>
-      </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">${t('admin.no_placements')}</td></tr>`;
+        <td class="td-actions">
+          ${isReported ? `<button class="btn-success" onclick="resolveReport('${p.id}')">${t('admin.resolve_report')}</button>` : ''}
+          <button class="btn-danger" onclick="forceOptOutBusiness('${p.from_business_id}', '${(p.from_business_name||'').replace(/'/g,"\\'")}')">${t('admin.force_opt_out')}</button>
+        </td>
+      </tr>`;
+    }).join('') : `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">${t('admin.no_placements')}</td></tr>`;
   } catch(e) {
     tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--red)">${e.message}</td></tr>`;
     console.error('Partner Network placements load error:', e.message);
@@ -693,6 +702,14 @@ async function forceOptOutBusiness(businessId, businessName) {
     const res = await fetch(`/api/admin/partner-network/force-opt-out/${businessId}`, { method: 'POST' });
     const data = await res.json();
     if (data.success) { loadPartnerNetworkOverview(); loadPartnerNetworkPlacements(); }
+  } catch(e) {}
+}
+
+async function resolveReport(placementId) {
+  try {
+    const res = await fetch(`/api/admin/partner-network/reports/${placementId}/resolve`, { method: 'POST' });
+    const data = await res.json();
+    if (data.success) loadPartnerNetworkPlacements();
   } catch(e) {}
 }
 
