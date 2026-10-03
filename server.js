@@ -383,6 +383,21 @@ async function resolveAccount(userId) {
   return account;
 }
 
+// Real, deliberate single, shared resolution — a business's real site URL
+// genuinely can come from three different real places (a manually entered
+// profile field, a connected WordPress site, a connected Shopify store),
+// and every real feature that needs "this business's real site" should
+// resolve it the exact same real way, rather than each place quietly
+// re-implementing its own, inevitably inconsistent fallback.
+async function resolveBusinessSiteUrl(businessId, businessWebsiteField) {
+  if (businessWebsiteField) return businessWebsiteField;
+  const wpResult = await pool.query(`SELECT site_url FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [businessId]);
+  if (wpResult.rows.length) return wpResult.rows[0].site_url;
+  const shopifyResult = await pool.query(`SELECT shop_domain FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [businessId]);
+  if (shopifyResult.rows.length) return `https://${shopifyResult.rows[0].shop_domain}`;
+  return null;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // BUSINESS WORKSPACE — Phase 1, Step 3
 // A single place that assembles whatever's known about a business, so future
@@ -4501,16 +4516,25 @@ async function findReciprocalLinkPartner(businessId, topic) {
   );
   const excludedIds = [businessId, ...recentPartners.rows.map(r => r.to_business_id)];
 
+  // Real, deliberate same three-source resolution as resolveBusinessSiteUrl
+  // above, done here as one real SQL query across every real candidate at
+  // once rather than one async call per candidate — a candidate whose real
+  // site only exists via a connected WordPress or Shopify store is just as
+  // eligible as one with the profile field filled in directly.
   const candidatesResult = await pool.query(
-    `SELECT b.id, b.name, b.website, b.industry, b.city, b.country
+    `SELECT b.id, b.name, b.industry, b.city, b.country,
+            COALESCE(NULLIF(b.website, ''), wc.site_url, ('https://' || sc.shop_domain)) AS resolved_website
      FROM reciprocal_network_opt_ins o
      JOIN businesses b ON b.id = o.business_id
-     WHERE o.opted_in = TRUE AND b.id != ALL($1) AND b.website IS NOT NULL AND b.website != ''`,
+     LEFT JOIN website_connections wc ON wc.business_id = b.id AND wc.connection_status != 'disconnected'
+     LEFT JOIN shopify_connections sc ON sc.business_id = b.id AND sc.connection_status = 'connected'
+     WHERE o.opted_in = TRUE AND b.id != ALL($1)
+       AND COALESCE(NULLIF(b.website, ''), wc.site_url, ('https://' || sc.shop_domain)) IS NOT NULL`,
     [excludedIds]
   );
   if (!candidatesResult.rows.length) return null;
 
-  const candidateList = candidatesResult.rows.map(c => `- id: ${c.id} | ${c.name} | industry: ${c.industry || 'unknown'} | ${[c.city, c.country].filter(Boolean).join(', ') || 'location unknown'} | ${c.website}`).join('\n');
+  const candidateList = candidatesResult.rows.map(c => `- id: ${c.id} | ${c.name} | industry: ${c.industry || 'unknown'} | ${[c.city, c.country].filter(Boolean).join(', ') || 'location unknown'} | ${c.resolved_website}`).join('\n');
 
   const prompt = `You are a strict editorial reviewer deciding whether it would be genuinely natural — not forced, not promotional — for a blog post on a specific topic to reference one specific other real business, as you would in authentic, independent journalism.
 
@@ -4538,17 +4562,22 @@ Return ONLY valid JSON, no markdown:
   const match = candidatesResult.rows.find(c => c.id === decision.businessId);
   if (!match) return null; // Real, deliberate safety check — never trust an id back from the model without confirming it's genuinely one of the real candidates offered.
 
-  return { businessId: match.id, businessName: match.name, url: match.website, reason: decision.reason || '' };
+  return { businessId: match.id, businessName: match.name, url: match.resolved_website, reason: decision.reason || '' };
 }
 
-async function findBacklinkOpportunities(context) {
+// Real, deliberate explicit siteUrl parameter — a business's real site
+// might be known three different real ways (a manually entered profile
+// field, a connected WordPress site, a connected Shopify store), and this
+// function shouldn't need to know or care which one supplied it; the
+// caller resolves the real, actual site URL first.
+async function findBacklinkOpportunities(context, siteUrl) {
   const business = context?.business || {};
   const businessName = (business.name || '').trim();
   const industry = (business.industry || '').trim();
   const location = [business.city, business.country].filter(Boolean).join(', ');
 
   let siteDomain = '';
-  try { siteDomain = new URL(business.website).hostname.replace(/^www\./, '').toLowerCase(); } catch { /* Real, deliberate no-op — an unparseable or missing site URL just means the unlinked-mentions category below has nothing to compare against and is skipped. */ }
+  try { siteDomain = new URL(siteUrl).hostname.replace(/^www\./, '').toLowerCase(); } catch { /* Real, deliberate no-op — an unparseable or missing site URL just means the unlinked-mentions category below has nothing to compare against and is skipped. */ }
 
   const opportunities = [];
 
@@ -8041,7 +8070,8 @@ app.post('/api/business/:id/reciprocal-network/opt-in', authRequired, async (req
     const account = await resolveAccount(req.userId);
     const biz = await pool.query('SELECT id, website FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
-    if (!biz.rows[0].website) return res.status(400).json({ error: 'A website URL is required before opting into the reciprocal network — add one on the business profile first.' });
+    const resolvedSiteUrl = await resolveBusinessSiteUrl(req.params.id, biz.rows[0].website);
+    if (!resolvedSiteUrl) return res.status(400).json({ error: 'A website URL is required before opting into the reciprocal network — add one on the business profile, or connect WordPress or Shopify first.' });
 
     await pool.query(
       `INSERT INTO reciprocal_network_opt_ins (business_id, opted_in, opted_in_at, updated_at)
@@ -8083,9 +8113,11 @@ app.post('/api/business/:id/backlinks/search', authRequired, async (req, res) =>
     const account = await resolveAccount(req.userId);
     const context = await getBusinessContext(req.params.id, account.id);
     if (!context) return res.status(404).json({ error: 'Business not found' });
-    if (!context.business.website) return res.status(400).json({ error: 'This business needs a website URL set before backlink opportunities can be found — add one on the business profile first.' });
 
-    const opportunities = await findBacklinkOpportunities(context);
+    const siteUrl = await resolveBusinessSiteUrl(req.params.id, context.business.website);
+    if (!siteUrl) return res.status(400).json({ error: 'This business needs a website URL — add one on the business profile, or connect WordPress or Shopify first.' });
+
+    const opportunities = await findBacklinkOpportunities(context, siteUrl);
 
     // Real, deliberate ignore-on-conflict insert — the same real
     // opportunity found again on a later search shouldn't duplicate or
