@@ -2079,6 +2079,17 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <button class="btn-ghost" onclick="disconnectShopify()" data-i18n="web.disconnect_button">Disconnect</button>
           </div>
 
+          <div style="margin-bottom:20px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+              <div class="section-title" style="margin-bottom:0;font-size:14px" data-i18n="web.intelligence_title">Website Intelligence</div>
+              <div style="display:flex;gap:8px">
+                <button class="btn-ghost" onclick="clearShopifyIntelligence()" data-i18n="web.clear_analysis_button">Clear Analysis</button>
+                <button class="btn-primary" onclick="generateShopifyIntelligence()" id="shopifyIntelligenceBtn" data-i18n="web.generate_button">Analyze Website</button>
+              </div>
+            </div>
+            <div id="shopifyIntelligenceContent"></div>
+          </div>
+
           <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:16px">
             <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:8px" data-i18n="web.generate_post_now_title">Generate a Blog Post Now</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -7727,6 +7738,7 @@ async function loadShopifyStatus() {
     document.getElementById('shopifyConnectPrompt').style.display = 'none';
     document.getElementById('shopifyConnectedWrap').style.display = 'block';
     document.getElementById('shopifyDomainLabel').textContent = data.connection.shop_domain;
+    renderWebsiteIntelligenceContent(data.connection.website_intelligence, data.connection.website_intelligence_generated_at, 'shopifyIntelligenceContent');
     loadShopifyGeneratedPosts();
     loadShopifySitemapStatus();
     loadTechnicalSeoHistory('shopify');
@@ -8367,6 +8379,45 @@ async function generateWebsiteIntelligence() {
   }
 }
 
+async function clearShopifyIntelligence() {
+  if (!confirm(t('web.confirm_clear_analysis'))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/intelligence`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.analysis_cleared_toast'), 'success');
+    renderWebsiteIntelligenceContent(null, null, 'shopifyIntelligenceContent');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+async function generateShopifyIntelligence() {
+  const btn = document.getElementById('shopifyIntelligenceBtn');
+  const contentEl = document.getElementById('shopifyIntelligenceContent');
+  btn.disabled = true;
+  btn.textContent = t('web.analyzing');
+  contentEl.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">${t('web.analyzing_desc')}</div>`;
+
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/intelligence`, { method: 'POST' });
+    const data = await res.json();
+    if (res.ok) {
+      renderWebsiteIntelligenceContent(data.intelligence, new Date().toISOString(), 'shopifyIntelligenceContent');
+    } else {
+      contentEl.innerHTML = `<div style="text-align:center;padding:24px;color:#ff8080;font-size:13px">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+    }
+  } catch (e) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:24px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.generate_button');
+  }
+}
+
 const WEBSITE_SEVERITY_COLORS = { high: '#ef4444', medium: 'var(--gold)', low: 'var(--muted)' };
 
 // Renders the AI's assessment (seo_issues, content_observations,
@@ -8514,8 +8565,8 @@ function toggleCollapsedList(uniqueId, btn) {
   btn.textContent = isHidden ? btn.dataset.hideText : btn.dataset.showText;
 }
 
-function renderWebsiteIntelligenceContent(intelligence, generatedAt) {
-  const contentEl = document.getElementById('websiteIntelligenceContent');
+function renderWebsiteIntelligenceContent(intelligence, generatedAt, containerId = 'websiteIntelligenceContent') {
+  const contentEl = document.getElementById(containerId);
   if (!intelligence) {
     contentEl.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px" data-i18n="web.no_intelligence_yet">No analysis yet — click Analyze Website to get started.</div>`;
     return;
