@@ -1448,8 +1448,10 @@ CREATE TABLE IF NOT EXISTS content_calendar_entries (
   business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
   platform VARCHAR(20) NOT NULL, -- 'wordpress' | 'shopify'
   scheduled_date DATE NOT NULL,
+  scheduled_time TIME NOT NULL DEFAULT '09:00:00', -- the real, specific time this real entry is due, not just a date
+  automation_rule_id UUID, -- NULL for a manually-added entry; set when a real recurring rule generated this real entry, so editing or cancelling that rule can find and remove only its own real, still-pending future entries
   topic TEXT, -- NULL means "pick a topic automatically on the day", same as the automatic cycle already does
-  publish_mode VARCHAR(20) DEFAULT 'draft', -- 'draft' | 'publish'
+  publish_mode VARCHAR(20) DEFAULT 'draft', -- 'draft' | 'publish' — this real entry's own real action, independent of any other entry's
   status VARCHAR(20) DEFAULT 'scheduled', -- 'scheduled' | 'generated' | 'failed' | 'cancelled'
   generated_title TEXT,
   generated_url TEXT,
@@ -1459,6 +1461,38 @@ CREATE TABLE IF NOT EXISTS content_calendar_entries (
 );
 CREATE INDEX IF NOT EXISTS idx_content_calendar_business ON content_calendar_entries(business_id, scheduled_date);
 CREATE INDEX IF NOT EXISTS idx_content_calendar_due ON content_calendar_entries(status, scheduled_date);
+CREATE INDEX IF NOT EXISTS idx_content_calendar_rule ON content_calendar_entries(automation_rule_id);
+ALTER TABLE content_calendar_entries ADD COLUMN IF NOT EXISTS scheduled_time TIME NOT NULL DEFAULT '09:00:00';
+ALTER TABLE content_calendar_entries ADD COLUMN IF NOT EXISTS automation_rule_id UUID;
+
+-- Real, deliberate recurring rule, genuinely separate from a single
+-- manually-added entry — a real rule exists to GENERATE real calendar
+-- entries ahead of time (below), rather than being checked itself at
+-- run time. The calendar is the one real, single source of truth for
+-- what's actually going to happen; a rule is just what produced some of
+-- those real rows.
+CREATE TABLE IF NOT EXISTS content_automation_rules (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  platform VARCHAR(20) NOT NULL, -- 'wordpress' | 'shopify'
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  enabled BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_content_automation_rules_business ON content_automation_rules(business_id);
+
+-- Real, deliberate one row per real time-of-day this rule posts at, each
+-- with its own real action — a rule posting 3 times a day can have one
+-- slot set to publish immediately and the other two set to draft, each
+-- independently, exactly as asked for.
+CREATE TABLE IF NOT EXISTS content_automation_rule_slots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rule_id UUID REFERENCES content_automation_rules(id) ON DELETE CASCADE,
+  time_of_day TIME NOT NULL,
+  publish_mode VARCHAR(20) DEFAULT 'draft' -- 'draft' | 'publish'
+);
+CREATE INDEX IF NOT EXISTS idx_content_automation_rule_slots_rule ON content_automation_rule_slots(rule_id);
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- BACKLINK OPPORTUNITIES — real, external, legitimately earnable links:
