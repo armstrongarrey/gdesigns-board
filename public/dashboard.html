@@ -1787,7 +1787,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div style="display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0">
         <button type="button" onclick="switchPlatformTab('wordpress')" id="platformTabWordPress" style="background:none;border:none;border-bottom:2px solid var(--purple);color:var(--text);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_wordpress">WordPress</button>
         <button type="button" onclick="switchPlatformTab('shopify')" id="platformTabShopify" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_shopify">Shopify</button>
-        <button type="button" onclick="switchPlatformTab('backlinks')" id="platformTabBacklinks" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer" data-i18n="web.platform_tab_backlinks">Backlinks</button>
+        <button type="button" onclick="switchPlatformTab('backlinks')" id="platformTabBacklinks" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_backlinks">Backlinks</button>
+        <button type="button" onclick="switchPlatformTab('partnernetwork')" id="platformTabPartnerNetwork" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer" data-i18n="web.platform_tab_partner_network">Partner Network</button>
       </div>
 
       <!-- EMPTY STATE — spec section 25: explicit about what Arreyon will
@@ -2085,6 +2086,31 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
         <div style="font-size:11.5px;color:var(--muted);margin:8px 0 16px" data-i18n="web.backlinks_description">Finds real, legitimately earnable opportunities — business directories, blogs that accept guest posts, and existing mentions of this business that don't yet link back. Arreyon never creates these links automatically; each one is yours to pursue.</div>
         <div id="backlinksContent"></div>
+      </div>
+
+      <!-- PARTNER NETWORK — the explicitly opt-in reciprocal system. A real
+           link between two real clients only ever happens when BOTH have
+           opted in; this panel is where that consent is given and where a
+           business can see every real link it has ever given or received. -->
+      <div id="partnerNetworkSection" style="display:none">
+        <div class="section-title" style="font-size:16px;margin-bottom:4px" data-i18n="web.partner_network_title">Partner Network</div>
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px" data-i18n="web.partner_network_description">An opt-in network where Arreyon occasionally references another genuinely relevant, opted-in client's business in new content — and that business does the same in return. A link only ever happens when both sides have opted in, it's capped to avoid looking mechanical, and every placement is logged below.</div>
+
+        <div id="partnerNetworkOptInCard" style="background:var(--bg2);border-radius:12px;padding:18px;margin-bottom:20px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+            <div>
+              <div style="font-size:13px;font-weight:700;color:var(--text)" id="partnerNetworkStatusLabel"></div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px" id="partnerNetworkStatusDetail"></div>
+            </div>
+            <button class="btn-primary" onclick="togglePartnerNetworkOptIn()" id="partnerNetworkToggleBtn"></button>
+          </div>
+        </div>
+
+        <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.links_given_title">Links Given</div>
+        <div id="partnerNetworkGivenContent" style="margin-bottom:24px"></div>
+
+        <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.links_received_title">Links Received</div>
+        <div id="partnerNetworkReceivedContent"></div>
       </div>
 
       <!-- CATEGORIES & TAGS — read the site's real, existing taxonomy and
@@ -7391,6 +7417,7 @@ const PLATFORM_TABS = {
   wordpress: { tabId: 'platformTabWordPress', sectionId: null },
   shopify: { tabId: 'platformTabShopify', sectionId: 'shopifySection' },
   backlinks: { tabId: 'platformTabBacklinks', sectionId: 'backlinksSection' },
+  partnernetwork: { tabId: 'platformTabPartnerNetwork', sectionId: 'partnerNetworkSection' },
 };
 
 function switchPlatformTab(platform) {
@@ -7416,6 +7443,7 @@ function switchPlatformTab(platform) {
   }
 
   if (platform === 'backlinks') loadBacklinkOpportunities();
+  if (platform === 'partnernetwork') loadPartnerNetworkStatus();
 }
 
 // ── BACKLINK OPPORTUNITIES ───────────────────────────────────────────────
@@ -7507,6 +7535,72 @@ async function clearBacklinkOpportunities() {
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
+}
+
+// ── PARTNER NETWORK ──────────────────────────────────────────────────────
+let partnerNetworkOptedIn = false;
+
+async function loadPartnerNetworkStatus() {
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/reciprocal-network`);
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    partnerNetworkOptedIn = data.optedIn;
+    renderPartnerNetworkOptInCard(data.optedIn, data.optedInAt);
+    renderPartnerNetworkLinks('partnerNetworkGivenContent', data.linksGiven || [], 'to_business_name', 'web.no_links_given');
+    renderPartnerNetworkLinks('partnerNetworkReceivedContent', data.linksReceived || [], 'from_business_name', 'web.no_links_received');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+function renderPartnerNetworkOptInCard(optedIn, optedInAt) {
+  document.getElementById('partnerNetworkStatusLabel').textContent = t(optedIn ? 'web.partner_network_opted_in' : 'web.partner_network_opted_out');
+  document.getElementById('partnerNetworkStatusDetail').textContent = optedIn
+    ? t('web.partner_network_opted_in_detail').replace('{date}', new Date(optedInAt).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US'))
+    : t('web.partner_network_opted_out_detail');
+  const btn = document.getElementById('partnerNetworkToggleBtn');
+  btn.textContent = t(optedIn ? 'web.opt_out_button' : 'web.opt_in_button');
+  btn.className = optedIn ? 'btn-ghost' : 'btn-primary';
+}
+
+async function togglePartnerNetworkOptIn() {
+  const action = partnerNetworkOptedIn ? 'opt-out' : 'opt-in';
+  if (!partnerNetworkOptedIn && !confirm(t('web.confirm_opt_in_partner_network'))) return;
+  const btn = document.getElementById('partnerNetworkToggleBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/reciprocal-network/${action}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t(action === 'opt-in' ? 'web.opted_in_toast' : 'web.opted_out_toast'), 'success');
+    loadPartnerNetworkStatus();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderPartnerNetworkLinks(containerId, links, partnerNameField, emptyKey) {
+  const contentEl = document.getElementById(containerId);
+  if (!links.length) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:14px;color:var(--muted);font-size:12.5px">${t(emptyKey)}</div>`;
+    return;
+  }
+  contentEl.innerHTML = renderCollapsibleItems(links, (link) => `
+    <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
+      <div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(link[partnerNameField])}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px">${t('web.in_post_label')}: ${escapeHtml(link.from_post_title || '')}${link.from_post_url ? ` · <a href="${escapeHtml(link.from_post_url)}" target="_blank" style="color:var(--purple-light)">${t('web.view_full_post_button')}</a>` : ''}</div>
+      ${link.relevance_reason ? `<div style="font-size:11px;color:var(--text2);margin-top:4px;font-style:italic">"${escapeHtml(link.relevance_reason)}"</div>` : ''}
+      <div style="font-size:10px;color:var(--muted);margin-top:4px">${timeAgo(link.placed_at)}</div>
+    </div>`, 5, containerId);
 }
 
 async function loadShopifyStatus() {
