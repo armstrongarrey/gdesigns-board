@@ -8104,11 +8104,17 @@ app.get('/api/business/:id/reciprocal-network', authRequired, async (req, res) =
       [req.params.id]
     );
 
+    // Real, deliberate platform-wide count, shown to a business before it
+    // ever opts in — a real trust signal ("this is a real, active network
+    // of N real businesses"), not a guess or a marketing number.
+    const networkSize = await pool.query(`SELECT COUNT(*) FROM reciprocal_network_opt_ins WHERE opted_in = TRUE`);
+
     res.json({
       optedIn: optInResult.rows[0]?.opted_in || false,
       optedInAt: optInResult.rows[0]?.opted_in_at || null,
       linksGiven: linksGiven.rows,
       linksReceived: linksReceived.rows,
+      networkSize: Number(networkSize.rows[0].count),
     });
   } catch (e) {
     console.error('Get reciprocal network status error:', e.message);
