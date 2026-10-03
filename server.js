@@ -9528,6 +9528,19 @@ app.post('/api/admin/login', async (req, res) => {
   } catch(e) { res.status(500).json({ error: 'Login failed' }); }
 });
 
+// Real, deliberate lightweight session check — the login already sets a
+// real, 24-hour cookie, so a refresh should never actually need a fresh
+// login; this is the one thing the admin page was missing to know that.
+app.get('/api/admin/me', adminRequired, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, name, email FROM admin_users WHERE id = $1', [req.adminId]);
+    if (!result.rows.length) return res.status(401).json({ error: 'Admin not found' });
+    res.json({ success: true, admin: result.rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to verify session' });
+  }
+});
+
 app.post('/api/admin/logout', (req, res) => {
   res.clearCookie('arreyon_admin_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
   res.json({ success: true });
@@ -10029,6 +10042,61 @@ app.get('/api/admin/users', adminRequired, async (req, res) => {
     );
     res.json({ users: result.rows });
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
+});
+
+// ── Admin: platform-wide oversight of the Partner Network — this is the
+// one place a real link between two real, unrelated businesses can be
+// seen and, if needed, stopped, now that matching happens across every
+// subscriber on the platform rather than within one agency's own client
+// list. ──────────────────────────────────────────────────────────────────
+app.get('/api/admin/partner-network/overview', adminRequired, async (req, res) => {
+  try {
+    const optedInCount = await pool.query(`SELECT COUNT(*) FROM reciprocal_network_opt_ins WHERE opted_in = TRUE`);
+    const totalPlacements = await pool.query(`SELECT COUNT(*) FROM reciprocal_links_placed`);
+    const recentPlacements = await pool.query(`SELECT COUNT(*) FROM reciprocal_links_placed WHERE placed_at > NOW() - INTERVAL '30 days'`);
+    res.json({
+      optedInBusinessCount: Number(optedInCount.rows[0].count),
+      totalPlacements: Number(totalPlacements.rows[0].count),
+      placementsLast30Days: Number(recentPlacements.rows[0].count),
+    });
+  } catch (e) {
+    console.error('Admin partner network overview error:', e.message);
+    res.status(500).json({ error: 'Failed to load Partner Network overview.' });
+  }
+});
+
+app.get('/api/admin/partner-network/placements', adminRequired, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT rl.*,
+              fb.name AS from_business_name, fu.email AS from_account_email,
+              tb.name AS to_business_name, tu.email AS to_account_email
+       FROM reciprocal_links_placed rl
+       JOIN businesses fb ON fb.id = rl.from_business_id
+       JOIN users fu ON fu.id = fb.user_id
+       JOIN businesses tb ON tb.id = rl.to_business_id
+       JOIN users tu ON tu.id = tb.user_id
+       ORDER BY rl.placed_at DESC LIMIT 200`
+    );
+    res.json({ placements: result.rows });
+  } catch (e) {
+    console.error('Admin partner network placements error:', e.message);
+    res.status(500).json({ error: 'Failed to load placements.' });
+  }
+});
+
+app.post('/api/admin/partner-network/force-opt-out/:businessId', adminRequired, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE reciprocal_network_opt_ins SET opted_in = FALSE, updated_at = NOW() WHERE business_id = $1 RETURNING business_id`,
+      [req.params.businessId]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'This business has no Partner Network opt-in record.' });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Admin force opt-out error:', e.message);
+    res.status(500).json({ error: 'Failed to opt this business out.' });
+  }
 });
 
 // ── Admin: platform-wide visibility into every team, across every account ──
