@@ -7267,6 +7267,76 @@ app.post('/api/business/:id/website/topic-suggestions', authRequired, async (req
   }
 });
 
+const VALID_CALENDAR_PLATFORMS = ['wordpress', 'shopify'];
+app.post('/api/business/:id/content-schedule', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    const { platform, scheduledDate, topic, publishMode } = req.body || {};
+    if (!VALID_CALENDAR_PLATFORMS.includes(platform)) return res.status(400).json({ error: 'Invalid platform.' });
+    if (!scheduledDate || isNaN(new Date(scheduledDate).getTime())) return res.status(400).json({ error: 'A valid date is required.' });
+
+    // Real, deliberate real connection check up front — refuses to
+    // schedule a real entry for a real platform this business hasn't
+    // actually connected, rather than silently failing days later when
+    // the real sweep finally tries to process it.
+    if (platform === 'wordpress') {
+      const conn = await pool.query(`SELECT id FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [req.params.id]);
+      if (!conn.rows.length) return res.status(400).json({ error: 'No WordPress site is connected for this business yet.' });
+    } else {
+      const conn = await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+      if (!conn.rows.length) return res.status(400).json({ error: 'No Shopify store is connected for this business yet.' });
+    }
+
+    const inserted = await pool.query(
+      `INSERT INTO content_calendar_entries (business_id, platform, scheduled_date, topic, publish_mode)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [req.params.id, platform, scheduledDate, (topic || '').trim() || null, publishMode === 'publish' ? 'publish' : 'draft']
+    );
+    res.json({ success: true, entry: inserted.rows[0] });
+  } catch (e) {
+    console.error('Create content calendar entry error:', e.message);
+    res.status(500).json({ error: 'Could not schedule this post. Please try again.' });
+  }
+});
+
+app.get('/api/business/:id/content-schedule', authRequired, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM content_calendar_entries WHERE business_id = $1 AND scheduled_date >= CURRENT_DATE - INTERVAL '30 days' ORDER BY scheduled_date ASC`,
+      [req.params.id]
+    );
+    res.json({ entries: result.rows });
+  } catch (e) {
+    console.error('Get content calendar error:', e.message);
+    res.status(500).json({ error: 'Could not load the content calendar.' });
+  }
+});
+
+app.delete('/api/business/:id/content-schedule/:entryId', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    // Real, deliberate status flip rather than a real delete — a
+    // cancelled entry still shows in the real history as "cancelled,"
+    // not silently vanishing, and only ever applies to a real entry
+    // that hasn't been processed yet.
+    const result = await pool.query(
+      `UPDATE content_calendar_entries SET status = 'cancelled' WHERE id = $1 AND business_id = $2 AND status = 'scheduled' RETURNING id`,
+      [req.params.entryId, req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Entry not found or already processed.' });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Cancel content calendar entry error:', e.message);
+    res.status(500).json({ error: 'Could not cancel this entry.' });
+  }
+});
+
 app.post('/api/business/:id/website/generate-blog-post', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
@@ -16348,9 +16418,88 @@ async function runContentAutomationSweep() {
   }
 }
 
+// Real, deliberate real date-driven sweep, genuinely separate from the
+// automatic daily/weekly cycle above — this only ever processes a real
+// entry someone actually scheduled for a real, specific date, once,
+// never repeating for the same entry regardless of how often this
+// itself runs (status moves off 'scheduled' the moment it's handled).
+async function runContentCalendarSweep() {
+  try {
+    const dueEntries = await pool.query(
+      `SELECT * FROM content_calendar_entries WHERE status = 'scheduled' AND scheduled_date <= CURRENT_DATE`
+    );
+
+    for (const entry of dueEntries.rows) {
+      try {
+        const bizResult = await pool.query('SELECT id, name, user_id FROM businesses WHERE id = $1', [entry.business_id]);
+        if (!bizResult.rows.length) continue;
+        const context = await getBusinessContext(entry.business_id, bizResult.rows[0].user_id);
+        if (!context) continue;
+
+        if (entry.platform === 'wordpress') {
+          const connResult = await pool.query(`SELECT * FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [entry.business_id]);
+          if (!connResult.rows.length) throw new Error('No WordPress site is connected for this business anymore.');
+          const connection = connResult.rows[0];
+          const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+
+          const { posts } = await getWordPressContentForAnalysis(connection, decryptedPassword);
+          const topic = entry.topic || await generateAutomaticBlogPostTopic(context, posts || []);
+          const result = await runBlogPostGeneration(connection, decryptedPassword, context, topic, false, entry.publish_mode);
+
+          await pool.query(
+            `UPDATE content_calendar_entries SET status = $1, generated_title = $2, generated_url = $3, processed_at = NOW() WHERE id = $4`,
+            [result?.success ? 'generated' : 'failed', result?.title || topic, result?.url || null, entry.id]
+          );
+        } else {
+          const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [entry.business_id]);
+          if (!connResult.rows.length) throw new Error('No Shopify store is connected for this business anymore.');
+          const connection = connResult.rows[0];
+          const accessToken = decryptSecret(connection.access_token_encrypted);
+
+          let existingTitles = [];
+          try {
+            if (connection.blog_id) {
+              const existingRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles.json?limit=20&fields=title`);
+              if (existingRes.ok) { const d = await existingRes.json(); existingTitles = (d.articles || []).map(a => a.title); }
+            }
+          } catch (e) { /* Real, deliberate no-op. */ }
+
+          const topic = entry.topic || await generateAutomaticBlogPostTopic(context, existingTitles.map(title => ({ title })));
+          let internalCandidates = [];
+          try { internalCandidates = await getShopifyContentForAnalysis(connection, accessToken); } catch (e) { /* Real, deliberate no-op. */ }
+
+          const generated = await generateShopifyBlogPostContent(context, topic, existingTitles, internalCandidates);
+          const result = await createShopifyBlogPost(connection, accessToken, { ...generated, status: entry.publish_mode });
+
+          if (result.success) {
+            await pool.query(
+              `INSERT INTO shopify_generated_posts (shopify_connection_id, shopify_article_id, topic, title, handle, body_html, meta_title, meta_description, tags, status, article_url)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+              [connection.id, result.id, topic, generated.title, result.handle, generated.bodyHtml, generated.metaTitle, generated.metaDescription, generated.tags.join(', '), result.status, result.url]
+            );
+          }
+          await pool.query(
+            `UPDATE content_calendar_entries SET status = $1, generated_title = $2, generated_url = $3, processed_at = NOW() WHERE id = $4`,
+            [result.success ? 'generated' : 'failed', generated.title || topic, result.url || null, entry.id]
+          );
+        }
+      } catch (entryErr) {
+        console.error(`Content calendar entry ${entry.id} failed:`, entryErr.message);
+        await pool.query(
+          `UPDATE content_calendar_entries SET status = 'failed', error_message = $1, processed_at = NOW() WHERE id = $2`,
+          [(entryErr.message || 'Unknown error').slice(0, 500), entry.id]
+        );
+      }
+    }
+  } catch (err) {
+    console.error('Content calendar sweep top-level error:', err.message);
+  }
+}
+
 function startContentAutomationScheduler() {
   setInterval(async () => {
     await runContentAutomationSweep();
+    await runContentCalendarSweep();
   }, 60 * 60 * 1000); // check every hour, same real cadence as the monitoring scheduler above
 }
 
