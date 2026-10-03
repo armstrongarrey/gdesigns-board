@@ -1362,9 +1362,15 @@ CREATE TABLE IF NOT EXISTS shopify_connections (
   blog_id BIGINT, -- the shop's default blog, resolved once at connect time
   connection_status VARCHAR(20) DEFAULT 'connected', -- 'connected' | 'disconnected' | 'auth_expired'
   connected_at TIMESTAMPTZ DEFAULT NOW(),
-  last_verified_at TIMESTAMPTZ
+  last_verified_at TIMESTAMPTZ,
+  website_intelligence JSONB,
+  website_intelligence_fr JSONB,
+  website_intelligence_generated_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_shopify_connections_business ON shopify_connections(business_id);
+ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS website_intelligence JSONB;
+ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS website_intelligence_fr JSONB;
+ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS website_intelligence_generated_at TIMESTAMPTZ;
 
 -- Real, deliberate local record, the same real reason website_generated_posts
 -- exists — so a real generated article is visible, editable, and trackable
