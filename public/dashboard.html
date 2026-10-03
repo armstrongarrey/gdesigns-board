@@ -1788,7 +1788,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <button type="button" onclick="switchPlatformTab('wordpress')" id="platformTabWordPress" style="background:none;border:none;border-bottom:2px solid var(--purple);color:var(--text);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_wordpress">WordPress</button>
         <button type="button" onclick="switchPlatformTab('shopify')" id="platformTabShopify" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_shopify">Shopify</button>
         <button type="button" onclick="switchPlatformTab('backlinks')" id="platformTabBacklinks" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_backlinks">Backlinks</button>
-        <button type="button" onclick="switchPlatformTab('partnernetwork')" id="platformTabPartnerNetwork" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer" data-i18n="web.platform_tab_partner_network">Partner Network</button>
+        <button type="button" onclick="switchPlatformTab('partnernetwork')" id="platformTabPartnerNetwork" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_partner_network">Partner Network</button>
+        <button type="button" onclick="switchPlatformTab('calendar')" id="platformTabCalendar" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer" data-i18n="web.platform_tab_calendar">Content Calendar</button>
       </div>
 
       <!-- EMPTY STATE — spec section 25: explicit about what Arreyon will
@@ -2211,6 +2212,34 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
         <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.links_received_title">Links Received</div>
         <div id="partnerNetworkReceivedContent"></div>
+      </div>
+
+      <!-- CONTENT CALENDAR — planning specific posts on specific real
+           dates, genuinely separate from the automatic daily/weekly
+           cycle. Platform-agnostic: one calendar, either platform. -->
+      <div id="contentCalendarSection" style="display:none">
+        <div class="section-title" style="font-size:16px;margin-bottom:4px" data-i18n="web.content_calendar_title">Content Calendar</div>
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px" data-i18n="web.content_calendar_description">Plan specific blog posts for specific future dates. Leave the topic blank and Arreyon will pick one automatically on the day, the same way the automatic cycle does.</div>
+
+        <div style="background:var(--bg2);border-radius:12px;padding:16px;margin-bottom:20px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+            <select id="calendarPlatform" style="max-width:140px">
+              <option value="wordpress">WordPress</option>
+              <option value="shopify">Shopify</option>
+            </select>
+            <input type="date" id="calendarDate" style="max-width:160px">
+            <select id="calendarPublishMode" style="max-width:180px">
+              <option value="draft" data-i18n="web.content_automation_save_draft">Save as draft (I publish manually)</option>
+              <option value="publish" data-i18n="web.content_automation_auto_publish">Publish immediately, no review</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px">
+            <input type="text" id="calendarTopic" data-i18n-placeholder="web.calendar_topic_placeholder" placeholder="Topic (optional — leave blank for an automatic pick)" style="flex:1">
+            <button class="btn-primary" onclick="addContentCalendarEntry()" id="calendarAddBtn" data-i18n="web.calendar_add_button">Schedule</button>
+          </div>
+        </div>
+
+        <div id="contentCalendarContent"></div>
       </div>
 
       <!-- CATEGORIES & TAGS — read the site's real, existing taxonomy and
@@ -7518,6 +7547,7 @@ const PLATFORM_TABS = {
   shopify: { tabId: 'platformTabShopify', sectionId: 'shopifySection' },
   backlinks: { tabId: 'platformTabBacklinks', sectionId: 'backlinksSection' },
   partnernetwork: { tabId: 'platformTabPartnerNetwork', sectionId: 'partnerNetworkSection' },
+  calendar: { tabId: 'platformTabCalendar', sectionId: 'contentCalendarSection' },
 };
 
 function switchPlatformTab(platform) {
@@ -7544,6 +7574,7 @@ function switchPlatformTab(platform) {
 
   if (platform === 'backlinks') loadBacklinkOpportunities();
   if (platform === 'partnernetwork') loadPartnerNetworkStatus();
+  if (platform === 'calendar') loadContentCalendar();
 }
 
 // ── BACKLINK OPPORTUNITIES ───────────────────────────────────────────────
@@ -7665,6 +7696,95 @@ async function clearBacklinkOpportunities() {
     }
     showToast(t('web.entries_cleared').replace('{n}', data.clearedCount), 'success');
     loadBacklinkOpportunities();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+// ── CONTENT CALENDAR ──────────────────────────────────────────────────────
+async function addContentCalendarEntry() {
+  const platform = document.getElementById('calendarPlatform').value;
+  const scheduledDate = document.getElementById('calendarDate').value;
+  const topic = document.getElementById('calendarTopic').value.trim();
+  const publishMode = document.getElementById('calendarPublishMode').value;
+  if (!scheduledDate) {
+    showToast(t('web.calendar_date_required'), 'error');
+    return;
+  }
+  const btn = document.getElementById('calendarAddBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-schedule`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, scheduledDate, topic, publishMode }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.calendar_entry_scheduled_toast'), 'success');
+    document.getElementById('calendarTopic').value = '';
+    document.getElementById('calendarDate').value = '';
+    loadContentCalendar();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadContentCalendar() {
+  const contentEl = document.getElementById('contentCalendarContent');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-schedule`);
+    const data = await res.json();
+    renderContentCalendar(data.entries || []);
+  } catch (e) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
+  }
+}
+
+const CALENDAR_STATUS_COLORS = { scheduled: '#8b5cf6', generated: '#22c55e', failed: '#ef4444', cancelled: 'var(--muted)' };
+function renderContentCalendar(entries) {
+  const contentEl = document.getElementById('contentCalendarContent');
+  if (!entries.length) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_calendar_entries')}</div>`;
+    return;
+  }
+  // Real, deliberate chronological order — already sorted by the server,
+  // but kept explicit here too so this never silently depends on insert
+  // order if the query above ever changes.
+  const sorted = [...entries].sort((a, b) => new Date(a.scheduled_date) - new Date(b.scheduled_date));
+  contentEl.innerHTML = renderCollapsibleItems(sorted, (entry) => {
+    const dateLabel = new Date(entry.scheduled_date + 'T00:00:00').toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const statusColor = CALENDAR_STATUS_COLORS[entry.status] || 'var(--muted)';
+    return `
+    <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+      <div style="min-width:0">
+        <div style="font-size:11.5px;color:var(--muted)">${dateLabel} · ${entry.platform === 'wordpress' ? 'WordPress' : 'Shopify'}</div>
+        <div style="font-size:12.5px;color:var(--text);font-weight:600;margin-top:2px">${escapeHtml(entry.generated_title || entry.topic || t('web.calendar_auto_topic'))}</div>
+        ${entry.status === 'failed' && entry.error_message ? `<div style="font-size:11px;color:#ef4444;margin-top:3px">${escapeHtml(entry.error_message)}</div>` : ''}
+        ${entry.generated_url ? `<a href="${escapeHtml(entry.generated_url)}" target="_blank" style="font-size:11px;color:var(--purple-light)">${t('web.view_full_post_button')}</a>` : ''}
+      </div>
+      <div style="text-align:right;white-space:nowrap">
+        <span style="font-size:9px;font-weight:700;color:${statusColor};text-transform:uppercase">${t('web.calendar_status_' + entry.status)}</span>
+        ${entry.status === 'scheduled' ? `<div style="margin-top:4px"><button class="btn-ghost" onclick="cancelContentCalendarEntry('${entry.id}')" style="font-size:10px;padding:3px 8px">${t('web.cancel_button')}</button></div>` : ''}
+      </div>
+    </div>`;
+  }, 10, 'contentCalendar');
+}
+
+async function cancelContentCalendarEntry(entryId) {
+  if (!confirm(t('web.confirm_cancel_calendar_entry'))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-schedule/${entryId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    loadContentCalendar();
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
