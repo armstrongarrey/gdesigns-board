@@ -4606,6 +4606,7 @@ async function findBacklinkOpportunities(context, siteUrl) {
       for (const r of results) {
         if (!r.url || r.url.toLowerCase().includes(siteDomain)) continue; // Real, deliberate skip — never flag the business's own real site as a real "opportunity" to link to itself.
         let alreadyLinked = false;
+        let contactEmail = null;
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 8000);
@@ -4613,6 +4614,13 @@ async function findBacklinkOpportunities(context, siteUrl) {
           clearTimeout(timeout);
           const html = await pageRes.text();
           alreadyLinked = html.toLowerCase().includes(siteDomain);
+          // Real, deliberate extraction of a genuinely stated contact —
+          // only an actual mailto: link the page itself provides, never
+          // a guessed or inferred address; a page with no real mailto:
+          // link simply has no contact_email recorded, rather than a
+          // fabricated one.
+          const mailtoMatch = html.match(/mailto:([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
+          if (mailtoMatch) contactEmail = mailtoMatch[1];
         } catch (e) {
           // Real, deliberate conservative default — if the real page
           // can't be fetched at all, this is skipped rather than
@@ -4621,13 +4629,48 @@ async function findBacklinkOpportunities(context, siteUrl) {
           continue;
         }
         if (!alreadyLinked) {
-          opportunities.push({ type: 'unlinked_mention', title: r.title, url: r.url, description: (r.snippet || '').slice(0, 300) });
+          opportunities.push({ type: 'unlinked_mention', title: r.title, url: r.url, description: (r.snippet || '').slice(0, 300), contactEmail });
         }
       }
     } catch (e) { /* Real, deliberate no-op. */ }
   }
 
   return opportunities;
+}
+
+// Real, deliberate AI-drafted outreach, stopping short of sending — the
+// draft gets handed back for a real person to review and send from their
+// own real inbox, via a real mailto: link, never dispatched by the server
+// itself. This keeps the final judgment call (who to contact, whether to
+// edit the message, whether to send at all) with the actual business
+// owner, while still removing the blank-page cost of writing it from
+// scratch for every real opportunity.
+async function generateOutreachEmailDraft(opportunity, context) {
+  const business = context?.business || {};
+  const typeInstructions = {
+    directory: `This is a request to list the business on a real online directory. Ask politely about their submission process, or offer to send over the needed details.`,
+    guest_post: `This is a pitch to write a guest post for their blog. Briefly introduce the business, express genuine interest in contributing, and ask about their specific submission guidelines — do not propose a specific topic, since we don't yet know what they'd accept.`,
+    unlinked_mention: `They already mentioned this business on their page (${opportunity.url}) without a link. Thank them genuinely for the mention, and politely ask if they'd be willing to add a link to the business's own website, since they've already referenced it.`,
+  };
+
+  const prompt = `Write a short, genuine, non-template-sounding outreach email on behalf of a real business owner. This should read like a real person wrote it personally, not a mass-outreach template.
+
+BUSINESS: ${business.name || 'the business'}${business.website ? ` (${business.website})` : ''}
+RECIPIENT PAGE: ${opportunity.title} (${opportunity.url})
+SITUATION: ${typeInstructions[opportunity.opportunity_type] || typeInstructions.unlinked_mention}
+
+RULES:
+- Keep it under 100 words. Short, warm, genuine — not salesy, not a template.
+- Never invent a specific detail about the recipient or their site beyond what's given above.
+- No subject line clichés like "Quick question" or "Collaboration opportunity."
+- Sign off with just the business name, not a fabricated person's name.
+
+Return ONLY valid JSON, no markdown: {"subject": "...", "body": "..."}`;
+
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Write the email now, as JSON only.' }], complexity: 'moderate', context: { feature: 'backlink_outreach_draft' }, maxTokens: 500 });
+  const parsed = extractJSON(raw);
+  if (!parsed.subject || !parsed.body) throw new Error('Could not draft this email. Please try again.');
+  return { subject: parsed.subject, body: parsed.body };
 }
 
 function buildOrganizationSchema(context, siteUrl) {
@@ -8126,9 +8169,9 @@ app.post('/api/business/:id/backlinks/search', authRequired, async (req, res) =>
     let insertedCount = 0;
     for (const opp of opportunities) {
       const result = await pool.query(
-        `INSERT INTO backlink_opportunities (business_id, opportunity_type, title, url, description)
-         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (business_id, url) DO NOTHING RETURNING id`,
-        [req.params.id, opp.type, opp.title, opp.url, opp.description]
+        `INSERT INTO backlink_opportunities (business_id, opportunity_type, title, url, description, contact_email)
+         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (business_id, url) DO NOTHING RETURNING id`,
+        [req.params.id, opp.type, opp.title, opp.url, opp.description, opp.contactEmail || null]
       );
       if (result.rows.length) insertedCount++;
     }
@@ -8166,6 +8209,23 @@ app.put('/api/business/:id/backlinks/:opportunityId', authRequired, async (req, 
   } catch (e) {
     console.error('Update backlink opportunity error:', e.message);
     res.status(500).json({ error: 'Could not update this opportunity.' });
+  }
+});
+
+app.post('/api/business/:id/backlinks/:opportunityId/draft-email', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+
+    const oppResult = await pool.query('SELECT * FROM backlink_opportunities WHERE id = $1 AND business_id = $2', [req.params.opportunityId, req.params.id]);
+    if (!oppResult.rows.length) return res.status(404).json({ error: 'Opportunity not found' });
+
+    const draft = await generateOutreachEmailDraft(oppResult.rows[0], context);
+    res.json({ ...draft, contactEmail: oppResult.rows[0].contact_email });
+  } catch (err) {
+    console.error('Draft outreach email error:', err.message);
+    res.status(500).json({ error: err.message || 'Could not draft this email. Please try again.' });
   }
 });
 
