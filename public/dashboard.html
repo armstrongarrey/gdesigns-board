@@ -1789,7 +1789,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <button type="button" onclick="switchPlatformTab('shopify')" id="platformTabShopify" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_shopify">Shopify</button>
         <button type="button" onclick="switchPlatformTab('backlinks')" id="platformTabBacklinks" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_backlinks">Backlinks</button>
         <button type="button" onclick="switchPlatformTab('partnernetwork')" id="platformTabPartnerNetwork" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_partner_network">Partner Network</button>
-        <button type="button" onclick="switchPlatformTab('calendar')" id="platformTabCalendar" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer" data-i18n="web.platform_tab_calendar">Content Calendar</button>
+
       </div>
 
       <!-- EMPTY STATE — spec section 25: explicit about what Arreyon will
@@ -1922,32 +1922,41 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <a href="/api/website-tools/seo-rest-bridge-plugin.zip" download style="color:var(--purple-light)" data-i18n="web.seo_plugin_download_zip">↓ Download (.zip) — install via WordPress admin: Plugins → Add New → Upload Plugin</a>
         </div>
 
-        <!-- AUTOMATIC CONTENT CREATION — a genuinely different, higher-stakes
-             capability from the metadata-only automation above: the AI
-             writing and, if enabled, publishing whole new blog posts on its
-             own, daily, with no per-post approval. Off by default, and kept
-             visually distinct from the permissions grid above for exactly
-             that reason. -->
+        <!-- CONTENT CALENDAR & AUTOMATION — a real rule expands into real,
+             specific calendar entries ahead of time (one per day per time
+             slot, each with its own real action), rather than being
+             checked itself at run time. The calendar below is the one
+             real place to see everything coming up, whether scheduled by
+             a rule or added by hand. -->
         <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px;border:1px solid rgba(239,68,68,.25)">
           <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.content_automation_title">Automatic Content Creation</div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.content_automation_warning">When enabled, the AI refreshes Website Intelligence, audits and fixes existing SEO issues, then writes and creates a new blog post, on the schedule you choose below — low-risk fixes follow your Automation Mode setting above, and a new post never modifies an existing page or post's URL.</div>
-          <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer;margin-bottom:10px">
-            <input type="checkbox" id="websiteContentAutomationEnabled" onchange="updateWebsitePermissions()" style="width:auto">
-            <span data-i18n="web.content_automation_enable">Automatically write and create new blog posts</span>
-          </label>
-          <div id="websiteContentAutomationPublishRow" style="display:none;margin-left:24px">
-            <label style="font-size:11px;color:var(--muted)" data-i18n="web.content_automation_frequency_label">How often</label>
-            <select class="form-input" id="websiteContentAutomationFrequency" onchange="updateWebsitePermissions()" style="font-size:12.5px;max-width:280px;margin-bottom:10px">
-              <option value="daily" data-i18n="web.frequency_daily">Daily</option>
-              <option value="weekly" data-i18n="web.frequency_weekly">Weekly</option>
-              <option value="monthly" data-i18n="web.frequency_monthly">Monthly</option>
-            </select>
-            <label style="font-size:11px;color:var(--muted)" data-i18n="web.content_automation_publish_label">When a new post is ready</label>
-            <select class="form-input" id="websiteContentAutomationPublishMode" onchange="updateWebsitePermissions()" style="font-size:12.5px;max-width:280px">
-              <option value="draft" data-i18n="web.content_automation_save_draft">Save as draft (I publish manually)</option>
-              <option value="publish" data-i18n="web.content_automation_auto_publish">Publish immediately, no review</option>
-            </select>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.rule_builder_description">Set a date range and one or more times of day to post — each time can have its own action (save as draft, or publish immediately). Arreyon writes the actual posts ahead of schedule on the calendar below.</div>
+
+          <div id="websiteActiveRulesContent" style="margin-bottom:12px"></div>
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+            <div>
+              <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_start_date_label">Start date</label><br>
+              <input type="date" id="websiteRuleStartDate">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_end_date_label">End date</label><br>
+              <input type="date" id="websiteRuleEndDate">
+            </div>
           </div>
+          <div id="websiteRuleSlotsContainer" style="margin-bottom:8px"></div>
+          <button class="btn-ghost" onclick="addRuleSlotRow('website')" style="font-size:11px;padding:5px 10px;margin-bottom:10px" data-i18n="web.add_time_button">+ Add another time</button>
+          <div>
+            <button class="btn-primary" onclick="createAutomationRule('website')" id="websiteCreateRuleBtn" data-i18n="web.start_automation_button">Start Automation</button>
+          </div>
+        </div>
+
+        <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-size:12.5px;font-weight:700;color:var(--text)" data-i18n="web.content_calendar_title">Content Calendar</div>
+            <button class="btn-ghost" onclick="loadContentCalendar('website')" style="font-size:11px;padding:4px 10px" data-i18n="web.refresh">Refresh</button>
+          </div>
+          <div id="websiteCalendarContent"></div>
         </div>
 
         <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px">
@@ -2212,34 +2221,6 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
         <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.links_received_title">Links Received</div>
         <div id="partnerNetworkReceivedContent"></div>
-      </div>
-
-      <!-- CONTENT CALENDAR — planning specific posts on specific real
-           dates, genuinely separate from the automatic daily/weekly
-           cycle. Platform-agnostic: one calendar, either platform. -->
-      <div id="contentCalendarSection" style="display:none">
-        <div class="section-title" style="font-size:16px;margin-bottom:4px" data-i18n="web.content_calendar_title">Content Calendar</div>
-        <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px" data-i18n="web.content_calendar_description">Plan specific blog posts for specific future dates. Leave the topic blank and Arreyon will pick one automatically on the day, the same way the automatic cycle does.</div>
-
-        <div style="background:var(--bg2);border-radius:12px;padding:16px;margin-bottom:20px">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-            <select id="calendarPlatform" style="max-width:140px">
-              <option value="wordpress">WordPress</option>
-              <option value="shopify">Shopify</option>
-            </select>
-            <input type="date" id="calendarDate" style="max-width:160px">
-            <select id="calendarPublishMode" style="max-width:180px">
-              <option value="draft" data-i18n="web.content_automation_save_draft">Save as draft (I publish manually)</option>
-              <option value="publish" data-i18n="web.content_automation_auto_publish">Publish immediately, no review</option>
-            </select>
-          </div>
-          <div style="display:flex;gap:8px">
-            <input type="text" id="calendarTopic" data-i18n-placeholder="web.calendar_topic_placeholder" placeholder="Topic (optional — leave blank for an automatic pick)" style="flex:1">
-            <button class="btn-primary" onclick="addContentCalendarEntry()" id="calendarAddBtn" data-i18n="web.calendar_add_button">Schedule</button>
-          </div>
-        </div>
-
-        <div id="contentCalendarContent"></div>
       </div>
 
       <!-- CATEGORIES & TAGS — read the site's real, existing taxonomy and
@@ -7547,7 +7528,6 @@ const PLATFORM_TABS = {
   shopify: { tabId: 'platformTabShopify', sectionId: 'shopifySection' },
   backlinks: { tabId: 'platformTabBacklinks', sectionId: 'backlinksSection' },
   partnernetwork: { tabId: 'platformTabPartnerNetwork', sectionId: 'partnerNetworkSection' },
-  calendar: { tabId: 'platformTabCalendar', sectionId: 'contentCalendarSection' },
 };
 
 function switchPlatformTab(platform) {
@@ -7574,7 +7554,6 @@ function switchPlatformTab(platform) {
 
   if (platform === 'backlinks') loadBacklinkOpportunities();
   if (platform === 'partnernetwork') loadPartnerNetworkStatus();
-  if (platform === 'calendar') loadContentCalendar();
 }
 
 // ── BACKLINK OPPORTUNITIES ───────────────────────────────────────────────
@@ -7702,68 +7681,41 @@ async function clearBacklinkOpportunities() {
 }
 
 // ── CONTENT CALENDAR ──────────────────────────────────────────────────────
-async function addContentCalendarEntry() {
-  const platform = document.getElementById('calendarPlatform').value;
-  const scheduledDate = document.getElementById('calendarDate').value;
-  const topic = document.getElementById('calendarTopic').value.trim();
-  const publishMode = document.getElementById('calendarPublishMode').value;
-  if (!scheduledDate) {
-    showToast(t('web.calendar_date_required'), 'error');
-    return;
-  }
-  const btn = document.getElementById('calendarAddBtn');
-  btn.disabled = true;
-  try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-schedule`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform, scheduledDate, topic, publishMode }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(data.error || t('board.connection_error'), 'error');
-      return;
-    }
-    showToast(t('web.calendar_entry_scheduled_toast'), 'success');
-    document.getElementById('calendarTopic').value = '';
-    document.getElementById('calendarDate').value = '';
-    loadContentCalendar();
-  } catch (e) {
-    showToast(t('board.connection_error'), 'error');
-  } finally {
-    btn.disabled = false;
-  }
-}
+// ── CONTENT CALENDAR (now platform-scoped, living inside each platform's
+// own view rather than a standalone tab) ────────────────────────────────
+const CALENDAR_STATUS_COLORS = { scheduled: '#8b5cf6', generated: '#22c55e', failed: '#ef4444', cancelled: 'var(--muted)' };
 
-async function loadContentCalendar() {
-  const contentEl = document.getElementById('contentCalendarContent');
+async function loadContentCalendar(platform) {
+  const contentEl = document.getElementById(platform === 'shopify' ? 'shopifyCalendarContent' : 'websiteCalendarContent');
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-schedule`);
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-schedule?platform=${platform}`);
     const data = await res.json();
-    renderContentCalendar(data.entries || []);
+    renderContentCalendar(data.entries || [], contentEl);
   } catch (e) {
     contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
   }
 }
 
-const CALENDAR_STATUS_COLORS = { scheduled: '#8b5cf6', generated: '#22c55e', failed: '#ef4444', cancelled: 'var(--muted)' };
-function renderContentCalendar(entries) {
-  const contentEl = document.getElementById('contentCalendarContent');
+function renderContentCalendar(entries, contentEl) {
   if (!entries.length) {
     contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_calendar_entries')}</div>`;
     return;
   }
-  // Real, deliberate chronological order — already sorted by the server,
-  // but kept explicit here too so this never silently depends on insert
-  // order if the query above ever changes.
-  const sorted = [...entries].sort((a, b) => new Date(a.scheduled_date) - new Date(b.scheduled_date));
+  // Real, deliberate chronological order by real date AND time — already
+  // sorted by the server, but kept explicit here too so this never
+  // silently depends on insert order if the query above ever changes.
+  const sorted = [...entries].sort((a, b) => new Date(`${a.scheduled_date}T${a.scheduled_time}`) - new Date(`${b.scheduled_date}T${b.scheduled_time}`));
   contentEl.innerHTML = renderCollapsibleItems(sorted, (entry) => {
     const dateLabel = new Date(entry.scheduled_date + 'T00:00:00').toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const timeLabel = entry.scheduled_time ? entry.scheduled_time.slice(0, 5) : '';
     const statusColor = CALENDAR_STATUS_COLORS[entry.status] || 'var(--muted)';
+    const actionLabel = entry.publish_mode === 'publish' ? t('web.content_automation_auto_publish') : t('web.content_automation_save_draft');
     return `
     <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
       <div style="min-width:0">
-        <div style="font-size:11.5px;color:var(--muted)">${dateLabel} · ${entry.platform === 'wordpress' ? 'WordPress' : 'Shopify'}</div>
+        <div style="font-size:11.5px;color:var(--muted)">${dateLabel} ${timeLabel}</div>
         <div style="font-size:12.5px;color:var(--text);font-weight:600;margin-top:2px">${escapeHtml(entry.generated_title || entry.topic || t('web.calendar_auto_topic'))}</div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(actionLabel)}</div>
         ${entry.status === 'failed' && entry.error_message ? `<div style="font-size:11px;color:#ef4444;margin-top:3px">${escapeHtml(entry.error_message)}</div>` : ''}
         ${entry.generated_url ? `<a href="${escapeHtml(entry.generated_url)}" target="_blank" style="font-size:11px;color:var(--purple-light)">${t('web.view_full_post_button')}</a>` : ''}
       </div>
@@ -7784,7 +7736,108 @@ async function cancelContentCalendarEntry(entryId) {
       showToast(data.error || t('board.connection_error'), 'error');
       return;
     }
-    loadContentCalendar();
+    // Real, deliberate refresh of whichever platform view is currently
+    // visible — simplest real way to pick the right one without needing
+    // to track which platform this specific real entry belonged to.
+    loadContentCalendar(document.getElementById('shopifyCalendarContent')?.offsetParent ? 'shopify' : 'website');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+// ── AUTOMATION RULE BUILDER (shared across WordPress and Shopify) ───────
+let ruleSlotCounters = { website: 0, shopify: 0 };
+
+function addRuleSlotRow(platform) {
+  const container = document.getElementById(`${platform}RuleSlotsContainer`);
+  const idx = ruleSlotCounters[platform]++;
+  const row = document.createElement('div');
+  row.id = `${platform}RuleSlot-${idx}`;
+  row.style.cssText = 'display:flex;gap:8px;margin-bottom:6px;align-items:center';
+  row.innerHTML = `
+    <input type="time" class="rule-slot-time" value="09:00" style="max-width:120px">
+    <select class="rule-slot-mode" style="max-width:220px">
+      <option value="draft">${t('web.content_automation_save_draft')}</option>
+      <option value="publish">${t('web.content_automation_auto_publish')}</option>
+    </select>
+    <button class="btn-ghost" onclick="document.getElementById('${platform}RuleSlot-${idx}').remove()" style="font-size:11px;padding:3px 8px">${t('web.remove_button')}</button>
+  `;
+  container.appendChild(row);
+}
+
+async function createAutomationRule(platform) {
+  const startDate = document.getElementById(`${platform}RuleStartDate`).value;
+  const endDate = document.getElementById(`${platform}RuleEndDate`).value;
+  const container = document.getElementById(`${platform}RuleSlotsContainer`);
+  const slots = [...container.children].map(row => ({
+    timeOfDay: row.querySelector('.rule-slot-time').value,
+    publishMode: row.querySelector('.rule-slot-mode').value,
+  }));
+
+  if (!startDate || !endDate) {
+    showToast(t('web.rule_dates_required'), 'error');
+    return;
+  }
+  if (!slots.length) {
+    showToast(t('web.rule_slot_required'), 'error');
+    return;
+  }
+
+  const btn = document.getElementById(`${platform}CreateRuleBtn`);
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-automation-rule`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: platform === 'shopify' ? 'shopify' : 'wordpress', startDate, endDate, slots }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(tf('web.rule_created_toast', { count: data.createdCount }), 'success');
+    container.innerHTML = '';
+    ruleSlotCounters[platform] = 0;
+    addRuleSlotRow(platform);
+    loadActiveRules(platform);
+    loadContentCalendar(platform);
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadActiveRules(platform) {
+  const contentEl = document.getElementById(`${platform}ActiveRulesContent`);
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-automation-rule`);
+    const data = await res.json();
+    const rules = (data.rules || []).filter(r => r.platform === (platform === 'shopify' ? 'shopify' : 'wordpress'));
+    if (!rules.length) { contentEl.innerHTML = ''; return; }
+    contentEl.innerHTML = rules.map(rule => `
+      <div style="background:var(--bg2);border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="font-size:12px;color:var(--text);font-weight:600">${rule.start_date} → ${rule.end_date}</div>
+          <div style="font-size:11px;color:var(--muted)">${rule.slots.map(s => `${s.time_of_day.slice(0,5)} (${s.publish_mode === 'publish' ? t('web.content_automation_auto_publish') : t('web.content_automation_save_draft')})`).join(' · ')}</div>
+        </div>
+        <button class="btn-ghost" onclick="cancelAutomationRule('${rule.id}', '${platform}')" style="font-size:11px;padding:4px 10px">${t('web.stop_automation_button')}</button>
+      </div>`).join('');
+  } catch (e) { /* Real, deliberate no-op — the create form above still works even if this list fails to load. */ }
+}
+
+async function cancelAutomationRule(ruleId, platform) {
+  if (!confirm(t('web.confirm_stop_automation'))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-automation-rule/${ruleId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(tf('web.rule_stopped_toast', { count: data.removedCount }), 'success');
+    loadActiveRules(platform);
+    loadContentCalendar(platform);
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
@@ -8180,10 +8233,6 @@ function renderWebsiteStatusCard(connection) {
 
   document.getElementById('websitePermissionLevel').value = connection.permission_level || 'read_only';
   document.getElementById('websiteAutomationMode').value = connection.automation_mode || 'manual';
-  document.getElementById('websiteContentAutomationEnabled').checked = !!connection.content_automation_enabled;
-  document.getElementById('websiteContentAutomationPublishMode').value = connection.content_automation_publish_mode || 'draft';
-  document.getElementById('websiteContentAutomationFrequency').value = connection.content_automation_frequency || 'daily';
-  document.getElementById('websiteContentAutomationPublishRow').style.display = connection.content_automation_enabled ? 'block' : 'none';
 
   const errEl = document.getElementById('websiteStatusError');
   if (connection.last_error && ['error', 'needs_attention', 'auth_expired'].includes(connection.connection_status)) {
@@ -8258,6 +8307,9 @@ async function loadWebsiteSection() {
     loadKeywordRankings();
     loadWebsiteSitemapStatus();
     loadTechnicalSeoHistory('website');
+    loadActiveRules('website');
+    loadContentCalendar('website');
+    if (!document.getElementById('websiteRuleSlotsContainer').children.length) addRuleSlotRow('website');
     loadWebsiteActions();
     return true;
   } catch (e) {
@@ -8884,14 +8936,10 @@ function renderWebsiteIntelligenceContent(intelligence, generatedAt, containerId
 async function updateWebsitePermissions() {
   const permissionLevel = document.getElementById('websitePermissionLevel').value;
   const automationMode = document.getElementById('websiteAutomationMode').value;
-  const contentAutomationEnabled = document.getElementById('websiteContentAutomationEnabled').checked;
-  const contentAutomationPublishMode = document.getElementById('websiteContentAutomationPublishMode').value;
-  const contentAutomationFrequency = document.getElementById('websiteContentAutomationFrequency').value;
-  document.getElementById('websiteContentAutomationPublishRow').style.display = contentAutomationEnabled ? 'block' : 'none';
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/permissions`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permissionLevel, automationMode, contentAutomationEnabled, contentAutomationPublishMode, contentAutomationFrequency })
+      body: JSON.stringify({ permissionLevel, automationMode })
     });
     if (res.ok) showToast(t('toast.saved'), 'success');
     else showToast(t('board.connection_error'), 'error');
