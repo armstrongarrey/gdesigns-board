@@ -8165,6 +8165,45 @@ app.post('/api/business/:id/reciprocal-network/opt-out', authRequired, async (re
   }
 });
 
+app.post('/api/business/:id/reciprocal-network/report/:placementId', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id, name FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+
+    // Real, deliberate authorization check — only a real party to this
+    // exact placement (the one that gave the link or the one that
+    // received it) can report it, never an arbitrary business guessing
+    // at another placement's id.
+    const placement = await pool.query(
+      `SELECT * FROM reciprocal_links_placed WHERE id = $1 AND (from_business_id = $2 OR to_business_id = $2)`,
+      [req.params.placementId, req.params.id]
+    );
+    if (!placement.rows.length) return res.status(404).json({ error: 'Placement not found' });
+
+    const reason = (req.body?.reason || '').trim().slice(0, 1000);
+    await pool.query(
+      `INSERT INTO reciprocal_link_reports (placement_id, reported_by_business_id, reason) VALUES ($1, $2, $3)`,
+      [req.params.placementId, req.params.id, reason || null]
+    );
+
+    // Real, deliberate admin notification — the same real email path
+    // already used for payment submissions, so a real report never just
+    // sits silently in a table waiting to be noticed by chance.
+    try {
+      await sendEmail(ADMIN_EMAIL, `Partner Network report — ${biz.rows[0].name}`,
+        `<p><strong>${biz.rows[0].name}</strong> reported a Partner Network placement.</p>
+         <p><strong>Reason:</strong> ${reason || '(no reason given)'}</p>
+         <p><strong>Placement:</strong> ${placement.rows[0].from_post_url || placement.rows[0].id}</p>`);
+    } catch (e) { /* Real, deliberate no-op — the report itself is already saved; a notification email failing shouldn't fail the whole request. */ }
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Report placement error:', e.message);
+    res.status(500).json({ error: 'Could not submit this report. Please try again.' });
+  }
+});
+
 app.post('/api/business/:id/backlinks/search', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
@@ -10073,21 +10112,43 @@ app.get('/api/admin/partner-network/overview', adminRequired, async (req, res) =
 
 app.get('/api/admin/partner-network/placements', adminRequired, async (req, res) => {
   try {
+    // Real, deliberate open-reports-first ordering — the most actionable
+    // real rows surface immediately, rather than needing to scroll past
+    // 200 unreported placements to find the one that actually needs
+    // attention.
     const result = await pool.query(
       `SELECT rl.*,
               fb.name AS from_business_name, fu.email AS from_account_email,
-              tb.name AS to_business_name, tu.email AS to_account_email
+              tb.name AS to_business_name, tu.email AS to_account_email,
+              r.open_report_count, r.open_report_reasons
        FROM reciprocal_links_placed rl
        JOIN businesses fb ON fb.id = rl.from_business_id
        JOIN users fu ON fu.id = fb.user_id
        JOIN businesses tb ON tb.id = rl.to_business_id
        JOIN users tu ON tu.id = tb.user_id
-       ORDER BY rl.placed_at DESC LIMIT 200`
+       LEFT JOIN (
+         SELECT placement_id, COUNT(*) AS open_report_count, STRING_AGG(COALESCE(reason, '(no reason given)'), ' | ') AS open_report_reasons
+         FROM reciprocal_link_reports WHERE status = 'open' GROUP BY placement_id
+       ) r ON r.placement_id = rl.id
+       ORDER BY (r.open_report_count IS NULL), rl.placed_at DESC LIMIT 200`
     );
     res.json({ placements: result.rows });
   } catch (e) {
     console.error('Admin partner network placements error:', e.message);
     res.status(500).json({ error: 'Failed to load placements.' });
+  }
+});
+
+app.post('/api/admin/partner-network/reports/:placementId/resolve', adminRequired, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE reciprocal_link_reports SET status = 'resolved' WHERE placement_id = $1 AND status = 'open' RETURNING id`,
+      [req.params.placementId]
+    );
+    res.json({ success: true, resolvedCount: result.rows.length });
+  } catch (e) {
+    console.error('Resolve report error:', e.message);
+    res.status(500).json({ error: 'Could not resolve this report.' });
   }
 });
 
