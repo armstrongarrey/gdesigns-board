@@ -398,6 +398,16 @@ let adminToken = null;
 let cmsData = {};
 
 // ── LOGIN ──────────────────────────────────────────────────────────────────
+// Real, deliberate single shared entry point into the dashboard — used by
+// both a fresh login and a restored session on page load, so the two
+// paths can never quietly drift out of sync with each other.
+function showAdminDashboard() {
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('appSidebar').style.display = 'flex';
+  document.getElementById('appMain').style.display = 'flex';
+  loadOverview(); loadPayments(); loadUsers(); loadCMS(); loadAnnouncements(); loadCoupons();
+}
+
 async function adminLogin() {
   const email = document.getElementById('adminEmail').value.trim();
   const password = document.getElementById('adminPassword').value;
@@ -409,10 +419,7 @@ async function adminLogin() {
     const res = await fetch('/api/admin/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, password}) });
     const data = await res.json();
     if (data.success) {
-      document.getElementById('loginScreen').style.display = 'none';
-      document.getElementById('appSidebar').style.display = 'flex';
-      document.getElementById('appMain').style.display = 'flex';
-      loadOverview(); loadPayments(); loadUsers(); loadCMS(); loadAnnouncements(); loadCoupons();
+      showAdminDashboard();
     } else { err.textContent = data.error || t('admin.invalid_credentials'); err.classList.add('show'); }
   } catch(e) { err.textContent = t('admin.connection_error_short'); err.classList.add('show'); }
   btn.disabled = false; btn.textContent = t('admin.sign_in');
@@ -422,6 +429,22 @@ async function adminLogout() {
   await fetch('/api/admin/logout', { method:'POST' });
   location.reload();
 }
+
+// Real, deliberate check for a real, still-valid session before ever
+// showing the login screen — the login already sets a real 24-hour
+// cookie, so without this, a simple page refresh looks exactly like an
+// expired session even though the real cookie is still perfectly valid.
+async function checkExistingAdminSession() {
+  try {
+    const res = await fetch('/api/admin/me');
+    if (res.ok) showAdminDashboard();
+  } catch (e) {
+    // Real, deliberate no-op — leaves the login screen showing, its own
+    // real default state, exactly as it should for a genuinely expired
+    // or nonexistent session.
+  }
+}
+checkExistingAdminSession();
 
 document.getElementById('adminPassword').addEventListener('keydown', e => { if(e.key==='Enter') adminLogin(); });
 
