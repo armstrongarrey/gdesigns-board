@@ -2107,6 +2107,32 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div id="shopifyActionsContent"></div>
           </div>
 
+          <!-- AUTOMATIC CONTENT CREATION — Shopify's equivalent of
+               WordPress's automation settings, same cycle: intelligence
+               refresh, audit, then a new blog post, on the schedule
+               chosen below. -->
+          <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px;border:1px solid rgba(239,68,68,.25)">
+            <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.content_automation_title">Automatic Content Creation</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.content_automation_warning">When enabled, the AI refreshes Website Intelligence, audits and fixes existing SEO issues, then writes and creates a new blog post, on the schedule you choose below — low-risk fixes follow your Automation Mode setting above, and a new post never modifies an existing page or post's URL.</div>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer;margin-bottom:10px">
+              <input type="checkbox" id="shopifyContentAutomationEnabled" onchange="updateShopifyAutomation()" style="width:auto">
+              <span data-i18n="web.content_automation_enable">Automatically write and create new blog posts</span>
+            </label>
+            <div id="shopifyContentAutomationPublishRow" style="display:none;margin-left:24px">
+              <label style="font-size:11px;color:var(--muted)" data-i18n="web.content_automation_frequency_label">How often</label>
+              <select class="form-input" id="shopifyContentAutomationFrequency" onchange="updateShopifyAutomation()" style="font-size:12.5px;max-width:280px;margin-bottom:10px">
+                <option value="daily" data-i18n="web.frequency_daily">Daily</option>
+                <option value="weekly" data-i18n="web.frequency_weekly">Weekly</option>
+                <option value="monthly" data-i18n="web.frequency_monthly">Monthly</option>
+              </select>
+              <label style="font-size:11px;color:var(--muted)" data-i18n="web.content_automation_publish_label">When a new post is ready</label>
+              <select class="form-input" id="shopifyContentAutomationPublishMode" onchange="updateShopifyAutomation()" style="font-size:12.5px;max-width:280px">
+                <option value="draft" data-i18n="web.content_automation_save_draft">Save as draft (I publish manually)</option>
+                <option value="publish" data-i18n="web.content_automation_auto_publish">Publish immediately, no review</option>
+              </select>
+            </div>
+          </div>
+
           <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:16px">
             <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:8px" data-i18n="web.generate_post_now_title">Generate a Blog Post Now</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -7755,6 +7781,10 @@ async function loadShopifyStatus() {
     document.getElementById('shopifyConnectPrompt').style.display = 'none';
     document.getElementById('shopifyConnectedWrap').style.display = 'block';
     document.getElementById('shopifyDomainLabel').textContent = data.connection.shop_domain;
+    document.getElementById('shopifyContentAutomationEnabled').checked = !!data.connection.content_automation_enabled;
+    document.getElementById('shopifyContentAutomationPublishMode').value = data.connection.content_automation_publish_mode || 'draft';
+    document.getElementById('shopifyContentAutomationFrequency').value = data.connection.content_automation_frequency || 'daily';
+    document.getElementById('shopifyContentAutomationPublishRow').style.display = data.connection.content_automation_enabled ? 'block' : 'none';
     renderWebsiteIntelligenceContent(data.connection.website_intelligence, data.connection.website_intelligence_generated_at, 'shopifyIntelligenceContent');
     loadShopifyActions();
     loadShopifyGeneratedPosts();
@@ -8740,6 +8770,23 @@ async function updateWebsitePermissions() {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/permissions`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ permissionLevel, automationMode, contentAutomationEnabled, contentAutomationPublishMode, contentAutomationFrequency })
+    });
+    if (res.ok) showToast(t('toast.saved'), 'success');
+    else showToast(t('board.connection_error'), 'error');
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+async function updateShopifyAutomation() {
+  const contentAutomationEnabled = document.getElementById('shopifyContentAutomationEnabled').checked;
+  const contentAutomationPublishMode = document.getElementById('shopifyContentAutomationPublishMode').value;
+  const contentAutomationFrequency = document.getElementById('shopifyContentAutomationFrequency').value;
+  document.getElementById('shopifyContentAutomationPublishRow').style.display = contentAutomationEnabled ? 'block' : 'none';
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/automation`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contentAutomationEnabled, contentAutomationPublishMode, contentAutomationFrequency })
     });
     if (res.ok) showToast(t('toast.saved'), 'success');
     else showToast(t('board.connection_error'), 'error');
