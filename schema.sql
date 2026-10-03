@@ -1369,7 +1369,14 @@ CREATE TABLE IF NOT EXISTS shopify_connections (
   content_automation_enabled BOOLEAN DEFAULT FALSE,
   content_automation_publish_mode VARCHAR(20) DEFAULT 'draft', -- 'draft' (safer, default) | 'publish'
   content_automation_frequency VARCHAR(20) DEFAULT 'daily', -- 'daily' | 'weekly' | 'monthly'
-  content_automation_last_run_at TIMESTAMPTZ
+  content_automation_last_run_at TIMESTAMPTZ,
+  -- Real, deliberate visible outcome of the real, last automatic attempt
+  -- — without this, a real failure (an expired token, a Shopify API
+  -- error, anything) updates last_run_at and then goes completely
+  -- invisible, indistinguishable from a real, successful run with
+  -- nothing new to say. This is what makes that distinction visible.
+  content_automation_last_run_status VARCHAR(20), -- 'success' | 'failed'
+  content_automation_last_run_error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_shopify_connections_business ON shopify_connections(business_id);
 ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS website_intelligence JSONB;
@@ -1378,6 +1385,8 @@ ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS website_intelligence_ge
 ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS content_automation_enabled BOOLEAN DEFAULT FALSE;
 ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS content_automation_publish_mode VARCHAR(20) DEFAULT 'draft';
 ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS content_automation_frequency VARCHAR(20) DEFAULT 'daily';
+ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS content_automation_last_run_status VARCHAR(20);
+ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS content_automation_last_run_error TEXT;
 ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS content_automation_last_run_at TIMESTAMPTZ;
 
 -- Real, deliberate local record, the same real reason website_generated_posts
