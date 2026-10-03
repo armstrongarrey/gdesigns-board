@@ -2090,6 +2090,23 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div id="shopifyIntelligenceContent"></div>
           </div>
 
+          <!-- RUN AUDIT & OPTIMIZE — Shopify's leaner equivalent: real
+               meta-tag gaps and real broken internal links only. Every
+               proposal here requires manual approval, since Shopify has
+               no permission/automation settings of its own yet. -->
+          <div style="margin-bottom:20px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+              <div class="section-title" style="margin-bottom:0;font-size:14px" data-i18n="web.audit_run_title">Run Audit & Optimize</div>
+              <button class="btn-primary" onclick="runShopifyAudit()" id="shopifyRunAuditBtn" data-i18n="web.run_audit_button">Run Audit & Optimize</button>
+            </div>
+            <div id="shopifyAuditRunContent"></div>
+          </div>
+
+          <div style="margin-bottom:20px">
+            <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.proposed_changes_title">Proposed Changes</div>
+            <div id="shopifyActionsContent"></div>
+          </div>
+
           <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:16px">
             <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:8px" data-i18n="web.generate_post_now_title">Generate a Blog Post Now</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -7739,6 +7756,7 @@ async function loadShopifyStatus() {
     document.getElementById('shopifyConnectedWrap').style.display = 'block';
     document.getElementById('shopifyDomainLabel').textContent = data.connection.shop_domain;
     renderWebsiteIntelligenceContent(data.connection.website_intelligence, data.connection.website_intelligence_generated_at, 'shopifyIntelligenceContent');
+    loadShopifyActions();
     loadShopifyGeneratedPosts();
     loadShopifySitemapStatus();
     loadTechnicalSeoHistory('shopify');
@@ -8415,6 +8433,100 @@ async function generateShopifyIntelligence() {
   } finally {
     btn.disabled = false;
     btn.textContent = t('web.generate_button');
+  }
+}
+
+// ── SHOPIFY AUDIT & PROPOSED CHANGES ─────────────────────────────────────
+async function runShopifyAudit() {
+  const btn = document.getElementById('shopifyRunAuditBtn');
+  const contentEl = document.getElementById('shopifyAuditRunContent');
+  btn.disabled = true;
+  btn.textContent = t('web.auditing');
+  contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.auditing_desc')}</div>`;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/run-audit`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:#ff8080;font-size:13px">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+      return;
+    }
+    const totalFound = (data.foundIssues.metaTitle || 0) + (data.foundIssues.metaDescription || 0) + (data.foundIssues.brokenLinks || 0);
+    const newCount = data.proposalsCreated.length;
+    contentEl.innerHTML = `<div style="font-size:12.5px;color:var(--text2)">${tf('web.shopify_audit_summary', { analyzed: data.analyzedCount, found: totalFound, new: newCount })}</div>`;
+    showToast(tf('web.shopify_audit_toast', { new: newCount }), 'success');
+    loadShopifyActions();
+  } catch (e) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.run_audit_button');
+  }
+}
+
+async function loadShopifyActions() {
+  const contentEl = document.getElementById('shopifyActionsContent');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/actions`);
+    const data = await res.json();
+    renderShopifyActions(data.actions || []);
+  } catch (e) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderShopifyActions(actions) {
+  const contentEl = document.getElementById('shopifyActionsContent');
+  const pending = actions.filter(a => a.approval_status === 'pending');
+  if (!pending.length) {
+    contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_pending_changes')}</div>`;
+    return;
+  }
+  contentEl.innerHTML = renderCollapsibleItems(pending, (action) => {
+    const change = action.proposed_change || {};
+    let changeDescription = '';
+    if (change.metaTitle) changeDescription = `${t('web.new_meta_title_label')}: "${escapeHtml(change.metaTitle)}"`;
+    else if (change.metaDescription) changeDescription = `${t('web.new_meta_description_label')}: "${escapeHtml(change.metaDescription)}"`;
+    else if (change.brokenUrl) changeDescription = tf('web.broken_link_description', { url: escapeHtml(change.brokenUrl) });
+
+    return `
+    <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
+      <div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(action.target_title || '')}</div>
+      <div style="font-size:11.5px;color:var(--text2);margin-top:4px">${changeDescription}</div>
+      ${action.reasoning ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;font-style:italic">${escapeHtml(action.reasoning)}</div>` : ''}
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn-primary" onclick="approveShopifyAction('${action.id}')" style="font-size:11px;padding:5px 12px">${t('web.approve_button')}</button>
+        <button class="btn-ghost" onclick="rejectShopifyAction('${action.id}')" style="font-size:11px;padding:5px 12px">${t('web.reject_button')}</button>
+      </div>
+    </div>`;
+  }, 5, 'shopifyActions');
+}
+
+async function approveShopifyAction(actionId) {
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/actions/${actionId}/approve`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    showToast(t('web.change_applied_toast'), 'success');
+    loadShopifyActions();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+async function rejectShopifyAction(actionId) {
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/actions/${actionId}/reject`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      return;
+    }
+    loadShopifyActions();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
   }
 }
 
