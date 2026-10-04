@@ -9165,9 +9165,11 @@ async function updateShopifyAgentMode() {
       body: JSON.stringify({ automationMode, agentCycleFrequency })
     });
     if (!res.ok) { showToast(t('board.connection_error'), 'error'); return; }
-    showToast(t('toast.saved'), 'success');
+    const data = await res.json().catch(() => ({}));
+    if (!reportAgentSwitch('shopify', data.agentRun)) showToast(t('toast.saved'), 'success');
     if (currentShopifyConnection) {
       Object.assign(currentShopifyConnection, { automation_mode: automationMode, agent_cycle_frequency: agentCycleFrequency });
+      if (data.connection && data.connection.agent_last_cycle_at) currentShopifyConnection.agent_last_cycle_at = data.connection.agent_last_cycle_at;
       renderAgentModeStatus('shopify', currentShopifyConnection);
     }
   } catch (e) {
@@ -9239,6 +9241,19 @@ function watchAgentRun(prefix) {
       setRunAgentButton(prefix, false);
     }
   }, 5000);
+}
+
+// What to tell the person after they save the mode. When they switch to Automatic the server starts the agent
+// straight away, in the background; this says so and follows the run live. Returns true if it showed its own
+// message (so the plain "saved" one is not shown on top of it).
+function reportAgentSwitch(prefix, agentRun) {
+  if (!agentRun) return false;
+  if (agentRun.started) { showToast(t('web.agent_switch_started_toast'), 'success'); watchAgentRun(prefix); return true; }
+  const key = { recent: 'web.agent_switch_recent_toast', running: 'web.agent_switch_running_toast', poll: 'web.agent_status_poll_warning' }[agentRun.reason];
+  if (!key) return false;
+  showToast(t(key), agentRun.reason === 'poll' ? 'error' : 'success');
+  if (agentRun.reason === 'running') watchAgentRun(prefix);
+  return true;
 }
 
 // Everything Automatic mode does, started by hand. In Manual mode fixes are proposed for approval; in
@@ -9343,9 +9358,11 @@ async function updateWebsitePermissions() {
       body: JSON.stringify({ permissionLevel, automationMode, agentCycleFrequency })
     });
     if (res.ok) {
-      showToast(t('toast.saved'), 'success');
+      const data = await res.json().catch(() => ({}));
+      if (!reportAgentSwitch('website', data.agentRun)) showToast(t('toast.saved'), 'success');
       if (currentWebsiteConnection) {
         Object.assign(currentWebsiteConnection, { permission_level: permissionLevel, automation_mode: automationMode, agent_cycle_frequency: agentCycleFrequency });
+        if (data.agentRun && data.agentRun.started) currentWebsiteConnection.agent_last_cycle_at = new Date().toISOString();
         renderAgentModeStatus('website', currentWebsiteConnection);
       }
     } else showToast(t('board.connection_error'), 'error');
