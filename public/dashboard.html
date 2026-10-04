@@ -57,6 +57,16 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .btn-primary:hover{background:var(--purple-light)}
 .btn-ghost{background:transparent;border:1px solid var(--border-light);color:var(--text2);font-size:13px;font-weight:500;padding:8px 16px;border-radius:8px;cursor:pointer;font-family:inherit;transition:all .15s;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
 .btn-ghost:hover{border-color:var(--purple);color:var(--text)}
+/* Manual / Automatic switch */
+.mode-switch{display:inline-flex;align-items:center;gap:10px;cursor:pointer;user-select:none;font-size:12.5px;color:var(--muted);position:relative}
+.mode-switch input{position:absolute;opacity:0;width:0;height:0}
+.mode-switch-track{position:relative;width:44px;height:24px;border-radius:12px;background:var(--bg4);border:1px solid var(--border-light);transition:background .15s,border-color .15s;flex-shrink:0}
+.mode-switch-knob{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:var(--text2);transition:transform .15s,background .15s}
+.mode-switch input:checked + .mode-switch-track{background:var(--purple);border-color:var(--purple-light)}
+.mode-switch input:checked + .mode-switch-track .mode-switch-knob{transform:translateX(20px);background:#fff}
+.mode-switch input:focus-visible + .mode-switch-track{outline:2px solid var(--purple-light);outline-offset:2px}
+.mode-switch input:disabled + .mode-switch-track{opacity:.55;cursor:wait}
+.mode-switch:has(input:checked) .mode-side-auto,.mode-switch:has(input:not(:checked)) .mode-side-manual{color:var(--text);font-weight:600}
 
 .content{padding:28px;flex:1}
 .section-view{display:none}
@@ -1919,14 +1929,17 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           </div>
           <div class="form-group" style="margin-bottom:0">
             <label style="font-size:11px" data-i18n="web.automation_mode_label">Automation</label>
-            <select class="form-input" id="websiteAutomationMode" onchange="updateWebsitePermissions()" style="font-size:12.5px">
-              <option value="manual" data-i18n="web.automation_manual">Manual (I approve everything)</option>
-              <option value="automatic" data-i18n="web.automation_automatic">Automatic (low-risk changes only)</option>
-            </select>
+            <label class="mode-switch" for="websiteAutomationSwitch">
+              <span class="mode-side-manual" data-i18n="web.mode_manual">Manual</span>
+              <input type="checkbox" id="websiteAutomationSwitch" role="switch" onchange="updateWebsitePermissions()">
+              <span class="mode-switch-track"><span class="mode-switch-knob"></span></span>
+              <span class="mode-side-auto" data-i18n="web.mode_automatic">Automatic</span>
+            </label>
+            <div id="websiteModeCaption" style="font-size:11px;color:var(--muted);line-height:1.4;margin-top:6px"></div>
           </div>
         </div>
 
-        <!-- AUTOMATIC MODE — the AI Agent Mode select above is the master switch.
+        <!-- AUTOMATIC MODE — the Manual / Automatic switch above is the master switch.
              This panel says plainly what it does, sets how often it runs, and
              shows when it last did and anything that would stop it working. -->
         <div style="margin-bottom:14px;padding:14px;background:var(--bg3);border-radius:10px;border:1px solid rgba(139,92,246,.25)">
@@ -1941,10 +1954,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             </select>
           </div>
           <div id="websiteAgentModeStatus" style="font-size:11.5px;line-height:1.5"></div>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px">
-            <button class="btn-ghost" id="websiteRunAgentBtn" onclick="runAgentNow('website')" style="font-size:12px;padding:6px 12px" data-i18n="web.agent_run_now_button">Run all now</button>
-            <span style="font-size:11px;color:var(--muted);line-height:1.4;flex:1;min-width:200px" data-i18n="web.agent_run_now_hint"></span>
-          </div>
+          <div id="websiteAgentRunBadge" hidden style="margin-top:8px;font-size:11.5px;font-weight:600;color:var(--gold)"></div>
         </div>
 
         <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:14px;padding-top:2px">
@@ -2117,6 +2127,17 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div id="websiteSitemapContent"></div>
       </div>
 
+      <!-- COMPETITOR ANALYSIS (WordPress) — measured on competitors' real public pages and compared with this site.
+           The AI may only draw conclusions from that data; anything it cannot trace to a page that was read is dropped. -->
+      <div id="websiteCompetitorSection" style="display:none;margin-top:28px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.competitor_title">Competitor Analysis</div>
+          <button class="btn-primary" onclick="runCompetitorAnalysis()" id="websiteCompetitorBtn" data-i18n="web.competitor_run_button">Analyze competitors</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin:8px 0 12px;line-height:1.5" data-i18n="web.competitor_description"></div>
+        <div id="websiteCompetitorContent"></div>
+      </div>
+
       <!-- TECHNICAL SEO — real Google Lighthouse lab data, not an estimate.
            Field (real-user) data is shown only when Google actually has
            enough real traffic to report it, which most small-business
@@ -2191,10 +2212,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px">
               <div class="form-group" style="margin-bottom:0">
                 <label style="font-size:11px" data-i18n="web.automation_mode_label">AI Agent Mode</label>
-                <select class="form-input" id="shopifyAutomationMode" onchange="updateShopifyAgentMode()" style="font-size:12.5px">
-                  <option value="manual" data-i18n="web.automation_manual">Manual</option>
-                  <option value="automatic" data-i18n="web.automation_automatic">Automatic</option>
-                </select>
+                <label class="mode-switch" for="shopifyAutomationSwitch">
+                  <span class="mode-side-manual" data-i18n="web.mode_manual">Manual</span>
+                  <input type="checkbox" id="shopifyAutomationSwitch" role="switch" onchange="updateShopifyAgentMode()">
+                  <span class="mode-switch-track"><span class="mode-switch-knob"></span></span>
+                  <span class="mode-side-auto" data-i18n="web.mode_automatic">Automatic</span>
+                </label>
+                <div id="shopifyModeCaption" style="font-size:11px;color:var(--muted);line-height:1.4;margin-top:6px"></div>
               </div>
               <div class="form-group" style="margin-bottom:0">
                 <label style="font-size:11px" data-i18n="web.agent_frequency_label">Run the agent</label>
@@ -2206,10 +2230,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               </div>
             </div>
             <div id="shopifyAgentModeStatus" style="font-size:11.5px;line-height:1.5"></div>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px">
-            <button class="btn-ghost" id="shopifyRunAgentBtn" onclick="runAgentNow('shopify')" style="font-size:12px;padding:6px 12px" data-i18n="web.agent_run_now_button">Run all now</button>
-            <span style="font-size:11px;color:var(--muted);line-height:1.4;flex:1;min-width:200px" data-i18n="web.agent_run_now_hint"></span>
-          </div>
+          <div id="shopifyAgentRunBadge" hidden style="margin-top:8px;font-size:11.5px;font-weight:600;color:var(--gold)"></div>
           </div>
 
           <!-- CONTENT CALENDAR & AUTOMATION — same real engine as
@@ -7670,7 +7691,7 @@ let currentShopifyConnection = null;
 const WORDPRESS_TAB_ELEMENT_IDS = [
   'websiteEmptyState', 'websiteStatusCard', 'websiteStatusError', 'websiteConnectMsg',
   'websiteIntelligenceSection', 'websiteAuditRunSection', 'websiteAiVisibilitySection',
-  'websiteKeywordRankingsSection', 'websiteSitemapSection', 'websiteTechnicalSeoSection', 'websiteTaxonomySection', 'websiteBrokenLinksSection',
+  'websiteKeywordRankingsSection', 'websiteSitemapSection', 'websiteCompetitorSection', 'websiteTechnicalSeoSection', 'websiteTaxonomySection', 'websiteBrokenLinksSection',
   'websiteMediaSection', 'websiteSchemaSection', 'websiteActivityLogSection',
   'websiteGeneratedPostsSection', 'websiteActionsSection',
 ];
@@ -7860,7 +7881,7 @@ async function clearBacklinkOpportunities() {
 const CALENDAR_STATUS_COLORS = { scheduled: '#8b5cf6', processing: '#f59e0b', generated: '#22c55e', failed: '#ef4444', cancelled: 'var(--muted)' };
 
 async function loadContentCalendar(platform) {
-  const contentEl = document.getElementById(platform === 'shopify' ? 'shopifyCalendarContent' : 'websiteCalendarContent');
+  const contentEl = document.getElementById(`${platformUi(platform).prefix}CalendarContent`);
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-schedule?platform=${platform}`);
     const data = await res.json();
@@ -7943,7 +7964,7 @@ async function createAutomationRule(platform) {
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-automation-rule`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform: platform === 'shopify' ? 'shopify' : 'wordpress', startDate, endDate, frequencyPeriod, postsPerPeriod, hoursBetweenPosts, startTime, publishMode, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+      body: JSON.stringify({ platform: platformUi(platform).platform, startDate, endDate, frequencyPeriod, postsPerPeriod, hoursBetweenPosts, startTime, publishMode, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -7965,7 +7986,7 @@ async function loadActiveRules(platform) {
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-automation-rule`);
     const data = await res.json();
-    const rules = (data.rules || []).filter(r => r.platform === (platform === 'shopify' ? 'shopify' : 'wordpress'));
+    const rules = (data.rules || []).filter(r => r.platform === platformUi(platform).platform);
     if (!rules.length) { contentEl.innerHTML = ''; return; }
     contentEl.innerHTML = rules.map(rule => {
       const periodLabel = t(`web.frequency_${rule.frequency_period}`);
@@ -8113,7 +8134,6 @@ async function loadShopifyStatus() {
     document.getElementById('shopifyConnectedWrap').style.display = 'block';
     document.getElementById('shopifyDomainLabel').textContent = data.connection.shop_domain;
     currentShopifyConnection = data.connection;
-    document.getElementById('shopifyAutomationMode').value = data.connection.automation_mode || 'manual';
     document.getElementById('shopifyAgentCycleFrequency').value = data.connection.agent_cycle_frequency || 'daily';
     renderAgentModeStatus('shopify', data.connection);
     loadActiveRules('shopify');
@@ -8303,6 +8323,7 @@ async function loadWebsiteBusinesses() {
       document.getElementById('websiteAiVisibilitySection').style.display = 'none';
       document.getElementById('websiteKeywordRankingsSection').style.display = 'none';
       document.getElementById('websiteSitemapSection').style.display = 'none';
+      document.getElementById('websiteCompetitorSection').style.display = 'none';
       document.getElementById('websiteTechnicalSeoSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return;
@@ -8372,6 +8393,7 @@ function onWebsiteBusinessSelectChange() {
     document.getElementById('websiteAiVisibilitySection').style.display = 'none';
     document.getElementById('websiteKeywordRankingsSection').style.display = 'none';
     document.getElementById('websiteSitemapSection').style.display = 'none';
+    document.getElementById('websiteCompetitorSection').style.display = 'none';
     document.getElementById('websiteTechnicalSeoSection').style.display = 'none';
     document.getElementById('websiteActionsSection').style.display = 'none';
     resetWebsiteConnectForm();
@@ -8400,7 +8422,6 @@ function renderWebsiteStatusCard(connection) {
   badge.style.background = style.bg;
 
   document.getElementById('websitePermissionLevel').value = connection.permission_level || 'read_only';
-  document.getElementById('websiteAutomationMode').value = connection.automation_mode || 'manual';
   currentWebsiteConnection = connection;
   document.getElementById('websiteAgentCycleFrequency').value = connection.agent_cycle_frequency || 'daily';
   document.getElementById('websitePollModeNotice').style.display = connection.connection_mode === 'poll' ? 'block' : 'none';
@@ -8448,6 +8469,7 @@ async function loadWebsiteSection() {
       document.getElementById('websiteAiVisibilitySection').style.display = 'none';
       document.getElementById('websiteKeywordRankingsSection').style.display = 'none';
       document.getElementById('websiteSitemapSection').style.display = 'none';
+      document.getElementById('websiteCompetitorSection').style.display = 'none';
       document.getElementById('websiteTechnicalSeoSection').style.display = 'none';
       document.getElementById('websiteActionsSection').style.display = 'none';
       return false;
@@ -8466,6 +8488,7 @@ async function loadWebsiteSection() {
     document.getElementById('websiteAiVisibilitySection').style.display = 'block';
     document.getElementById('websiteKeywordRankingsSection').style.display = 'block';
     document.getElementById('websiteSitemapSection').style.display = 'block';
+    document.getElementById('websiteCompetitorSection').style.display = 'block';
     document.getElementById('websiteTechnicalSeoSection').style.display = 'block';
     document.getElementById('websiteActionsSection').style.display = 'block';
     renderWebsiteStatusCard(connection);
@@ -8478,6 +8501,7 @@ async function loadWebsiteSection() {
     loadAiVisibilityHistory();
     loadKeywordRankings();
     loadWebsiteSitemapStatus();
+    loadCompetitorAnalysis();
     loadTechnicalSeoHistory('website');
     loadActiveRules('website');
     loadContentCalendar('website');
@@ -9132,11 +9156,21 @@ function formatTimestamp(iso) {
 
 // Says what Automatic mode is doing right now — and, importantly, what would
 // stop it from doing anything, so "on" never silently means "nothing happens".
+// Makes the switch and its caption show the connection's real mode (the screen must never disagree with the server).
+function syncModeSwitch(prefix, conn) {
+  if (!conn) return;
+  const sw = document.getElementById(`${prefix}AutomationSwitch`);
+  if (sw) sw.checked = conn.automation_mode === 'automatic';
+  const cap = document.getElementById(`${prefix}ModeCaption`);
+  if (cap) cap.textContent = t(conn.automation_mode === 'automatic' ? 'web.mode_automatic_caption' : 'web.mode_manual_caption');
+}
+
 function renderAgentModeStatus(prefix, conn) {
+  syncModeSwitch(prefix, conn);
   const el = document.getElementById(`${prefix}AgentModeStatus`);
   if (!el || !conn) return;
   let html;
-  if (prefix === 'website' && conn.connection_mode === 'poll') {
+  if (platformUi(prefix).pollMode && conn.connection_mode === 'poll') {
     html = `<span style="color:#f59e0b">${t('web.agent_status_poll_warning')}</span>`;
   } else if (conn.automation_mode !== 'automatic') {
     html = `<span style="color:var(--muted)">${t('web.agent_status_manual')}</span>`;
@@ -9149,7 +9183,7 @@ function renderAgentModeStatus(prefix, conn) {
       html = `<span style="color:var(--text2)">${escapeHtml(tf('web.agent_status_on', { frequency: t('web.frequency_' + freq).toLowerCase(), last: formatTimestamp(conn.agent_last_cycle_at), next: formatTimestamp(next) }))}</span>`;
     }
     // Only fixes at or above this permission level are applied; below it the agent still audits and proposes.
-    if (prefix === 'website' && conn.permission_level !== 'managed') {
+    if (platformUi(prefix).permissionLevel && conn.permission_level !== 'managed') {
       html += `<div style="color:#f59e0b;margin-top:4px">${escapeHtml(tf('web.agent_status_permission_warning', { level: t('web.permission_' + conn.permission_level) }))}</div>`;
     }
   }
@@ -9157,16 +9191,20 @@ function renderAgentModeStatus(prefix, conn) {
 }
 
 async function updateShopifyAgentMode() {
-  const automationMode = document.getElementById('shopifyAutomationMode').value;
+  const sw = document.getElementById('shopifyAutomationSwitch');
+  const automationMode = sw.checked ? 'automatic' : 'manual';
   const agentCycleFrequency = document.getElementById('shopifyAgentCycleFrequency').value;
+  const previousMode = currentShopifyConnection ? currentShopifyConnection.automation_mode : null;
+  sw.disabled = true; // one change at a time: no double-clicks while the server decides
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/automation`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ automationMode, agentCycleFrequency })
     });
-    if (!res.ok) { showToast(t('board.connection_error'), 'error'); return; }
+    if (!res.ok) { showToast(t('board.connection_error'), 'error'); syncModeSwitch('shopify', currentShopifyConnection); return; }
     const data = await res.json().catch(() => ({}));
-    if (!reportAgentSwitch('shopify', data.agentRun)) showToast(t('toast.saved'), 'success');
+    const modeChanged = previousMode !== automationMode;
+    if (!(modeChanged && reportAgentSwitch('shopify', data.agentRun, automationMode))) showToast(t('toast.saved'), 'success');
     if (currentShopifyConnection) {
       Object.assign(currentShopifyConnection, { automation_mode: automationMode, agent_cycle_frequency: agentCycleFrequency });
       if (data.connection && data.connection.agent_last_cycle_at) currentShopifyConnection.agent_last_cycle_at = data.connection.agent_last_cycle_at;
@@ -9174,7 +9212,8 @@ async function updateShopifyAgentMode() {
     }
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
-  }
+    syncModeSwitch('shopify', currentShopifyConnection); // put the switch back where the server says it is
+  } finally { sw.disabled = false; }
 }
 
 // Built from structured detail, so each entry is worded in the viewer's own language.
@@ -9196,10 +9235,24 @@ function agentActivityText(e) {
       if (d.alreadySubmitted) return t('web.activity_sitemap_already');
       return t('web.activity_sitemap_submitted');
     case 'sitemap_missing': return t('web.activity_sitemap_missing');
+    case 'competitor_analysis': return failed ? t('web.activity_competitor_failed') : tf('web.activity_competitor_success', { competitors: d.competitorsAnalyzed || 0, gaps: d.gaps || 0 });
     case 'cycle_failed': return t('web.activity_cycle_failed');
+    case 'cycle_stopped': return t('web.activity_cycle_stopped');
     default: return e.task_type;
   }
 }
+
+// How the dashboard tells the platforms apart — the ONE place. Shared code asks this table instead of branching on a name.
+//   prefix   — used in element ids and as the argument to shared functions ('website' is WordPress's: the website tool began WordPress-only)
+//   platform — the key the server knows
+//   api      — the route segment: /api/business/:id/<api>/...
+//   pollMode / permissionLevel — whether this platform has that setting at all
+// A new platform is one entry here (and its own section of the page).
+const WEBSITE_PLATFORM_UI = {
+  website: { prefix: 'website', platform: 'wordpress', api: 'website', pollMode: true, permissionLevel: true },
+  shopify: { prefix: 'shopify', platform: 'shopify', api: 'shopify', pollMode: false, permissionLevel: false },
+};
+const platformUi = key => WEBSITE_PLATFORM_UI[key] || WEBSITE_PLATFORM_UI.website;
 
 const agentRunPollers = {};
 
@@ -9208,10 +9261,11 @@ async function loadAgentActivity(prefix) {
   const el = document.getElementById(`${prefix}ActivityContent`);
   if (!el) return false;
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/agent-activity?platform=${prefix === 'shopify' ? 'shopify' : 'wordpress'}`);
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/agent-activity?platform=${platformUi(prefix).platform}`);
     const data = await res.json();
     if (!res.ok) { el.innerHTML = `<div style="font-size:12px;color:#ff8080">${escapeHtml(data.error || t('board.connection_error'))}</div>`; return false; }
     renderAgentActivity(prefix, data.entries || []);
+    setAgentRunBadge(prefix, data.running ? (data.stopping ? 'stopping' : 'running') : null);
     if (data.running && !agentRunPollers[prefix]) watchAgentRun(prefix);
     return !!data.running;
   } catch (e) {
@@ -9220,17 +9274,20 @@ async function loadAgentActivity(prefix) {
   }
 }
 
-function setRunAgentButton(prefix, running) {
-  const btn = document.getElementById(`${prefix}RunAgentBtn`);
-  if (!btn) return;
-  btn.disabled = running;
-  btn.textContent = running ? t('web.agent_run_now_running') : t('web.agent_run_now_button');
+// The "Running now / Stopping" line beside the switch. Switching to Manual is how a run is stopped.
+function setAgentRunBadge(prefix, state) {
+  const el = document.getElementById(`${prefix}AgentRunBadge`);
+  if (!el) return;
+  if (!state) { el.hidden = true; el.textContent = ''; return; }
+  el.hidden = false;
+  el.textContent = t(state === 'stopping' ? 'web.agent_badge_stopping' : 'web.agent_badge_running');
 }
 
-// Refreshes the feed while a hand-started run works, so each step appears as it finishes.
-function watchAgentRun(prefix) {
+// Refreshes the feed while a run works, so each step appears as it finishes; the badge follows the server.
+// 'state' is what the badge should say right now ('running' or 'stopping'); without it the badge is left as it is.
+function watchAgentRun(prefix, state) {
+  if (state) setAgentRunBadge(prefix, state);
   if (agentRunPollers[prefix]) return;
-  setRunAgentButton(prefix, true);
   let ticks = 0;
   agentRunPollers[prefix] = setInterval(async () => {
     ticks++;
@@ -9238,38 +9295,27 @@ function watchAgentRun(prefix) {
     if (!running || ticks >= 100) {
       clearInterval(agentRunPollers[prefix]);
       delete agentRunPollers[prefix];
-      setRunAgentButton(prefix, false);
+      setAgentRunBadge(prefix, null);
     }
   }, 5000);
 }
 
-// What to tell the person after they save the mode. When they switch to Automatic the server starts the agent
-// straight away, in the background; this says so and follows the run live. Returns true if it showed its own
-// message (so the plain "saved" one is not shown on top of it).
-function reportAgentSwitch(prefix, agentRun) {
+// What to tell the person after they flip the switch. Switching to Automatic starts the agent straight away, in the
+// background; switching to Manual stops a run in progress. Returns true if it showed its own message (so the plain
+// "saved" one is not shown on top of it).
+function reportAgentSwitch(prefix, agentRun, mode) {
+  if (mode === 'manual') {
+    if (agentRun && agentRun.stopping) { watchAgentRun(prefix, 'stopping'); showToast(t('web.agent_switch_stopping_toast'), 'success'); }
+    else showToast(t('web.agent_switch_manual_toast'), 'success');
+    return true;
+  }
   if (!agentRun) return false;
-  if (agentRun.started) { showToast(t('web.agent_switch_started_toast'), 'success'); watchAgentRun(prefix); return true; }
-  const key = { recent: 'web.agent_switch_recent_toast', running: 'web.agent_switch_running_toast', poll: 'web.agent_status_poll_warning' }[agentRun.reason];
+  if (agentRun.started) { showToast(t('web.agent_switch_started_toast'), 'success'); watchAgentRun(prefix, 'running'); return true; }
+  const key = { recent: 'web.agent_switch_recent_toast', running: 'web.agent_switch_running_toast', resumed: 'web.agent_switch_resumed_toast', poll: 'web.agent_status_poll_warning' }[agentRun.reason];
   if (!key) return false;
   showToast(t(key), agentRun.reason === 'poll' ? 'error' : 'success');
-  if (agentRun.reason === 'running') watchAgentRun(prefix);
+  if (agentRun.reason === 'running' || agentRun.reason === 'resumed') watchAgentRun(prefix, 'running');
   return true;
-}
-
-// Everything Automatic mode does, started by hand. In Manual mode fixes are proposed for approval; in
-// Automatic mode low-risk ones are applied — the connection's own setting decides, as it does on a schedule.
-async function runAgentNow(prefix) {
-  setRunAgentButton(prefix, true);
-  try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${prefix === 'shopify' ? 'shopify' : 'website'}/run-agent-now`, { method: 'POST' });
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 202) { showToast(t('web.agent_run_now_started_toast'), 'success'); watchAgentRun(prefix); return; }
-    showToast(data.error || t('board.connection_error'), 'error');
-    if (res.status === 409) watchAgentRun(prefix); else setRunAgentButton(prefix, false);
-  } catch (e) {
-    showToast(t('board.connection_error'), 'error');
-    setRunAgentButton(prefix, false);
-  }
 }
 
 function renderAgentActivity(prefix, entries) {
@@ -9278,7 +9324,7 @@ function renderAgentActivity(prefix, entries) {
     el.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.agent_no_activity_yet')}</div>`;
     return;
   }
-  const platform = prefix === 'shopify' ? 'shopify' : 'wordpress';
+  const platform = platformUi(prefix).platform;
   el.innerHTML = renderCollapsibleItems(entries, (e) => {
     const d = e.detail || {};
     const color = e.outcome === 'failed' ? '#ef4444' : e.outcome === 'attention' ? '#f59e0b' : '#22c55e';
@@ -9349,9 +9395,12 @@ async function toggleAgentPreview(btn, platform, postId, containerId) {
 }
 
 async function updateWebsitePermissions() {
+  const sw = document.getElementById('websiteAutomationSwitch');
   const permissionLevel = document.getElementById('websitePermissionLevel').value;
-  const automationMode = document.getElementById('websiteAutomationMode').value;
+  const automationMode = sw.checked ? 'automatic' : 'manual';
   const agentCycleFrequency = document.getElementById('websiteAgentCycleFrequency').value;
+  const previousMode = currentWebsiteConnection ? currentWebsiteConnection.automation_mode : null;
+  sw.disabled = true; // one change at a time: no double-clicks while the server decides
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/permissions`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -9359,16 +9408,18 @@ async function updateWebsitePermissions() {
     });
     if (res.ok) {
       const data = await res.json().catch(() => ({}));
-      if (!reportAgentSwitch('website', data.agentRun)) showToast(t('toast.saved'), 'success');
+      const modeChanged = previousMode !== automationMode;
+      if (!(modeChanged && reportAgentSwitch('website', data.agentRun, automationMode))) showToast(t('toast.saved'), 'success');
       if (currentWebsiteConnection) {
         Object.assign(currentWebsiteConnection, { permission_level: permissionLevel, automation_mode: automationMode, agent_cycle_frequency: agentCycleFrequency });
         if (data.agentRun && data.agentRun.started) currentWebsiteConnection.agent_last_cycle_at = new Date().toISOString();
         renderAgentModeStatus('website', currentWebsiteConnection);
       }
-    } else showToast(t('board.connection_error'), 'error');
+    } else { showToast(t('board.connection_error'), 'error'); syncModeSwitch('website', currentWebsiteConnection); }
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
-  }
+    syncModeSwitch('website', currentWebsiteConnection); // put the switch back where the server says it is
+  } finally { sw.disabled = false; }
 }
 
 async function generateBlogPostNow() {
@@ -9797,7 +9848,7 @@ async function runTechnicalSeoCheck(platform) {
   btn.disabled = true;
   btn.textContent = t('web.running_technical_check');
   try {
-    const apiPath = platform === 'shopify' ? 'shopify/technical-seo/check' : 'website/technical-seo/check';
+    const apiPath = `${platformUi(platform).api}/technical-seo/check`;
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${apiPath}`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) {
@@ -9817,10 +9868,9 @@ async function runTechnicalSeoCheck(platform) {
 async function loadTechnicalSeoHistory(platform) {
   const contentEl = document.getElementById(`${platform}TechnicalSeoContent`);
   try {
-    // Real, deliberate shared history endpoint — business-scoped, not
-    // platform-scoped, so the same real check history shows regardless
-    // of which platform's button actually ran it.
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/technical-seo/history`);
+    // Each platform has its own history: a business with both a WordPress and a Shopify site must never see one site's
+    // scores in the other's view.
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${platformUi(platform).api}/technical-seo/history`);
     const data = await res.json();
     renderTechnicalSeoHistory(contentEl, data.checks || []);
   } catch (e) {
@@ -9872,6 +9922,121 @@ function renderTechnicalSeoHistory(contentEl, checks) {
 
   html += `<div style="font-size:10px;color:var(--muted);margin-top:10px">${t('web.last_checked_label')}: ${timeAgo(latest.checked_at)}</div>`;
   contentEl.innerHTML = html;
+}
+
+
+// ── Competitor analysis (WordPress) ──
+// Everything from a competitor's site (titles, topics, URLs) is third-party text: it is always escaped, links are checked,
+// and the "Use this topic" button carries only a number.
+let competitorGaps = [];
+let competitorPoller = null;
+
+function setCompetitorButton(running) {
+  const btn = document.getElementById('websiteCompetitorBtn');
+  if (!btn) return;
+  btn.disabled = running;
+  btn.textContent = t(running ? 'web.competitor_running_button' : 'web.competitor_run_button');
+}
+
+function renderCompetitorAnalysis(el, data) {
+  const dash = v => (v === null || v === undefined ? '–' : v);
+  const list = (titleKey, items) => (items && items.length)
+    ? `<div style="margin-top:14px"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:6px">${t(titleKey)}</div><ul style="margin:0;padding-left:18px;font-size:12px;color:var(--text2);line-height:1.6">${items.map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul></div>` : '';
+  let html = '';
+  if (data.running) html += `<div style="font-size:12px;color:var(--gold);margin-bottom:10px">${t('web.competitor_running')}</div>`;
+  if (!data.competitorsWithWebsite) {
+    competitorGaps = [];
+    el.innerHTML = html + `<div style="font-size:12px;color:var(--muted)">${t(data.trackedCompetitors ? 'web.competitor_none_website' : 'web.competitor_none_tracked')}</div>`;
+    return;
+  }
+  const latest = data.latest;
+  if (!latest) { competitorGaps = []; el.innerHTML = html + (data.running ? '' : `<div style="font-size:12px;color:var(--muted)">${t('web.competitor_not_run')}</div>`); return; }
+  if (latest.status === 'failed') html += `<div style="font-size:12px;color:#ff8080;margin-bottom:10px">${escapeHtml(tf('web.competitor_failed', { error: latest.error_message || '' }))}</div>`;
+  if (latest.status !== 'completed') { competitorGaps = []; el.innerHTML = html; return; }
+
+  const own = latest.own || {}, ins = latest.insights || {}, comps = latest.competitors || [];
+  html += `<div style="font-size:11px;color:var(--muted);margin-bottom:8px">${escapeHtml(tf('web.competitor_analyzed_at', { time: formatTimestamp(latest.completed_at || latest.created_at) }))}</div>`;
+  if (ins.summary) html += `<div style="font-size:12.5px;color:var(--text2);line-height:1.6;margin-bottom:12px">${escapeHtml(ins.summary)}</div>`;
+
+  const cell = 'padding:6px 10px;border-bottom:1px solid var(--border);font-size:12px';
+  html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:520px"><thead><tr style="text-align:left;color:var(--muted);font-size:11px">`
+    + ['site', 'pages', 'recent', 'words', 'meta'].map(k => `<th style="${cell}">${t('web.competitor_col_' + k)}</th>`).join('') + `</tr></thead><tbody>`
+    + `<tr style="color:var(--text)"><td style="${cell};font-weight:600">${t('web.competitor_you')}</td><td style="${cell}">${(own.postCount || 0) + (own.pageCount || 0)}</td><td style="${cell}">–</td><td style="${cell}">${dash(own.avgWordsOnPosts)}</td><td style="${cell}">${own.pctWithMetaDescription == null ? '–' : own.pctWithMetaDescription + '%'}</td></tr>`
+    + comps.map(c => c.reachable
+      ? `<tr style="color:var(--text2)"><td style="${cell}">${escapeHtml(c.name || '')}</td><td style="${cell}">${c.sitemapFound ? c.totalUrls : '–'}</td><td style="${cell}">${c.sitemapFound ? c.urlsLast90Days : '–'}</td><td style="${cell}">${dash(c.avgWords)}</td><td style="${cell}">${c.pctWithMetaDescription == null ? '–' : c.pctWithMetaDescription + '%'}</td></tr>`
+      : `<tr style="color:var(--muted)"><td style="${cell}">${escapeHtml(c.name || '')}</td><td style="${cell}" colspan="4">${t('web.competitor_unreadable')}</td></tr>`).join('')
+    + `</tbody></table></div><div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.5">${t('web.competitor_table_note')}</div>`;
+
+  if (ins.competitors_not_included > 0) html += `<div style="font-size:10.5px;color:var(--gold);margin-top:4px;line-height:1.5">${escapeHtml(tf('web.competitor_not_included_note', { n: ins.competitors_not_included }))}</div>`;
+  competitorGaps = ins.content_gaps || [];
+  html += `<div style="margin-top:16px;font-size:12.5px;font-weight:700;color:var(--text)">${t('web.competitor_gaps_title')}</div>`;
+  if (!competitorGaps.length) html += `<div style="font-size:12px;color:var(--muted);margin-top:6px">${t('web.competitor_no_gaps')}</div>`;
+  html += competitorGaps.map((g, i) => {
+    const links = (g.evidence || []).map(ev => { const u = safeHttpUrl(ev.url); const label = escapeHtml(`${ev.competitor || ''}: ${ev.title || ev.url}`); return u ? `<a href="${escapeHtml(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--purple-light)">${label}</a>` : label; }).join(' · ');
+    return `<div style="margin-top:10px;padding:10px 12px;background:var(--bg3);border-radius:8px"><div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(g.topic)}</div><button class="btn-ghost" style="font-size:11px;padding:4px 10px;flex-shrink:0" onclick="useCompetitorTopic(${i})">${t('web.competitor_use_topic')}</button></div>`
+      + (g.why_it_matters ? `<div style="font-size:11.5px;color:var(--text2);margin-top:4px;line-height:1.5">${escapeHtml(g.why_it_matters)}</div>` : '')
+      + `<div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5">${t('web.competitor_evidence')} ${links}</div></div>`;
+  }).join('');
+  if (ins.ungrounded_gaps_dropped > 0) html += `<div style="font-size:10.5px;color:var(--muted);margin-top:8px">${escapeHtml(tf('web.competitor_dropped_note', { n: ins.ungrounded_gaps_dropped }))}</div>`;
+  html += list('web.competitor_ahead_title', ins.where_you_are_ahead) + list('web.competitor_quickwins_title', ins.quick_wins) + list('web.competitor_limits_title', ins.data_limits);
+  el.innerHTML = html;
+}
+
+// Returns whether an analysis is running (and picks up watching one started earlier or elsewhere).
+async function loadCompetitorAnalysis() {
+  const el = document.getElementById('websiteCompetitorContent');
+  if (!el) return false;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/competitor-analysis`);
+    const data = await res.json();
+    if (!res.ok) { el.innerHTML = `<div style="font-size:12px;color:#ff8080">${escapeHtml(data.error || t('board.connection_error'))}</div>`; return false; }
+    renderCompetitorAnalysis(el, data);
+    setCompetitorButton(!!data.running);
+    if (data.running) watchCompetitorAnalysis();
+    return !!data.running;
+  } catch (e) {
+    el.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
+    return false;
+  }
+}
+
+function watchCompetitorAnalysis() {
+  if (competitorPoller) return;
+  let ticks = 0;
+  competitorPoller = setInterval(async () => {
+    ticks++;
+    const running = await loadCompetitorAnalysis();
+    if (!running || ticks >= 60) {
+      clearInterval(competitorPoller); competitorPoller = null;
+      setCompetitorButton(false);
+      loadAgentActivity('website'); // the outcome is in Agent Activity too
+    }
+  }, 4000);
+}
+
+async function runCompetitorAnalysis() {
+  setCompetitorButton(true);
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/competitor-analysis`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 202) { showToast(t('web.competitor_started_toast'), 'success'); await loadCompetitorAnalysis(); watchCompetitorAnalysis(); return; }
+    showToast(data.error || t('board.connection_error'), 'error');
+    if (res.status === 409) watchCompetitorAnalysis(); else setCompetitorButton(false);
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+    setCompetitorButton(false);
+  }
+}
+
+// Puts a suggested topic into the blog post generator. Only the index travels through the page, never the text.
+function useCompetitorTopic(i) {
+  const gap = competitorGaps[i];
+  const input = document.getElementById('websiteBlogPostTopic');
+  if (!gap || !input) return;
+  input.value = gap.suggested_post_title || gap.topic;
+  input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  input.focus();
+  showToast(t('web.competitor_topic_filled'), 'success');
 }
 
 async function loadWebsiteSitemapStatus() {
