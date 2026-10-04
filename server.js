@@ -393,8 +393,13 @@ async function resolveBusinessSiteUrl(businessId, businessWebsiteField) {
   if (businessWebsiteField) return businessWebsiteField;
   const wpResult = await pool.query(`SELECT site_url FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [businessId]);
   if (wpResult.rows.length) return wpResult.rows[0].site_url;
-  const shopifyResult = await pool.query(`SELECT shop_domain FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [businessId]);
-  if (shopifyResult.rows.length) return `https://${shopifyResult.rows[0].shop_domain}`;
+  const shopifyResult = await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [businessId]);
+  if (shopifyResult.rows.length) {
+    const c = shopifyResult.rows[0];
+    // The store's real primary domain, not its myshopify.com address: Search Console and every "is this link ours"
+    // check match on the real domain.
+    return await shopifyStoreUrlFor(c);
+  }
   return null;
 }
 
@@ -5801,10 +5806,12 @@ app.delete('/api/business/:id/website/intelligence', authRequired, async (req, r
 
 app.post('/api/business/:id/website/intelligence', authRequired, async (req, res) => {
   const language = req.body?.language === 'fr' ? 'fr' : 'en';
+  let owned = false;
   try {
     const account = await resolveAccount(req.userId);
     const biz = await pool.query('SELECT id, name FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    owned = true;
 
     const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
@@ -5921,9 +5928,11 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 
     await logWebsiteAudit(connection.id, 'ai_agent', null, 'intelligence_generated', `Generated Website Intelligence (${pages.length} pages, ${posts.length} posts analyzed)`, { pageCount: pages.length, postCount: posts.length }, 'intelligence');
 
+    await logManual(req.params.id, 'wordpress', 'intelligence_refreshed', 'success', {});
     res.json({ intelligence, generatedAt: new Date().toISOString() });
   } catch (err) {
     console.error('Website Intelligence error:', err.message);
+    if (owned) await logManual(req.params.id, 'wordpress', 'intelligence_refreshed', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to generate Website Intelligence. Please try again.' });
   }
 });
@@ -6648,10 +6657,12 @@ async function runFullWebsiteAudit(connection, decryptedPassword, context, trigg
 }
 
 app.post('/api/business/:id/website/run-audit', authRequired, async (req, res) => {
+  let owned = false;
   try {
     const account = await resolveAccount(req.userId);
     const context = await getBusinessContext(req.params.id, account.id);
     if (!context) return res.status(404).json({ error: 'Business not found' });
+    owned = true;
 
     const { connection, error, status } = await getConnectionForBusiness(req);
     if (error) return res.status(status).json({ error });
@@ -6659,9 +6670,11 @@ app.post('/api/business/:id/website/run-audit', authRequired, async (req, res) =
 
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
     const result = await runFullWebsiteAudit(connection, decryptedPassword, context, 'manual', req.userId);
+    if (!result.pendingPoll) await logManual(req.params.id, 'wordpress', 'audit_completed', 'success', wordpressAuditActivityDetail(result));
     res.json(result);
   } catch (err) {
     console.error('Run audit error:', err.message);
+    if (owned) await logManual(req.params.id, 'wordpress', 'audit_completed', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to run the audit. Please try again.' });
   }
 });
@@ -6834,10 +6847,12 @@ app.get('/api/business/:id/website/keyword-rankings', authRequired, async (req, 
 });
 
 app.post('/api/business/:id/website/technical-seo/check', authRequired, async (req, res) => {
+  let owned = false;
   try {
     const account = await resolveAccount(req.userId);
     const { connection: siteConnection, error, status } = await getConnectionForBusiness(req);
     if (error) return res.status(status).json({ error });
+    owned = true;
 
     const [vitals, robots] = await Promise.all([
       checkCoreWebVitals(siteConnection.site_url),
@@ -6845,6 +6860,8 @@ app.post('/api/business/:id/website/technical-seo/check', authRequired, async (r
     ]);
 
     const inserted = { rows: [await insertTechnicalSeoCheck(req.params.id, vitals, robots)] };
+    const tc = technicalCheckActivity(vitals, robots);
+    await logManual(req.params.id, 'wordpress', 'technical_check', tc.outcome, tc.detail);
 
     await logWebsiteAudit(siteConnection.id, 'user', req.userId, 'technical_seo_checked',
       `Ran a technical SEO check — performance ${vitals.performanceScore}, SEO ${vitals.seoScore}`,
@@ -6853,6 +6870,7 @@ app.post('/api/business/:id/website/technical-seo/check', authRequired, async (r
     res.json({ success: true, check: inserted.rows[0] });
   } catch (err) {
     console.error('Technical SEO check error:', err.message);
+    if (owned) await logManual(req.params.id, 'wordpress', 'technical_check', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to run the technical SEO check. Please try again.' });
   }
 });
@@ -6869,13 +6887,15 @@ app.get('/api/business/:id/website/technical-seo/history', authRequired, async (
 });
 
 app.post('/api/business/:id/website/sitemap/submit', authRequired, async (req, res) => {
+  let owned = false;
   try {
     const account = await resolveAccount(req.userId);
     const { connection: siteConnection, error, status } = await getConnectionForBusiness(req);
     if (error) return res.status(status).json({ error });
+    owned = true;
 
     const sitemap = await detectSitemapUrl(siteConnection.site_url);
-    if (!sitemap) return res.status(404).json({ error: 'No sitemap was found at this site\'s common sitemap locations. Check that your SEO plugin has sitemaps enabled.' });
+    if (!sitemap) { await logManual(req.params.id, 'wordpress', 'sitemap_missing', 'attention', {}); return res.status(404).json({ error: 'No sitemap was found at this site\'s common sitemap locations. Check that your SEO plugin has sitemaps enabled.' }); }
 
     const { gscConnection, error: gscError } = await resolveMatchingGscConnection(account.id, siteConnection.site_url);
     if (gscError) return res.status(400).json({ error: gscError });
@@ -6883,9 +6903,11 @@ app.post('/api/business/:id/website/sitemap/submit', authRequired, async (req, r
     await submitSitemapToGSC(gscConnection, gscConnection.site_url, sitemap.url);
     await logWebsiteAudit(siteConnection.id, 'user', req.userId, 'sitemap_submitted', `Submitted sitemap to Search Console: ${sitemap.url}`, { sitemapUrl: sitemap.url, urlCount: sitemap.urlCount }, 'general');
 
+    await logManual(req.params.id, 'wordpress', 'sitemap_submitted', 'success', { sitemapUrl: sitemap.url });
     res.json({ success: true, sitemapUrl: sitemap.url, urlCount: sitemap.urlCount });
   } catch (err) {
     console.error('Sitemap submit error:', err.message);
+    if (owned) await logManual(req.params.id, 'wordpress', 'sitemap_submitted', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to submit the sitemap. Please try again.' });
   }
 });
@@ -7437,6 +7459,7 @@ app.delete('/api/business/:id/content-automation-rule/:ruleId', authRequired, as
 });
 
 app.post('/api/business/:id/website/generate-blog-post', authRequired, async (req, res) => {
+  let owned = false;
   try {
     const account = await resolveAccount(req.userId);
     const context = await getBusinessContext(req.params.id, account.id);
@@ -7444,6 +7467,7 @@ app.post('/api/business/:id/website/generate-blog-post', authRequired, async (re
 
     const { connection, error, status } = await getConnectionForBusiness(req);
     if (error) return res.status(status).json({ error });
+    owned = true;
 
     // Real, deliberate scope limit, disclosed honestly — generating and
     // creating a real, new post means Arreyon making a real, direct
@@ -7461,10 +7485,15 @@ app.post('/api/business/:id/website/generate-blog-post', authRequired, async (re
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
     const result = await runBlogPostGeneration(connection, decryptedPassword, context, topic, generateFeaturedImage, publishStatusOverride);
 
-    if (!result.success) return res.status(400).json({ error: result.error });
+    if (!result.success) {
+      await logManual(req.params.id, 'wordpress', 'content_failed', 'failed', { title: topic, error: String(result.error || 'WordPress did not accept this post.').slice(0, 500) });
+      return res.status(400).json({ error: result.error });
+    }
+    await logManual(req.params.id, 'wordpress', 'content_generated', 'success', { title: result.title || topic, status: result.publishStatus, url: result.url || null, postId: result.generatedPostId || null });
     res.json(result);
   } catch (err) {
     console.error('Generate blog post error:', err.message);
+    if (owned) await logManual(req.params.id, 'wordpress', 'content_failed', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to generate this blog post. Please try again.' });
   }
 });
@@ -8237,10 +8266,12 @@ app.get('/api/business/:id/shopify', authRequired, async (req, res) => {
 });
 
 app.post('/api/business/:id/shopify/run-audit', authRequired, async (req, res) => {
+  let owned = false;
   try {
     const account = await resolveAccount(req.userId);
     const context = await getBusinessContext(req.params.id, account.id);
     if (!context) return res.status(404).json({ error: 'Business not found' });
+    owned = true;
 
     const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
@@ -8248,9 +8279,11 @@ app.post('/api/business/:id/shopify/run-audit', authRequired, async (req, res) =
     const accessToken = decryptSecret(connection.access_token_encrypted);
 
     const result = await runShopifyAudit(connection, accessToken, context, req.userId);
+    await logManual(req.params.id, 'shopify', 'audit_completed', 'success', shopifyAuditActivityDetail(result));
     res.json({ success: true, ...result });
   } catch (err) {
     console.error('Shopify audit error:', err.message);
+    if (owned) await logManual(req.params.id, 'shopify', 'audit_completed', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to run the audit. Please try again.' });
   }
 });
@@ -8314,10 +8347,12 @@ app.post('/api/business/:id/shopify/actions/:actionId/reject', authRequired, asy
 });
 
 app.post('/api/business/:id/shopify/intelligence', authRequired, async (req, res) => {
+  let owned = false;
   try {
     const account = await resolveAccount(req.userId);
     const biz = await pool.query('SELECT id, name FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    owned = true;
 
     const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
@@ -8327,9 +8362,11 @@ app.post('/api/business/:id/shopify/intelligence', authRequired, async (req, res
     const intelligence = await runShopifyWebsiteIntelligence(connection, accessToken, biz.rows[0].name);
     if (!intelligence) return res.status(400).json({ error: 'No pages or articles were found to analyze yet.' });
 
+    await logManual(req.params.id, 'shopify', 'intelligence_refreshed', 'success', {});
     res.json({ success: true, intelligence });
   } catch (err) {
     console.error('Shopify intelligence error:', err.message);
+    if (owned) await logManual(req.params.id, 'shopify', 'intelligence_refreshed', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to generate Website Intelligence. Please try again.' });
   }
 });
@@ -9047,42 +9084,51 @@ app.delete('/api/business/:id/backlinks', authRequired, async (req, res) => {
 });
 
 app.post('/api/business/:id/shopify/technical-seo/check', authRequired, async (req, res) => {
+  let owned = false;
   try {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    owned = true;
     const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
-    const siteUrl = `https://${connResult.rows[0].shop_domain}`;
+    const siteUrl = await shopifyStoreUrlFor(connResult.rows[0]);
 
     const [vitals, robots] = await Promise.all([checkCoreWebVitals(siteUrl), checkRobotsTxt(siteUrl)]);
 
     const inserted = { rows: [await insertTechnicalSeoCheck(req.params.id, vitals, robots)] };
+    const tc = technicalCheckActivity(vitals, robots);
+    await logManual(req.params.id, 'shopify', 'technical_check', tc.outcome, tc.detail);
 
     res.json({ success: true, check: inserted.rows[0] });
   } catch (err) {
     console.error('Shopify technical SEO check error:', err.message);
+    if (owned) await logManual(req.params.id, 'shopify', 'technical_check', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to run the technical SEO check. Please try again.' });
   }
 });
 
 app.post('/api/business/:id/shopify/sitemap/submit', authRequired, async (req, res) => {
+  let owned = false;
   try {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    owned = true;
     const account = await resolveAccount(req.userId);
     const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
     const connection = connResult.rows[0];
-    const siteUrl = `https://${connection.shop_domain}`;
+    const siteUrl = await shopifyStoreUrlFor(connection);
 
     const sitemap = await detectSitemapUrl(siteUrl);
-    if (!sitemap) return res.status(404).json({ error: 'No sitemap was found at this store\'s common sitemap location.' });
+    if (!sitemap) { await logManual(req.params.id, 'shopify', 'sitemap_missing', 'attention', {}); return res.status(404).json({ error: 'No sitemap was found at this store\'s common sitemap location.' }); }
 
     const { gscConnection, error: gscError } = await resolveMatchingGscConnection(account.id, siteUrl);
     if (gscError) return res.status(400).json({ error: gscError });
 
     await submitSitemapToGSC(gscConnection, gscConnection.site_url, sitemap.url);
+    await logManual(req.params.id, 'shopify', 'sitemap_submitted', 'success', { sitemapUrl: sitemap.url });
     res.json({ success: true, sitemapUrl: sitemap.url, urlCount: sitemap.urlCount });
   } catch (err) {
     console.error('Shopify sitemap submit error:', err.message);
+    if (owned) await logManual(req.params.id, 'shopify', 'sitemap_submitted', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to submit the sitemap. Please try again.' });
   }
 });
@@ -9093,7 +9139,7 @@ app.get('/api/business/:id/shopify/sitemap/status', authRequired, async (req, re
     const account = await resolveAccount(req.userId);
     const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
-    const siteUrl = `https://${connResult.rows[0].shop_domain}`;
+    const siteUrl = await shopifyStoreUrlFor(connResult.rows[0]);
 
     const { gscConnection, error: gscError } = await resolveMatchingGscConnection(account.id, siteUrl);
     if (gscError) return res.json({ sitemaps: [], notice: gscError });
@@ -9122,10 +9168,12 @@ app.get('/api/business/:id/shopify/generated-posts', authRequired, async (req, r
 });
 
 app.post('/api/business/:id/shopify/generate-post', authRequired, async (req, res) => {
+  let owned = false;
   try {
     const account = await resolveAccount(req.userId);
     const context = await getBusinessContext(req.params.id, account.id);
     if (!context) return res.status(404).json({ error: 'Business not found' });
+    owned = true;
 
     const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
@@ -9150,11 +9198,14 @@ app.post('/api/business/:id/shopify/generate-post', authRequired, async (req, re
     const generated = await generateShopifyBlogPostContent(context, topic, existingTitles, internalCandidates);
     const result = await createShopifyBlogPost(connection, accessToken, { ...generated, status: publishStatus });
 
-    if (!result.success) return res.status(400).json({ error: result.error });
+    if (!result.success) {
+      await logManual(req.params.id, 'shopify', 'content_failed', 'failed', { title: topic, error: String(result.error || 'Shopify did not accept this post.').slice(0, 500) });
+      return res.status(400).json({ error: result.error });
+    }
 
-    await pool.query(
+    const savedPost = await pool.query(
       `INSERT INTO shopify_generated_posts (shopify_connection_id, shopify_article_id, topic, title, handle, body_html, meta_title, meta_description, tags, status, article_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
       [connection.id, result.id, topic, generated.title, result.handle, generated.bodyHtml, generated.metaTitle, generated.metaDescription, generated.tags.join(', '), result.status, result.url]
     );
 
@@ -9171,9 +9222,11 @@ app.post('/api/business/:id/shopify/generate-post', authRequired, async (req, re
       } catch (e) { console.error('Failed to record reciprocal link placement:', e.message); }
     }
 
+    await logManual(req.params.id, 'shopify', 'content_generated', 'success', { title: generated.title, status: result.status, url: result.url || null, postId: savedPost.rows[0].id });
     res.json({ success: true, title: generated.title, publishStatus: result.status, url: result.url });
   } catch (err) {
     console.error('Shopify generate post error:', err.message);
+    if (owned) await logManual(req.params.id, 'shopify', 'content_failed', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to generate this post. Please try again.' });
   }
 });
@@ -9694,7 +9747,13 @@ async function resolveMatchingGscConnection(accountId, siteUrl) {
 
   let gscHost = gscConnection.site_url.replace(/^sc-domain:/, '');
   let siteHost = '';
-  try { siteHost = new URL(siteUrl).hostname.replace(/^www\./, ''); } catch { /* Real, deliberate no-op — falls through to the mismatch check below. */ }
+  // A profile website is often typed without "https://" ("mystore.com"); read it that way rather than failing to parse it.
+  for (const candidate of [String(siteUrl || ''), 'https://' + String(siteUrl || '')]) {
+    try { siteHost = new URL(candidate).hostname.replace(/^www\./, ''); if (siteHost) break; } catch { /* try the next form */ }
+  }
+  // An address that can't be read must never match: '' is "included" in every string, so without this it would
+  // match whatever property happens to be connected — including a different site's.
+  if (!siteHost || !siteHost.includes('.')) return { error: "This site's address couldn't be read, so it can't be matched to a Search Console property. Check the website address on the business profile." };
   const domainsMatch = gscHost.replace(/^www\./, '').includes(siteHost) || siteHost.includes(gscHost.replace(/^www\./, ''));
   if (!domainsMatch) {
     return { error: `The connected Search Console property (${gscHost}) doesn't appear to match this site (${siteHost}). Select the right property under Integrations.` };
@@ -16535,6 +16594,15 @@ async function getShopifyStoreUrl(connection, accessToken) {
   return value;
 }
 
+// Never throws. The real primary domain when it can be resolved; otherwise the myshopify.com address
+// (which redirects to it). Used wherever a page's URL is needed but a problem with the stored token
+// (a rotated encryption key, say) must not take the whole feature down — these routes worked without
+// ever touching the token before the real domain was needed.
+async function shopifyStoreUrlFor(connection) {
+  try { return await getShopifyStoreUrl(connection, decryptSecret(connection.access_token_encrypted)); }
+  catch (e) { return `https://${connection.shop_domain}`; }
+}
+
 async function getShopifyBlogHandle(connection, accessToken) {
   const key = `${connection.id}:blog`;
   const cached = shopifyCacheGet(key);
@@ -16695,10 +16763,41 @@ async function runContentCalendarSweep() {
   }
 }
 
+// ── One feed, two ways in ──────────────────────────────────────────────────
+// Everything Automatic mode does can also be done by hand, and both write the same kind of
+// entry to the same feed — only triggered_by differs ('automatic' | 'manual'). These helpers
+// build the entries, so the two paths cannot drift apart.
+const agentRunsInFlight = new Set();
+const agentRunKey = (platform, businessId) => `${platform}:${businessId}`;
+const logManual = (businessId, platform, taskType, outcome, detail) =>
+  logAgentActivity({ businessId, platform, taskType, outcome, triggeredBy: 'manual', detail });
+const errDetail = e => ({ error: String((e && e.message) || e).slice(0, 300) });
+
+function wordpressAuditActivityDetail(audit) {
+  return { issuesFound: audit.issuesFound, autoFixed: audit.autoFixed, pendingApproval: audit.pendingApproval, pages: (audit.findingsByPage || []).slice(0, 10) };
+}
+function shopifyAuditActivityDetail(audit) {
+  const totalIssues = (audit.foundIssues.metaTitle || 0) + (audit.foundIssues.metaDescription || 0) + (audit.foundIssues.brokenLinks || 0);
+  const pages = new Map();
+  const addChange = (a, status) => {
+    if (!pages.has(a.target_url)) pages.set(a.target_url, { title: a.target_title, url: a.target_url, changes: [] });
+    pages.get(a.target_url).changes.push({ description: describeShopifyActionChange(a), status });
+  };
+  (audit.autoApplied || []).forEach(a => addChange(a, 'fixed'));
+  (audit.proposalsCreated || []).forEach(a => addChange(a, 'pending'));
+  return { issuesFound: totalIssues, autoFixed: (audit.autoApplied || []).length, pendingApproval: (audit.proposalsCreated || []).length, pages: [...pages.values()].slice(0, 10) };
+}
+function technicalCheckActivity(vitals, robots) {
+  return {
+    outcome: robots.blocksEverything ? 'attention' : 'success',
+    detail: { performanceScore: vitals.performanceScore, seoScore: vitals.seoScore, accessibilityScore: vitals.accessibilityScore, robotsBlocksEverything: !!robots.blocksEverything },
+  };
+}
+
 // ── The maintenance cycle (Automatic mode) ─────────────────────────────────
-async function runWordPressMaintenanceCycle(connection) {
+async function runWordPressMaintenanceCycle(connection, triggeredBy = 'automatic') {
   const businessId = connection.business_id;
-  const log = (taskType, outcome, detail) => logAgentActivity({ businessId, platform: 'wordpress', taskType, outcome, detail });
+  const log = (taskType, outcome, detail) => logAgentActivity({ businessId, platform: 'wordpress', taskType, outcome, triggeredBy, detail });
   const bizResult = await pool.query('SELECT id, name, user_id FROM businesses WHERE id = $1', [businessId]);
   if (!bizResult.rows.length) return;
   const biz = bizResult.rows[0];
@@ -16708,27 +16807,31 @@ async function runWordPressMaintenanceCycle(connection) {
   try {
     await runAutomaticWebsiteIntelligence(connection, decryptedPassword, biz.name);
     await log('intelligence_refreshed', 'success', {});
-  } catch (e) { await log('intelligence_refreshed', 'failed', { error: String(e.message).slice(0, 300) }); }
+  } catch (e) { await log('intelligence_refreshed', 'failed', errDetail(e)); }
 
   if (context) {
     try {
-      const audit = await runFullWebsiteAudit(connection, decryptedPassword, context, 'automatic', null);
-      await log('audit_completed', 'success', { issuesFound: audit.issuesFound, autoFixed: audit.autoFixed, pendingApproval: audit.pendingApproval, pages: (audit.findingsByPage || []).slice(0, 10) });
-    } catch (e) { await log('audit_completed', 'failed', { error: String(e.message).slice(0, 300) }); }
+      const audit = await runFullWebsiteAudit(connection, decryptedPassword, context, triggeredBy, null);
+      await log('audit_completed', 'success', wordpressAuditActivityDetail(audit));
+    } catch (e) { await log('audit_completed', 'failed', errDetail(e)); }
+  } else {
+    // Previously skipped without a trace, so the owner had no sign the audit did not run.
+    await log('audit_completed', 'failed', { error: 'Business details could not be loaded, so the audit was skipped.' });
   }
 
   try {
     const [vitals, robots] = await Promise.all([checkCoreWebVitals(connection.site_url), checkRobotsTxt(connection.site_url)]);
     await insertTechnicalSeoCheck(businessId, vitals, robots);
-    await log('technical_check', robots.blocksEverything ? 'attention' : 'success', { performanceScore: vitals.performanceScore, seoScore: vitals.seoScore, accessibilityScore: vitals.accessibilityScore, robotsBlocksEverything: !!robots.blocksEverything });
-  } catch (e) { await log('technical_check', 'failed', { error: String(e.message).slice(0, 300) }); }
+    const tc = technicalCheckActivity(vitals, robots);
+    await log('technical_check', tc.outcome, tc.detail);
+  } catch (e) { await log('technical_check', 'failed', errDetail(e)); }
 
-  await runSitemapTask(biz.user_id, businessId, 'wordpress', connection.site_url);
+  await runSitemapTask(biz.user_id, businessId, 'wordpress', connection.site_url, triggeredBy);
 }
 
-async function runShopifyMaintenanceCycle(connection) {
+async function runShopifyMaintenanceCycle(connection, triggeredBy = 'automatic') {
   const businessId = connection.business_id;
-  const log = (taskType, outcome, detail) => logAgentActivity({ businessId, platform: 'shopify', taskType, outcome, detail });
+  const log = (taskType, outcome, detail) => logAgentActivity({ businessId, platform: 'shopify', taskType, outcome, triggeredBy, detail });
   const bizResult = await pool.query('SELECT id, name, user_id FROM businesses WHERE id = $1', [businessId]);
   if (!bizResult.rows.length) return;
   const biz = bizResult.rows[0];
@@ -16738,21 +16841,15 @@ async function runShopifyMaintenanceCycle(connection) {
   try {
     await runShopifyWebsiteIntelligence(connection, accessToken, biz.name);
     await log('intelligence_refreshed', 'success', {});
-  } catch (e) { await log('intelligence_refreshed', 'failed', { error: String(e.message).slice(0, 300) }); }
+  } catch (e) { await log('intelligence_refreshed', 'failed', errDetail(e)); }
 
   if (context) {
     try {
       const audit = await runShopifyAudit(connection, accessToken, context, null);
-      const totalIssues = (audit.foundIssues.metaTitle || 0) + (audit.foundIssues.metaDescription || 0) + (audit.foundIssues.brokenLinks || 0);
-      const pages = new Map();
-      const addChange = (a, status) => {
-        if (!pages.has(a.target_url)) pages.set(a.target_url, { title: a.target_title, url: a.target_url, changes: [] });
-        pages.get(a.target_url).changes.push({ description: describeShopifyActionChange(a), status });
-      };
-      audit.autoApplied.forEach(a => addChange(a, 'fixed'));
-      audit.proposalsCreated.forEach(a => addChange(a, 'pending'));
-      await log('audit_completed', 'success', { issuesFound: totalIssues, autoFixed: audit.autoApplied.length, pendingApproval: audit.proposalsCreated.length, pages: [...pages.values()].slice(0, 10) });
-    } catch (e) { await log('audit_completed', 'failed', { error: String(e.message).slice(0, 300) }); }
+      await log('audit_completed', 'success', shopifyAuditActivityDetail(audit));
+    } catch (e) { await log('audit_completed', 'failed', errDetail(e)); }
+  } else {
+    await log('audit_completed', 'failed', { error: 'Business details could not be loaded, so the audit was skipped.' });
   }
 
   let siteUrl;
@@ -16760,10 +16857,11 @@ async function runShopifyMaintenanceCycle(connection) {
   try {
     const [vitals, robots] = await Promise.all([checkCoreWebVitals(siteUrl), checkRobotsTxt(siteUrl)]);
     await insertTechnicalSeoCheck(businessId, vitals, robots);
-    await log('technical_check', robots.blocksEverything ? 'attention' : 'success', { performanceScore: vitals.performanceScore, seoScore: vitals.seoScore, accessibilityScore: vitals.accessibilityScore, robotsBlocksEverything: !!robots.blocksEverything });
-  } catch (e) { await log('technical_check', 'failed', { error: String(e.message).slice(0, 300) }); }
+    const tc = technicalCheckActivity(vitals, robots);
+    await log('technical_check', tc.outcome, tc.detail);
+  } catch (e) { await log('technical_check', 'failed', errDetail(e)); }
 
-  await runSitemapTask(biz.user_id, businessId, 'shopify', siteUrl);
+  await runSitemapTask(biz.user_id, businessId, 'shopify', siteUrl, triggeredBy);
 }
 
 function describeShopifyActionChange(action) {
@@ -16775,20 +16873,25 @@ function describeShopifyActionChange(action) {
   return parts.join(' · ') || action.action_type;
 }
 
-// Logs only when something happened or needs attention — "already
-// submitted" every day would bury the entries that matter.
-async function runSitemapTask(accountId, businessId, platform, siteUrl) {
+// Automatic runs log only when something happened or needs attention — "already submitted" every
+// day would bury the entries that matter. A run started by hand always reports every outcome: the
+// person is waiting for an answer, and a silent step looks the same as a broken one.
+async function runSitemapTask(accountId, businessId, platform, siteUrl, triggeredBy = 'automatic') {
+  const auto = triggeredBy === 'automatic';
+  const log = (taskType, outcome, detail) => logAgentActivity({ businessId, platform, taskType, outcome, triggeredBy, detail });
   try {
     const sm = await ensureSitemapSubmitted(accountId, siteUrl);
     if (sm && sm.submitted) {
-      await logAgentActivity({ businessId, platform, taskType: 'sitemap_submitted', outcome: 'success', detail: { sitemapUrl: sm.sitemapUrl } });
-    } else if (sm && sm.noSitemapFound && !(await recentlyLogged(businessId, platform, 'sitemap_missing', 7))) {
-      await logAgentActivity({ businessId, platform, taskType: 'sitemap_missing', outcome: 'attention', detail: {} });
+      await log('sitemap_submitted', 'success', { sitemapUrl: sm.sitemapUrl });
+    } else if (sm && sm.alreadySubmitted) {
+      if (!auto) await log('sitemap_submitted', 'success', { alreadySubmitted: true });
+    } else if (sm && sm.noSitemapFound) {
+      if (!auto || !(await recentlyLogged(businessId, platform, 'sitemap_missing', 7))) await log('sitemap_missing', 'attention', {});
+    } else if (!sm && !auto) {
+      await log('sitemap_submitted', 'attention', { skipped: true });
     }
   } catch (e) {
-    if (!(await recentlyLogged(businessId, platform, 'sitemap_submitted', 7))) {
-      await logAgentActivity({ businessId, platform, taskType: 'sitemap_submitted', outcome: 'failed', detail: { error: String(e.message).slice(0, 300) } });
-    }
+    if (!auto || !(await recentlyLogged(businessId, platform, 'sitemap_submitted', 7))) await log('sitemap_submitted', 'failed', errDetail(e));
   }
 }
 
@@ -16808,11 +16911,15 @@ async function runAgentMaintenanceSweep() {
         [row.id]
       );
       if (!claimed.rows.length) continue;
+      // A run the person started by hand may already be doing this exact work.
+      const wpKey = agentRunKey('wordpress', claimed.rows[0].business_id);
+      if (agentRunsInFlight.has(wpKey)) continue;
+      agentRunsInFlight.add(wpKey);
       try { await runWordPressMaintenanceCycle(claimed.rows[0]); }
       catch (e) {
         console.error(`WordPress maintenance cycle failed for connection ${row.id}:`, e.message);
         await logAgentActivity({ businessId: claimed.rows[0].business_id, platform: 'wordpress', taskType: 'cycle_failed', outcome: 'failed', detail: { error: String(e.message).slice(0, 300) } });
-      }
+      } finally { agentRunsInFlight.delete(wpKey); }
     }
 
     const shopDue = await pool.query(
@@ -16827,11 +16934,14 @@ async function runAgentMaintenanceSweep() {
         [row.id]
       );
       if (!claimed.rows.length) continue;
+      const shKey = agentRunKey('shopify', claimed.rows[0].business_id);
+      if (agentRunsInFlight.has(shKey)) continue;
+      agentRunsInFlight.add(shKey);
       try { await runShopifyMaintenanceCycle(claimed.rows[0]); }
       catch (e) {
         console.error(`Shopify maintenance cycle failed for connection ${row.id}:`, e.message);
         await logAgentActivity({ businessId: claimed.rows[0].business_id, platform: 'shopify', taskType: 'cycle_failed', outcome: 'failed', detail: { error: String(e.message).slice(0, 300) } });
-      }
+      } finally { agentRunsInFlight.delete(shKey); }
     }
 
     if (Date.now() - lastActivityPruneAt > 24 * 60 * 60 * 1000) {
@@ -16914,12 +17024,55 @@ app.get('/api/business/:id/agent-activity', authRequired, async (req, res) => {
        ORDER BY created_at DESC LIMIT 100`,
       [req.params.id, platform]
     );
-    res.json({ entries: result.rows });
+    const running = platform ? agentRunsInFlight.has(agentRunKey(platform, req.params.id))
+      : (agentRunsInFlight.has(agentRunKey('wordpress', req.params.id)) || agentRunsInFlight.has(agentRunKey('shopify', req.params.id)));
+    res.json({ entries: result.rows, running });
   } catch (e) {
     console.error('Get agent activity error:', e.message);
     res.status(500).json({ error: 'Could not load activity.' });
   }
 });
+
+// Everything Automatic mode runs — analysis, audit, technical check, sitemap — started by hand. It is
+// the same cycle function the schedule uses, so the two cannot differ; what differs is only who
+// started it (recorded as 'manual') and the connection's own settings: in Manual mode fixes are
+// proposed for approval, in Automatic mode low-risk ones are applied. Responds at once and works in
+// the background, since a full run takes minutes.
+const POLL_MODE_AGENT_MESSAGE = "The agent can't run on a site connected in poll mode yet. Your host blocks direct access from Arreyon. This is a planned improvement.";
+async function startManualAgentRun(req, res, platform) {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    const businessId = req.params.id;
+    let connection;
+    if (platform === 'wordpress') {
+      const r = await pool.query(`SELECT * FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [businessId]);
+      if (!r.rows.length) return res.status(404).json({ error: 'No website connected' });
+      connection = r.rows[0];
+      if (connection.connection_mode === 'poll') return res.status(400).json({ error: POLL_MODE_AGENT_MESSAGE });
+    } else {
+      const r = await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [businessId]);
+      if (!r.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
+      connection = r.rows[0];
+    }
+    const key = agentRunKey(platform, businessId);
+    if (agentRunsInFlight.has(key)) return res.status(409).json({ error: 'The agent is already running for this site. Its results will appear in Agent Activity as each step finishes.' });
+    agentRunsInFlight.add(key);
+    res.status(202).json({ started: true });
+    try {
+      if (platform === 'wordpress') await runWordPressMaintenanceCycle(connection, 'manual');
+      else await runShopifyMaintenanceCycle(connection, 'manual');
+    } catch (e) {
+      console.error(`Manual ${platform} agent run failed for business ${businessId}:`, e.message);
+      await logManual(businessId, platform, 'cycle_failed', 'failed', errDetail(e));
+    } finally { agentRunsInFlight.delete(key); }
+  } catch (e) {
+    console.error('Start manual agent run error:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Could not start the agent. Please try again.' });
+  }
+}
+app.post('/api/business/:id/website/run-agent-now', authRequired, (req, res) => startManualAgentRun(req, res, 'wordpress'));
+app.post('/api/business/:id/shopify/run-agent-now', authRequired, (req, res) => startManualAgentRun(req, res, 'shopify'));
+
 
 // Read-only copy of a generated post, so a draft can be read inside Arreyon
 // (an unpublished draft isn't viewable on the connected site without logging in).
