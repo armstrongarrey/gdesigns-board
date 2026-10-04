@@ -1638,3 +1638,32 @@ ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS agent_cycle_frequency V
 ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS agent_last_cycle_at TIMESTAMPTZ;
 -- Distinguishes a fix the agent applied on its own from one a person approved.
 ALTER TABLE shopify_actions ADD COLUMN IF NOT EXISTS auto_applied BOOLEAN DEFAULT FALSE;
+
+-- Each platform's technical-check history is its own. It used to be saved per business only, so a business with both a
+-- WordPress and a Shopify site saw one combined history in both views, each site's scores mixed into the other's.
+-- Rows from before this column existed are attributed to WordPress (the website tool predates Shopify), except for a
+-- business that has only a Shopify store. Rows written by an older server during a deploy overlap are picked up the
+-- same way on the next start. Nothing is ever deleted.
+ALTER TABLE website_technical_seo_checks ADD COLUMN IF NOT EXISTS platform VARCHAR(20); -- 'wordpress' | 'shopify'
+UPDATE website_technical_seo_checks c SET platform = CASE
+  WHEN EXISTS (SELECT 1 FROM shopify_connections s WHERE s.business_id = c.business_id)
+   AND NOT EXISTS (SELECT 1 FROM website_connections w WHERE w.business_id = c.business_id) THEN 'shopify'
+  ELSE 'wordpress' END
+WHERE platform IS NULL;
+CREATE INDEX IF NOT EXISTS idx_technical_checks_platform ON website_technical_seo_checks (business_id, platform, checked_at DESC);
+
+-- Competitor analysis (WordPress): what was measured on your site and on each competitor's public site, and what the
+-- AI concluded from those measurements only. Tied to the WordPress connection, like the other WordPress tables.
+CREATE TABLE IF NOT EXISTS website_competitor_analyses (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  website_connection_id UUID REFERENCES website_connections(id) ON DELETE CASCADE,
+  status VARCHAR(20) NOT NULL DEFAULT 'running', -- 'running' | 'completed' | 'failed'
+  triggered_by VARCHAR(20) DEFAULT 'manual',
+  own JSONB,
+  competitors JSONB,
+  insights JSONB,
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_competitor_analyses_conn ON website_competitor_analyses (website_connection_id, created_at DESC);
