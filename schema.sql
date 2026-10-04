@@ -1598,3 +1598,43 @@ CREATE TABLE IF NOT EXISTS website_connection_codes (
   used_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_website_connection_codes_business ON website_connection_codes(business_id);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- AUTOMATIC MODE + AGENT ACTIVITY FEED
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- One timestamped record per thing the AI agent did on its own, across
+-- both platforms: content it generated (draft or published), audits, fixes,
+-- technical checks, sitemap actions — and failures, so "nothing happened"
+-- is always distinguishable from "it ran and failed". Deliberately stores
+-- structured detail rather than finished English sentences, so the page
+-- can render each entry in the viewer's own language.
+CREATE TABLE IF NOT EXISTS website_agent_activity (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  platform VARCHAR(20) NOT NULL, -- 'wordpress' | 'shopify'
+  task_type VARCHAR(40) NOT NULL, -- 'content_generated' | 'content_failed' | 'intelligence_refreshed' | 'audit_completed' | 'technical_check' | 'sitemap_submitted' | 'sitemap_missing'
+  outcome VARCHAR(20) NOT NULL DEFAULT 'success', -- 'success' | 'failed' | 'attention' (completed, but found something the owner should look at)
+  triggered_by VARCHAR(20) NOT NULL DEFAULT 'automatic',
+  detail JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_activity_business ON website_agent_activity(business_id, platform, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_activity_created ON website_agent_activity(created_at);
+
+-- A scheduled time means the owner's local clock time, not UTC. Stored
+-- as an IANA zone name so the sweep can compare against the real instant
+-- (including daylight saving) rather than treating "09:00" as 09:00 UTC.
+ALTER TABLE content_automation_rules ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) DEFAULT 'UTC';
+ALTER TABLE content_calendar_entries ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) DEFAULT 'UTC';
+
+-- Automatic mode's maintenance cycle: how often it runs, and when it last
+-- did (the timestamp is also the claim that stops two sweeps running the
+-- same cycle at once). WordPress already had automation_mode.
+ALTER TABLE website_connections ADD COLUMN IF NOT EXISTS agent_cycle_frequency VARCHAR(20) DEFAULT 'daily'; -- 'daily' | 'weekly'
+ALTER TABLE website_connections ADD COLUMN IF NOT EXISTS agent_last_cycle_at TIMESTAMPTZ;
+ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS automation_mode VARCHAR(20) DEFAULT 'manual'; -- 'manual' | 'automatic'
+ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS agent_cycle_frequency VARCHAR(20) DEFAULT 'daily';
+ALTER TABLE shopify_connections ADD COLUMN IF NOT EXISTS agent_last_cycle_at TIMESTAMPTZ;
+-- Distinguishes a fix the agent applied on its own from one a person approved.
+ALTER TABLE shopify_actions ADD COLUMN IF NOT EXISTS auto_applied BOOLEAN DEFAULT FALSE;
