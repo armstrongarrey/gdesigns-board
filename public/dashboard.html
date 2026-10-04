@@ -1941,6 +1941,10 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             </select>
           </div>
           <div id="websiteAgentModeStatus" style="font-size:11.5px;line-height:1.5"></div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px">
+            <button class="btn-ghost" id="websiteRunAgentBtn" onclick="runAgentNow('website')" style="font-size:12px;padding:6px 12px" data-i18n="web.agent_run_now_button">Run all now</button>
+            <span style="font-size:11px;color:var(--muted);line-height:1.4;flex:1;min-width:200px" data-i18n="web.agent_run_now_hint"></span>
+          </div>
         </div>
 
         <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:14px;padding-top:2px">
@@ -2202,6 +2206,10 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               </div>
             </div>
             <div id="shopifyAgentModeStatus" style="font-size:11.5px;line-height:1.5"></div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px">
+            <button class="btn-ghost" id="shopifyRunAgentBtn" onclick="runAgentNow('shopify')" style="font-size:12px;padding:6px 12px" data-i18n="web.agent_run_now_button">Run all now</button>
+            <span style="font-size:11px;color:var(--muted);line-height:1.4;flex:1;min-width:200px" data-i18n="web.agent_run_now_hint"></span>
+          </div>
           </div>
 
           <!-- CONTENT CALENDAR & AUTOMATION — same real engine as
@@ -9180,23 +9188,72 @@ function agentActivityText(e) {
       if (failed) return t('web.activity_technical_failed');
       if (e.outcome === 'attention') return t('web.activity_technical_attention');
       return tf('web.activity_technical_check', { perf: d.performanceScore != null ? d.performanceScore : '–', seo: d.seoScore != null ? d.seoScore : '–' });
-    case 'sitemap_submitted': return t(failed ? 'web.activity_sitemap_failed' : 'web.activity_sitemap_submitted');
+    case 'sitemap_submitted':
+      if (failed) return t('web.activity_sitemap_failed');
+      if (d.skipped) return t('web.activity_sitemap_skipped');
+      if (d.alreadySubmitted) return t('web.activity_sitemap_already');
+      return t('web.activity_sitemap_submitted');
     case 'sitemap_missing': return t('web.activity_sitemap_missing');
     case 'cycle_failed': return t('web.activity_cycle_failed');
     default: return e.task_type;
   }
 }
 
+const agentRunPollers = {};
+
+// Returns whether a run is in progress. If one is (started earlier, or from another tab), pick up watching it.
 async function loadAgentActivity(prefix) {
   const el = document.getElementById(`${prefix}ActivityContent`);
-  if (!el) return;
+  if (!el) return false;
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/agent-activity?platform=${prefix === 'shopify' ? 'shopify' : 'wordpress'}`);
     const data = await res.json();
-    if (!res.ok) { el.innerHTML = `<div style="font-size:12px;color:#ff8080">${escapeHtml(data.error || t('board.connection_error'))}</div>`; return; }
+    if (!res.ok) { el.innerHTML = `<div style="font-size:12px;color:#ff8080">${escapeHtml(data.error || t('board.connection_error'))}</div>`; return false; }
     renderAgentActivity(prefix, data.entries || []);
+    if (data.running && !agentRunPollers[prefix]) watchAgentRun(prefix);
+    return !!data.running;
   } catch (e) {
     el.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
+    return false;
+  }
+}
+
+function setRunAgentButton(prefix, running) {
+  const btn = document.getElementById(`${prefix}RunAgentBtn`);
+  if (!btn) return;
+  btn.disabled = running;
+  btn.textContent = running ? t('web.agent_run_now_running') : t('web.agent_run_now_button');
+}
+
+// Refreshes the feed while a hand-started run works, so each step appears as it finishes.
+function watchAgentRun(prefix) {
+  if (agentRunPollers[prefix]) return;
+  setRunAgentButton(prefix, true);
+  let ticks = 0;
+  agentRunPollers[prefix] = setInterval(async () => {
+    ticks++;
+    const running = await loadAgentActivity(prefix);
+    if (!running || ticks >= 100) {
+      clearInterval(agentRunPollers[prefix]);
+      delete agentRunPollers[prefix];
+      setRunAgentButton(prefix, false);
+    }
+  }, 5000);
+}
+
+// Everything Automatic mode does, started by hand. In Manual mode fixes are proposed for approval; in
+// Automatic mode low-risk ones are applied — the connection's own setting decides, as it does on a schedule.
+async function runAgentNow(prefix) {
+  setRunAgentButton(prefix, true);
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${prefix === 'shopify' ? 'shopify' : 'website'}/run-agent-now`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 202) { showToast(t('web.agent_run_now_started_toast'), 'success'); watchAgentRun(prefix); return; }
+    showToast(data.error || t('board.connection_error'), 'error');
+    if (res.status === 409) watchAgentRun(prefix); else setRunAgentButton(prefix, false);
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+    setRunAgentButton(prefix, false);
   }
 }
 
@@ -9219,7 +9276,7 @@ function renderAgentActivity(prefix, entries) {
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
         <div style="min-width:0">
           <div style="font-size:12.5px;color:var(--text)">${escapeHtml(agentActivityText(e))}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px">${formatTimestamp(e.created_at)} · ${timeAgo(e.created_at)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">${formatTimestamp(e.created_at)} · ${timeAgo(e.created_at)} · ${e.triggered_by === 'manual' ? t('web.activity_by_manual') : t('web.activity_by_automatic')}</div>
           ${(e.outcome === 'failed' && d.error) ? `<div style="font-size:11px;color:#ef4444;margin-top:3px">${escapeHtml(d.error)}</div>` : ''}
         </div>
         <span style="font-size:11px;font-weight:700;color:${color};flex-shrink:0" aria-hidden="true">${mark}</span>
