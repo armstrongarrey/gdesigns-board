@@ -1901,6 +1901,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <span id="websiteStatusBadge" style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:6px;white-space:nowrap"></span>
         </div>
         <div id="websiteStatusError" style="display:none;font-size:12px;color:#ff8080;background:rgba(239,68,68,.1);border-radius:8px;padding:10px 12px;margin-bottom:14px"></div>
+        <div id="websitePollModeNotice" style="display:none;font-size:12px;line-height:1.5;color:#f59e0b;background:rgba(245,158,11,.1);border-radius:8px;padding:10px 12px;margin-bottom:14px" data-i18n="web.poll_mode_notice"></div>
 
         <!-- PERMISSIONS & AUTOMATION — spec Section 4's 4 tiers, plus the
              manual/automatic switch. Managed mode still requires approval
@@ -1923,6 +1924,22 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <option value="automatic" data-i18n="web.automation_automatic">Automatic (low-risk changes only)</option>
             </select>
           </div>
+        </div>
+
+        <!-- AUTOMATIC MODE — the AI Agent Mode select above is the master switch.
+             This panel says plainly what it does, sets how often it runs, and
+             shows when it last did and anything that would stop it working. -->
+        <div style="margin-bottom:14px;padding:14px;background:var(--bg3);border-radius:10px;border:1px solid rgba(139,92,246,.25)">
+          <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.agent_mode_title">What Automatic mode does</div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:10px" data-i18n="web.agent_mode_description"></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <label style="font-size:11px;color:var(--muted)" data-i18n="web.agent_frequency_label">Run the agent</label>
+            <select class="form-input" id="websiteAgentCycleFrequency" onchange="updateWebsitePermissions()" style="font-size:12.5px;max-width:160px">
+              <option value="daily" data-i18n="web.frequency_daily">Daily</option>
+              <option value="weekly" data-i18n="web.frequency_weekly">Weekly</option>
+            </select>
+          </div>
+          <div id="websiteAgentModeStatus" style="font-size:11.5px;line-height:1.5"></div>
         </div>
 
         <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:14px;padding-top:2px">
@@ -1992,6 +2009,15 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <button class="btn-ghost" onclick="loadContentCalendar('website')" style="font-size:11px;padding:4px 10px" data-i18n="web.refresh">Refresh</button>
           </div>
           <div id="websiteCalendarContent"></div>
+        </div>
+
+        <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <div style="font-size:12.5px;font-weight:700;color:var(--text)" data-i18n="web.activity_title">Automatic Activity</div>
+            <button class="btn-ghost" onclick="loadAgentActivity('website')" style="font-size:11px;padding:4px 10px" data-i18n="web.refresh">Refresh</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:10px" data-i18n="web.activity_description"></div>
+          <div id="websiteActivityContent"></div>
         </div>
 
         <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px">
@@ -2152,6 +2178,30 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div id="shopifyActionsContent"></div>
           </div>
 
+          <!-- AUTOMATIC MODE (Shopify) — same agent, same schedule options. Only the
+               low-risk meta-tag fixes are applied on its own; removing a link always waits for approval. -->
+          <div style="margin-bottom:14px;padding:14px;background:var(--bg3);border-radius:10px;border:1px solid rgba(139,92,246,.25)">
+            <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.agent_mode_title">What Automatic mode does</div>
+            <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:10px" data-i18n="web.agent_mode_description"></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px">
+              <div class="form-group" style="margin-bottom:0">
+                <label style="font-size:11px" data-i18n="web.automation_mode_label">AI Agent Mode</label>
+                <select class="form-input" id="shopifyAutomationMode" onchange="updateShopifyAgentMode()" style="font-size:12.5px">
+                  <option value="manual" data-i18n="web.automation_manual">Manual</option>
+                  <option value="automatic" data-i18n="web.automation_automatic">Automatic</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label style="font-size:11px" data-i18n="web.agent_frequency_label">Run the agent</label>
+                <select class="form-input" id="shopifyAgentCycleFrequency" onchange="updateShopifyAgentMode()" style="font-size:12.5px">
+                  <option value="daily" data-i18n="web.frequency_daily">Daily</option>
+                  <option value="weekly" data-i18n="web.frequency_weekly">Weekly</option>
+                </select>
+              </div>
+            </div>
+            <div id="shopifyAgentModeStatus" style="font-size:11.5px;line-height:1.5"></div>
+          </div>
+
           <!-- CONTENT CALENDAR & AUTOMATION — same real engine as
                WordPress: a real rule expands into real, specific
                calendar entries ahead of time, one per day per time slot. -->
@@ -2211,6 +2261,15 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <button class="btn-ghost" onclick="loadContentCalendar('shopify')" style="font-size:11px;padding:4px 10px" data-i18n="web.refresh">Refresh</button>
             </div>
             <div id="shopifyCalendarContent"></div>
+          </div>
+
+          <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <div style="font-size:12.5px;font-weight:700;color:var(--text)" data-i18n="web.activity_title">Automatic Activity</div>
+              <button class="btn-ghost" onclick="loadAgentActivity('shopify')" style="font-size:11px;padding:4px 10px" data-i18n="web.refresh">Refresh</button>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:10px" data-i18n="web.activity_description"></div>
+            <div id="shopifyActivityContent"></div>
           </div>
 
           <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:16px">
@@ -7589,6 +7648,8 @@ document.addEventListener('arreyon:langchange', () => {
 // WEBSITE CONTROL CENTER — Phase 8 / Increment 1 (connection + read-only intelligence)
 // ═══════════════════════════════════════════════════════════════════════════
 let currentWebsiteBusinessId = null;
+let currentWebsiteConnection = null;
+let currentShopifyConnection = null;
 
 // ── SHOPIFY ──────────────────────────────────────────────────────────────
 // Real, deliberate hardcoded list of every top-level WordPress section
@@ -7807,20 +7868,24 @@ function renderContentCalendar(entries, contentEl) {
   // Real, deliberate chronological order by real date AND time — already
   // sorted by the server, but kept explicit here too so this never
   // silently depends on insert order if the query above ever changes.
-  const sorted = [...entries].sort((a, b) => new Date(`${a.scheduled_date}T${a.scheduled_time}`) - new Date(`${b.scheduled_date}T${b.scheduled_time}`));
+  // The server sends dates as full ISO timestamps, so building dates from scheduled_date + 'T...' yields "Invalid Date"; due_at is the real instant.
+  const dueMs = e => e.due_at ? new Date(e.due_at).getTime() : new Date(`${e.scheduled_date_str}T${e.scheduled_time}`).getTime();
+  const sorted = [...entries].sort((a, b) => dueMs(a) - dueMs(b));
   contentEl.innerHTML = renderCollapsibleItems(sorted, (entry) => {
-    const dateLabel = new Date(entry.scheduled_date + 'T00:00:00').toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    const timeLabel = entry.scheduled_time ? entry.scheduled_time.slice(0, 5) : '';
+    const due = new Date(dueMs(entry));
+    const whenLabel = due.toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const overdue = entry.status === 'scheduled' && (Date.now() - due.getTime()) > 10 * 60 * 1000;
     const statusColor = CALENDAR_STATUS_COLORS[entry.status] || 'var(--muted)';
     const actionLabel = entry.publish_mode === 'publish' ? t('web.content_automation_auto_publish') : t('web.content_automation_save_draft');
     return `
     <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
       <div style="min-width:0">
-        <div style="font-size:11.5px;color:var(--muted)">${dateLabel} ${timeLabel}</div>
+        <div style="font-size:11.5px;color:var(--muted)">${whenLabel}</div>
         <div style="font-size:12.5px;color:var(--text);font-weight:600;margin-top:2px">${escapeHtml(entry.generated_title || entry.topic || t('web.calendar_auto_topic'))}</div>
         <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(actionLabel)}</div>
+        ${overdue ? `<div style="font-size:11px;color:#f59e0b;margin-top:3px">${t('web.calendar_overdue')}</div>` : ''}
         ${entry.status === 'failed' && entry.error_message ? `<div style="font-size:11px;color:#ef4444;margin-top:3px">${escapeHtml(entry.error_message)}</div>` : ''}
-        ${entry.generated_url ? `<a href="${escapeHtml(entry.generated_url)}" target="_blank" style="font-size:11px;color:var(--purple-light)">${t('web.view_full_post_button')}</a>` : ''}
+        ${safeHttpUrl(entry.generated_url) ? `<a href="${escapeAttr(safeHttpUrl(entry.generated_url))}" target="_blank" rel="noopener" style="font-size:11px;color:var(--purple-light)">${t('web.view_full_post_button')}</a>` : ''}
       </div>
       <div style="text-align:right;white-space:nowrap">
         <span style="font-size:9px;font-weight:700;color:${statusColor};text-transform:uppercase">${t('web.calendar_status_' + entry.status)}</span>
@@ -7868,14 +7933,14 @@ async function createAutomationRule(platform) {
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-automation-rule`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform: platform === 'shopify' ? 'shopify' : 'wordpress', startDate, endDate, frequencyPeriod, postsPerPeriod, hoursBetweenPosts, startTime, publishMode }),
+      body: JSON.stringify({ platform: platform === 'shopify' ? 'shopify' : 'wordpress', startDate, endDate, frequencyPeriod, postsPerPeriod, hoursBetweenPosts, startTime, publishMode, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
     });
     const data = await res.json();
     if (!res.ok) {
       showToast(data.error || t('board.connection_error'), 'error');
       return;
     }
-    showToast(tf('web.rule_created_toast', { count: data.createdCount }), 'success');
+    showToast(data.skippedCount > 0 ? tf('web.rule_created_skipped_toast', { count: data.createdCount, skipped: data.skippedCount }) : tf('web.rule_created_toast', { count: data.createdCount }), 'success');
     loadActiveRules(platform);
     loadContentCalendar(platform);
   } catch (e) {
@@ -7899,7 +7964,7 @@ async function loadActiveRules(platform) {
       return `
       <div style="background:var(--bg2);border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
         <div>
-          <div style="font-size:12px;color:var(--text);font-weight:600">${rule.start_date} → ${rule.end_date}</div>
+          <div style="font-size:12px;color:var(--text);font-weight:600">${rule.start_date_str} → ${rule.end_date_str}</div>
           <div style="font-size:11px;color:var(--muted)">${summary} · ${actionLabel}</div>
         </div>
         <button class="btn-ghost" onclick="cancelAutomationRule('${rule.id}', '${platform}')" style="font-size:11px;padding:4px 10px">${t('web.stop_automation_button')}</button>
@@ -8037,8 +8102,13 @@ async function loadShopifyStatus() {
     document.getElementById('shopifyConnectPrompt').style.display = 'none';
     document.getElementById('shopifyConnectedWrap').style.display = 'block';
     document.getElementById('shopifyDomainLabel').textContent = data.connection.shop_domain;
+    currentShopifyConnection = data.connection;
+    document.getElementById('shopifyAutomationMode').value = data.connection.automation_mode || 'manual';
+    document.getElementById('shopifyAgentCycleFrequency').value = data.connection.agent_cycle_frequency || 'daily';
+    renderAgentModeStatus('shopify', data.connection);
     loadActiveRules('shopify');
     loadContentCalendar('shopify');
+    loadAgentActivity('shopify');
     renderWebsiteIntelligenceContent(data.connection.website_intelligence, data.connection.website_intelligence_generated_at, 'shopifyIntelligenceContent');
     loadShopifyActions();
     loadShopifyGeneratedPosts();
@@ -8321,6 +8391,10 @@ function renderWebsiteStatusCard(connection) {
 
   document.getElementById('websitePermissionLevel').value = connection.permission_level || 'read_only';
   document.getElementById('websiteAutomationMode').value = connection.automation_mode || 'manual';
+  currentWebsiteConnection = connection;
+  document.getElementById('websiteAgentCycleFrequency').value = connection.agent_cycle_frequency || 'daily';
+  document.getElementById('websitePollModeNotice').style.display = connection.connection_mode === 'poll' ? 'block' : 'none';
+  renderAgentModeStatus('website', connection);
 
   const errEl = document.getElementById('websiteStatusError');
   if (connection.last_error && ['error', 'needs_attention', 'auth_expired'].includes(connection.connection_status)) {
@@ -8397,6 +8471,7 @@ async function loadWebsiteSection() {
     loadTechnicalSeoHistory('website');
     loadActiveRules('website');
     loadContentCalendar('website');
+    loadAgentActivity('website');
     loadWebsiteActions();
     return true;
   } catch (e) {
@@ -8743,7 +8818,8 @@ async function runShopifyAudit() {
     }
     const totalFound = (data.foundIssues.metaTitle || 0) + (data.foundIssues.metaDescription || 0) + (data.foundIssues.brokenLinks || 0);
     const newCount = data.proposalsCreated.length;
-    contentEl.innerHTML = `<div style="font-size:12.5px;color:var(--text2)">${tf('web.shopify_audit_summary', { analyzed: data.analyzedCount, found: totalFound, new: newCount })}</div>`;
+    const autoNote = data.autoApplied && data.autoApplied.length ? ' ' + tf('web.shopify_audit_auto_applied', { count: data.autoApplied.length }) : '';
+    contentEl.innerHTML = `<div style="font-size:12.5px;color:var(--text2)">${tf('web.shopify_audit_summary', { analyzed: data.analyzedCount, found: totalFound, new: newCount })}${escapeHtml(autoNote)}</div>`;
     showToast(tf('web.shopify_audit_toast', { new: newCount }), 'success');
     loadShopifyActions();
   } catch (e) {
@@ -9020,16 +9096,187 @@ function renderWebsiteIntelligenceContent(intelligence, generatedAt, containerId
 // PHASE 8 / INCREMENT 2 — Permissions & Approval Workflow
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ── AUTOMATIC MODE STATUS + ACTIVITY FEED ────────────────────────────────
+// escapeHtml leaves quotes alone, which is fine in text but not inside an
+// attribute. Post URLs come back from the connected CMS, so they are treated
+// as untrusted: escaped for attributes, and only http(s) links are ever rendered.
+function escapeAttr(str) { return escapeHtml(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function safeHttpUrl(u) { return /^https?:\/\//i.test(String(u || '')) ? String(u) : ''; }
+
+function formatTimestamp(iso) {
+  return new Date(iso).toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+// Says what Automatic mode is doing right now — and, importantly, what would
+// stop it from doing anything, so "on" never silently means "nothing happens".
+function renderAgentModeStatus(prefix, conn) {
+  const el = document.getElementById(`${prefix}AgentModeStatus`);
+  if (!el || !conn) return;
+  let html;
+  if (prefix === 'website' && conn.connection_mode === 'poll') {
+    html = `<span style="color:#f59e0b">${t('web.agent_status_poll_warning')}</span>`;
+  } else if (conn.automation_mode !== 'automatic') {
+    html = `<span style="color:var(--muted)">${t('web.agent_status_manual')}</span>`;
+  } else {
+    const freq = conn.agent_cycle_frequency === 'weekly' ? 'weekly' : 'daily';
+    if (!conn.agent_last_cycle_at) {
+      html = `<span style="color:var(--text2)">${t('web.agent_status_waiting')}</span>`;
+    } else {
+      const next = new Date(new Date(conn.agent_last_cycle_at).getTime() + (freq === 'weekly' ? 7 : 1) * 86400000);
+      html = `<span style="color:var(--text2)">${escapeHtml(tf('web.agent_status_on', { frequency: t('web.frequency_' + freq).toLowerCase(), last: formatTimestamp(conn.agent_last_cycle_at), next: formatTimestamp(next) }))}</span>`;
+    }
+    // Only fixes at or above this permission level are applied; below it the agent still audits and proposes.
+    if (prefix === 'website' && conn.permission_level !== 'managed') {
+      html += `<div style="color:#f59e0b;margin-top:4px">${escapeHtml(tf('web.agent_status_permission_warning', { level: t('web.permission_' + conn.permission_level) }))}</div>`;
+    }
+  }
+  el.innerHTML = html;
+}
+
+async function updateShopifyAgentMode() {
+  const automationMode = document.getElementById('shopifyAutomationMode').value;
+  const agentCycleFrequency = document.getElementById('shopifyAgentCycleFrequency').value;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/automation`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ automationMode, agentCycleFrequency })
+    });
+    if (!res.ok) { showToast(t('board.connection_error'), 'error'); return; }
+    showToast(t('toast.saved'), 'success');
+    if (currentShopifyConnection) {
+      Object.assign(currentShopifyConnection, { automation_mode: automationMode, agent_cycle_frequency: agentCycleFrequency });
+      renderAgentModeStatus('shopify', currentShopifyConnection);
+    }
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+// Built from structured detail, so each entry is worded in the viewer's own language.
+function agentActivityText(e) {
+  const d = e.detail || {};
+  const failed = e.outcome === 'failed';
+  switch (e.task_type) {
+    case 'content_generated': return tf(d.status === 'publish' ? 'web.activity_content_published' : 'web.activity_content_drafted', { title: d.title || '' });
+    case 'content_failed': return t('web.activity_content_failed');
+    case 'intelligence_refreshed': return t(failed ? 'web.activity_intelligence_failed' : 'web.activity_intelligence_refreshed');
+    case 'audit_completed': return failed ? t('web.activity_audit_failed') : tf('web.activity_audit_completed', { found: d.issuesFound || 0, fixed: d.autoFixed || 0, pending: d.pendingApproval || 0 });
+    case 'technical_check':
+      if (failed) return t('web.activity_technical_failed');
+      if (e.outcome === 'attention') return t('web.activity_technical_attention');
+      return tf('web.activity_technical_check', { perf: d.performanceScore != null ? d.performanceScore : '–', seo: d.seoScore != null ? d.seoScore : '–' });
+    case 'sitemap_submitted': return t(failed ? 'web.activity_sitemap_failed' : 'web.activity_sitemap_submitted');
+    case 'sitemap_missing': return t('web.activity_sitemap_missing');
+    case 'cycle_failed': return t('web.activity_cycle_failed');
+    default: return e.task_type;
+  }
+}
+
+async function loadAgentActivity(prefix) {
+  const el = document.getElementById(`${prefix}ActivityContent`);
+  if (!el) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/agent-activity?platform=${prefix === 'shopify' ? 'shopify' : 'wordpress'}`);
+    const data = await res.json();
+    if (!res.ok) { el.innerHTML = `<div style="font-size:12px;color:#ff8080">${escapeHtml(data.error || t('board.connection_error'))}</div>`; return; }
+    renderAgentActivity(prefix, data.entries || []);
+  } catch (e) {
+    el.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
+  }
+}
+
+function renderAgentActivity(prefix, entries) {
+  const el = document.getElementById(`${prefix}ActivityContent`);
+  if (!entries.length) {
+    el.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.agent_no_activity_yet')}</div>`;
+    return;
+  }
+  const platform = prefix === 'shopify' ? 'shopify' : 'wordpress';
+  el.innerHTML = renderCollapsibleItems(entries, (e) => {
+    const d = e.detail || {};
+    const color = e.outcome === 'failed' ? '#ef4444' : e.outcome === 'attention' ? '#f59e0b' : '#22c55e';
+    const mark = e.outcome === 'failed' ? '✕' : e.outcome === 'attention' ? '!' : '✓';
+    const hasPost = e.task_type === 'content_generated' && d.postId;
+    const previewId = `${prefix}-preview-${e.id}`;
+    const pages = Array.isArray(d.pages) ? d.pages : [];
+    return `
+    <div style="background:var(--bg2);border-radius:10px;padding:10px 14px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+        <div style="min-width:0">
+          <div style="font-size:12.5px;color:var(--text)">${escapeHtml(agentActivityText(e))}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">${formatTimestamp(e.created_at)} · ${timeAgo(e.created_at)}</div>
+          ${(e.outcome === 'failed' && d.error) ? `<div style="font-size:11px;color:#ef4444;margin-top:3px">${escapeHtml(d.error)}</div>` : ''}
+        </div>
+        <span style="font-size:11px;font-weight:700;color:${color};flex-shrink:0" aria-hidden="true">${mark}</span>
+      </div>
+      ${pages.length ? `<div style="margin-top:6px;font-size:11px;color:var(--text2)">${pages.map(p => `
+        <div style="margin-top:3px"><span style="font-weight:600">${escapeHtml(p.title || p.url || '')}</span>${(p.changes || []).map(c => `
+          <div style="margin-left:10px;color:var(--muted)">${c.status === 'fixed' ? '✓ ' + t('web.activity_change_fixed') : '… ' + t('web.activity_change_pending')}: ${escapeHtml(c.description || '')}</div>`).join('')}</div>`).join('')}</div>` : ''}
+      ${hasPost ? `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn-ghost" data-platform="${platform}" data-post-id="${escapeAttr(d.postId)}" data-preview-id="${escapeAttr(previewId)}" onclick="toggleAgentPreviewFromButton(this)" style="font-size:11px;padding:4px 10px">${t('web.activity_preview_button')}</button>
+        ${(d.status === 'publish' && safeHttpUrl(d.url)) ? `<a href="${escapeAttr(safeHttpUrl(d.url))}" target="_blank" rel="noopener" style="font-size:11px;color:var(--purple-light)">${t('web.activity_open_on_site')}</a>` : ''}
+      </div>
+      <div id="${previewId}"></div>` : ''}
+    </div>`;
+  }, 8, `${prefix}Activity`);
+}
+
+// Shows a read-only copy of a generated post inside the app — an unpublished
+// draft isn't viewable on the connected site without logging in. Rendered in a
+// sandboxed frame with no script permission: the HTML is AI-written from
+// scraped web sources, so it is never injected into the page itself.
+// Values reach the handler through data-* attributes, not as arguments written into an
+// inline handler: HTML-escaping does not protect a value inside an onclick string, because
+// the browser decodes the entities before the JavaScript is parsed.
+function toggleAgentPreviewFromButton(btn) {
+  return toggleAgentPreview(btn, btn.dataset.platform, btn.dataset.postId, btn.dataset.previewId);
+}
+
+async function toggleAgentPreview(btn, platform, postId, containerId) {
+  const box = document.getElementById(containerId);
+  if (box.dataset.open === '1') { box.innerHTML = ''; box.dataset.open = '0'; btn.textContent = t('web.activity_preview_button'); return; }
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/agent-activity/post/${encodeURIComponent(platform)}/${encodeURIComponent(postId)}`);
+    const data = await res.json();
+    if (!res.ok) { showToast(data.error || t('web.activity_preview_failed'), 'error'); return; }
+    const post = data.post;
+    box.innerHTML = '';
+    const meta = document.createElement('div');
+    meta.style.cssText = 'font-size:11px;color:var(--muted);margin:8px 0 6px';
+    meta.textContent = `${post.status === 'publish' ? t('web.status_published') : t('web.status_draft')} · ${formatTimestamp(post.created_at)}${post.status === 'publish' ? '' : ' · ' + t('web.activity_draft_note')}`;
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
+    frame.setAttribute('referrerpolicy', 'no-referrer');
+    frame.style.cssText = 'width:100%;height:380px;border:1px solid var(--border);border-radius:8px;background:#fff';
+    frame.srcdoc = '<meta charset="utf-8"><base target="_blank"><style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1f2937;line-height:1.65;padding:18px;max-width:720px;margin:0 auto}img{max-width:100%;height:auto}a{color:#6d28d9}</style><h1 style="font-size:22px">' + escapeHtml(post.title) + '</h1>' + post.body_html;
+    box.appendChild(meta);
+    box.appendChild(frame);
+    box.dataset.open = '1';
+    btn.textContent = t('web.activity_hide_preview');
+  } catch (e) {
+    showToast(t('web.activity_preview_failed'), 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function updateWebsitePermissions() {
   const permissionLevel = document.getElementById('websitePermissionLevel').value;
   const automationMode = document.getElementById('websiteAutomationMode').value;
+  const agentCycleFrequency = document.getElementById('websiteAgentCycleFrequency').value;
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/permissions`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permissionLevel, automationMode })
+      body: JSON.stringify({ permissionLevel, automationMode, agentCycleFrequency })
     });
-    if (res.ok) showToast(t('toast.saved'), 'success');
-    else showToast(t('board.connection_error'), 'error');
+    if (res.ok) {
+      showToast(t('toast.saved'), 'success');
+      if (currentWebsiteConnection) {
+        Object.assign(currentWebsiteConnection, { permission_level: permissionLevel, automation_mode: automationMode, agent_cycle_frequency: agentCycleFrequency });
+        renderAgentModeStatus('website', currentWebsiteConnection);
+      }
+    } else showToast(t('board.connection_error'), 'error');
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
