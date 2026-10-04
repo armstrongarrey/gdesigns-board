@@ -16606,15 +16606,35 @@ async function runContentCalendarSweep() {
       // just its date; this is the one change that makes specific
       // posting times genuinely mean something rather than being stored
       // but never actually checked.
-      `SELECT * FROM content_calendar_entries WHERE status = 'scheduled' AND (scheduled_date + scheduled_time) <= NOW()`
+      // The second clause recovers an entry whose sweep died mid-
+      // generation (a crash or a deploy restart) — without it, an
+      // entry claimed below would stay 'processing' forever.
+      `SELECT * FROM content_calendar_entries
+       WHERE (status = 'scheduled' AND (scheduled_date + scheduled_time) <= NOW())
+          OR (status = 'processing' AND processed_at < NOW() - INTERVAL '30 minutes')
+       ORDER BY scheduled_date, scheduled_time`
     );
 
     for (const entry of dueEntries.rows) {
+      // Atomic claim: generating one post takes a minute or more, and
+      // sweeps can overlap (the interval doesn't wait for the previous
+      // run, and Render briefly runs two instances during a deploy).
+      // Without this, two sweeps both select the same due entry and
+      // both publish it. Exactly one UPDATE can match, so exactly one
+      // sweep proceeds; the other skips.
+      const claimed = await pool.query(
+        `UPDATE content_calendar_entries SET status = 'processing', processed_at = NOW()
+         WHERE id = $1 AND (status = 'scheduled' OR (status = 'processing' AND processed_at < NOW() - INTERVAL '30 minutes'))
+         RETURNING id`,
+        [entry.id]
+      );
+      if (!claimed.rows.length) continue;
+
       try {
         const bizResult = await pool.query('SELECT id, name, user_id FROM businesses WHERE id = $1', [entry.business_id]);
-        if (!bizResult.rows.length) continue;
+        if (!bizResult.rows.length) throw new Error('This business no longer exists.');
         const context = await getBusinessContext(entry.business_id, bizResult.rows[0].user_id);
-        if (!context) continue;
+        if (!context) throw new Error('Business details could not be loaded for this post.');
 
         if (entry.platform === 'wordpress') {
           const connResult = await pool.query(`SELECT * FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [entry.business_id]);
@@ -16627,8 +16647,8 @@ async function runContentCalendarSweep() {
           const result = await runBlogPostGeneration(connection, decryptedPassword, context, topic, false, entry.publish_mode);
 
           await pool.query(
-            `UPDATE content_calendar_entries SET status = $1, generated_title = $2, generated_url = $3, processed_at = NOW() WHERE id = $4`,
-            [result?.success ? 'generated' : 'failed', result?.title || topic, result?.url || null, entry.id]
+            `UPDATE content_calendar_entries SET status = $1, generated_title = $2, generated_url = $3, error_message = $4, processed_at = NOW() WHERE id = $5`,
+            [result?.success ? 'generated' : 'failed', result?.title || topic, result?.url || null, result?.success ? null : (result?.error || 'WordPress did not accept this post.').slice(0, 500), entry.id]
           );
         } else {
           const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [entry.business_id]);
@@ -16657,10 +16677,26 @@ async function runContentCalendarSweep() {
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
               [connection.id, result.id, topic, generated.title, result.handle, generated.bodyHtml, generated.metaTitle, generated.metaDescription, generated.tags.join(', '), result.status, result.url]
             );
+
+            // Recorded immediately, post by post — the cooldown and
+            // no-repeat checks read this table, so a rule producing
+            // several posts in one run needs each one visible to the
+            // next, or the same partner could be linked repeatedly with
+            // nothing throttling it. Only recorded if the final body
+            // genuinely contains the partner's URL.
+            if (generated.reciprocalCandidate && generated.bodyHtml.includes(generated.reciprocalCandidate.url)) {
+              try {
+                await pool.query(
+                  `INSERT INTO reciprocal_links_placed (from_business_id, to_business_id, from_post_title, from_post_url, to_url, relevance_reason)
+                   VALUES ($1, $2, $3, $4, $5, $6)`,
+                  [entry.business_id, generated.reciprocalCandidate.businessId, generated.title, result.url || null, generated.reciprocalCandidate.url, generated.reciprocalCandidate.reason]
+                );
+              } catch (e) { console.error('Failed to record reciprocal link placement (Shopify calendar):', e.message); }
+            }
           }
           await pool.query(
-            `UPDATE content_calendar_entries SET status = $1, generated_title = $2, generated_url = $3, processed_at = NOW() WHERE id = $4`,
-            [result.success ? 'generated' : 'failed', generated.title || topic, result.url || null, entry.id]
+            `UPDATE content_calendar_entries SET status = $1, generated_title = $2, generated_url = $3, error_message = $4, processed_at = NOW() WHERE id = $5`,
+            [result.success ? 'generated' : 'failed', generated.title || topic, result.url || null, result.success ? null : (result.error || 'Shopify did not accept this post.').slice(0, 500), entry.id]
           );
         }
       } catch (entryErr) {
