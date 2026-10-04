@@ -4382,7 +4382,7 @@ const VALID_PUBLISH_MODES = ['draft', 'publish'];
 const VALID_CONTENT_AUTOMATION_FREQUENCIES = ['daily', 'weekly', 'monthly'];
 app.put('/api/business/:id/website/permissions', authRequired, async (req, res) => {
   const { permissionLevel, automationMode, contentAutomationEnabled, contentAutomationPublishMode, contentAutomationFrequency, agentCycleFrequency } = req.body;
-  if (agentCycleFrequency && !['daily', 'weekly'].includes(agentCycleFrequency)) {
+  if (agentCycleFrequency && !['daily', 'weekly', 'monthly'].includes(agentCycleFrequency)) {
     return res.status(400).json({ error: 'Invalid agent schedule' });
   }
   if (permissionLevel && !VALID_PERMISSION_LEVELS.includes(permissionLevel)) {
@@ -8355,7 +8355,7 @@ app.put('/api/business/:id/shopify/automation', authRequired, async (req, res) =
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
     const { automationMode, agentCycleFrequency } = req.body || {};
     if (automationMode && !['manual', 'automatic'].includes(automationMode)) return res.status(400).json({ error: 'Invalid automation mode.' });
-    if (agentCycleFrequency && !['daily', 'weekly'].includes(agentCycleFrequency)) return res.status(400).json({ error: 'Invalid schedule.' });
+    if (agentCycleFrequency && !['daily', 'weekly', 'monthly'].includes(agentCycleFrequency)) return res.status(400).json({ error: 'Invalid schedule.' });
     const result = await pool.query(
       `UPDATE shopify_connections SET automation_mode = COALESCE($1, automation_mode), agent_cycle_frequency = COALESCE($2, agent_cycle_frequency)
        WHERE business_id = $3 RETURNING id, automation_mode, agent_cycle_frequency, agent_last_cycle_at`,
@@ -16392,7 +16392,9 @@ const POLL_MODE_CONTENT_MESSAGE = "Automatic content creation isn't available fo
 // has no auto-apply path in runShopifyAudit at all, so widening this set would NOT make it auto-apply.
 const SHOPIFY_AUTO_APPLY_ACTIONS = new Set(['update_meta_title', 'update_meta_description']);
 const MAX_RULE_ENTRIES = 1000;
-const AGENT_CYCLE_DUE_CLAUSE = `(agent_last_cycle_at IS NULL OR agent_last_cycle_at < NOW() - (CASE WHEN agent_cycle_frequency = 'weekly' THEN INTERVAL '7 days' ELSE INTERVAL '1 day' END))`;
+// Written as "last run + interval <= now", not "last run < now - interval": for a month the two differ at
+// month-ends (a cycle that ran Jan 31 is due Feb 28, the clamped date; the subtractive form would wait until Mar 1).
+const AGENT_CYCLE_DUE_CLAUSE = `(agent_last_cycle_at IS NULL OR agent_last_cycle_at + (CASE agent_cycle_frequency WHEN 'weekly' THEN INTERVAL '7 days' WHEN 'monthly' THEN INTERVAL '1 month' ELSE INTERVAL '1 day' END) <= NOW())`;
 
 // Returns the account if the logged-in user owns this business, else null.
 async function userOwnsBusiness(req) {
