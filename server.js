@@ -4434,7 +4434,11 @@ app.put('/api/business/:id/website/permissions', authRequired, async (req, res) 
         { previousEnabled: connection.content_automation_enabled, newContentAutomationEnabled, previousPublishMode: connection.content_automation_publish_mode, newContentAutomationPublishMode, previousFrequency: connection.content_automation_frequency, newContentAutomationFrequency }, 'content_generation');
     }
 
-    res.json({ success: true, permissionLevel: newPermissionLevel, automationMode: newAutomationMode, contentAutomationEnabled: newContentAutomationEnabled, contentAutomationPublishMode: newContentAutomationPublishMode, contentAutomationFrequency: newContentAutomationFrequency });
+    // Switching to Automatic starts the agent now, in the background — it does not wait for the schedule.
+    const agentRun = (newAutomationMode === 'automatic' && connection.automation_mode !== 'automatic')
+      ? await startAgentRunOnSwitch('wordpress', connection.id) : null;
+
+    res.json({ success: true, permissionLevel: newPermissionLevel, automationMode: newAutomationMode, contentAutomationEnabled: newContentAutomationEnabled, contentAutomationPublishMode: newContentAutomationPublishMode, contentAutomationFrequency: newContentAutomationFrequency, agentRun });
   } catch (e) {
     console.error('Website permissions update error:', e.message);
     res.status(500).json({ error: 'Failed to update permissions' });
@@ -8393,13 +8397,21 @@ app.put('/api/business/:id/shopify/automation', authRequired, async (req, res) =
     const { automationMode, agentCycleFrequency } = req.body || {};
     if (automationMode && !['manual', 'automatic'].includes(automationMode)) return res.status(400).json({ error: 'Invalid automation mode.' });
     if (agentCycleFrequency && !['daily', 'weekly', 'monthly'].includes(agentCycleFrequency)) return res.status(400).json({ error: 'Invalid schedule.' });
+    const before = await pool.query('SELECT automation_mode FROM shopify_connections WHERE business_id = $1', [req.params.id]);
+    if (!before.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
     const result = await pool.query(
       `UPDATE shopify_connections SET automation_mode = COALESCE($1, automation_mode), agent_cycle_frequency = COALESCE($2, agent_cycle_frequency)
        WHERE business_id = $3 RETURNING id, automation_mode, agent_cycle_frequency, agent_last_cycle_at`,
       [automationMode || null, agentCycleFrequency || null, req.params.id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
-    res.json({ success: true, connection: result.rows[0] });
+    // Switching to Automatic starts the agent now, in the background — it does not wait for the schedule.
+    let agentRun = null, connection = result.rows[0];
+    if (connection.automation_mode === 'automatic' && before.rows[0].automation_mode !== 'automatic') {
+      agentRun = await startAgentRunOnSwitch('shopify', connection.id);
+      connection = (await pool.query('SELECT id, automation_mode, agent_cycle_frequency, agent_last_cycle_at FROM shopify_connections WHERE id = $1', [connection.id])).rows[0];
+    }
+    res.json({ success: true, connection, agentRun });
   } catch (e) {
     console.error('Update Shopify automation error:', e.message);
     res.status(500).json({ error: 'Could not update automatic mode.' });
@@ -16773,6 +16785,49 @@ const logManual = (businessId, platform, taskType, outcome, detail) =>
   logAgentActivity({ businessId, platform, taskType, outcome, triggeredBy: 'manual', detail });
 const errDetail = e => ({ error: String((e && e.message) || e).slice(0, 300) });
 
+// Starts the maintenance cycle in the background — the caller never waits for it. Returns false if a run is
+// already in progress for this site (so two can never overlap); a failure is recorded, never lost.
+function launchAgentCycleInBackground(platform, connection, triggeredBy) {
+  const businessId = connection.business_id;
+  const key = agentRunKey(platform, businessId);
+  if (agentRunsInFlight.has(key)) return false;
+  agentRunsInFlight.add(key);
+  (async () => {
+    try {
+      if (platform === 'wordpress') await runWordPressMaintenanceCycle(connection, triggeredBy);
+      else await runShopifyMaintenanceCycle(connection, triggeredBy);
+    } catch (e) {
+      console.error(`${platform} agent run (${triggeredBy}) failed for business ${businessId}:`, e.message);
+      await logAgentActivity({ businessId, platform, taskType: 'cycle_failed', outcome: 'failed', triggeredBy, detail: errDetail(e) });
+    } finally { agentRunsInFlight.delete(key); }
+  })();
+  return true;
+}
+
+// Switching a site from Manual to Automatic starts the agent right then, in the background, instead of
+// waiting for the schedule's next sweep. The timestamp is claimed in the same statement that checks
+// eligibility, so two quick switches (or two server instances) start exactly one run, and the schedule's
+// next run is measured from now. A run in the last 15 minutes is not repeated: flipping the switch back and
+// forth must not start a costly audit every time.
+const AGENT_SWITCH_COOLDOWN = '15 minutes';
+async function startAgentRunOnSwitch(platform, connectionId) {
+  const table = platform === 'wordpress' ? 'website_connections' : 'shopify_connections';
+  const eligible = platform === 'wordpress' ? "AND connection_status != 'disconnected' AND connection_mode = 'push'" : "AND connection_status = 'connected'";
+  const claimed = await pool.query(
+    `UPDATE ${table} SET agent_last_cycle_at = NOW()
+     WHERE id = $1 ${eligible} AND (agent_last_cycle_at IS NULL OR agent_last_cycle_at < NOW() - INTERVAL '${AGENT_SWITCH_COOLDOWN}')
+     RETURNING *`, [connectionId]);
+  if (!claimed.rows.length) {
+    const why = await pool.query(`SELECT * FROM ${table} WHERE id = $1`, [connectionId]);
+    const c = why.rows[0];
+    if (!c) return { started: false, reason: 'unavailable' };
+    if (platform === 'wordpress' && c.connection_mode === 'poll') return { started: false, reason: 'poll' };
+    const connected = platform === 'wordpress' ? c.connection_status !== 'disconnected' : c.connection_status === 'connected';
+    return { started: false, reason: connected ? 'recent' : 'unavailable' };
+  }
+  return launchAgentCycleInBackground(platform, claimed.rows[0], 'automatic') ? { started: true } : { started: false, reason: 'running' };
+}
+
 function wordpressAuditActivityDetail(audit) {
   return { issuesFound: audit.issuesFound, autoFixed: audit.autoFixed, pendingApproval: audit.pendingApproval, pages: (audit.findingsByPage || []).slice(0, 10) };
 }
@@ -17054,17 +17109,8 @@ async function startManualAgentRun(req, res, platform) {
       if (!r.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
       connection = r.rows[0];
     }
-    const key = agentRunKey(platform, businessId);
-    if (agentRunsInFlight.has(key)) return res.status(409).json({ error: 'The agent is already running for this site. Its results will appear in Agent Activity as each step finishes.' });
-    agentRunsInFlight.add(key);
+    if (!launchAgentCycleInBackground(platform, connection, 'manual')) return res.status(409).json({ error: 'The agent is already running for this site. Its results will appear in Agent Activity as each step finishes.' });
     res.status(202).json({ started: true });
-    try {
-      if (platform === 'wordpress') await runWordPressMaintenanceCycle(connection, 'manual');
-      else await runShopifyMaintenanceCycle(connection, 'manual');
-    } catch (e) {
-      console.error(`Manual ${platform} agent run failed for business ${businessId}:`, e.message);
-      await logManual(businessId, platform, 'cycle_failed', 'failed', errDetail(e));
-    } finally { agentRunsInFlight.delete(key); }
   } catch (e) {
     console.error('Start manual agent run error:', e.message);
     if (!res.headersSent) res.status(500).json({ error: 'Could not start the agent. Please try again.' });
