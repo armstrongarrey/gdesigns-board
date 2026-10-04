@@ -1784,9 +1784,17 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
            connected WordPress site and a newly connected Shopify store look
            like one confusing, mixed list. Only one platform's content is
            ever visible at a time now. -->
-      <div style="display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0">
-        <button type="button" onclick="switchPlatformTab('wordpress')" id="platformTabWordPress" style="background:none;border:none;border-bottom:2px solid var(--purple);color:var(--text);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_wordpress">WordPress</button>
-        <button type="button" onclick="switchPlatformTab('shopify')" id="platformTabShopify" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_shopify">Shopify</button>
+      <div style="display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0;align-items:flex-end">
+        <!-- One selector for every connected-site platform, instead of
+             one tab per platform — adding Webflow or Wix later is one
+             more option here, never another tab in the row. Backlinks and
+             Partner Network stay as fixed tabs since they belong to the
+             business, not to any one platform, so their count never grows. -->
+        <select id="platformSelector" onchange="switchPlatformTab(this.value)" style="background:none;border:none;border-bottom:2px solid var(--purple);color:var(--text);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px;width:auto;border-radius:0">
+          <option value="" disabled hidden data-i18n="web.platform_selector_placeholder" style="background:var(--bg2);color:var(--text)">Platform</option>
+          <option value="wordpress" selected data-i18n="web.platform_tab_wordpress" style="background:var(--bg2);color:var(--text)">WordPress</option>
+          <option value="shopify" data-i18n="web.platform_tab_shopify" style="background:var(--bg2);color:var(--text)">Shopify</option>
+        </select>
         <button type="button" onclick="switchPlatformTab('backlinks')" id="platformTabBacklinks" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_backlinks">Backlinks</button>
         <button type="button" onclick="switchPlatformTab('partnernetwork')" id="platformTabPartnerNetwork" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_partner_network">Partner Network</button>
 
@@ -2144,31 +2152,65 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div id="shopifyActionsContent"></div>
           </div>
 
-          <!-- AUTOMATIC CONTENT CREATION — Shopify's equivalent of
-               WordPress's automation settings, same cycle: intelligence
-               refresh, audit, then a new blog post, on the schedule
-               chosen below. -->
+          <!-- CONTENT CALENDAR & AUTOMATION — same real engine as
+               WordPress: a real rule expands into real, specific
+               calendar entries ahead of time, one per day per time slot. -->
           <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px;border:1px solid rgba(239,68,68,.25)">
             <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.content_automation_title">Automatic Content Creation</div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.content_automation_warning">When enabled, the AI refreshes Website Intelligence, audits and fixes existing SEO issues, then writes and creates a new blog post, on the schedule you choose below — low-risk fixes follow your Automation Mode setting above, and a new post never modifies an existing page or post's URL.</div>
-            <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);cursor:pointer;margin-bottom:10px">
-              <input type="checkbox" id="shopifyContentAutomationEnabled" onchange="updateShopifyAutomation()" style="width:auto">
-              <span data-i18n="web.content_automation_enable">Automatically write and create new blog posts</span>
-            </label>
-            <div id="shopifyContentAutomationPublishRow" style="display:none;margin-left:24px">
-              <label style="font-size:11px;color:var(--muted)" data-i18n="web.content_automation_frequency_label">How often</label>
-              <select class="form-input" id="shopifyContentAutomationFrequency" onchange="updateShopifyAutomation()" style="font-size:12.5px;max-width:280px;margin-bottom:10px">
-                <option value="daily" data-i18n="web.frequency_daily">Daily</option>
-                <option value="weekly" data-i18n="web.frequency_weekly">Weekly</option>
-                <option value="monthly" data-i18n="web.frequency_monthly">Monthly</option>
-              </select>
-              <label style="font-size:11px;color:var(--muted)" data-i18n="web.content_automation_publish_label">When a new post is ready</label>
-              <select class="form-input" id="shopifyContentAutomationPublishMode" onchange="updateShopifyAutomation()" style="font-size:12.5px;max-width:280px">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.rule_builder_description">Set a date range, how many posts per day/week/month, and how many hours apart. Arreyon writes the actual posts ahead of schedule on the calendar below.</div>
+
+            <div id="shopifyActiveRulesContent" style="margin-bottom:12px"></div>
+
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+              <div>
+                <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_start_date_label">Start date</label><br>
+                <input type="date" id="shopifyRuleStartDate">
+              </div>
+              <div>
+                <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_end_date_label">End date</label><br>
+                <input type="date" id="shopifyRuleEndDate">
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+              <div>
+                <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_period_label">Repeat</label><br>
+                <select id="shopifyRuleFrequencyPeriod">
+                  <option value="daily" data-i18n="web.frequency_daily">Daily</option>
+                  <option value="weekly" data-i18n="web.frequency_weekly">Weekly</option>
+                  <option value="monthly" data-i18n="web.frequency_monthly">Monthly</option>
+                </select>
+              </div>
+              <div>
+                <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_posts_per_period_label">Posts each time</label><br>
+                <input type="number" id="shopifyRulePostsPerPeriod" value="1" min="1" max="20" style="max-width:90px">
+              </div>
+              <div>
+                <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_hours_between_label">Hours apart</label><br>
+                <input type="number" id="shopifyRuleHoursBetween" value="3" min="1" style="max-width:90px">
+              </div>
+              <div>
+                <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_first_post_time_label">First post at</label><br>
+                <input type="time" id="shopifyRuleStartTime" value="09:00">
+              </div>
+            </div>
+            <div style="margin-bottom:10px">
+              <label style="font-size:11px;color:var(--muted)" data-i18n="web.rule_action_label">Action for every post this creates</label><br>
+              <select id="shopifyRulePublishMode" style="max-width:280px">
                 <option value="draft" data-i18n="web.content_automation_save_draft">Save as draft (I publish manually)</option>
                 <option value="publish" data-i18n="web.content_automation_auto_publish">Publish immediately, no review</option>
               </select>
-              <div id="shopifyAutomationStatus" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);font-size:11px"></div>
             </div>
+            <div>
+              <button class="btn-primary" onclick="createAutomationRule('shopify')" id="shopifyCreateRuleBtn" data-i18n="web.start_automation_button">Start Automation</button>
+            </div>
+          </div>
+
+          <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <div style="font-size:12.5px;font-weight:700;color:var(--text)" data-i18n="web.content_calendar_title">Content Calendar</div>
+              <button class="btn-ghost" onclick="loadContentCalendar('shopify')" style="font-size:11px;padding:4px 10px" data-i18n="web.refresh">Refresh</button>
+            </div>
+            <div id="shopifyCalendarContent"></div>
           </div>
 
           <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:16px">
@@ -2545,6 +2587,21 @@ async function init() {
         showIntMsg(t('int.zoho_connected_success'), 'success');
       } else if (urlParams.get('error') === 'zoho_connect_failed') {
         showIntMsg(t('int.zoho_connect_failed'), 'error');
+      }
+      window.history.replaceState({}, '', '/dashboard');
+    } else if (urlParams.get('section') === 'website') {
+      // Shopify OAuth returns here. Previously this fell through to the
+      // generic branch, which ignores query params — so a successful
+      // connect landed on Dashboard home with no message, and a failed
+      // one was silent. The platform switch itself is deferred until the
+      // website section finishes loading (see pendingPlatformView).
+      showSection('website');
+      if (urlParams.get('connected') === 'shopify') {
+        window.pendingPlatformView = 'shopify';
+        showToast(t('web.shopify_connected_toast'), 'success');
+      } else if (urlParams.get('error') === 'shopify_connect_failed') {
+        window.pendingPlatformView = 'shopify';
+        showToast(t('web.shopify_connect_failed_toast'), 'error');
       }
       window.history.replaceState({}, '', '/dashboard');
     } else {
@@ -7550,22 +7607,41 @@ const WORDPRESS_TAB_ELEMENT_IDS = [
 // Real, deliberate scalable structure — three tabs now, and any future
 // platform (Webflow, Wix) just adds one more real entry here rather than
 // another real branch in an ever-growing if/else chain.
+// Connected-site platforms live in the selector; each future platform is
+// one entry here plus one <option> in #platformSelector. Fixed,
+// business-level tabs (not tied to any platform) are listed separately
+// below, so adding a platform never adds a tab.
+const PLATFORMS = {
+  wordpress: { sectionId: null },
+  shopify: { sectionId: 'shopifySection' },
+};
 const PLATFORM_TABS = {
-  wordpress: { tabId: 'platformTabWordPress', sectionId: null },
-  shopify: { tabId: 'platformTabShopify', sectionId: 'shopifySection' },
   backlinks: { tabId: 'platformTabBacklinks', sectionId: 'backlinksSection' },
   partnernetwork: { tabId: 'platformTabPartnerNetwork', sectionId: 'partnerNetworkSection' },
 };
 
 function switchPlatformTab(platform) {
+  // The selector shows the active platform, or falls back to its
+  // placeholder while a fixed tab is open — this is what lets picking
+  // the platform that was last shown still count as a change, so
+  // returning from Backlinks to WordPress actually fires.
+  const selector = document.getElementById('platformSelector');
+  const isPlatformView = platform in PLATFORMS;
+  selector.value = isPlatformView ? platform : '';
+  selector.style.borderBottomColor = isPlatformView ? 'var(--purple)' : 'transparent';
+  selector.style.color = isPlatformView ? 'var(--text)' : 'var(--muted)';
+  Object.entries(PLATFORMS).forEach(([key, config]) => {
+    if (config.sectionId) {
+      document.getElementById(config.sectionId).style.display = key === platform ? 'block' : 'none';
+    }
+  });
+
   Object.entries(PLATFORM_TABS).forEach(([key, config]) => {
     const tabBtn = document.getElementById(config.tabId);
     const isActive = key === platform;
     tabBtn.style.borderBottomColor = isActive ? 'var(--purple)' : 'transparent';
     tabBtn.style.color = isActive ? 'var(--text)' : 'var(--muted)';
-    if (config.sectionId) {
-      document.getElementById(config.sectionId).style.display = isActive ? 'block' : 'none';
-    }
+    document.getElementById(config.sectionId).style.display = isActive ? 'block' : 'none';
   });
 
   if (platform === 'wordpress') {
@@ -7710,7 +7786,7 @@ async function clearBacklinkOpportunities() {
 // ── CONTENT CALENDAR ──────────────────────────────────────────────────────
 // ── CONTENT CALENDAR (now platform-scoped, living inside each platform's
 // own view rather than a standalone tab) ────────────────────────────────
-const CALENDAR_STATUS_COLORS = { scheduled: '#8b5cf6', generated: '#22c55e', failed: '#ef4444', cancelled: 'var(--muted)' };
+const CALENDAR_STATUS_COLORS = { scheduled: '#8b5cf6', processing: '#f59e0b', generated: '#22c55e', failed: '#ef4444', cancelled: 'var(--muted)' };
 
 async function loadContentCalendar(platform) {
   const contentEl = document.getElementById(platform === 'shopify' ? 'shopifyCalendarContent' : 'websiteCalendarContent');
@@ -7961,11 +8037,8 @@ async function loadShopifyStatus() {
     document.getElementById('shopifyConnectPrompt').style.display = 'none';
     document.getElementById('shopifyConnectedWrap').style.display = 'block';
     document.getElementById('shopifyDomainLabel').textContent = data.connection.shop_domain;
-    document.getElementById('shopifyContentAutomationEnabled').checked = !!data.connection.content_automation_enabled;
-    document.getElementById('shopifyContentAutomationPublishMode').value = data.connection.content_automation_publish_mode || 'draft';
-    document.getElementById('shopifyContentAutomationFrequency').value = data.connection.content_automation_frequency || 'daily';
-    document.getElementById('shopifyContentAutomationPublishRow').style.display = data.connection.content_automation_enabled ? 'block' : 'none';
-    renderShopifyAutomationStatus(data.connection);
+    loadActiveRules('shopify');
+    loadContentCalendar('shopify');
     renderWebsiteIntelligenceContent(data.connection.website_intelligence, data.connection.website_intelligence_generated_at, 'shopifyIntelligenceContent');
     loadShopifyActions();
     loadShopifyGeneratedPosts();
@@ -8178,6 +8251,15 @@ async function loadWebsiteBusinesses() {
     // and the dropdown stays hidden until "Connect Website" is clicked.
     const hasConnection = await loadWebsiteSection();
     select.parentElement.style.display = hasConnection ? 'block' : 'none';
+
+    // Applied only once init has finished, because loadWebsiteSection()
+    // re-shows WordPress elements as it completes — switching earlier
+    // (e.g. straight after the Shopify OAuth redirect lands) would be
+    // silently undone by it.
+    if (window.pendingPlatformView) {
+      switchPlatformTab(window.pendingPlatformView);
+      window.pendingPlatformView = null;
+    }
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
@@ -8945,54 +9027,6 @@ async function updateWebsitePermissions() {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/permissions`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ permissionLevel, automationMode })
-    });
-    if (res.ok) showToast(t('toast.saved'), 'success');
-    else showToast(t('board.connection_error'), 'error');
-  } catch (e) {
-    showToast(t('board.connection_error'), 'error');
-  }
-}
-
-// Real, deliberate visible outcome of the real, last automatic attempt,
-// plus a real, computed estimate of when the next one is actually due —
-// the one piece of visibility that was missing before: whether
-// automation genuinely ran, whether it worked, and roughly when to
-// expect the next one, without needing to guess or wait and see.
-function renderShopifyAutomationStatus(connection) {
-  const statusEl = document.getElementById('shopifyAutomationStatus');
-  if (!connection.content_automation_enabled) { statusEl.innerHTML = ''; return; }
-
-  const lastRunAt = connection.content_automation_last_run_at;
-  const lastStatus = connection.content_automation_last_run_status;
-  const lastError = connection.content_automation_last_run_error;
-
-  let html = '';
-  if (!lastRunAt) {
-    html = `<span style="color:var(--muted)">${t('web.automation_never_run_yet')}</span>`;
-  } else {
-    const lastRunDate = new Date(lastRunAt);
-    const intervalMs = connection.content_automation_frequency === 'weekly' ? 7 * 86400000 : connection.content_automation_frequency === 'monthly' ? 30 * 86400000 : 86400000;
-    const nextDue = new Date(lastRunDate.getTime() + intervalMs);
-    const statusColor = lastStatus === 'failed' ? '#ef4444' : '#22c55e';
-    const statusLabel = lastStatus === 'failed' ? t('web.automation_last_run_failed') : t('web.automation_last_run_success');
-    html = `<div><span style="color:${statusColor};font-weight:600">${statusLabel}</span> <span style="color:var(--muted)">(${timeAgo(lastRunAt)})</span></div>`;
-    if (lastStatus === 'failed' && lastError) {
-      html += `<div style="color:#ef4444;margin-top:3px">${escapeHtml(lastError)}</div>`;
-    }
-    html += `<div style="color:var(--muted);margin-top:3px">${t('web.automation_next_due')}: ${nextDue.toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' })}</div>`;
-  }
-  statusEl.innerHTML = html;
-}
-
-async function updateShopifyAutomation() {
-  const contentAutomationEnabled = document.getElementById('shopifyContentAutomationEnabled').checked;
-  const contentAutomationPublishMode = document.getElementById('shopifyContentAutomationPublishMode').value;
-  const contentAutomationFrequency = document.getElementById('shopifyContentAutomationFrequency').value;
-  document.getElementById('shopifyContentAutomationPublishRow').style.display = contentAutomationEnabled ? 'block' : 'none';
-  try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/automation`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contentAutomationEnabled, contentAutomationPublishMode, contentAutomationFrequency })
     });
     if (res.ok) showToast(t('toast.saved'), 'success');
     else showToast(t('board.connection_error'), 'error');
