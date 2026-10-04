@@ -1937,6 +1937,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <select class="form-input" id="websiteAgentCycleFrequency" onchange="updateWebsitePermissions()" style="font-size:12.5px;max-width:160px">
               <option value="daily" data-i18n="web.frequency_daily">Daily</option>
               <option value="weekly" data-i18n="web.frequency_weekly">Weekly</option>
+              <option value="monthly" data-i18n="web.frequency_monthly">Monthly</option>
             </select>
           </div>
           <div id="websiteAgentModeStatus" style="font-size:11.5px;line-height:1.5"></div>
@@ -2196,6 +2197,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
                 <select class="form-input" id="shopifyAgentCycleFrequency" onchange="updateShopifyAgentMode()" style="font-size:12.5px">
                   <option value="daily" data-i18n="web.frequency_daily">Daily</option>
                   <option value="weekly" data-i18n="web.frequency_weekly">Weekly</option>
+                  <option value="monthly" data-i18n="web.frequency_monthly">Monthly</option>
                 </select>
               </div>
             </div>
@@ -9103,6 +9105,19 @@ function renderWebsiteIntelligenceContent(intelligence, generatedAt, containerId
 function escapeAttr(str) { return escapeHtml(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 function safeHttpUrl(u) { return /^https?:\/\//i.test(String(u || '')) ? String(u) : ''; }
 
+// When the next cycle is due, computed the way the server decides it: last run + one period. A month is
+// a calendar month clamped to the target month's last day (Jan 31 -> Feb 28), in UTC like the database,
+// so the estimate shown here matches when the server will actually run it.
+function nextAgentCycleDate(lastIso, freq) {
+  const last = new Date(lastIso);
+  if (freq === 'monthly') {
+    const y = last.getUTCFullYear(), m = last.getUTCMonth() + 1;
+    const lastDayOfTarget = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    return new Date(Date.UTC(y, m, Math.min(last.getUTCDate(), lastDayOfTarget), last.getUTCHours(), last.getUTCMinutes(), last.getUTCSeconds(), last.getUTCMilliseconds()));
+  }
+  return new Date(last.getTime() + (freq === 'weekly' ? 7 : 1) * 86400000);
+}
+
 function formatTimestamp(iso) {
   return new Date(iso).toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' });
 }
@@ -9118,11 +9133,11 @@ function renderAgentModeStatus(prefix, conn) {
   } else if (conn.automation_mode !== 'automatic') {
     html = `<span style="color:var(--muted)">${t('web.agent_status_manual')}</span>`;
   } else {
-    const freq = conn.agent_cycle_frequency === 'weekly' ? 'weekly' : 'daily';
+    const freq = ['weekly', 'monthly'].includes(conn.agent_cycle_frequency) ? conn.agent_cycle_frequency : 'daily';
     if (!conn.agent_last_cycle_at) {
       html = `<span style="color:var(--text2)">${t('web.agent_status_waiting')}</span>`;
     } else {
-      const next = new Date(new Date(conn.agent_last_cycle_at).getTime() + (freq === 'weekly' ? 7 : 1) * 86400000);
+      const next = nextAgentCycleDate(conn.agent_last_cycle_at, freq);
       html = `<span style="color:var(--text2)">${escapeHtml(tf('web.agent_status_on', { frequency: t('web.frequency_' + freq).toLowerCase(), last: formatTimestamp(conn.agent_last_cycle_at), next: formatTimestamp(next) }))}</span>`;
     }
     // Only fixes at or above this permission level are applied; below it the agent still audits and proposes.
