@@ -391,14 +391,10 @@ async function resolveAccount(userId) {
 // re-implementing its own, inevitably inconsistent fallback.
 async function resolveBusinessSiteUrl(businessId, businessWebsiteField) {
   if (businessWebsiteField) return businessWebsiteField;
-  const wpResult = await pool.query(`SELECT site_url FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [businessId]);
-  if (wpResult.rows.length) return wpResult.rows[0].site_url;
-  const shopifyResult = await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [businessId]);
-  if (shopifyResult.rows.length) {
-    const c = shopifyResult.rows[0];
-    // The store's real primary domain, not its myshopify.com address: Search Console and every "is this link ours"
-    // check match on the real domain.
-    return await shopifyStoreUrlFor(c);
+  // Each platform says whether this business has a site of its own there; the first that does wins.
+  for (const agent of Object.values(WEBSITE_AGENTS)) {
+    const url = await agent.siteUrl(businessId);
+    if (url) return url;
   }
   return null;
 }
@@ -4435,8 +4431,9 @@ app.put('/api/business/:id/website/permissions', authRequired, async (req, res) 
     }
 
     // Switching to Automatic starts the agent now, in the background — it does not wait for the schedule.
-    const agentRun = (newAutomationMode === 'automatic' && connection.automation_mode !== 'automatic')
-      ? await startAgentRunOnSwitch('wordpress', connection.id) : null;
+    let agentRun = null;
+    if (newAutomationMode === 'automatic' && connection.automation_mode !== 'automatic') agentRun = await startAgentRunOnSwitch('wordpress', connection.id);
+    else if (newAutomationMode === 'manual' && connection.automation_mode === 'automatic') agentRun = stopAgentOnSwitch('wordpress', req.params.id);
 
     res.json({ success: true, permissionLevel: newPermissionLevel, automationMode: newAutomationMode, contentAutomationEnabled: newContentAutomationEnabled, contentAutomationPublishMode: newContentAutomationPublishMode, contentAutomationFrequency: newContentAutomationFrequency, agentRun });
   } catch (e) {
@@ -6217,8 +6214,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   }
   if (!Array.isArray(result.proposals)) throw new Error(`Could not generate category/tag proposals — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
 
-  const autoExecuteEligible = connection.permission_level === 'managed' && connection.automation_mode === 'automatic';
-
+  
   const insertedProposals = [];
   for (const p of result.proposals) {
     const candidate = cappedCandidates[p.index];
@@ -6236,7 +6232,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     );
     let action = inserted.rows[0];
 
-    if (autoExecuteEligible) {
+    if (await wordpressAutoExecuteAllowed(connection)) {
       await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
       await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: assign_taxonomy for "${candidate.title}"`, { actionId: action.id }, 'taxonomy');
 
@@ -6863,7 +6859,7 @@ app.post('/api/business/:id/website/technical-seo/check', authRequired, async (r
       checkRobotsTxt(siteConnection.site_url),
     ]);
 
-    const inserted = { rows: [await insertTechnicalSeoCheck(req.params.id, vitals, robots)] };
+    const inserted = { rows: [await insertTechnicalSeoCheck(req.params.id, vitals, robots, 'wordpress')] };
     const tc = technicalCheckActivity(vitals, robots);
     await logManual(req.params.id, 'wordpress', 'technical_check', tc.outcome, tc.detail);
 
@@ -6882,11 +6878,49 @@ app.post('/api/business/:id/website/technical-seo/check', authRequired, async (r
 app.get('/api/business/:id/website/technical-seo/history', authRequired, async (req, res) => {
   try {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
-    const result = await pool.query('SELECT * FROM website_technical_seo_checks WHERE business_id = $1 ORDER BY checked_at DESC LIMIT 20', [req.params.id]);
+    const result = await pool.query("SELECT * FROM website_technical_seo_checks WHERE business_id = $1 AND platform = 'wordpress' ORDER BY checked_at DESC LIMIT 20", [req.params.id]);
     res.json({ checks: result.rows });
   } catch (e) {
     console.error('Get technical SEO history error:', e.message);
     res.status(500).json({ error: 'Could not load technical SEO history.' });
+  }
+});
+
+app.post('/api/business/:id/website/competitor-analysis', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    const conn = (await pool.query(`SELECT * FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [req.params.id])).rows[0];
+    if (!conn) return res.status(404).json({ error: 'No WordPress site is connected for this business yet.' });
+    if (conn.connection_mode === 'poll') return res.status(400).json({ error: 'Competitor analysis needs a WordPress connection that Arreyon can read directly. Sites in poll mode cannot be analyzed yet.' });
+    const n = (await pool.query(`SELECT COUNT(*)::int AS n FROM tracked_competitors WHERE business_id = $1 AND website IS NOT NULL AND TRIM(website) <> ''`, [req.params.id])).rows[0].n;
+    if (!n) return res.status(400).json({ error: 'Add at least one competitor with a website first, then run the analysis.' });
+    const biz = (await pool.query('SELECT id, user_id FROM businesses WHERE id = $1', [req.params.id])).rows[0];
+    const context = await getBusinessContext(req.params.id, biz.user_id);
+    if (!context) return res.status(500).json({ error: 'Business details could not be loaded.' });
+    const password = decryptSecret(conn.wp_app_password_encrypted);
+    const row = await startWordPressCompetitorAnalysisRow(conn.id, 'manual');
+    if (!row) return res.status(409).json({ error: 'An analysis is already running for this site.' });
+    res.status(202).json({ id: row.id });
+    // Carries on after answering: reading several sites takes a while. Its outcome lands in the record and in Agent Activity.
+    runWordPressCompetitorAnalysis(conn, password, context, row.id, 'manual');
+  } catch (e) {
+    console.error('Start competitor analysis error:', e.message);
+    res.status(500).json({ error: 'Could not start the competitor analysis.' });
+  }
+});
+
+app.get('/api/business/:id/website/competitor-analysis', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    const counts = (await pool.query(`SELECT COUNT(*)::int AS tracked, COUNT(*) FILTER (WHERE website IS NOT NULL AND TRIM(website) <> '')::int AS with_website FROM tracked_competitors WHERE business_id = $1`, [req.params.id])).rows[0];
+    const conn = (await pool.query('SELECT id FROM website_connections WHERE business_id = $1', [req.params.id])).rows[0];
+    if (!conn) return res.json({ latest: null, running: false, trackedCompetitors: counts.tracked, competitorsWithWebsite: counts.with_website });
+    const running = (await pool.query(`SELECT 1 FROM website_competitor_analyses WHERE website_connection_id = $1 AND status = 'running' AND created_at > NOW() - INTERVAL '15 minutes'`, [conn.id])).rows.length > 0;
+    const latest = (await pool.query(`SELECT id, status, triggered_by, own, competitors, insights, error_message, created_at, completed_at FROM website_competitor_analyses WHERE website_connection_id = $1 AND status <> 'running' ORDER BY created_at DESC LIMIT 1`, [conn.id])).rows[0] || null;
+    res.json({ latest, running, trackedCompetitors: counts.tracked, competitorsWithWebsite: counts.with_website });
+  } catch (e) {
+    console.error('Get competitor analysis error:', e.message);
+    res.status(500).json({ error: 'Could not load the competitor analysis.' });
   }
 });
 
@@ -7292,7 +7326,6 @@ app.post('/api/business/:id/website/topic-suggestions', authRequired, async (req
   }
 });
 
-const VALID_CALENDAR_PLATFORMS = ['wordpress', 'shopify'];
 app.post('/api/business/:id/content-schedule', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
@@ -7300,20 +7333,15 @@ app.post('/api/business/:id/content-schedule', authRequired, async (req, res) =>
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
     const { platform, scheduledDate, topic, publishMode } = req.body || {};
-    if (!VALID_CALENDAR_PLATFORMS.includes(platform)) return res.status(400).json({ error: 'Invalid platform.' });
+    if (!isWebsitePlatform(platform)) return res.status(400).json({ error: 'Invalid platform.' });
     if (!scheduledDate || isNaN(new Date(scheduledDate).getTime())) return res.status(400).json({ error: 'A valid date is required.' });
 
     // Real, deliberate real connection check up front — refuses to
     // schedule a real entry for a real platform this business hasn't
     // actually connected, rather than silently failing days later when
     // the real sweep finally tries to process it.
-    if (platform === 'wordpress') {
-      const conn = await pool.query(`SELECT id FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [req.params.id]);
-      if (!conn.rows.length) return res.status(400).json({ error: 'No WordPress site is connected for this business yet.' });
-    } else {
-      const conn = await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id]);
-      if (!conn.rows.length) return res.status(400).json({ error: 'No Shopify store is connected for this business yet.' });
-    }
+    const agent = WEBSITE_AGENTS[platform];
+    if (!(await agent.postingConnection(req.params.id))) return res.status(400).json({ error: `No ${agent.label} ${agent.noun} is connected for this business yet.` });
 
     const inserted = await pool.query(
       `INSERT INTO content_calendar_entries (business_id, platform, scheduled_date, topic, publish_mode)
@@ -7330,7 +7358,7 @@ app.post('/api/business/:id/content-schedule', authRequired, async (req, res) =>
 app.get('/api/business/:id/content-schedule', authRequired, async (req, res) => {
   try {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
-    const platformFilter = VALID_CALENDAR_PLATFORMS.includes(req.query.platform) ? req.query.platform : null;
+    const platformFilter = isWebsitePlatform(req.query.platform) ? req.query.platform : null;
     const result = await pool.query(
       `SELECT *, scheduled_date::text AS scheduled_date_str, ((scheduled_date + scheduled_time) AT TIME ZONE COALESCE(NULLIF(timezone, ''), 'UTC')) AS due_at
        FROM content_calendar_entries
@@ -7375,7 +7403,7 @@ app.post('/api/business/:id/content-automation-rule', authRequired, async (req, 
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
 
     const { platform, startDate, endDate, frequencyPeriod, postsPerPeriod, hoursBetweenPosts, startTime, publishMode, timezone: clientTimezone } = req.body || {};
-    if (!VALID_CALENDAR_PLATFORMS.includes(platform)) return res.status(400).json({ error: 'Invalid platform.' });
+    if (!isWebsitePlatform(platform)) return res.status(400).json({ error: 'Invalid platform.' });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate || '') || !/^\d{4}-\d{2}-\d{2}$/.test(endDate || '') || isNaN(new Date(startDate).getTime()) || isNaN(new Date(endDate).getTime())) return res.status(400).json({ error: 'A valid start and end date are required.' });
     if (new Date(endDate) < new Date(startDate)) return res.status(400).json({ error: 'The end date must be on or after the start date.' });
     if (!['daily', 'weekly', 'monthly'].includes(frequencyPeriod)) return res.status(400).json({ error: 'Invalid frequency period.' });
@@ -7391,15 +7419,12 @@ app.post('/api/business/:id/content-automation-rule', authRequired, async (req, 
     if (projected > MAX_RULE_ENTRIES) return res.status(400).json({ error: `That would schedule ${projected} posts at once; the limit is ${MAX_RULE_ENTRIES}. Shorten the date range or reduce the number of posts.` });
     const timezone = await resolveValidTimezone(clientTimezone);
 
-    if (platform === 'wordpress') {
-      const conn = await pool.query(`SELECT id, connection_mode FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [req.params.id]);
-      if (!conn.rows.length) return res.status(400).json({ error: 'No WordPress site is connected for this business yet.' });
-      // Refused here rather than accepted and failing days later: poll-mode connections can't be written to by Arreyon.
-      if (conn.rows[0].connection_mode === 'poll') return res.status(400).json({ error: POLL_MODE_CONTENT_MESSAGE });
-    } else {
-      const conn = await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id]);
-      if (!conn.rows.length) return res.status(400).json({ error: 'No Shopify store is connected for this business yet.' });
-    }
+    const agent = WEBSITE_AGENTS[platform];
+    const postingConnection = await agent.postingConnection(req.params.id);
+    if (!postingConnection) return res.status(400).json({ error: `No ${agent.label} ${agent.noun} is connected for this business yet.` });
+    // Refused here rather than accepted and failing days later (e.g. a host that blocks Arreyon from writing posts).
+    const cannotPost = agent.postingBlockedMessage(postingConnection);
+    if (cannotPost) return res.status(400).json({ error: cannotPost });
 
     const ruleResult = await pool.query(
       `INSERT INTO content_automation_rules (business_id, platform, start_date, end_date, frequency_period, posts_per_period, hours_between_posts, start_time, publish_mode, timezone)
@@ -7649,8 +7674,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   }
   if (!Array.isArray(result.proposals)) throw new Error(`Could not generate duplicate-title fixes — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
 
-  const autoExecuteEligible = connection.permission_level === 'managed' && connection.automation_mode === 'automatic';
-
+  
   const insertedProposals = [];
   for (const p of result.proposals) {
     const candidate = cappedCandidates[p.index];
@@ -7666,7 +7690,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     );
     let action = inserted.rows[0];
 
-    if (autoExecuteEligible) {
+    if (await wordpressAutoExecuteAllowed(connection)) {
       await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
       await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: duplicate-title fix for "${candidate.title}"`, { actionId: action.id }, 'duplicate_titles');
 
@@ -7794,8 +7818,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   if (!Array.isArray(result.proposals)) throw new Error(`Could not generate SEO proposals — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
 
   const ACTION_RISK = { update_meta_title: 'low', update_meta_description: 'low' };
-  const autoExecuteEligible = connection.permission_level === 'managed' && connection.automation_mode === 'automatic';
-
+  
   const insertedProposals = [];
   for (const p of result.proposals) {
     const candidate = cappedCandidates[p.index];
@@ -7815,7 +7838,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     );
     let action = inserted.rows[0];
 
-    if (autoExecuteEligible && ACTION_RISK[actionType] === 'low') {
+    if (ACTION_RISK[actionType] === 'low' && await wordpressAutoExecuteAllowed(connection)) {
       await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
       await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: ${actionType} for "${candidate.title}"`, { actionId: action.id }, featureForActionType(actionType));
 
@@ -8410,6 +8433,8 @@ app.put('/api/business/:id/shopify/automation', authRequired, async (req, res) =
     if (connection.automation_mode === 'automatic' && before.rows[0].automation_mode !== 'automatic') {
       agentRun = await startAgentRunOnSwitch('shopify', connection.id);
       connection = (await pool.query('SELECT id, automation_mode, agent_cycle_frequency, agent_last_cycle_at FROM shopify_connections WHERE id = $1', [connection.id])).rows[0];
+    } else if (connection.automation_mode === 'manual' && before.rows[0].automation_mode === 'automatic') {
+      agentRun = stopAgentOnSwitch('shopify', req.params.id);
     }
     res.json({ success: true, connection, agentRun });
   } catch (e) {
@@ -8636,7 +8661,6 @@ async function runShopifyAudit(connection, accessToken, context, userId = null) 
   const autoApplied = [];
   // Automatic mode is the owner's standing permission for the low-risk tier
   // only (meta title/description). Content edits like removing a link always wait.
-  const autoApplyEnabled = connection.automation_mode === 'automatic';
 
   // Real, deliberate real meta-tag gap detection — only items genuinely
   // missing a real title_tag or description_tag, never a judgment call
@@ -8687,7 +8711,7 @@ Return ONLY valid JSON, no markdown:
              JSON.stringify(proposedChange), p.reasoning || null]
           );
           const savedAction = inserted.rows[0];
-          if (autoApplyEnabled && SHOPIFY_AUTO_APPLY_ACTIONS.has(actionType)) {
+          if (SHOPIFY_AUTO_APPLY_ACTIONS.has(actionType) && await shopifyAutoApplyAllowed(connection)) {
             const exec = await executeShopifyAction(savedAction, connection, accessToken);
             if (exec.executed) {
               await pool.query(`UPDATE shopify_actions SET approval_status = 'approved', execution_status = 'executed', auto_applied = TRUE, reviewed_at = NOW() WHERE id = $1`, [savedAction.id]);
@@ -9106,7 +9130,7 @@ app.post('/api/business/:id/shopify/technical-seo/check', authRequired, async (r
 
     const [vitals, robots] = await Promise.all([checkCoreWebVitals(siteUrl), checkRobotsTxt(siteUrl)]);
 
-    const inserted = { rows: [await insertTechnicalSeoCheck(req.params.id, vitals, robots)] };
+    const inserted = { rows: [await insertTechnicalSeoCheck(req.params.id, vitals, robots, 'shopify')] };
     const tc = technicalCheckActivity(vitals, robots);
     await logManual(req.params.id, 'shopify', 'technical_check', tc.outcome, tc.detail);
 
@@ -9115,6 +9139,17 @@ app.post('/api/business/:id/shopify/technical-seo/check', authRequired, async (r
     console.error('Shopify technical SEO check error:', err.message);
     if (owned) await logManual(req.params.id, 'shopify', 'technical_check', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to run the technical SEO check. Please try again.' });
+  }
+});
+
+app.get('/api/business/:id/shopify/technical-seo/history', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    const result = await pool.query("SELECT * FROM website_technical_seo_checks WHERE business_id = $1 AND platform = 'shopify' ORDER BY checked_at DESC LIMIT 20", [req.params.id]);
+    res.json({ checks: result.rows });
+  } catch (e) {
+    console.error('Get Shopify technical SEO history error:', e.message);
+    res.status(500).json({ error: 'Could not load technical SEO history.' });
   }
 });
 
@@ -14406,7 +14441,7 @@ async function assertPublicHost(hostname) {
 }
 
 // SSRF-safe fetch: validates scheme, host, redirects, size, and applies a timeout
-async function safeFetch(urlStr, { maxBytes = 2_000_000, timeoutMs = 8000, maxRedirects = 3 } = {}) {
+async function safeFetch(urlStr, { maxBytes = 2_000_000, timeoutMs = 8000, maxRedirects = 3, acceptTypes = ['text/html', 'text/plain'] } = {}) {
   let current = urlStr;
   for (let hop = 0; hop <= maxRedirects; hop++) {
     let parsed;
@@ -14439,8 +14474,8 @@ async function safeFetch(urlStr, { maxBytes = 2_000_000, timeoutMs = 8000, maxRe
     if (!res.ok) throw new Error(`Fetch failed with status ${res.status}`);
 
     const contentType = res.headers.get('content-type') || '';
-    if (!contentType.includes('text/html') && !contentType.includes('text/plain')) {
-      throw new Error('URL did not return HTML content');
+    if (!acceptTypes.some(t => contentType.includes(t))) {
+      throw new Error('URL did not return the expected content');
     }
 
     // Read body with a hard size cap
@@ -14459,6 +14494,147 @@ async function safeFetch(urlStr, { maxBytes = 2_000_000, timeoutMs = 8000, maxRe
   }
   throw new Error('Too many redirects');
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMPETITOR SITE READING — business-level, used by every platform
+// Reads a competitor's PUBLIC pages the way a visitor or search engine can: robots.txt, the sitemap, and a small sample of
+// recent pages. Everything goes through safeFetch (public hosts only, size and time limits), requests are few, and a path
+// the site's robots.txt disallows is never fetched. Only what was actually read is reported; nothing is estimated.
+// ═══════════════════════════════════════════════════════════════════════════
+const SITEMAP_TYPES = ['text/xml', 'application/xml', 'application/rss', 'text/plain', 'application/octet-stream'];
+
+function normalizeCompetitorUrl(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  let s = raw.trim(); if (!s) return null;
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+  try { const u = new URL(s); if (!u.hostname.includes('.')) return null; return u.origin; } catch (e) { return null; }
+}
+
+function parseRobotsTxt(text) {
+  const disallow = [], sitemaps = []; let applies = false, seenAgent = false;
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, '').trim(); if (!line) continue;
+    const i = line.indexOf(':'); if (i < 0) continue;
+    const key = line.slice(0, i).trim().toLowerCase(), val = line.slice(i + 1).trim();
+    if (key === 'sitemap') { if (val) sitemaps.push(val); continue; }
+    if (key === 'user-agent') { if (seenAgent && applies === false) { /* new group */ } applies = val === '*'; seenAgent = true; continue; }
+    if (key === 'disallow' && applies && val) disallow.push(val);
+  }
+  return { disallow, sitemaps };
+}
+
+// Conservative: only Disallow rules are read, so anything a site asks crawlers to avoid is avoided.
+function robotsAllows(rules, pathname) {
+  for (const d of rules.disallow) {
+    const rx = new RegExp('^' + d.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\\\$$/, '$'));
+    if (rx.test(pathname)) return false;
+  }
+  return true;
+}
+
+function decodeXmlText(s) { return String(s || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").trim(); }
+
+function parseSitemapXml(xml) {
+  const sitemaps = [...String(xml || '').matchAll(/<sitemap>[\s\S]*?<loc>\s*([^<]+?)\s*<\/loc>[\s\S]*?<\/sitemap>/gi)].map(m => decodeXmlText(m[1]));
+  const urls = [...String(xml || '').matchAll(/<url>([\s\S]*?)<\/url>/gi)].map(m => {
+    const loc = /<loc>\s*([^<]+?)\s*<\/loc>/i.exec(m[1]), mod = /<lastmod>\s*([^<]+?)\s*<\/lastmod>/i.exec(m[1]);
+    return loc ? { loc: decodeXmlText(loc[1]), lastmod: mod ? decodeXmlText(mod[1]) : null } : null;
+  }).filter(Boolean);
+  return { urls, sitemaps };
+}
+
+function extractPageSignals(html) {
+  const h = String(html || '');
+  const strip = t => decodeHtmlEntities(String(t || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim());
+  const title = (/<title[^>]*>([\s\S]*?)<\/title>/i.exec(h) || [])[1];
+  const metaTag = (h.match(/<meta\s+[^>]*name=["']description["'][^>]*>/i) || [])[0] || '';
+  const metaDescription = (/content=["']([^"']*)["']/i.exec(metaTag) || [])[1] || '';
+  const h1 = (/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(h) || [])[1];
+  const h2s = [...h.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)].map(m => strip(m[1])).filter(Boolean).slice(0, 8);
+  const bodyOnly = (/<body[^>]*>([\s\S]*)<\/body>/i.exec(h) || [null, h])[1]; // the visible page, not the <head> (the title is not body text)
+  const body = strip(bodyOnly.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<nav[\s\S]*?<\/nav>/gi, ' ').replace(/<footer[\s\S]*?<\/footer>/gi, ' '));
+  return { title: title ? strip(title) : null, hasMetaDescription: metaDescription.trim().length > 0, h1: h1 ? strip(h1) : null, h2s, wordCount: body ? body.split(/\s+/).filter(Boolean).length : 0 };
+}
+
+// Returns only what could be measured; 'reachable' is false when nothing at all could be read.
+async function collectCompetitorSiteData(rawUrl, { maxPages = 6, now = Date.now() } = {}) {
+  const base = normalizeCompetitorUrl(rawUrl);
+  const out = { site: base, reachable: false, sitemapFound: false, totalUrls: 0, urlsLast90Days: 0, sampledPages: [], avgWords: null, pctWithMetaDescription: null, notes: [] };
+  if (!base) { out.notes.push('invalid_url'); return out; }
+  const host = new URL(base).hostname;
+  let rules = { disallow: [], sitemaps: [] };
+  try { rules = parseRobotsTxt((await safeFetch(base + '/robots.txt', { timeoutMs: 6000, maxBytes: 200000 })).html); } catch (e) { out.notes.push('no_robots'); }
+
+  let urls = [];
+  const candidates = [...new Set([...rules.sitemaps, base + '/sitemap_index.xml', base + '/wp-sitemap.xml', base + '/sitemap.xml'])].slice(0, 5);
+  for (const sm of candidates) {
+    try {
+      const parsed = parseSitemapXml((await safeFetch(sm, { timeoutMs: 6000, maxBytes: 3_000_000, acceptTypes: SITEMAP_TYPES })).html);
+      urls.push(...parsed.urls);
+      for (const child of parsed.sitemaps.slice(0, 3)) {
+        try { urls.push(...parseSitemapXml((await safeFetch(child, { timeoutMs: 6000, maxBytes: 3_000_000, acceptTypes: SITEMAP_TYPES })).html).urls); } catch (e) { /* a child that cannot be read is skipped */ }
+      }
+      if (urls.length) break;
+    } catch (e) { /* try the next likely location */ }
+  }
+  urls = urls.slice(0, 2000);
+  out.sitemapFound = urls.length > 0; out.totalUrls = urls.length;
+  const cutoff = now - 90 * 86400000;
+  out.urlsLast90Days = urls.filter(u => u.lastmod && new Date(u.lastmod).getTime() >= cutoff).length;
+
+  const sameHost = u => { try { return new URL(u).hostname === host; } catch (e) { return false; } };
+  const recent = urls.filter(u => sameHost(u.loc)).filter(u => { try { const p = new URL(u.loc).pathname; return p !== '/' && p.length > 1 && robotsAllows(rules, p); } catch (e) { return false; } })
+    .sort((a, b) => (new Date(b.lastmod || 0).getTime() || 0) - (new Date(a.lastmod || 0).getTime() || 0)).slice(0, maxPages - 1).map(u => u.loc);
+  for (const target of [base + '/', ...recent]) {
+    try {
+      if (!robotsAllows(rules, new URL(target).pathname)) { out.notes.push('skipped_by_robots'); continue; }
+      const { html, finalUrl } = await safeFetch(target, { timeoutMs: 6000, maxBytes: 1_000_000 });
+      out.sampledPages.push({ url: finalUrl || target, ...extractPageSignals(html) });
+    } catch (e) { out.notes.push('page_unreadable'); }
+  }
+  const pages = out.sampledPages;
+  out.reachable = pages.length > 0 || out.sitemapFound;
+  if (pages.length) {
+    out.avgWords = Math.round(pages.reduce((s, p) => s + p.wordCount, 0) / pages.length);
+    out.pctWithMetaDescription = Math.round(100 * pages.filter(p => p.hasMetaDescription).length / pages.length);
+  }
+  return out;
+}
+
+// What the AI concludes from the MEASURED data and nothing else. Every content gap must cite competitor page URLs that were
+// really collected; a gap that cannot be traced to one is dropped here, in code, rather than trusted.
+async function synthesizeCompetitorInsights(context, ownSite, competitors) {
+  const known = new Map();
+  for (const c of competitors) for (const p of c.sampledPages) known.set(p.url.replace(/\/+$/, ''), { competitor: c.name, title: p.title });
+  const prompt = `You are a content strategist comparing a business's website with its competitors' websites. You may use ONLY the measured data below. Never state or guess traffic, rankings, revenue, or anything not in the data. If the data is thin, say so in data_limits.
+
+THE BUSINESS: ${summarizeBusinessContextForAI(context) || 'No detailed context is available.'}
+
+YOUR SITE (measured): ${JSON.stringify(ownSite)}
+
+COMPETITOR SITES (measured; each page below was really fetched):
+${JSON.stringify(competitors.map(c => ({ name: c.name, totalUrlsInSitemap: c.totalUrls, urlsUpdatedLast90Days: c.urlsLast90Days, avgWordsOnSampledPages: c.avgWords, pctSampledPagesWithMetaDescription: c.pctWithMetaDescription, pages: c.sampledPages.map(p => ({ url: p.url, title: p.title, h1: p.h1, h2s: p.h2s, words: p.wordCount })) })))}
+
+Find topics competitors cover on the pages above that the business's site does not appear to cover (compare against YOUR SITE's titles). Return ONLY valid JSON, no markdown:
+{
+  "summary": "2-3 sentences on how the business's content compares, grounded in the data",
+  "content_gaps": [ { "topic": "specific topic", "why_it_matters": "1 sentence", "evidence_urls": ["exact page URLs from the competitor data above"], "suggested_post_title": "a specific post title" } ],
+  "where_you_are_ahead": ["short, evidence-based points"],
+  "quick_wins": ["short, specific actions"],
+  "data_limits": ["anything that limits how far these conclusions can be trusted"]
+}`;
+  const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Produce the comparison now, as JSON only.' }], complexity: 'complex', context: { feature: 'competitor_content_analysis' }, maxTokens: 4000 });
+  let parsed; try { parsed = extractJSON(raw); } catch (e) { throw new Error('The comparison could not be read back from the AI. Please try again.'); }
+  let dropped = 0;
+  const gaps = (Array.isArray(parsed.content_gaps) ? parsed.content_gaps : []).map(g => {
+    const urls = (Array.isArray(g.evidence_urls) ? g.evidence_urls : []).map(u => String(u).replace(/\/+$/, '')).filter(u => known.has(u));
+    if (!g.topic || !urls.length) { dropped++; return null; }
+    return { topic: String(g.topic).slice(0, 200), why_it_matters: String(g.why_it_matters || '').slice(0, 400), suggested_post_title: String(g.suggested_post_title || '').slice(0, 200), evidence: urls.map(u => ({ url: u, competitor: known.get(u).competitor, title: known.get(u).title })) };
+  }).filter(Boolean).slice(0, 8);
+  const list = v => (Array.isArray(v) ? v.map(x => String(x).slice(0, 300)).slice(0, 8) : []);
+  return { summary: String(parsed.summary || '').slice(0, 800), content_gaps: gaps, where_you_are_ahead: list(parsed.where_you_are_ahead), quick_wins: list(parsed.quick_wins), data_limits: list(parsed.data_limits), ungrounded_gaps_dropped: dropped };
+}
+
 
 // Minimal HTML text/metadata extraction — no external HTML parser dependency
 function extractFromHTML(html) {
@@ -16444,36 +16620,35 @@ function startMonitoringScheduler() {
     }
   }, 60 * 60 * 1000); // check every hour
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// AUTOMATIC MODE, THE ACTIVITY FEED, AND THE BACKGROUND SWEEPS
+// ████████████████████████████████████████████████████████████████████████████
+// WEBSITE AGENT — how this part of the app is organised
 //
-// Two things run on their own here, deliberately separate:
-//   1. The content calendar — posts someone scheduled for a specific time.
-//      Runs regardless of Automatic mode, because a scheduled post that
-//      silently doesn't happen is exactly the failure to avoid.
-//   2. The maintenance cycle — refresh Website Intelligence, audit and fix
-//      low-risk issues, check technical health, make sure the sitemap is
-//      submitted. Runs only for connections set to Automatic mode.
-// Everything either does is recorded in website_agent_activity.
-// ═══════════════════════════════════════════════════════════════════════════
+//   1. SHARED      Platform-agnostic: the activity feed, runs in progress and stopping them,
+//                  the switch, the sweeps, the scheduler. Nothing here names a platform; it asks
+//                  the registry for the platform's adapter and calls the same methods on each.
+//   2. WORDPRESS   Everything WordPress-specific. It must not mention Shopify.
+//   3. SHOPIFY     Everything Shopify-specific. It must not mention WordPress.
+//   4. REGISTRY    WEBSITE_AGENTS — the ONE place both platforms are named. Adding a platform
+//                  means writing an adapter and registering it here; sections 1 does not change.
+//
+//   Business-level features (backlinks, the partner network, competitor tracking) belong to the
+//   business, not to a platform, and live outside this block.
+// ████████████████████████████████████████████████████████████████████████████
 
-const POLL_MODE_CONTENT_MESSAGE = "Automatic content creation isn't available for sites connected in poll mode yet. Your host blocks direct access from Arreyon, so new posts can't be written to this site. This is a planned improvement.";
-// The low-risk tier WordPress also auto-executes. This governs the meta-tag path only: broken-link removal
-// has no auto-apply path in runShopifyAudit at all, so widening this set would NOT make it auto-apply.
-const SHOPIFY_AUTO_APPLY_ACTIONS = new Set(['update_meta_title', 'update_meta_description']);
+// ═══════════════════════════════════════════════════════════════════════════
+// 1 · SHARED — platform-agnostic
+// Knows nothing about WordPress or Shopify. Platform behaviour comes from the adapters in the registry.
+// ═══════════════════════════════════════════════════════════════════════════
 const MAX_RULE_ENTRIES = 1000;
 // Written as "last run + interval <= now", not "last run < now - interval": for a month the two differ at
 // month-ends (a cycle that ran Jan 31 is due Feb 28, the clamped date; the subtractive form would wait until Mar 1).
 const AGENT_CYCLE_DUE_CLAUSE = `(agent_last_cycle_at IS NULL OR agent_last_cycle_at + (CASE agent_cycle_frequency WHEN 'weekly' THEN INTERVAL '7 days' WHEN 'monthly' THEN INTERVAL '1 month' ELSE INTERVAL '1 day' END) <= NOW())`;
-
 // Returns the account if the logged-in user owns this business, else null.
 async function userOwnsBusiness(req) {
   const account = await resolveAccount(req.userId);
   const r = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
   return r.rows.length ? account : null;
 }
-
 // Never lets a logging failure break the task being logged.
 async function logAgentActivity({ businessId, platform, taskType, outcome = 'success', triggeredBy = 'automatic', detail = {} }) {
   try {
@@ -16484,7 +16659,6 @@ async function logAgentActivity({ businessId, platform, taskType, outcome = 'suc
     );
   } catch (e) { console.error('Failed to log agent activity:', e.message); }
 }
-
 async function recentlyLogged(businessId, platform, taskType, days) {
   const r = await pool.query(
     `SELECT 1 FROM website_agent_activity WHERE business_id = $1 AND platform = $2 AND task_type = $3
@@ -16493,7 +16667,6 @@ async function recentlyLogged(businessId, platform, taskType, days) {
   );
   return r.rows.length > 0;
 }
-
 // Accepts only a zone name Postgres itself recognises, so a bad value can
 // never reach the sweep's AT TIME ZONE comparison and break it for everyone.
 async function resolveValidTimezone(tz) {
@@ -16501,7 +16674,6 @@ async function resolveValidTimezone(tz) {
   const r = await pool.query('SELECT 1 FROM pg_timezone_names WHERE name = $1 LIMIT 1', [tz]);
   return r.rows.length ? tz : 'UTC';
 }
-
 // Pure calendar arithmetic on date strings — no Date objects in the host's
 // local timezone, so the result is identical on any server. Wall-clock
 // times only; the timezone is applied later, when comparing to the real now.
@@ -16545,7 +16717,6 @@ function computeRuleSlots(rule) {
   }
   return slots;
 }
-
 async function generateCalendarEntriesFromRule(ruleId) {
   const ruleResult = await pool.query(
     `SELECT *, start_date::text AS start_date_str, end_date::text AS end_date_str, start_time::text AS start_time_str
@@ -16575,79 +16746,21 @@ async function generateCalendarEntriesFromRule(ruleId) {
   }
   return { created, skippedPast };
 }
-
-// ── Shopify store URL: the real one, never a guess ─────────────────────────
-const shopifyStoreInfoCache = new Map();
-const SHOPIFY_INFO_TTL_MS = 6 * 60 * 60 * 1000;
-function shopifyCacheGet(key) {
-  const hit = shopifyStoreInfoCache.get(key);
-  return hit && Date.now() < hit.expiresAt ? hit.value : undefined;
-}
-function shopifyCacheSet(key, value, ttlMs) { shopifyStoreInfoCache.set(key, { value, expiresAt: Date.now() + ttlMs }); }
-
-// The shop's primary customer-facing domain. Falls back to the
-// myshopify.com address, which always works (it redirects to the primary
-// domain) — never to a guessed "<shop>.com", which can be someone else's site.
-async function getShopifyStoreUrl(connection, accessToken) {
-  const key = `${connection.id}:url`;
-  const cached = shopifyCacheGet(key);
-  if (cached) return cached;
-  let value = `https://${connection.shop_domain}`;
-  let resolved = false;
-  try {
-    const res = await shopifyApiRequest(connection.shop_domain, accessToken, '/shop.json?fields=domain');
-    if (res.ok) {
-      const d = await res.json();
-      const domain = d.shop && d.shop.domain;
-      if (typeof domain === 'string' && /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i.test(domain)) { value = `https://${domain}`; resolved = true; }
-    }
-  } catch (e) { /* use the fallback */ }
-  shopifyCacheSet(key, value, resolved ? SHOPIFY_INFO_TTL_MS : 5 * 60 * 1000); // a fallback is retried soon
-  return value;
-}
-
-// Never throws. The real primary domain when it can be resolved; otherwise the myshopify.com address
-// (which redirects to it). Used wherever a page's URL is needed but a problem with the stored token
-// (a rotated encryption key, say) must not take the whole feature down — these routes worked without
-// ever touching the token before the real domain was needed.
-async function shopifyStoreUrlFor(connection) {
-  try { return await getShopifyStoreUrl(connection, decryptSecret(connection.access_token_encrypted)); }
-  catch (e) { return `https://${connection.shop_domain}`; }
-}
-
-async function getShopifyBlogHandle(connection, accessToken) {
-  const key = `${connection.id}:blog`;
-  const cached = shopifyCacheGet(key);
-  if (cached) return cached;
-  let value = 'news';
-  let resolved = false;
-  try {
-    if (connection.blog_id) {
-      const res = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}.json?fields=handle`);
-      if (res.ok) {
-        const d = await res.json();
-        if (d.blog && typeof d.blog.handle === 'string' && /^[a-z0-9-]+$/i.test(d.blog.handle)) { value = d.blog.handle; resolved = true; }
-      }
-    }
-  } catch (e) { /* use the fallback */ }
-  shopifyCacheSet(key, value, resolved ? SHOPIFY_INFO_TTL_MS : 5 * 60 * 1000);
-  return value;
-}
-
-async function insertTechnicalSeoCheck(businessId, vitals, robots) {
+async function insertTechnicalSeoCheck(businessId, vitals, robots, platform) {
+  // A check belongs to one platform's site. Refusing a missing or unknown platform makes a mix-up impossible to save quietly.
+  if (!isWebsitePlatform(platform)) throw new Error('insertTechnicalSeoCheck needs a registered platform, got: ' + platform);
   const inserted = await pool.query(
     `INSERT INTO website_technical_seo_checks
-     (business_id, performance_score, seo_score, accessibility_score, lcp_ms, cls_score, tbt_ms,
+     (business_id, platform, performance_score, seo_score, accessibility_score, lcp_ms, cls_score, tbt_ms,
       field_data_available, field_lcp_category, field_cls_category, field_inp_category,
       robots_txt_exists, robots_txt_blocks_everything, robots_txt_references_sitemap, top_issues)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-    [businessId, vitals.performanceScore, vitals.seoScore, vitals.accessibilityScore, vitals.lcpMs, vitals.clsScore, vitals.tbtMs,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+    [businessId, platform, vitals.performanceScore, vitals.seoScore, vitals.accessibilityScore, vitals.lcpMs, vitals.clsScore, vitals.tbtMs,
      vitals.fieldDataAvailable, vitals.fieldLcpCategory, vitals.fieldClsCategory, vitals.fieldInpCategory,
      robots.exists, robots.blocksEverything, robots.referencesSitemap, JSON.stringify(vitals.topIssues)]
   );
   return inserted.rows[0];
 }
-
 // Submits the sitemap only if Search Console has none yet. Returns null when
 // Search Console isn't connected for this site — nothing to do, not an error.
 async function ensureSitemapSubmitted(accountId, siteUrl) {
@@ -16661,7 +16774,130 @@ async function ensureSitemapSubmitted(accountId, siteUrl) {
   return { submitted: true, sitemapUrl: sitemap.url };
 }
 
-// ── The content calendar sweep ─────────────────────────────────────────────
+// A platform key is valid only if an adapter is registered for it.
+function isWebsitePlatform(platform) {
+  return typeof platform === 'string' && Object.prototype.hasOwnProperty.call(WEBSITE_AGENTS, platform);
+}
+
+// ── Runs in progress, and stopping them ──────────────────────────────────────
+// One entry per site while its cycle is running. 'cancelled' is how a run is stopped: the cycle checks it
+// between steps and skips what is left, and the code that applies fixes re-reads the live mode, so once a
+// person switches back to Manual nothing further is changed on their site.
+const agentRunsInFlight = new Map(); // "platform:businessId" -> { startedAt, triggeredBy, cancelled }
+const agentRunKey = (platform, businessId) => `${platform}:${businessId}`;
+const logManual = (businessId, platform, taskType, outcome, detail) =>
+  logAgentActivity({ businessId, platform, taskType, outcome, triggeredBy: 'manual', detail });
+const errDetail = e => ({ error: String((e && e.message) || e).slice(0, 300) });
+
+// Asks a run in progress to stop. Returns whether there was one.
+function stopAgentRun(platform, businessId) {
+  const run = agentRunsInFlight.get(agentRunKey(platform, businessId));
+  if (!run) return false;
+  run.cancelled = true;
+  return true;
+}
+
+// Splits a cycle into named steps so it can be stopped between them. Whatever was skipped is recorded.
+function createCycleSteps(run) {
+  const completed = [], skipped = [];
+  return {
+    async run(name, fn) {
+      if (run && run.cancelled) { skipped.push(name); return; }
+      await fn();
+      completed.push(name);
+    },
+    async finish(log) { if (skipped.length) await log('cycle_stopped', 'attention', { completed, skipped }); },
+  };
+}
+
+// Runs one cycle to completion, registered as the run in progress for its site (so it can be stopped, and two
+// can never overlap). Resolves false at once if a run is already going.
+async function runAgentCycleTracked(platform, connection, triggeredBy) {
+  const agent = WEBSITE_AGENTS[platform];
+  if (!agent) throw new Error(`Unknown platform "${platform}".`);
+  const businessId = connection.business_id, key = agentRunKey(platform, businessId);
+  if (agentRunsInFlight.has(key)) return false;
+  agentRunsInFlight.set(key, { startedAt: Date.now(), triggeredBy, cancelled: false });
+  try {
+    await agent.runCycle(connection, triggeredBy, agentRunsInFlight.get(key));
+  } catch (e) {
+    console.error(`${platform} agent run (${triggeredBy}) failed for business ${businessId}:`, e.message);
+    await logAgentActivity({ businessId, platform, taskType: 'cycle_failed', outcome: 'failed', triggeredBy, detail: errDetail(e) });
+  } finally { agentRunsInFlight.delete(key); }
+  return true;
+}
+
+// Starts a cycle in the background — the caller never waits for it. False if one is already running.
+function launchAgentCycleInBackground(platform, connection, triggeredBy) {
+  if (agentRunsInFlight.has(agentRunKey(platform, connection.business_id))) return false;
+  runAgentCycleTracked(platform, connection, triggeredBy);
+  return true;
+}
+
+// Switching a site from Manual to Automatic starts the agent right then, in the background, instead of
+// waiting for the schedule's next sweep. The timestamp is claimed in the same statement that checks
+// eligibility, so two quick switches (or two server instances) start exactly one run, and the schedule's
+// next run is measured from now. A run in the last 15 minutes is not repeated: flipping the switch back and
+// forth must not start a costly audit every time. If the person switched to Manual while a run was still
+// stopping and then back to Automatic, that run simply carries on.
+// Switching a site from Manual to Automatic starts the agent right then, in the background, instead of
+// waiting for the schedule's next sweep. The timestamp is claimed in the same statement that checks
+// eligibility, so two quick switches (or two server instances) start exactly one run, and the schedule's
+// next run is measured from now. A run in the last 15 minutes is not repeated: flipping the switch back and
+// forth must not start a costly audit every time.
+const AGENT_SWITCH_COOLDOWN = '15 minutes';
+async function startAgentRunOnSwitch(platform, connectionId) {
+  const agent = WEBSITE_AGENTS[platform];
+  const found = await pool.query(`SELECT business_id FROM ${agent.table} WHERE id = $1`, [connectionId]);
+  if (!found.rows.length) return { started: false, reason: 'unavailable' };
+  const live = agentRunsInFlight.get(agentRunKey(platform, found.rows[0].business_id));
+  if (live) {
+    if (live.cancelled) { live.cancelled = false; return { started: false, reason: 'resumed' }; }
+    return { started: false, reason: 'running' };
+  }
+  const claimed = await pool.query(
+    `UPDATE ${agent.table} SET agent_last_cycle_at = NOW()
+     WHERE id = $1 AND ${agent.runnableWhere} AND (agent_last_cycle_at IS NULL OR agent_last_cycle_at < NOW() - INTERVAL '${AGENT_SWITCH_COOLDOWN}')
+     RETURNING *`, [connectionId]);
+  if (!claimed.rows.length) {
+    const row = (await pool.query(`SELECT * FROM ${agent.table} WHERE id = $1`, [connectionId])).rows[0];
+    return { started: false, reason: (row && agent.blockedReason(row)) || 'recent' };
+  }
+  return launchAgentCycleInBackground(platform, claimed.rows[0], 'automatic') ? { started: true } : { started: false, reason: 'running' };
+}
+
+// Switching back to Manual: stop whatever is running for this site.
+function stopAgentOnSwitch(platform, businessId) { return { stopping: stopAgentRun(platform, businessId) }; }
+function technicalCheckActivity(vitals, robots) {
+  return {
+    outcome: robots.blocksEverything ? 'attention' : 'success',
+    detail: { performanceScore: vitals.performanceScore, seoScore: vitals.seoScore, accessibilityScore: vitals.accessibilityScore, robotsBlocksEverything: !!robots.blocksEverything },
+  };
+}
+// Automatic runs log only when something happened or needs attention — "already submitted" every
+// day would bury the entries that matter. A run started by hand always reports every outcome: the
+// person is waiting for an answer, and a silent step looks the same as a broken one.
+async function runSitemapTask(accountId, businessId, platform, siteUrl, triggeredBy = 'automatic') {
+  const auto = triggeredBy === 'automatic';
+  const log = (taskType, outcome, detail) => logAgentActivity({ businessId, platform, taskType, outcome, triggeredBy, detail });
+  try {
+    const sm = await ensureSitemapSubmitted(accountId, siteUrl);
+    if (sm && sm.submitted) {
+      await log('sitemap_submitted', 'success', { sitemapUrl: sm.sitemapUrl });
+    } else if (sm && sm.alreadySubmitted) {
+      if (!auto) await log('sitemap_submitted', 'success', { alreadySubmitted: true });
+    } else if (sm && sm.noSitemapFound) {
+      if (!auto || !(await recentlyLogged(businessId, platform, 'sitemap_missing', 7))) await log('sitemap_missing', 'attention', {});
+    } else if (!sm && !auto) {
+      await log('sitemap_submitted', 'attention', { skipped: true });
+    }
+  } catch (e) {
+    if (!auto || !(await recentlyLogged(businessId, platform, 'sitemap_submitted', 7))) await log('sitemap_submitted', 'failed', errDetail(e));
+  }
+}
+
+// Scheduled posts: the shared part is claiming the entry, recording the outcome and the feed entry; how a post
+// is actually written and published is the adapter's job.
 async function runContentCalendarSweep() {
   let dueEntries;
   try {
@@ -16707,66 +16943,16 @@ async function runContentCalendarSweep() {
     };
 
     try {
+      const agent = WEBSITE_AGENTS[entry.platform];
+      if (!agent) throw new Error(`Unknown platform "${entry.platform}".`);
       const bizResult = await pool.query('SELECT id, name, user_id FROM businesses WHERE id = $1', [entry.business_id]);
       if (!bizResult.rows.length) throw new Error('This business no longer exists.');
       const context = await getBusinessContext(entry.business_id, bizResult.rows[0].user_id);
       if (!context) throw new Error('Business details could not be loaded for this post.');
 
-      if (entry.platform === 'wordpress') {
-        const connResult = await pool.query(`SELECT * FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [entry.business_id]);
-        if (!connResult.rows.length) throw new Error('No WordPress site is connected for this business anymore.');
-        const connection = connResult.rows[0];
-        if (connection.connection_mode === 'poll') throw new Error(POLL_MODE_CONTENT_MESSAGE);
-        const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
-
-        const { posts } = await getWordPressContentForAnalysis(connection, decryptedPassword);
-        const topic = entry.topic || await generateAutomaticBlogPostTopic(context, posts || []);
-        const result = await runBlogPostGeneration(connection, decryptedPassword, context, topic, false, entry.publish_mode);
-        await finish({ success: !!(result && result.success), title: result && result.title || topic, url: result && result.url, error: (result && result.error) || 'WordPress did not accept this post.', publishStatus: result && result.publishStatus, postId: result && result.generatedPostId });
-      } else {
-        const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [entry.business_id]);
-        if (!connResult.rows.length) throw new Error('No Shopify store is connected for this business anymore.');
-        const connection = connResult.rows[0];
-        const accessToken = decryptSecret(connection.access_token_encrypted);
-
-        let existingTitles = [];
-        try {
-          if (connection.blog_id) {
-            const existingRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles.json?limit=20&fields=title`);
-            if (existingRes.ok) { const d = await existingRes.json(); existingTitles = (d.articles || []).map(a => a.title); }
-          }
-        } catch (e) { /* topic choice can proceed without this */ }
-
-        const topic = entry.topic || await generateAutomaticBlogPostTopic(context, existingTitles.map(title => ({ title })));
-        let internalCandidates = [];
-        try { internalCandidates = await getShopifyContentForAnalysis(connection, accessToken); } catch (e) { /* a post can be written without internal links */ }
-
-        const generated = await generateShopifyBlogPostContent(context, topic, existingTitles, internalCandidates);
-        const result = await createShopifyBlogPost(connection, accessToken, { ...generated, status: entry.publish_mode });
-
-        let postId = null;
-        if (result.success) {
-          const saved = await pool.query(
-            `INSERT INTO shopify_generated_posts (shopify_connection_id, shopify_article_id, topic, title, handle, body_html, meta_title, meta_description, tags, status, article_url)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
-            [connection.id, result.id, topic, generated.title, result.handle, generated.bodyHtml, generated.metaTitle, generated.metaDescription, generated.tags.join(', '), result.status, result.url]
-          );
-          postId = saved.rows[0].id;
-
-          // Recorded post by post: the cooldown and no-repeat checks read this
-          // table, so each post must be visible to the next one generated.
-          if (generated.reciprocalCandidate && generated.bodyHtml.includes(generated.reciprocalCandidate.url)) {
-            try {
-              await pool.query(
-                `INSERT INTO reciprocal_links_placed (from_business_id, to_business_id, from_post_title, from_post_url, to_url, relevance_reason)
-                 VALUES ($1, $2, $3, $4, $5, $6)`,
-                [entry.business_id, generated.reciprocalCandidate.businessId, generated.title, result.url || null, generated.reciprocalCandidate.url, generated.reciprocalCandidate.reason]
-              );
-            } catch (e) { console.error('Failed to record reciprocal link placement (Shopify calendar):', e.message); }
-          }
-        }
-        await finish({ success: !!result.success, title: generated.title || topic, url: result.url, error: result.error || 'Shopify did not accept this post.', publishStatus: result.status, postId });
-      }
+      const connection = await agent.postingConnection(entry.business_id);
+      if (!connection) throw new Error(`No ${agent.label} ${agent.noun} is connected for this business anymore.`);
+      await finish(await agent.generateScheduledPost(entry, context, connection));
     } catch (entryErr) {
       console.error(`Content calendar entry ${entry.id} failed:`, entryErr.message);
       try { await finish({ success: false, error: entryErr.message }); }
@@ -16775,228 +16961,28 @@ async function runContentCalendarSweep() {
   }
 }
 
-// ── One feed, two ways in ──────────────────────────────────────────────────
-// Everything Automatic mode does can also be done by hand, and both write the same kind of
-// entry to the same feed — only triggered_by differs ('automatic' | 'manual'). These helpers
-// build the entries, so the two paths cannot drift apart.
-const agentRunsInFlight = new Set();
-const agentRunKey = (platform, businessId) => `${platform}:${businessId}`;
-const logManual = (businessId, platform, taskType, outcome, detail) =>
-  logAgentActivity({ businessId, platform, taskType, outcome, triggeredBy: 'manual', detail });
-const errDetail = e => ({ error: String((e && e.message) || e).slice(0, 300) });
-
-// Starts the maintenance cycle in the background — the caller never waits for it. Returns false if a run is
-// already in progress for this site (so two can never overlap); a failure is recorded, never lost.
-function launchAgentCycleInBackground(platform, connection, triggeredBy) {
-  const businessId = connection.business_id;
-  const key = agentRunKey(platform, businessId);
-  if (agentRunsInFlight.has(key)) return false;
-  agentRunsInFlight.add(key);
-  (async () => {
-    try {
-      if (platform === 'wordpress') await runWordPressMaintenanceCycle(connection, triggeredBy);
-      else await runShopifyMaintenanceCycle(connection, triggeredBy);
-    } catch (e) {
-      console.error(`${platform} agent run (${triggeredBy}) failed for business ${businessId}:`, e.message);
-      await logAgentActivity({ businessId, platform, taskType: 'cycle_failed', outcome: 'failed', triggeredBy, detail: errDetail(e) });
-    } finally { agentRunsInFlight.delete(key); }
-  })();
-  return true;
-}
-
-// Switching a site from Manual to Automatic starts the agent right then, in the background, instead of
-// waiting for the schedule's next sweep. The timestamp is claimed in the same statement that checks
-// eligibility, so two quick switches (or two server instances) start exactly one run, and the schedule's
-// next run is measured from now. A run in the last 15 minutes is not repeated: flipping the switch back and
-// forth must not start a costly audit every time.
-const AGENT_SWITCH_COOLDOWN = '15 minutes';
-async function startAgentRunOnSwitch(platform, connectionId) {
-  const table = platform === 'wordpress' ? 'website_connections' : 'shopify_connections';
-  const eligible = platform === 'wordpress' ? "AND connection_status != 'disconnected' AND connection_mode = 'push'" : "AND connection_status = 'connected'";
-  const claimed = await pool.query(
-    `UPDATE ${table} SET agent_last_cycle_at = NOW()
-     WHERE id = $1 ${eligible} AND (agent_last_cycle_at IS NULL OR agent_last_cycle_at < NOW() - INTERVAL '${AGENT_SWITCH_COOLDOWN}')
-     RETURNING *`, [connectionId]);
-  if (!claimed.rows.length) {
-    const why = await pool.query(`SELECT * FROM ${table} WHERE id = $1`, [connectionId]);
-    const c = why.rows[0];
-    if (!c) return { started: false, reason: 'unavailable' };
-    if (platform === 'wordpress' && c.connection_mode === 'poll') return { started: false, reason: 'poll' };
-    const connected = platform === 'wordpress' ? c.connection_status !== 'disconnected' : c.connection_status === 'connected';
-    return { started: false, reason: connected ? 'recent' : 'unavailable' };
-  }
-  return launchAgentCycleInBackground(platform, claimed.rows[0], 'automatic') ? { started: true } : { started: false, reason: 'running' };
-}
-
-function wordpressAuditActivityDetail(audit) {
-  return { issuesFound: audit.issuesFound, autoFixed: audit.autoFixed, pendingApproval: audit.pendingApproval, pages: (audit.findingsByPage || []).slice(0, 10) };
-}
-function shopifyAuditActivityDetail(audit) {
-  const totalIssues = (audit.foundIssues.metaTitle || 0) + (audit.foundIssues.metaDescription || 0) + (audit.foundIssues.brokenLinks || 0);
-  const pages = new Map();
-  const addChange = (a, status) => {
-    if (!pages.has(a.target_url)) pages.set(a.target_url, { title: a.target_title, url: a.target_url, changes: [] });
-    pages.get(a.target_url).changes.push({ description: describeShopifyActionChange(a), status });
-  };
-  (audit.autoApplied || []).forEach(a => addChange(a, 'fixed'));
-  (audit.proposalsCreated || []).forEach(a => addChange(a, 'pending'));
-  return { issuesFound: totalIssues, autoFixed: (audit.autoApplied || []).length, pendingApproval: (audit.proposalsCreated || []).length, pages: [...pages.values()].slice(0, 10) };
-}
-function technicalCheckActivity(vitals, robots) {
-  return {
-    outcome: robots.blocksEverything ? 'attention' : 'success',
-    detail: { performanceScore: vitals.performanceScore, seoScore: vitals.seoScore, accessibilityScore: vitals.accessibilityScore, robotsBlocksEverything: !!robots.blocksEverything },
-  };
-}
-
-// ── The maintenance cycle (Automatic mode) ─────────────────────────────────
-async function runWordPressMaintenanceCycle(connection, triggeredBy = 'automatic') {
-  const businessId = connection.business_id;
-  const log = (taskType, outcome, detail) => logAgentActivity({ businessId, platform: 'wordpress', taskType, outcome, triggeredBy, detail });
-  const bizResult = await pool.query('SELECT id, name, user_id FROM businesses WHERE id = $1', [businessId]);
-  if (!bizResult.rows.length) return;
-  const biz = bizResult.rows[0];
-  const context = await getBusinessContext(businessId, biz.user_id);
-  const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
-
-  try {
-    await runAutomaticWebsiteIntelligence(connection, decryptedPassword, biz.name);
-    await log('intelligence_refreshed', 'success', {});
-  } catch (e) { await log('intelligence_refreshed', 'failed', errDetail(e)); }
-
-  if (context) {
-    try {
-      const audit = await runFullWebsiteAudit(connection, decryptedPassword, context, triggeredBy, null);
-      await log('audit_completed', 'success', wordpressAuditActivityDetail(audit));
-    } catch (e) { await log('audit_completed', 'failed', errDetail(e)); }
-  } else {
-    // Previously skipped without a trace, so the owner had no sign the audit did not run.
-    await log('audit_completed', 'failed', { error: 'Business details could not be loaded, so the audit was skipped.' });
-  }
-
-  try {
-    const [vitals, robots] = await Promise.all([checkCoreWebVitals(connection.site_url), checkRobotsTxt(connection.site_url)]);
-    await insertTechnicalSeoCheck(businessId, vitals, robots);
-    const tc = technicalCheckActivity(vitals, robots);
-    await log('technical_check', tc.outcome, tc.detail);
-  } catch (e) { await log('technical_check', 'failed', errDetail(e)); }
-
-  await runSitemapTask(biz.user_id, businessId, 'wordpress', connection.site_url, triggeredBy);
-}
-
-async function runShopifyMaintenanceCycle(connection, triggeredBy = 'automatic') {
-  const businessId = connection.business_id;
-  const log = (taskType, outcome, detail) => logAgentActivity({ businessId, platform: 'shopify', taskType, outcome, triggeredBy, detail });
-  const bizResult = await pool.query('SELECT id, name, user_id FROM businesses WHERE id = $1', [businessId]);
-  if (!bizResult.rows.length) return;
-  const biz = bizResult.rows[0];
-  const context = await getBusinessContext(businessId, biz.user_id);
-  const accessToken = decryptSecret(connection.access_token_encrypted);
-
-  try {
-    await runShopifyWebsiteIntelligence(connection, accessToken, biz.name);
-    await log('intelligence_refreshed', 'success', {});
-  } catch (e) { await log('intelligence_refreshed', 'failed', errDetail(e)); }
-
-  if (context) {
-    try {
-      const audit = await runShopifyAudit(connection, accessToken, context, null);
-      await log('audit_completed', 'success', shopifyAuditActivityDetail(audit));
-    } catch (e) { await log('audit_completed', 'failed', errDetail(e)); }
-  } else {
-    await log('audit_completed', 'failed', { error: 'Business details could not be loaded, so the audit was skipped.' });
-  }
-
-  let siteUrl;
-  try { siteUrl = await getShopifyStoreUrl(connection, accessToken); } catch (e) { siteUrl = `https://${connection.shop_domain}`; }
-  try {
-    const [vitals, robots] = await Promise.all([checkCoreWebVitals(siteUrl), checkRobotsTxt(siteUrl)]);
-    await insertTechnicalSeoCheck(businessId, vitals, robots);
-    const tc = technicalCheckActivity(vitals, robots);
-    await log('technical_check', tc.outcome, tc.detail);
-  } catch (e) { await log('technical_check', 'failed', errDetail(e)); }
-
-  await runSitemapTask(biz.user_id, businessId, 'shopify', siteUrl, triggeredBy);
-}
-
-function describeShopifyActionChange(action) {
-  const c = action.proposed_change || {};
-  if (c.brokenUrl) return `Remove broken link to ${c.brokenUrl}`;
-  const parts = [];
-  if (c.metaTitle) parts.push(`Meta title: "${c.metaTitle}"`);
-  if (c.metaDescription) parts.push(`Meta description: "${c.metaDescription}"`);
-  return parts.join(' · ') || action.action_type;
-}
-
-// Automatic runs log only when something happened or needs attention — "already submitted" every
-// day would bury the entries that matter. A run started by hand always reports every outcome: the
-// person is waiting for an answer, and a silent step looks the same as a broken one.
-async function runSitemapTask(accountId, businessId, platform, siteUrl, triggeredBy = 'automatic') {
-  const auto = triggeredBy === 'automatic';
-  const log = (taskType, outcome, detail) => logAgentActivity({ businessId, platform, taskType, outcome, triggeredBy, detail });
-  try {
-    const sm = await ensureSitemapSubmitted(accountId, siteUrl);
-    if (sm && sm.submitted) {
-      await log('sitemap_submitted', 'success', { sitemapUrl: sm.sitemapUrl });
-    } else if (sm && sm.alreadySubmitted) {
-      if (!auto) await log('sitemap_submitted', 'success', { alreadySubmitted: true });
-    } else if (sm && sm.noSitemapFound) {
-      if (!auto || !(await recentlyLogged(businessId, platform, 'sitemap_missing', 7))) await log('sitemap_missing', 'attention', {});
-    } else if (!sm && !auto) {
-      await log('sitemap_submitted', 'attention', { skipped: true });
-    }
-  } catch (e) {
-    if (!auto || !(await recentlyLogged(businessId, platform, 'sitemap_submitted', 7))) await log('sitemap_submitted', 'failed', errDetail(e));
-  }
-}
-
 let lastActivityPruneAt = 0;
+// Each platform's connections that are in Automatic mode and due. The timestamp doubles as the claim: only one
+// sweep can move it. A cycle is awaited here, one at a time, so the sweep's own progress (and its stall detection)
+// reflects real work.
 async function runAgentMaintenanceSweep() {
   try {
-    const wpDue = await pool.query(
-      `SELECT id FROM website_connections WHERE automation_mode = 'automatic' AND connection_mode = 'push' AND connection_status != 'disconnected' AND ${AGENT_CYCLE_DUE_CLAUSE}`
-    );
-    for (const row of wpDue.rows) {
-      touchSweepProgress();
-      // The timestamp doubles as the claim: only one sweep can move it.
-      const claimed = await pool.query(
-        `UPDATE website_connections SET agent_last_cycle_at = NOW()
-         WHERE id = $1 AND automation_mode = 'automatic' AND connection_mode = 'push' AND connection_status != 'disconnected' AND ${AGENT_CYCLE_DUE_CLAUSE}
-         RETURNING *`,
-        [row.id]
+    for (const [platform, agent] of Object.entries(WEBSITE_AGENTS)) {
+      const due = await pool.query(
+        `SELECT id FROM ${agent.table} WHERE automation_mode = 'automatic' AND ${agent.runnableWhere} AND ${AGENT_CYCLE_DUE_CLAUSE}`
       );
-      if (!claimed.rows.length) continue;
-      // A run the person started by hand may already be doing this exact work.
-      const wpKey = agentRunKey('wordpress', claimed.rows[0].business_id);
-      if (agentRunsInFlight.has(wpKey)) continue;
-      agentRunsInFlight.add(wpKey);
-      try { await runWordPressMaintenanceCycle(claimed.rows[0]); }
-      catch (e) {
-        console.error(`WordPress maintenance cycle failed for connection ${row.id}:`, e.message);
-        await logAgentActivity({ businessId: claimed.rows[0].business_id, platform: 'wordpress', taskType: 'cycle_failed', outcome: 'failed', detail: { error: String(e.message).slice(0, 300) } });
-      } finally { agentRunsInFlight.delete(wpKey); }
-    }
-
-    const shopDue = await pool.query(
-      `SELECT id FROM shopify_connections WHERE automation_mode = 'automatic' AND connection_status = 'connected' AND ${AGENT_CYCLE_DUE_CLAUSE}`
-    );
-    for (const row of shopDue.rows) {
-      touchSweepProgress();
-      const claimed = await pool.query(
-        `UPDATE shopify_connections SET agent_last_cycle_at = NOW()
-         WHERE id = $1 AND automation_mode = 'automatic' AND connection_status = 'connected' AND ${AGENT_CYCLE_DUE_CLAUSE}
-         RETURNING *`,
-        [row.id]
-      );
-      if (!claimed.rows.length) continue;
-      const shKey = agentRunKey('shopify', claimed.rows[0].business_id);
-      if (agentRunsInFlight.has(shKey)) continue;
-      agentRunsInFlight.add(shKey);
-      try { await runShopifyMaintenanceCycle(claimed.rows[0]); }
-      catch (e) {
-        console.error(`Shopify maintenance cycle failed for connection ${row.id}:`, e.message);
-        await logAgentActivity({ businessId: claimed.rows[0].business_id, platform: 'shopify', taskType: 'cycle_failed', outcome: 'failed', detail: { error: String(e.message).slice(0, 300) } });
-      } finally { agentRunsInFlight.delete(shKey); }
+      for (const row of due.rows) {
+        touchSweepProgress();
+        const claimed = await pool.query(
+          `UPDATE ${agent.table} SET agent_last_cycle_at = NOW()
+           WHERE id = $1 AND automation_mode = 'automatic' AND ${agent.runnableWhere} AND ${AGENT_CYCLE_DUE_CLAUSE}
+           RETURNING *`,
+          [row.id]
+        );
+        if (!claimed.rows.length) continue;
+        // Skips a site already being worked on (it has had its run).
+        await runAgentCycleTracked(platform, claimed.rows[0], 'automatic');
+      }
     }
 
     if (Date.now() - lastActivityPruneAt > 24 * 60 * 60 * 1000) {
@@ -17044,7 +17030,6 @@ async function runAllSweeps() {
   }
   return true;
 }
-
 // Previously a bare hourly timer with no run at startup: after any restart
 // or deploy the first sweep was a full hour away, so scheduled posts could
 // go unprocessed indefinitely. Now: a catch-up run shortly after boot, then
@@ -17054,7 +17039,6 @@ function startContentAutomationScheduler() {
   setTimeout(run, 30 * 1000);
   setInterval(run, 5 * 60 * 1000);
 }
-
 // Lets an external scheduler trigger a sweep. A free Render instance sleeps
 // after 15 minutes without traffic, and in-process timers die with it; an
 // outside ping every few minutes both wakes the instance and runs the work.
@@ -17072,81 +17056,432 @@ app.all('/api/internal/run-sweeps', async (req, res) => {
 app.get('/api/business/:id/agent-activity', authRequired, async (req, res) => {
   try {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
-    const platform = VALID_CALENDAR_PLATFORMS.includes(req.query.platform) ? req.query.platform : null;
+    const platform = isWebsitePlatform(req.query.platform) ? req.query.platform : null;
     const result = await pool.query(
       `SELECT id, platform, task_type, outcome, triggered_by, detail, created_at
        FROM website_agent_activity WHERE business_id = $1 AND ($2::text IS NULL OR platform = $2::text)
        ORDER BY created_at DESC LIMIT 100`,
       [req.params.id, platform]
     );
-    const running = platform ? agentRunsInFlight.has(agentRunKey(platform, req.params.id))
-      : (agentRunsInFlight.has(agentRunKey('wordpress', req.params.id)) || agentRunsInFlight.has(agentRunKey('shopify', req.params.id)));
-    res.json({ entries: result.rows, running });
+    const runs = (platform ? [platform] : Object.keys(WEBSITE_AGENTS)).map(p => agentRunsInFlight.get(agentRunKey(p, req.params.id))).filter(Boolean);
+    res.json({ entries: result.rows, running: runs.length > 0, stopping: runs.some(r => r.cancelled) });
   } catch (e) {
     console.error('Get agent activity error:', e.message);
     res.status(500).json({ error: 'Could not load activity.' });
   }
 });
 
-// Everything Automatic mode runs — analysis, audit, technical check, sitemap — started by hand. It is
-// the same cycle function the schedule uses, so the two cannot differ; what differs is only who
-// started it (recorded as 'manual') and the connection's own settings: in Manual mode fixes are
-// proposed for approval, in Automatic mode low-risk ones are applied. Responds at once and works in
-// the background, since a full run takes minutes.
-const POLL_MODE_AGENT_MESSAGE = "The agent can't run on a site connected in poll mode yet. Your host blocks direct access from Arreyon. This is a planned improvement.";
-async function startManualAgentRun(req, res, platform) {
-  try {
-    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
-    const businessId = req.params.id;
-    let connection;
-    if (platform === 'wordpress') {
-      const r = await pool.query(`SELECT * FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [businessId]);
-      if (!r.rows.length) return res.status(404).json({ error: 'No website connected' });
-      connection = r.rows[0];
-      if (connection.connection_mode === 'poll') return res.status(400).json({ error: POLL_MODE_AGENT_MESSAGE });
-    } else {
-      const r = await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [businessId]);
-      if (!r.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
-      connection = r.rows[0];
-    }
-    if (!launchAgentCycleInBackground(platform, connection, 'manual')) return res.status(409).json({ error: 'The agent is already running for this site. Its results will appear in Agent Activity as each step finishes.' });
-    res.status(202).json({ started: true });
-  } catch (e) {
-    console.error('Start manual agent run error:', e.message);
-    if (!res.headersSent) res.status(500).json({ error: 'Could not start the agent. Please try again.' });
-  }
-}
-app.post('/api/business/:id/website/run-agent-now', authRequired, (req, res) => startManualAgentRun(req, res, 'wordpress'));
-app.post('/api/business/:id/shopify/run-agent-now', authRequired, (req, res) => startManualAgentRun(req, res, 'shopify'));
-
-
-// Read-only copy of a generated post, so a draft can be read inside Arreyon
-// (an unpublished draft isn't viewable on the connected site without logging in).
 app.get('/api/business/:id/agent-activity/post/:platform/:postId', authRequired, async (req, res) => {
   try {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
     if (!/^[0-9a-f-]{36}$/i.test(req.params.postId)) return res.status(400).json({ error: 'Invalid post.' });
-    let result;
-    if (req.params.platform === 'wordpress') {
-      result = await pool.query(
-        `SELECT p.id, p.title, p.body_html, p.status, p.wp_url AS url, p.created_at
-         FROM website_generated_posts p JOIN website_connections c ON c.id = p.website_connection_id
-         WHERE p.id = $1 AND c.business_id = $2`, [req.params.postId, req.params.id]);
-    } else if (req.params.platform === 'shopify') {
-      result = await pool.query(
-        `SELECT p.id, p.title, p.body_html, p.status, p.article_url AS url, p.created_at
-         FROM shopify_generated_posts p JOIN shopify_connections c ON c.id = p.shopify_connection_id
-         WHERE p.id = $1 AND c.business_id = $2`, [req.params.postId, req.params.id]);
-    } else {
-      return res.status(400).json({ error: 'Invalid platform.' });
-    }
-    if (!result.rows.length) return res.status(404).json({ error: 'Post not found.' });
-    res.json({ post: result.rows[0] });
+    if (!isWebsitePlatform(req.params.platform)) return res.status(400).json({ error: 'Invalid platform.' });
+    const post = await WEBSITE_AGENTS[req.params.platform].previewPost(req.params.id, req.params.postId);
+    if (!post) return res.status(404).json({ error: 'Post not found.' });
+    res.json({ post });
   } catch (e) {
     console.error('Get post preview error:', e.message);
     res.status(500).json({ error: 'Could not load this post.' });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2 · WORDPRESS — must not mention Shopify
+// Everything WordPress-specific: its cycle, how it writes a scheduled post, how it previews one, and its adapter.
+// ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// AUTOMATIC MODE, THE ACTIVITY FEED, AND THE BACKGROUND SWEEPS
+//
+// Two things run on their own here, deliberately separate:
+//   1. The content calendar — posts someone scheduled for a specific time.
+//      Runs regardless of Automatic mode, because a scheduled post that
+//      silently doesn't happen is exactly the failure to avoid.
+//   2. The maintenance cycle — refresh Website Intelligence, audit and fix
+//      low-risk issues, check technical health, make sure the sitemap is
+//      submitted. Runs only for connections set to Automatic mode.
+// Everything either does is recorded in website_agent_activity.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const POLL_MODE_CONTENT_MESSAGE = "Automatic content creation isn't available for sites connected in poll mode yet. Your host blocks direct access from Arreyon, so new posts can't be written to this site. This is a planned improvement.";
+function wordpressAuditActivityDetail(audit) {
+  return { issuesFound: audit.issuesFound, autoFixed: audit.autoFixed, pendingApproval: audit.pendingApproval, pages: (audit.findingsByPage || []).slice(0, 10) };
+}
+
+async function runWordPressMaintenanceCycle(connection, triggeredBy = 'automatic', run = null) {
+  const businessId = connection.business_id;
+  const log = (taskType, outcome, detail) => logAgentActivity({ businessId, platform: 'wordpress', taskType, outcome, triggeredBy, detail });
+  const bizResult = await pool.query('SELECT id, name, user_id FROM businesses WHERE id = $1', [businessId]);
+  if (!bizResult.rows.length) return;
+  const biz = bizResult.rows[0];
+  const context = await getBusinessContext(businessId, biz.user_id);
+  const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+  const steps = createCycleSteps(run);
+  // Decided up front so a stop record never lists a step that would not have run anyway.
+  let competitorsDue = false;
+  try { competitorsDue = !!context && await wordpressCompetitorAnalysisDue(connection.id, businessId); } catch (e) { /* not due if it cannot be checked */ }
+
+  await steps.run('intelligence', async () => {
+    try {
+      await runAutomaticWebsiteIntelligence(connection, decryptedPassword, biz.name);
+      await log('intelligence_refreshed', 'success', {});
+    } catch (e) { await log('intelligence_refreshed', 'failed', errDetail(e)); }
+  });
+
+  await steps.run('audit', async () => {
+    if (!context) {
+      // Previously skipped without a trace, so the owner had no sign the audit did not run.
+      await log('audit_completed', 'failed', { error: 'Business details could not be loaded, so the audit was skipped.' });
+      return;
+    }
+    try {
+      const audit = await runFullWebsiteAudit(connection, decryptedPassword, context, triggeredBy, null);
+      await log('audit_completed', 'success', wordpressAuditActivityDetail(audit));
+    } catch (e) { await log('audit_completed', 'failed', errDetail(e)); }
+  });
+
+  await steps.run('technical check', async () => {
+    try {
+      const [vitals, robots] = await Promise.all([checkCoreWebVitals(connection.site_url), checkRobotsTxt(connection.site_url)]);
+      await insertTechnicalSeoCheck(businessId, vitals, robots, 'wordpress');
+      const tc = technicalCheckActivity(vitals, robots);
+      await log('technical_check', tc.outcome, tc.detail);
+    } catch (e) { await log('technical_check', 'failed', errDetail(e)); }
+  });
+
+  await steps.run('sitemap', async () => {
+    await runSitemapTask(biz.user_id, businessId, 'wordpress', connection.site_url, triggeredBy);
+  });
+
+  if (competitorsDue) {
+    await steps.run('competitor analysis', async () => {
+      const row = await startWordPressCompetitorAnalysisRow(connection.id, triggeredBy);
+      if (row) await runWordPressCompetitorAnalysis(connection, decryptedPassword, context, row.id, triggeredBy);
+    });
+  }
+
+  await steps.finish(log);
+}
+
+// Whether fixes on this site may be applied automatically RIGHT NOW. Read live from the database, not from the copy of the
+// connection loaded when the run began: if the person switches to Manual mid-run, no further fix is applied.
+async function wordpressAutoExecuteAllowed(connection) {
+  const r = await pool.query('SELECT permission_level, automation_mode FROM website_connections WHERE id = $1', [connection.id]);
+  return r.rows.length > 0 && r.rows[0].permission_level === 'managed' && r.rows[0].automation_mode === 'automatic';
+}
+
+// How a scheduled post is written and published on WordPress. Returns what the calendar records.
+async function generateWordPressScheduledPost(entry, context, connection) {
+  if (connection.connection_mode === 'poll') throw new Error(POLL_MODE_CONTENT_MESSAGE);
+  const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+  const { posts } = await getWordPressContentForAnalysis(connection, decryptedPassword);
+  const topic = entry.topic || await generateAutomaticBlogPostTopic(context, posts || []);
+  const result = await runBlogPostGeneration(connection, decryptedPassword, context, topic, false, entry.publish_mode);
+  return { success: !!(result && result.success), title: result && result.title || topic, url: result && result.url, error: (result && result.error) || 'WordPress did not accept this post.', publishStatus: result && result.publishStatus, postId: result && result.generatedPostId };
+}
+
+// ── Competitor analysis (WordPress) ──────────────────────────────────────────
+const MAX_COMPETITORS_PER_ANALYSIS = 5;
+// Your own site, measured in the same terms as a competitor's pages. Only what WordPress reports is used.
+function measureOwnWordPressSite(pages, posts) {
+  const all = [...pages, ...posts];
+  const avg = list => (list.length ? Math.round(list.reduce((s, i) => s + (i.wordCount || 0), 0) / list.length) : null);
+  return {
+    postCount: posts.length, pageCount: pages.length, avgWordsOnPosts: avg(posts), avgWordsOnPages: avg(pages),
+    pctWithMetaDescription: all.length ? Math.round(100 * all.filter(i => i.metaDescription).length / all.length) : null,
+    titles: all.map(i => i.title).filter(Boolean).slice(0, 60),
+  };
+}
+
+// Weekly in Automatic mode, whatever the agent's own schedule, and only when there is something to compare against.
+// An analysis that failed does not count as done, so the next run tries again.
+async function wordpressCompetitorAnalysisDue(connectionId, businessId) {
+  const comps = await pool.query(`SELECT COUNT(*)::int AS n FROM tracked_competitors WHERE business_id = $1 AND website IS NOT NULL AND TRIM(website) <> ''`, [businessId]);
+  if (!comps.rows[0].n) return false;
+  const recent = await pool.query(
+    `SELECT 1 FROM website_competitor_analyses WHERE website_connection_id = $1
+     AND ((status = 'completed' AND created_at > NOW() - INTERVAL '7 days') OR (status = 'running' AND created_at > NOW() - INTERVAL '15 minutes')) LIMIT 1`, [connectionId]);
+  return recent.rows.length === 0;
+}
+
+// Creates the 'running' record, unless one is already running (checked in the same statement, so two requests cannot both start).
+async function startWordPressCompetitorAnalysisRow(connectionId, triggeredBy) {
+  const r = await pool.query(
+    `INSERT INTO website_competitor_analyses (website_connection_id, triggered_by)
+     SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM website_competitor_analyses WHERE website_connection_id = $1 AND status = 'running' AND created_at > NOW() - INTERVAL '15 minutes')
+     RETURNING id`, [connectionId, triggeredBy]);
+  return r.rows[0] || null;
+}
+
+// Never throws: the outcome is written to the record and to the feed, so a failure is visible and never silent.
+async function runWordPressCompetitorAnalysis(connection, decryptedPassword, context, rowId, triggeredBy) {
+  const businessId = connection.business_id;
+  const log = (outcome, detail) => logAgentActivity({ businessId, platform: 'wordpress', taskType: 'competitor_analysis', outcome, triggeredBy, detail });
+  try {
+    // Each analysis reads at most 5 competitors (the oldest tracked first) — more would make it too slow and too many requests
+    // to other people's sites. Whatever is left out is counted and shown, never silently ignored.
+    const tracked = (await pool.query(`SELECT id, name, website FROM tracked_competitors WHERE business_id = $1 AND website IS NOT NULL AND TRIM(website) <> '' ORDER BY created_at ASC`, [businessId])).rows;
+    const comps = tracked.slice(0, MAX_COMPETITORS_PER_ANALYSIS), notIncluded = tracked.length - comps.length;
+    if (!comps.length) throw new Error('No competitor with a website is being tracked.');
+    const { pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword);
+    const own = measureOwnWordPressSite(pages || [], posts || []);
+    const measured = await Promise.all(comps.map(async c => ({ id: c.id, name: c.name, ...(await collectCompetitorSiteData(c.website)) })));
+    const usable = measured.filter(m => m.reachable);
+    if (!usable.length) throw new Error('None of the competitor websites could be read right now.');
+    const insights = await synthesizeCompetitorInsights(context, own, usable);
+    insights.competitors_not_included = notIncluded;
+    await pool.query(`UPDATE website_competitor_analyses SET status = 'completed', own = $2, competitors = $3, insights = $4, completed_at = NOW() WHERE id = $1`, [rowId, JSON.stringify(own), JSON.stringify(measured), JSON.stringify(insights)]);
+    await pool.query(`DELETE FROM website_competitor_analyses WHERE website_connection_id = $1 AND id NOT IN (SELECT id FROM website_competitor_analyses WHERE website_connection_id = $1 ORDER BY created_at DESC LIMIT 10)`, [connection.id]);
+    await log('success', { competitorsAnalyzed: usable.length, competitorsUnreachable: measured.length - usable.length, competitorsNotIncluded: notIncluded, gaps: insights.content_gaps.length });
+    return { ok: true };
+  } catch (e) {
+    try { await pool.query(`UPDATE website_competitor_analyses SET status = 'failed', error_message = $2, completed_at = NOW() WHERE id = $1`, [rowId, String(e.message).slice(0, 500)]); } catch (e2) { console.error('Could not record competitor analysis failure:', e2.message); }
+    await log('failed', errDetail(e));
+    return { ok: false };
+  }
+}
+
+// A post this app generated for WordPress, only if it belongs to this business.
+async function previewWordPressPost(businessId, postId) {
+  const r = await pool.query(
+    `SELECT p.id, p.title, p.body_html, p.status, p.wp_url AS url, p.created_at
+     FROM website_generated_posts p JOIN website_connections c ON c.id = p.website_connection_id
+     WHERE p.id = $1 AND c.business_id = $2`, [postId, businessId]);
+  return r.rows[0] || null;
+}
+
+// The WordPress adapter. Late-bound wrappers (not direct references) so the functions can be replaced in tests.
+const wordpressAgent = {
+  key: 'wordpress', label: 'WordPress', noun: 'site', table: 'website_connections',
+  // A connection the agent can work on (constant SQL, never user input).
+  runnableWhere: "connection_status != 'disconnected' AND connection_mode = 'push'",
+  // Why an existing connection cannot be worked on ('poll' | 'unavailable'), or null if nothing blocks it.
+  blockedReason(row) { if (row.connection_mode === 'poll') return 'poll'; return row.connection_status === 'disconnected' ? 'unavailable' : null; },
+  async postingConnection(businessId) {
+    const r = await pool.query(`SELECT * FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [businessId]);
+    return r.rows[0] || null;
+  },
+  // Refused when a schedule is created, rather than accepted and failing days later.
+  postingBlockedMessage(connection) { return connection.connection_mode === 'poll' ? POLL_MODE_CONTENT_MESSAGE : null; },
+  async siteUrl(businessId) {
+    const r = await pool.query(`SELECT site_url FROM website_connections WHERE business_id = $1 AND connection_status != 'disconnected'`, [businessId]);
+    return r.rows[0] ? r.rows[0].site_url : null;
+  },
+  runCycle: (connection, triggeredBy, run) => runWordPressMaintenanceCycle(connection, triggeredBy, run),
+  generateScheduledPost: (entry, context, connection) => generateWordPressScheduledPost(entry, context, connection),
+  previewPost: (businessId, postId) => previewWordPressPost(businessId, postId),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3 · SHOPIFY — must not mention WordPress
+// Everything Shopify-specific: its store address lookup, its cycle, how it writes a scheduled post, how it previews one, and its adapter.
+// ═══════════════════════════════════════════════════════════════════════════
+// The low-risk tier WordPress also auto-executes. This governs the meta-tag path only: broken-link removal
+// has no auto-apply path in runShopifyAudit at all, so widening this set would NOT make it auto-apply.
+const SHOPIFY_AUTO_APPLY_ACTIONS = new Set(['update_meta_title', 'update_meta_description']);
+// ── Shopify store URL: the real one, never a guess ─────────────────────────
+const shopifyStoreInfoCache = new Map();
+const SHOPIFY_INFO_TTL_MS = 6 * 60 * 60 * 1000;
+function shopifyCacheGet(key) {
+  const hit = shopifyStoreInfoCache.get(key);
+  return hit && Date.now() < hit.expiresAt ? hit.value : undefined;
+}
+function shopifyCacheSet(key, value, ttlMs) { shopifyStoreInfoCache.set(key, { value, expiresAt: Date.now() + ttlMs }); }
+// The shop's primary customer-facing domain. Falls back to the
+// myshopify.com address, which always works (it redirects to the primary
+// domain) — never to a guessed "<shop>.com", which can be someone else's site.
+async function getShopifyStoreUrl(connection, accessToken) {
+  const key = `${connection.id}:url`;
+  const cached = shopifyCacheGet(key);
+  if (cached) return cached;
+  let value = `https://${connection.shop_domain}`;
+  let resolved = false;
+  try {
+    const res = await shopifyApiRequest(connection.shop_domain, accessToken, '/shop.json?fields=domain');
+    if (res.ok) {
+      const d = await res.json();
+      const domain = d.shop && d.shop.domain;
+      if (typeof domain === 'string' && /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i.test(domain)) { value = `https://${domain}`; resolved = true; }
+    }
+  } catch (e) { /* use the fallback */ }
+  shopifyCacheSet(key, value, resolved ? SHOPIFY_INFO_TTL_MS : 5 * 60 * 1000); // a fallback is retried soon
+  return value;
+}
+// Never throws. The real primary domain when it can be resolved; otherwise the myshopify.com address
+// (which redirects to it). Used wherever a page's URL is needed but a problem with the stored token
+// (a rotated encryption key, say) must not take the whole feature down — these routes worked without
+// ever touching the token before the real domain was needed.
+async function shopifyStoreUrlFor(connection) {
+  try { return await getShopifyStoreUrl(connection, decryptSecret(connection.access_token_encrypted)); }
+  catch (e) { return `https://${connection.shop_domain}`; }
+}
+async function getShopifyBlogHandle(connection, accessToken) {
+  const key = `${connection.id}:blog`;
+  const cached = shopifyCacheGet(key);
+  if (cached) return cached;
+  let value = 'news';
+  let resolved = false;
+  try {
+    if (connection.blog_id) {
+      const res = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}.json?fields=handle`);
+      if (res.ok) {
+        const d = await res.json();
+        if (d.blog && typeof d.blog.handle === 'string' && /^[a-z0-9-]+$/i.test(d.blog.handle)) { value = d.blog.handle; resolved = true; }
+      }
+    }
+  } catch (e) { /* use the fallback */ }
+  shopifyCacheSet(key, value, resolved ? SHOPIFY_INFO_TTL_MS : 5 * 60 * 1000);
+  return value;
+}
+function shopifyAuditActivityDetail(audit) {
+  const totalIssues = (audit.foundIssues.metaTitle || 0) + (audit.foundIssues.metaDescription || 0) + (audit.foundIssues.brokenLinks || 0);
+  const pages = new Map();
+  const addChange = (a, status) => {
+    if (!pages.has(a.target_url)) pages.set(a.target_url, { title: a.target_title, url: a.target_url, changes: [] });
+    pages.get(a.target_url).changes.push({ description: describeShopifyActionChange(a), status });
+  };
+  (audit.autoApplied || []).forEach(a => addChange(a, 'fixed'));
+  (audit.proposalsCreated || []).forEach(a => addChange(a, 'pending'));
+  return { issuesFound: totalIssues, autoFixed: (audit.autoApplied || []).length, pendingApproval: (audit.proposalsCreated || []).length, pages: [...pages.values()].slice(0, 10) };
+}
+function describeShopifyActionChange(action) {
+  const c = action.proposed_change || {};
+  if (c.brokenUrl) return `Remove broken link to ${c.brokenUrl}`;
+  const parts = [];
+  if (c.metaTitle) parts.push(`Meta title: "${c.metaTitle}"`);
+  if (c.metaDescription) parts.push(`Meta description: "${c.metaDescription}"`);
+  return parts.join(' · ') || action.action_type;
+}
+
+async function runShopifyMaintenanceCycle(connection, triggeredBy = 'automatic', run = null) {
+  const businessId = connection.business_id;
+  const log = (taskType, outcome, detail) => logAgentActivity({ businessId, platform: 'shopify', taskType, outcome, triggeredBy, detail });
+  const bizResult = await pool.query('SELECT id, name, user_id FROM businesses WHERE id = $1', [businessId]);
+  if (!bizResult.rows.length) return;
+  const biz = bizResult.rows[0];
+  const context = await getBusinessContext(businessId, biz.user_id);
+  const accessToken = decryptSecret(connection.access_token_encrypted);
+  const steps = createCycleSteps(run);
+
+  await steps.run('intelligence', async () => {
+    try {
+      await runShopifyWebsiteIntelligence(connection, accessToken, biz.name);
+      await log('intelligence_refreshed', 'success', {});
+    } catch (e) { await log('intelligence_refreshed', 'failed', errDetail(e)); }
+  });
+
+  await steps.run('audit', async () => {
+    if (!context) { await log('audit_completed', 'failed', { error: 'Business details could not be loaded, so the audit was skipped.' }); return; }
+    try {
+      const audit = await runShopifyAudit(connection, accessToken, context, null);
+      await log('audit_completed', 'success', shopifyAuditActivityDetail(audit));
+    } catch (e) { await log('audit_completed', 'failed', errDetail(e)); }
+  });
+
+  let siteUrl;
+  try { siteUrl = await getShopifyStoreUrl(connection, accessToken); } catch (e) { siteUrl = `https://${connection.shop_domain}`; }
+
+  await steps.run('technical check', async () => {
+    try {
+      const [vitals, robots] = await Promise.all([checkCoreWebVitals(siteUrl), checkRobotsTxt(siteUrl)]);
+      await insertTechnicalSeoCheck(businessId, vitals, robots, 'shopify');
+      const tc = technicalCheckActivity(vitals, robots);
+      await log('technical_check', tc.outcome, tc.detail);
+    } catch (e) { await log('technical_check', 'failed', errDetail(e)); }
+  });
+
+  await steps.run('sitemap', async () => {
+    await runSitemapTask(biz.user_id, businessId, 'shopify', siteUrl, triggeredBy);
+  });
+
+  await steps.finish(log);
+}
+
+// Whether fixes on this store may be applied automatically RIGHT NOW. Read live from the database, not from the copy of
+// the connection loaded when the run began: if the person switches to Manual mid-run, no further fix is applied.
+async function shopifyAutoApplyAllowed(connection) {
+  const r = await pool.query('SELECT automation_mode FROM shopify_connections WHERE id = $1', [connection.id]);
+  return r.rows.length > 0 && r.rows[0].automation_mode === 'automatic';
+}
+
+// How a scheduled post is written and published on Shopify. Returns what the calendar records.
+async function generateShopifyScheduledPost(entry, context, connection) {
+  const accessToken = decryptSecret(connection.access_token_encrypted);
+
+  let existingTitles = [];
+  try {
+    if (connection.blog_id) {
+      const existingRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles.json?limit=20&fields=title`);
+      if (existingRes.ok) { const d = await existingRes.json(); existingTitles = (d.articles || []).map(a => a.title); }
+    }
+  } catch (e) { /* topic choice can proceed without this */ }
+
+  const topic = entry.topic || await generateAutomaticBlogPostTopic(context, existingTitles.map(title => ({ title })));
+  let internalCandidates = [];
+  try { internalCandidates = await getShopifyContentForAnalysis(connection, accessToken); } catch (e) { /* a post can be written without internal links */ }
+
+  const generated = await generateShopifyBlogPostContent(context, topic, existingTitles, internalCandidates);
+  const result = await createShopifyBlogPost(connection, accessToken, { ...generated, status: entry.publish_mode });
+
+  let postId = null;
+  if (result.success) {
+    const saved = await pool.query(
+      `INSERT INTO shopify_generated_posts (shopify_connection_id, shopify_article_id, topic, title, handle, body_html, meta_title, meta_description, tags, status, article_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+      [connection.id, result.id, topic, generated.title, result.handle, generated.bodyHtml, generated.metaTitle, generated.metaDescription, generated.tags.join(', '), result.status, result.url]
+    );
+    postId = saved.rows[0].id;
+
+    // Recorded post by post: the cooldown and no-repeat checks read this
+    // table, so each post must be visible to the next one generated.
+    if (generated.reciprocalCandidate && generated.bodyHtml.includes(generated.reciprocalCandidate.url)) {
+      try {
+        await pool.query(
+          `INSERT INTO reciprocal_links_placed (from_business_id, to_business_id, from_post_title, from_post_url, to_url, relevance_reason)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [entry.business_id, generated.reciprocalCandidate.businessId, generated.title, result.url || null, generated.reciprocalCandidate.url, generated.reciprocalCandidate.reason]
+        );
+      } catch (e) { console.error('Failed to record reciprocal link placement (Shopify calendar):', e.message); }
+    }
+  }
+  return { success: !!result.success, title: generated.title || topic, url: result.url, error: result.error || 'Shopify did not accept this post.', publishStatus: result.status, postId };
+}
+
+// A post this app generated for Shopify, only if it belongs to this business.
+async function previewShopifyPost(businessId, postId) {
+  const r = await pool.query(
+    `SELECT p.id, p.title, p.body_html, p.status, p.article_url AS url, p.created_at
+     FROM shopify_generated_posts p JOIN shopify_connections c ON c.id = p.shopify_connection_id
+     WHERE p.id = $1 AND c.business_id = $2`, [postId, businessId]);
+  return r.rows[0] || null;
+}
+
+// The Shopify adapter. Late-bound wrappers (not direct references) so the functions can be replaced in tests.
+const shopifyAgent = {
+  key: 'shopify', label: 'Shopify', noun: 'store', table: 'shopify_connections',
+  runnableWhere: "connection_status = 'connected'",
+  blockedReason(row) { return row.connection_status === 'connected' ? null : 'unavailable'; },
+  async postingConnection(businessId) {
+    const r = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [businessId]);
+    return r.rows[0] || null;
+  },
+  postingBlockedMessage() { return null; },
+  async siteUrl(businessId) {
+    const r = await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [businessId]);
+    // The store's real primary domain, not its myshopify.com address: Search Console and every "is this link ours"
+    // check match on the real domain.
+    return r.rows[0] ? await shopifyStoreUrlFor(r.rows[0]) : null;
+  },
+  runCycle: (connection, triggeredBy, run) => runShopifyMaintenanceCycle(connection, triggeredBy, run),
+  generateScheduledPost: (entry, context, connection) => generateShopifyScheduledPost(entry, context, connection),
+  previewPost: (businessId, postId) => previewShopifyPost(businessId, postId),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4 · REGISTRY — the only place both platforms are named
+// To add a platform: write its adapter (same methods as the two above), add it here. Nothing in section 1 changes.
+// ═══════════════════════════════════════════════════════════════════════════
+const WEBSITE_AGENTS = { wordpress: wordpressAgent, shopify: shopifyAgent };
+
 
 
 // ── Alerts API — shared across the team, like other account data ──────────
