@@ -7358,7 +7358,8 @@ app.post('/api/business/:id/content-schedule', authRequired, async (req, res) =>
 app.get('/api/business/:id/content-schedule', authRequired, async (req, res) => {
   try {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
-    const platformFilter = isWebsitePlatform(req.query.platform) ? req.query.platform : null;
+    if (req.query.platform !== undefined && !isWebsitePlatform(req.query.platform)) return res.status(400).json({ error: 'Unknown platform.' });
+    const platformFilter = req.query.platform || null;
     const result = await pool.query(
       `SELECT *, scheduled_date::text AS scheduled_date_str, ((scheduled_date + scheduled_time) AT TIME ZONE COALESCE(NULLIF(timezone, ''), 'UTC')) AS due_at
        FROM content_calendar_entries
@@ -7371,6 +7372,19 @@ app.get('/api/business/:id/content-schedule', authRequired, async (req, res) => 
   } catch (e) {
     console.error('Get content calendar error:', e.message);
     res.status(500).json({ error: 'Could not load the content calendar.' });
+  }
+});
+
+// Clears the FINISHED entries (generated, failed, cancelled) for one platform. Posts still to come stay scheduled.
+app.delete('/api/business/:id/content-schedule', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    if (!isWebsitePlatform(req.query.platform)) return res.status(400).json({ error: 'Say which platform to clear.' });
+    const result = await pool.query(`DELETE FROM content_calendar_entries WHERE business_id = $1 AND platform = $2 AND status IN ('generated', 'failed', 'cancelled')`, [req.params.id, req.query.platform]);
+    res.json({ success: true, removed: result.rowCount });
+  } catch (e) {
+    console.error('Clear content calendar history error:', e.message);
+    res.status(500).json({ error: 'Could not clear the calendar history.' });
   }
 });
 
@@ -8215,6 +8229,30 @@ app.get('/api/business/:id/shopify/connect', authRequired, async (req, res) => {
   }
 });
 
+// Connecting a Shopify store for a business that does not exist yet. The business is NOT created here: its name travels in
+// the signed sign-in token and the business is created by the callback only once Shopify has approved the store, so
+// abandoning the sign-in leaves nothing behind.
+app.get('/api/shopify/connect-new', authRequired, async (req, res) => {
+  try {
+    if (!process.env.SHOPIFY_API_KEY) {
+      return res.status(400).json({ error: 'Shopify integration is not configured on this server yet — SHOPIFY_API_KEY is missing.' });
+    }
+    const businessName = String(req.query.businessName || '').trim();
+    if (!businessName) return res.status(400).json({ error: 'Please enter a business name.' });
+    if (businessName.length > 120) return res.status(400).json({ error: 'The business name is too long (120 characters at most).' });
+    const shop = (req.query.shop || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop)) {
+      return res.status(400).json({ error: 'Enter your shop domain exactly as it appears, e.g. yourstore.myshopify.com' });
+    }
+    const state = jwt.sign({ businessName, userId: req.userId, shop }, JWT_SECRET, { expiresIn: '10m' });
+    const params = new URLSearchParams({ client_id: process.env.SHOPIFY_API_KEY, scope: SHOPIFY_SCOPES, redirect_uri: SHOPIFY_CALLBACK_URL, state });
+    res.json({ authorizeUrl: `https://${shop}/admin/oauth/authorize?${params.toString()}` });
+  } catch (e) {
+    console.error('Shopify connect-new init error:', e.message);
+    res.status(500).json({ error: 'Failed to start the Shopify connection.' });
+  }
+});
+
 app.get('/api/shopify/callback', async (req, res) => {
   const { code, shop, state, hmac } = req.query;
   try {
@@ -8259,14 +8297,25 @@ app.get('/api/shopify/callback', async (req, res) => {
       // itself still succeeds.
     }
 
+    // New-business path: the store is approved, so only now is the business created (a reused sign-in code fails at the token
+    // exchange above, so this can never run twice for one approval). A store address is deliberately NOT written to the business's
+    // website field: the store's real domain is looked up from Shopify itself.
+    let businessId = decoded.businessId;
+    if (!businessId) {
+      const name = String(decoded.businessName || '').trim();
+      if (!name || !decoded.userId) return res.redirect('/dashboard?section=website&error=shopify_connect_failed');
+      const account = await resolveAccount(decoded.userId);
+      const created = await pool.query('INSERT INTO businesses (user_id, name) VALUES ($1, $2) RETURNING id', [account.id, name.slice(0, 120)]);
+      businessId = created.rows[0].id;
+    }
     await pool.query(
       `INSERT INTO shopify_connections (business_id, shop_domain, access_token_encrypted, scope, blog_id, connection_status, last_verified_at)
        VALUES ($1, $2, $3, $4, $5, 'connected', NOW())
        ON CONFLICT (business_id) DO UPDATE SET shop_domain = $2, access_token_encrypted = $3, scope = $4, blog_id = $5, connection_status = 'connected', last_verified_at = NOW()`,
-      [decoded.businessId, shop, encryptSecret(tokenData.access_token), tokenData.scope || SHOPIFY_SCOPES, blogId]
+      [businessId, shop, encryptSecret(tokenData.access_token), tokenData.scope || SHOPIFY_SCOPES, blogId]
     );
 
-    res.redirect('/dashboard?section=website&connected=shopify');
+    res.redirect(`/dashboard?section=website&connected=shopify&business=${encodeURIComponent(businessId)}`);
   } catch (e) {
     console.error('Shopify callback error:', e.message);
     res.redirect('/dashboard?section=website&error=shopify_connect_failed');
@@ -14958,7 +15007,8 @@ app.get('/api/business', authRequired, async (req, res) => {
     // real connection at all.
     const result = await pool.query(
       `SELECT b.id, b.name, b.website, b.industry, b.created_at, b.updated_at,
-       EXISTS(SELECT 1 FROM website_connections wc WHERE wc.business_id = b.id AND wc.connection_status != 'disconnected') AS has_website_connection
+       EXISTS(SELECT 1 FROM website_connections wc WHERE wc.business_id = b.id AND wc.connection_status != 'disconnected') AS has_website_connection,
+       EXISTS(SELECT 1 FROM shopify_connections sc WHERE sc.business_id = b.id AND sc.connection_status = 'connected') AS has_shopify_connection
        FROM businesses b WHERE b.user_id = $1 AND b.is_active = true ORDER BY b.updated_at DESC`,
       [account.id]
     );
@@ -17056,7 +17106,8 @@ app.all('/api/internal/run-sweeps', async (req, res) => {
 app.get('/api/business/:id/agent-activity', authRequired, async (req, res) => {
   try {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
-    const platform = isWebsitePlatform(req.query.platform) ? req.query.platform : null;
+    if (req.query.platform !== undefined && !isWebsitePlatform(req.query.platform)) return res.status(400).json({ error: 'Unknown platform.' });
+    const platform = req.query.platform || null;
     const result = await pool.query(
       `SELECT id, platform, task_type, outcome, triggered_by, detail, created_at
        FROM website_agent_activity WHERE business_id = $1 AND ($2::text IS NULL OR platform = $2::text)
@@ -17068,6 +17119,19 @@ app.get('/api/business/:id/agent-activity', authRequired, async (req, res) => {
   } catch (e) {
     console.error('Get agent activity error:', e.message);
     res.status(500).json({ error: 'Could not load activity.' });
+  }
+});
+
+// Clears one platform's Agent Activity for one business. The platform must be named, so this can never wipe another site's history.
+app.delete('/api/business/:id/agent-activity', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    if (!isWebsitePlatform(req.query.platform)) return res.status(400).json({ error: 'Say which platform to clear.' });
+    const result = await pool.query('DELETE FROM website_agent_activity WHERE business_id = $1 AND platform = $2', [req.params.id, req.query.platform]);
+    res.json({ success: true, removed: result.rowCount });
+  } catch (e) {
+    console.error('Clear agent activity error:', e.message);
+    res.status(500).json({ error: 'Could not clear the activity history.' });
   }
 });
 
