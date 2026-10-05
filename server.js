@@ -6445,46 +6445,11 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 // domain. Never assumes or estimates; only records what Perplexity
 // genuinely returned for this exact real query, right now.
 async function runAiVisibilityCheck(connection, context) {
-  const businessName = (context?.business?.name || '').trim();
-  const siteUrl = connection.site_url || '';
-  let siteDomain = '';
-  try { siteDomain = new URL(siteUrl).hostname.replace(/^www\./, '').toLowerCase(); } catch { /* Real, deliberate no-op — an unparseable site URL just means domain-citation can never match, name-mention still can. */ }
-
-  const queries = await generateAiVisibilityQueries(context);
-  const results = [];
-
-  for (const query of queries) {
-    try {
-      const searchResults = await perplexitySearch(query);
-      const answerResult = searchResults.find(r => r.title === 'Perplexity research summary');
-      const answer = answerResult?.snippet || '';
-      const citations = searchResults.filter(r => r.url).map(r => r.url);
-
-      const mentionedByName = businessName.length > 2 && answer.toLowerCase().includes(businessName.toLowerCase());
-      const citedByDomain = siteDomain && citations.some(url => {
-        try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase() === siteDomain; } catch { return false; }
-      });
-
-      const inserted = await pool.query(
-        `INSERT INTO website_ai_visibility_checks (website_connection_id, query, mentioned_by_name, cited_by_domain, answer_excerpt, citations)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [connection.id, query, mentionedByName, citedByDomain, answer.slice(0, 2000), JSON.stringify(citations)]
-      );
-      results.push(inserted.rows[0]);
-    } catch (e) {
-      // Real, deliberate skip — one real query failing (a real
-      // Perplexity error, a real timeout) shouldn't block the rest of
-      // this real check from genuinely completing.
-      console.error(`AI visibility check failed for query "${query}":`, e.message);
-    }
-  }
-
-  const mentionedCount = results.filter(r => r.mentioned_by_name || r.cited_by_domain).length;
+  const outcome = await runAiVisibilityQueries(wordpressAiVisibilitySpec, connection, context, connection.site_url || '');
   await logWebsiteAudit(connection.id, 'ai_agent', null, 'ai_visibility_checked',
-    `Checked AI visibility across ${results.length} real quer${results.length === 1 ? 'y' : 'ies'} — mentioned or cited in ${mentionedCount} of them`,
-    { checkedCount: results.length, mentionedCount }, 'general');
-
-  return { results, checkedCount: results.length, mentionedCount };
+    `Checked AI visibility across ${outcome.checkedCount} real quer${outcome.checkedCount === 1 ? 'y' : 'ies'} — mentioned or cited in ${outcome.mentionedCount} of them`,
+    { checkedCount: outcome.checkedCount, mentionedCount: outcome.mentionedCount }, 'general');
+  return outcome;
 }
 
 async function suggestBlogPostTopics(context, existingPosts, count = 5) {
@@ -9251,6 +9216,47 @@ app.get('/api/business/:id/shopify/competitor-analysis', authRequired, async (re
   } catch (e) {
     console.error('Get Shopify competitor analysis error:', e.message);
     res.status(500).json({ error: 'Could not load the competitor analysis.' });
+  }
+});
+
+app.post('/api/business/:id/shopify/ai-visibility/check', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    if (!context.business.name) return res.status(400).json({ error: 'A business name is required before an AI visibility check can run — add one on the business profile first.' });
+    const conn = (await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
+    if (!conn) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
+    res.json(await runShopifyAiVisibilityCheck(conn, context));
+  } catch (err) {
+    console.error('Shopify AI visibility check error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to run the AI visibility check. Please try again.' });
+  }
+});
+
+app.get('/api/business/:id/shopify/ai-visibility/history', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    const conn = (await pool.query(`SELECT id FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
+    if (!conn) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
+    const result = await pool.query('SELECT * FROM shopify_ai_visibility_checks WHERE shopify_connection_id = $1 ORDER BY checked_at DESC LIMIT 100', [conn.id]);
+    res.json({ checks: result.rows });
+  } catch (e) {
+    console.error('Get Shopify AI visibility history error:', e.message);
+    res.status(500).json({ error: 'Could not load AI visibility history.' });
+  }
+});
+
+app.delete('/api/business/:id/shopify/ai-visibility/history', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    const conn = (await pool.query(`SELECT id FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
+    if (!conn) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
+    const result = await pool.query('DELETE FROM shopify_ai_visibility_checks WHERE shopify_connection_id = $1 RETURNING id', [conn.id]);
+    res.json({ success: true, clearedCount: result.rows.length });
+  } catch (e) {
+    console.error('Clear Shopify AI visibility history error:', e.message);
+    res.status(500).json({ error: 'Could not clear AI visibility history.' });
   }
 });
 
@@ -16938,6 +16944,43 @@ async function runCompetitorAnalysis(spec, connection, secret, context, rowId, t
   }
 }
 
+// ── AI Visibility engine — the same for every platform ─────────────────────
+// Asks realistic customer questions of an AI assistant and records whether this business was NAMED in the answer or its
+// site CITED as a source. A platform describes itself with a spec: { table, fk }; the caller supplies the connection and the
+// site address to look for. If no question could be checked at all, that is an error the person sees, not a quiet "0 of 0".
+async function runAiVisibilityQueries(spec, connection, context, siteUrl) {
+  const businessName = (context?.business?.name || '').trim();
+  let siteDomain = '';
+  try { siteDomain = new URL(siteUrl || '').hostname.replace(/^www\./, '').toLowerCase(); } catch { /* an unparseable address just means a domain citation can never match; a name mention still can */ }
+
+  const queries = await generateAiVisibilityQueries(context);
+  const results = [];
+  for (const query of queries) {
+    try {
+      const searchResults = await perplexitySearch(query);
+      const answerResult = searchResults.find(r => r.title === 'Perplexity research summary');
+      const answer = answerResult?.snippet || '';
+      const citations = searchResults.filter(r => r.url).map(r => r.url);
+      const mentionedByName = businessName.length > 2 && answer.toLowerCase().includes(businessName.toLowerCase());
+      const citedByDomain = !!siteDomain && citations.some(url => {
+        try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase() === siteDomain; } catch { return false; }
+      });
+      const inserted = await pool.query(
+        `INSERT INTO ${spec.table} (${spec.fk}, query, mentioned_by_name, cited_by_domain, answer_excerpt, citations)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [connection.id, query, mentionedByName, citedByDomain, answer.slice(0, 2000), JSON.stringify(citations)]
+      );
+      results.push(inserted.rows[0]);
+    } catch (e) {
+      // One question failing (an AI error, a timeout) must not stop the others from completing.
+      console.error(`AI visibility check failed for query "${query}":`, e.message);
+    }
+  }
+  if (!results.length) throw new Error('None of the test questions could be checked right now. Please try again in a moment.');
+  const mentionedCount = results.filter(r => r.mentioned_by_name || r.cited_by_domain).length;
+  return { results, checkedCount: results.length, mentionedCount };
+}
+
 // ── Runs in progress, and stopping them ──────────────────────────────────────
 // One entry per site while its cycle is running. 'cancelled' is how a run is stopped: the cycle checks it
 // between steps and skips what is left, and the code that applies fixes re-reads the live mode, so once a
@@ -17386,6 +17429,8 @@ async function startWordPressCompetitorAnalysisRow(connectionId, triggeredBy) { 
 // Never throws: the outcome is written to the record and to the feed, so a failure is visible and never silent.
 async function runWordPressCompetitorAnalysis(connection, decryptedPassword, context, rowId, triggeredBy) { return runCompetitorAnalysis(wordpressCompetitorSpec, connection, decryptedPassword, context, rowId, triggeredBy); }
 
+const wordpressAiVisibilitySpec = { table: 'website_ai_visibility_checks', fk: 'website_connection_id' };
+
 const wordpressCompetitorSpec = {
   platform: 'wordpress', table: 'website_competitor_analyses', fk: 'website_connection_id',
   async measureOwn(connection, password) { const { pages, posts } = await getWordPressContentForAnalysis(connection, password); return measureOwnWordPressSite(pages || [], posts || []); },
@@ -17522,6 +17567,17 @@ function measureOwnShopifyStore(content) {
 async function shopifyCompetitorAnalysisDue(connectionId, businessId) { return competitorAnalysisDue(shopifyCompetitorSpec, connectionId, businessId); }
 async function startShopifyCompetitorAnalysisRow(connectionId, triggeredBy) { return startCompetitorAnalysisRow(shopifyCompetitorSpec, connectionId, triggeredBy); }
 async function runShopifyCompetitorAnalysis(connection, accessToken, context, rowId, triggeredBy) { return runCompetitorAnalysis(shopifyCompetitorSpec, connection, accessToken, context, rowId, triggeredBy); }
+const shopifyAiVisibilitySpec = { table: 'shopify_ai_visibility_checks', fk: 'shopify_connection_id' };
+
+// Shopify has no separate activity log, so a manual check is recorded in Agent Activity. The site address looked for in the
+// AI's cited sources is the store's real domain (what customers use), never its myshopify.com address.
+async function runShopifyAiVisibilityCheck(connection, context) {
+  const siteUrl = await shopifyStoreUrlFor(connection);
+  const outcome = await runAiVisibilityQueries(shopifyAiVisibilitySpec, connection, context, siteUrl);
+  await logAgentActivity({ businessId: connection.business_id, platform: 'shopify', taskType: 'ai_visibility_checked', outcome: 'success', triggeredBy: 'manual', detail: { checkedCount: outcome.checkedCount, mentionedCount: outcome.mentionedCount } });
+  return outcome;
+}
+
 const shopifyCompetitorSpec = {
   platform: 'shopify', table: 'shopify_competitor_analyses', fk: 'shopify_connection_id',
   async measureOwn(connection, accessToken) { return measureOwnShopifyStore(await getShopifyContentForIntelligence(connection, accessToken)); },
