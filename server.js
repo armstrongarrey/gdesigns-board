@@ -7375,12 +7375,12 @@ app.get('/api/business/:id/content-schedule', authRequired, async (req, res) => 
   }
 });
 
-// Clears the FINISHED entries (generated, failed, cancelled) for one platform. Posts still to come stay scheduled.
+// Clears the FINISHED entries (generated, failed, cancelled, missed) for one platform. Posts still to come stay scheduled.
 app.delete('/api/business/:id/content-schedule', authRequired, async (req, res) => {
   try {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
     if (!isWebsitePlatform(req.query.platform)) return res.status(400).json({ error: 'Say which platform to clear.' });
-    const result = await pool.query(`DELETE FROM content_calendar_entries WHERE business_id = $1 AND platform = $2 AND status IN ('generated', 'failed', 'cancelled')`, [req.params.id, req.query.platform]);
+    const result = await pool.query(`DELETE FROM content_calendar_entries WHERE business_id = $1 AND platform = $2 AND status IN ('generated', 'failed', 'cancelled', 'missed')`, [req.params.id, req.query.platform]);
     res.json({ success: true, removed: result.rowCount });
   } catch (e) {
     console.error('Clear content calendar history error:', e.message);
@@ -7407,6 +7407,21 @@ app.delete('/api/business/:id/content-schedule/:entryId', authRequired, async (r
   } catch (e) {
     console.error('Cancel content calendar entry error:', e.message);
     res.status(500).json({ error: 'Could not cancel this entry.' });
+  }
+});
+
+// Dismisses ONE entry that did not happen (missed or failed) so it does not sit in the calendar forever. Nothing else can be
+// dismissed this way: a post still to come is cancelled (above), and a generated post is history.
+app.post('/api/business/:id/content-schedule/:entryId/dismiss', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.entryId)) return res.status(400).json({ error: 'Invalid entry.' });
+    const result = await pool.query(`DELETE FROM content_calendar_entries WHERE id = $1 AND business_id = $2 AND status IN ('missed', 'failed') RETURNING id`, [req.params.entryId, req.params.id]);
+    if (!result.rows.length) return res.status(404).json({ error: 'Entry not found, or it is not something that can be dismissed.' });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Dismiss content calendar entry error:', e.message);
+    res.status(500).json({ error: 'Could not dismiss this entry.' });
   }
 });
 
@@ -17086,9 +17101,19 @@ async function runContentCalendarSweep() {
       });
     };
 
+    // Manual mode means the agent does nothing on its own, scheduled posts included. A post that comes due while the platform
+    // is in Manual is not written; it is kept as "missed" (so switching back to Automatic can never fire a burst of overdue
+    // posts), and Agent Activity says so. Only the person can dismiss it.
+    const markMissed = async () => {
+      await pool.query(`UPDATE content_calendar_entries SET status = 'missed', error_message = $1, processed_at = NOW() WHERE id = $2`, ['Manual mode was on when this post was due.', entry.id]);
+      await logAgentActivity({ businessId: entry.business_id, platform: entry.platform, taskType: 'content_missed', outcome: 'attention', detail: { entryId: entry.id, scheduledFor, reason: 'manual_mode' } });
+    };
+
     try {
       const agent = WEBSITE_AGENTS[entry.platform];
       if (!agent) throw new Error(`Unknown platform "${entry.platform}".`);
+      const mode = await pool.query(`SELECT automation_mode FROM ${agent.table} WHERE business_id = $1`, [entry.business_id]);
+      if (mode.rows.length && mode.rows[0].automation_mode !== 'automatic') { await markMissed(); continue; }
       const bizResult = await pool.query('SELECT id, name, user_id FROM businesses WHERE id = $1', [entry.business_id]);
       if (!bizResult.rows.length) throw new Error('This business no longer exists.');
       const context = await getBusinessContext(entry.business_id, bizResult.rows[0].user_id);
