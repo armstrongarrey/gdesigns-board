@@ -2202,8 +2202,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.ai_visibility_title">AI Visibility</div>
           <div style="display:flex;gap:8px">
-            <button class="btn-ghost" onclick="clearAiVisibilityHistory()" data-i18n="web.clear_history_button">Clear History</button>
-            <button class="btn-primary" onclick="runAiVisibilityCheck()" id="websiteAiVisibilityBtn" data-i18n="web.run_visibility_check_button">Check AI Visibility</button>
+            <button class="btn-ghost" onclick="clearAiVisibilityHistory('website')" data-i18n="web.clear_history_button">Clear History</button>
+            <button class="btn-primary" onclick="runAiVisibilityCheck('website')" id="websiteAiVisibilityBtn" data-i18n="web.run_visibility_check_button">Check AI Visibility</button>
           </div>
         </div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.ai_visibility_description">Sends real, realistic customer questions to Perplexity and checks whether this business is actually mentioned or cited in the answer — a direct check, not an estimate.</div>
@@ -2519,6 +2519,17 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             </div>
             <div id="shopifyAuditRunContent"></div>
           </div>
+        <div class="wt-card" id="shopifyAiVisibilitySection">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+            <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.ai_visibility_title">AI Visibility</div>
+            <div style="display:flex;gap:8px">
+              <button class="btn-ghost" onclick="clearAiVisibilityHistory('shopify')" data-i18n="web.clear_history_button">Clear History</button>
+              <button class="btn-primary" onclick="runAiVisibilityCheck('shopify')" id="shopifyAiVisibilityBtn" data-i18n="web.run_visibility_check_button">Check AI Visibility</button>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.ai_visibility_description">Sends real, realistic customer questions to Perplexity and checks whether this business is actually mentioned or cited in the answer — a direct check, not an estimate.</div>
+          <div id="shopifyAiVisibilityContent"></div>
+        </div>
         <div class="wt-card" id="shopifySitemapSection">
             <div style="display:flex;justify-content:space-between;align-items:center">
               <div class="section-title" style="margin-bottom:0;font-size:14px" data-i18n="web.sitemap_title">Sitemap</div>
@@ -8229,6 +8240,7 @@ async function loadShopifyStatus() {
     renderWebsiteIntelligenceContent(data.connection.website_intelligence, data.connection.website_intelligence_generated_at, 'shopifyIntelligenceContent');
     loadShopifyActions();
     loadShopifyGeneratedPosts();
+    loadAiVisibilityHistory('shopify');
     loadShopifySitemapStatus();
     loadCompetitorAnalysis('shopify');
     loadTechnicalSeoHistory('shopify');
@@ -8560,7 +8572,7 @@ async function loadWebsiteSection() {
     loadWebsiteActivityLog();
     loadWebsiteGeneratedPosts();
     loadWebsiteAuditRuns();
-    loadAiVisibilityHistory();
+    loadAiVisibilityHistory('website');
     loadKeywordRankings();
     loadWebsiteSitemapStatus();
     loadCompetitorAnalysis('website');
@@ -9224,6 +9236,7 @@ function agentActivityText(e) {
   switch (e.task_type) {
     case 'content_generated': return tf(d.status === 'publish' ? 'web.activity_content_published' : 'web.activity_content_drafted', { title: d.title || '' });
     case 'content_failed': return t('web.activity_content_failed');
+    case 'ai_visibility_checked': return tf('web.activity_ai_visibility', { mentioned: d.mentionedCount || 0, total: d.checkedCount || 0 });
     case 'content_missed': return t('web.activity_content_missed');
     case 'intelligence_refreshed': return t(failed ? 'web.activity_intelligence_failed' : 'web.activity_intelligence_refreshed');
     case 'audit_completed': return failed ? t('web.activity_audit_failed') : tf('web.activity_audit_completed', { found: d.issuesFound || 0, fixed: d.autoFixed || 0, pending: d.pendingApproval || 0 });
@@ -9738,19 +9751,26 @@ async function clearAuditHistory() {
 }
 
 // ── AI VISIBILITY ────────────────────────────────────────────────────────
-async function runAiVisibilityCheck() {
-  const btn = document.getElementById('websiteAiVisibilityBtn');
+// ── AI Visibility (WordPress and Shopify) ──
+// One implementation serves both platforms: the platform table says which route (<api>/ai-visibility/...) and the element ids
+// are <prefix>AiVisibilityContent / <prefix>AiVisibilityBtn.
+const aiVisEl = (prefix, part) => document.getElementById(`${prefix}AiVisibility${part}`);
+const aiVisUrl = (prefix, what) => `/api/business/${currentWebsiteBusinessId}/${platformUi(prefix).api}/ai-visibility/${what}`;
+
+async function runAiVisibilityCheck(prefix = 'website') {
+  const btn = aiVisEl(prefix, 'Btn');
   btn.disabled = true;
   btn.textContent = t('web.checking_visibility');
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/ai-visibility/check`, { method: 'POST' });
+    const res = await fetch(aiVisUrl(prefix, 'check'), { method: 'POST' });
     const data = await res.json();
     if (!res.ok) {
       showToast(data.error || t('board.connection_error'), 'error');
       return;
     }
     showToast(t('web.visibility_check_complete').replace('{mentioned}', data.mentionedCount).replace('{total}', data.checkedCount), 'success');
-    loadAiVisibilityHistory();
+    loadAiVisibilityHistory(prefix);
+    if (prefix === 'shopify') loadAgentActivity(prefix); // a Shopify check is recorded in Agent Activity
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   } finally {
@@ -9759,23 +9779,23 @@ async function runAiVisibilityCheck() {
   }
 }
 
-async function loadAiVisibilityHistory() {
-  const contentEl = document.getElementById('websiteAiVisibilityContent');
+async function loadAiVisibilityHistory(prefix = 'website') {
+  const contentEl = aiVisEl(prefix, 'Content');
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/ai-visibility/history`);
+    const res = await fetch(aiVisUrl(prefix, 'history'));
     const data = await res.json();
     if (!res.ok) {
       contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
       return;
     }
-    renderAiVisibilityHistory(data.checks || []);
+    renderAiVisibilityHistory(data.checks || [], prefix);
   } catch (e) {
     contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
   }
 }
 
-function renderAiVisibilityHistory(checks) {
-  const contentEl = document.getElementById('websiteAiVisibilityContent');
+function renderAiVisibilityHistory(checks, prefix = 'website') {
+  const contentEl = aiVisEl(prefix, 'Content');
   if (!checks.length) {
     contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_visibility_checks')}</div>`;
     return;
@@ -9797,20 +9817,20 @@ function renderAiVisibilityHistory(checks) {
       ${check.answer_excerpt ? `<div style="font-size:11.5px;color:var(--text2);margin-top:6px;font-style:italic">"${escapeHtml(check.answer_excerpt.slice(0, 220))}${check.answer_excerpt.length > 220 ? '...' : ''}"</div>` : ''}
       ${citations.length ? `<div style="font-size:10.5px;color:var(--muted);margin-top:6px">${t('web.sources_label')}: ${citations.slice(0, 3).map(u => escapeHtml(u)).join(', ')}</div>` : ''}
     </div>`;
-  }, 5, 'aiVisibilityChecks');
+  }, 5, `${prefix}AiVisibilityChecks`);   // each platform keeps its own "show more" state
 }
 
-async function clearAiVisibilityHistory() {
+async function clearAiVisibilityHistory(prefix = 'website') {
   if (!confirm(t('web.confirm_clear_visibility_history'))) return;
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/ai-visibility/history`, { method: 'DELETE' });
+    const res = await fetch(aiVisUrl(prefix, 'history'), { method: 'DELETE' });
     const data = await res.json();
     if (!res.ok) {
       showToast(data.error || t('board.connection_error'), 'error');
       return;
     }
     showToast(t('web.entries_cleared').replace('{n}', data.clearedCount), 'success');
-    loadAiVisibilityHistory();
+    loadAiVisibilityHistory(prefix);
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
@@ -10094,7 +10114,7 @@ const ICON_PATHS = {
   code: '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>', image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>', check: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/>', list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
 };
-const SECTION_ICONS = { shopifyIntelligenceSection: 'brain', shopifyAuditSection: 'shield', shopifySitemapSection: 'map', shopifyCompetitorSection: 'target', shopifyTechnicalSeoSection: 'gauge', shopifyGeneratedPostsSection: 'file', shopifyActionsSection: 'check', websiteIntelligenceSection: 'brain', websiteAuditRunSection: 'shield', websiteAiVisibilitySection: 'eye', websiteKeywordRankingsSection: 'chart', websiteSitemapSection: 'map', websiteCompetitorSection: 'target', websiteTechnicalSeoSection: 'gauge', websiteBrokenLinksSection: 'unlink', websiteSchemaSection: 'code', websiteMediaSection: 'image', websiteGeneratedPostsSection: 'file', websiteActionsSection: 'check', websiteActivityLogSection: 'list' };
+const SECTION_ICONS = { shopifyIntelligenceSection: 'brain', shopifyAuditSection: 'shield', shopifySitemapSection: 'map', shopifyAiVisibilitySection: 'eye', shopifyCompetitorSection: 'target', shopifyTechnicalSeoSection: 'gauge', shopifyGeneratedPostsSection: 'file', shopifyActionsSection: 'check', websiteIntelligenceSection: 'brain', websiteAuditRunSection: 'shield', websiteAiVisibilitySection: 'eye', websiteKeywordRankingsSection: 'chart', websiteSitemapSection: 'map', websiteCompetitorSection: 'target', websiteTechnicalSeoSection: 'gauge', websiteBrokenLinksSection: 'unlink', websiteSchemaSection: 'code', websiteMediaSection: 'image', websiteGeneratedPostsSection: 'file', websiteActionsSection: 'check', websiteActivityLogSection: 'list' };
 const iconSvg = key => ICON_PATHS[key] ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[key]}</svg>` : '';
 const CHEVRON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 const readCollapsed = () => { try { return JSON.parse(localStorage.getItem('arreyon_wt_collapsed') || '{}'); } catch (e) { return {}; } };
