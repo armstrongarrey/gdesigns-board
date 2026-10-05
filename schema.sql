@@ -1695,3 +1695,17 @@ CREATE TABLE IF NOT EXISTS shopify_ai_visibility_checks (
   checked_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_shopify_ai_visibility_conn ON shopify_ai_visibility_checks (shopify_connection_id, checked_at DESC);
+
+-- Keyword Rankings (Shopify): the same daily snapshot as the WordPress one, tied to the Shopify connection. The two platforms never share rows.
+CREATE TABLE IF NOT EXISTS shopify_keyword_rankings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  shopify_connection_id UUID REFERENCES shopify_connections(id) ON DELETE CASCADE,
+  query TEXT NOT NULL,
+  clicks INTEGER DEFAULT 0,
+  impressions INTEGER DEFAULT 0,
+  ctr NUMERIC(6,3),
+  avg_position NUMERIC(6,2),
+  snapshot_date DATE NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(shopify_connection_id, query, snapshot_date)
+);
