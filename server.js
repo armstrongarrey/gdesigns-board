@@ -6597,7 +6597,7 @@ async function runFullWebsiteAudit(connection, decryptedPassword, context, trigg
       const pending = linksResult.pendingCount || 0;
       issuesFound += found;
       pendingApproval += pending;
-      findings.brokenLinks = { label: 'Broken internal links', found, fixed: 0, pending, note: pending < found ? 'Some occurrences exceeded this run\'s proposal cap — run the audit again to propose the rest.' : null };
+      findings.brokenLinks = { label: 'Broken internal links', found, fixed: 0, pending, note: (pending + (linksResult.alreadyPendingCount || 0)) < found ? 'Some occurrences exceeded this run\'s proposal cap — run the audit again to propose the rest.' : null };
       for (const action of (linksResult.proposals || [])) {
         addToPageView(action, 'pending');
       }
@@ -6895,6 +6895,7 @@ app.get('/api/business/:id/website/sitemap/status', authRequired, async (req, re
 });
 
 app.post('/api/business/:id/website/ai-visibility/check', authRequired, async (req, res) => {
+  let ran = false;
   try {
     const account = await resolveAccount(req.userId);
     const context = await getBusinessContext(req.params.id, account.id);
@@ -6904,10 +6905,13 @@ app.post('/api/business/:id/website/ai-visibility/check', authRequired, async (r
     const { connection, error, status } = await getConnectionForBusiness(req);
     if (error) return res.status(status).json({ error });
 
+    ran = true;
     const result = await runAiVisibilityCheck(connection, context);
+    await logManual(req.params.id, 'wordpress', 'ai_visibility_checked', 'success', { checkedCount: result.checkedCount, mentionedCount: result.mentionedCount });
     res.json(result);
   } catch (err) {
     console.error('AI visibility check error:', err.message);
+    if (ran) await logManual(req.params.id, 'wordpress', 'ai_visibility_checked', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to run the AI visibility check. Please try again.' });
   }
 });
@@ -7507,10 +7511,16 @@ async function runBrokenLinksCheck(connection, decryptedPassword, preloadedConte
   // dozens of real pages doesn't flood the queue in a single run.
   const insertedProposals = [];
   const MAX_LINK_PROPOSALS = 30;
+  let alreadyPendingCount = 0;
   outer:
   for (const broken of brokenLinks) {
     for (const referrer of (broken.foundOn || [])) {
       if (insertedProposals.length >= MAX_LINK_PROPOSALS) break outer;
+      // A fix already waiting for approval is not queued again (this scan runs every Automatic cycle). It does not count toward the cap, so a later run reaches the rest.
+      const waiting = await pool.query(
+        `SELECT 1 FROM website_actions WHERE website_connection_id = $1 AND target_wp_id = $2 AND target_type = $4 AND action_type = 'remove_broken_link' AND proposed_change->>'brokenUrl' = $3 AND approval_status = 'pending'`,
+        [connection.id, referrer.id, referrer.href, referrer.isPost ? 'post' : 'page']);
+      if (waiting.rows.length) { alreadyPendingCount++; continue; }
       const inserted = await pool.query(
         `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
          VALUES ($1, 'seo_agent', 'remove_broken_link', $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
@@ -7524,10 +7534,11 @@ async function runBrokenLinksCheck(connection, decryptedPassword, preloadedConte
     `Checked ${checkedCount} unique internal link(s), found ${brokenLinks.length} broken, proposed ${insertedProposals.length} fix(es)`,
     { checkedCount: checkedCount, brokenCount: brokenLinks.length, totalUniqueLinks: totalUniqueLinks, proposedCount: insertedProposals.length }, 'broken_links');
 
-  return { brokenLinks, checkedCount: checkedCount, totalUniqueLinks: totalUniqueLinks, proposals: insertedProposals, pendingCount: insertedProposals.length, autoExecutedCount: 0 };
+  return { brokenLinks, checkedCount: checkedCount, totalUniqueLinks: totalUniqueLinks, proposals: insertedProposals, pendingCount: insertedProposals.length, alreadyPendingCount, autoExecutedCount: 0 };
 }
 
 app.post('/api/business/:id/website/broken-links', authRequired, async (req, res) => {
+  let ran = false;
   try {
     const account = await resolveAccount(req.userId);
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
@@ -7543,10 +7554,13 @@ app.post('/api/business/:id/website/broken-links', authRequired, async (req, res
     }
 
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
+    ran = true;
     const result = await runBrokenLinksCheck(connection, decryptedPassword);
+    await logManual(req.params.id, 'wordpress', 'broken_links_checked', 'success', { checkedCount: result.checkedCount, totalUniqueLinks: result.totalUniqueLinks, brokenCount: result.brokenLinks.length, proposedCount: result.proposals.length });
     res.json({ ...result, message: result.brokenLinks.length ? null : 'No broken internal links were found among the ones checked.' });
   } catch (err) {
     console.error('Broken links check error:', err.message);
+    if (ran) await logManual(req.params.id, 'wordpress', 'broken_links_checked', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to check for broken links. Please try again.' });
   }
 });
@@ -8120,11 +8134,11 @@ app.post('/api/business/:id/website/actions/:actionId/reject', authRequired, asy
 // as a WordPress site.
 // ═══════════════════════════════════════════════════════════════════════════
 
-// What a NEW connection asks for is exactly what it always asked for. The two extra permissions (installing into the theme, reading
-// Files) are asked for only when the person presses "Grant permission" (?upgrade=1), so a problem with them can never stop a store
+// What a NEW connection asks for is exactly what it always asked for. The one extra permission (installing into the theme) is
+// asked for only when the person presses "Grant permission" (?upgrade=1), so a problem with them can never stop a store
 // from connecting. Set SHOPIFY_REQUEST_ALL_SCOPES=true to ask for everything at first connection instead.
 const SHOPIFY_BASE_SCOPES = 'read_content,write_content,read_themes';
-const SHOPIFY_FULL_SCOPES = 'read_content,write_content,read_themes,write_themes,read_files';
+const SHOPIFY_FULL_SCOPES = 'read_content,write_content,read_themes,write_themes';
 const SHOPIFY_SCOPES = process.env.SHOPIFY_REQUEST_ALL_SCOPES === 'true' ? SHOPIFY_FULL_SCOPES : SHOPIFY_BASE_SCOPES;
 const SHOPIFY_CALLBACK_URL = `${BASE_URL}/api/shopify/callback`;
 
@@ -9173,6 +9187,7 @@ app.get('/api/business/:id/shopify/competitor-analysis', authRequired, async (re
 });
 
 app.post('/api/business/:id/shopify/ai-visibility/check', authRequired, async (req, res) => {
+  let ran = false;
   try {
     const account = await resolveAccount(req.userId);
     const context = await getBusinessContext(req.params.id, account.id);
@@ -9180,9 +9195,13 @@ app.post('/api/business/:id/shopify/ai-visibility/check', authRequired, async (r
     if (!context.business.name) return res.status(400).json({ error: 'A business name is required before an AI visibility check can run — add one on the business profile first.' });
     const conn = (await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
     if (!conn) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
-    res.json(await runShopifyAiVisibilityCheck(conn, context));
+    ran = true;
+    const result = await runShopifyAiVisibilityCheck(conn, context);
+    await logManual(req.params.id, 'shopify', 'ai_visibility_checked', 'success', { checkedCount: result.checkedCount, mentionedCount: result.mentionedCount });
+    res.json(result);
   } catch (err) {
     console.error('Shopify AI visibility check error:', err.message);
+    if (ran) await logManual(req.params.id, 'shopify', 'ai_visibility_checked', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to run the AI visibility check. Please try again.' });
   }
 });
@@ -9311,22 +9330,6 @@ app.delete('/api/business/:id/shopify/organization-schema', authRequired, async 
     if (owned) await logManual(req.params.id, 'shopify', 'schema_removed', 'failed', errDetail(err));
     if (err.code === 'ACCESS_DENIED') return res.status(409).json({ needsReauth: true, error: err.message });
     res.status(['NO_THEME', 'THEME_REJECTED', 'VERIFY_FAILED'].includes(err.code) ? 400 : 500).json({ error: err.message || 'Could not remove the schema markup. Please try again.' });
-  }
-});
-
-// The images already in the store (read-only), newest first, a page at a time
-app.get('/api/business/:id/shopify/media', authRequired, async (req, res) => {
-  try {
-    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
-    const connection = (await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
-    if (!connection) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
-    if (!shopifyHasScope(connection, 'read_files')) return res.json({ needsReauth: true, media: [], hasMore: false, cursor: null });
-    const after = typeof req.query.after === 'string' && req.query.after.length <= 200 ? req.query.after : null;
-    res.json(await listShopifyImages(connection, decryptSecret(connection.access_token_encrypted), { first: 24, after }));
-  } catch (err) {
-    console.error('Shopify media error:', err.message);
-    if (err.code === 'ACCESS_DENIED') return res.json({ needsReauth: true, media: [], hasMore: false, cursor: null });
-    res.status(err.code === 'THROTTLED' ? 429 : 502).json({ error: err.code === 'THROTTLED' ? err.message : 'Could not read the images from this store right now.' });
   }
 });
 
@@ -17158,6 +17161,49 @@ function buildSchemaSnippet(schema) {
   return `<script type="application/ld+json">\n${JSON.stringify(schema, null, 2).replace(/</g, '\\u003c')}\n</script>`;
 }
 
+// ── Weekly tasks in Automatic mode ───────────────────────────────────────────
+// AI Visibility, a Keyword Rankings snapshot and (on Shopify) a full broken-link scan run about once a WEEK, not every cycle: they
+// use paid or rate-limited services and change slowly. A cycle runs one only when it is DUE: nothing recorded for the site in the
+// last 6 days 12 hours (a little under a week, so a cycle that starts a few minutes later each week never pushes a task a whole
+// extra day). A failed attempt records nothing, so it is tried again on the next cycle, and the failure is visible in the feed.
+async function aiVisibilityDue(spec, connectionId) {
+  const r = await pool.query(`SELECT 1 FROM ${spec.table} WHERE ${spec.fk} = $1 AND checked_at > NOW() - INTERVAL '6 days 12 hours' LIMIT 1`, [connectionId]);
+  return r.rows.length === 0;
+}
+
+// Only when Search Console is connected for THIS site: it is optional, and the Keyword Rankings card explains when it is not.
+async function keywordSnapshotDue(spec, connectionId, accountId, siteUrl) {
+  const matched = await resolveMatchingGscConnection(accountId, siteUrl);
+  if (matched.error) return false;
+  const r = await pool.query(`SELECT 1 FROM ${spec.table} WHERE ${spec.fk} = $1 AND snapshot_date > CURRENT_DATE - 7 LIMIT 1`, [connectionId]);
+  return r.rows.length === 0;
+}
+
+// A scan is "recorded" by its entry in Agent Activity, whether the person ran it or a cycle did.
+async function brokenLinksScanDue(businessId, platform) {
+  const r = await pool.query(`SELECT 1 FROM website_agent_activity WHERE business_id = $1 AND platform = $2 AND task_type = 'broken_links_checked' AND outcome = 'success' AND created_at > NOW() - INTERVAL '6 days 12 hours' LIMIT 1`, [businessId, platform]);
+  return r.rows.length === 0;
+}
+
+// Each step records its own outcome, success or failure, in Agent Activity. None of them throws: a failure must not stop the cycle.
+async function runAutomaticAiVisibilityStep(log, runCheck) {
+  try { const out = await runCheck(); await log('ai_visibility_checked', 'success', { checkedCount: out.checkedCount, mentionedCount: out.mentionedCount }); }
+  catch (e) { await log('ai_visibility_checked', 'failed', errDetail(e)); }
+}
+async function runAutomaticKeywordSnapshotStep(log, spec, accountId, connection, siteUrl) {
+  try {
+    const out = await loadKeywordRankingsFor(spec, accountId, connection, siteUrl);
+    if (out.error) { await log('keyword_snapshot', 'failed', { error: String(out.error).slice(0, 300) }); return; }   // it matched when checked; if that changed since, say so
+    await log('keyword_snapshot', 'success', { queries: out.rankings.length, opportunities: out.rankings.filter(r => r.isPageTwoOpportunity).length });
+  } catch (e) { await log('keyword_snapshot', 'failed', errDetail(e)); }
+}
+async function runAutomaticBrokenLinksStep(log, runScan) {
+  try {
+    const out = await runScan();
+    await log('broken_links_checked', 'success', { checkedCount: out.checkedCount, totalUniqueLinks: out.totalUniqueLinks, brokenCount: out.brokenLinks.length, proposedCount: out.proposals.length });
+  } catch (e) { await log('broken_links_checked', 'failed', errDetail(e)); }
+}
+
 // ── Runs in progress, and stopping them ──────────────────────────────────────
 // One entry per site while its cycle is running. 'cancelled' is how a run is stopped: the cycle checks it
 // between steps and skips what is left, and the code that applies fixes re-reads the live mode, so once a
@@ -17522,6 +17568,9 @@ async function runWordPressMaintenanceCycle(connection, triggeredBy = 'automatic
   // Decided up front so a stop record never lists a step that would not have run anyway.
   let competitorsDue = false;
   try { competitorsDue = !!context && await wordpressCompetitorAnalysisDue(connection.id, businessId); } catch (e) { /* not due if it cannot be checked */ }
+  let aiVisibilityIsDue = false, snapshotDue = false;
+  try { aiVisibilityIsDue = !!context && !!context.business.name && await aiVisibilityDue(wordpressAiVisibilitySpec, connection.id); } catch (e) { /* not due if it cannot be checked */ }
+  try { snapshotDue = await keywordSnapshotDue(wordpressKeywordSpec, connection.id, biz.user_id, connection.site_url); } catch (e) { /* not due if it cannot be checked */ }
 
   await steps.run('intelligence', async () => {
     try {
@@ -17561,6 +17610,9 @@ async function runWordPressMaintenanceCycle(connection, triggeredBy = 'automatic
       if (row) await runWordPressCompetitorAnalysis(connection, decryptedPassword, context, row.id, triggeredBy);
     });
   }
+
+  if (aiVisibilityIsDue) await steps.run('ai visibility', () => runAutomaticAiVisibilityStep(log, () => runAiVisibilityCheck(connection, context)));
+  if (snapshotDue) await steps.run('keyword snapshot', () => runAutomaticKeywordSnapshotStep(log, wordpressKeywordSpec, biz.user_id, connection, connection.site_url));
 
   await steps.finish(log);
 }
@@ -17796,8 +17848,8 @@ async function runShopifyBrokenLinksCheck(connection, accessToken) {
     for (const ref of broken.foundOn) {
       if (proposals.length >= MAX_LINK_PROPOSALS) break outer;
       const waiting = await pool.query(
-        `SELECT 1 FROM shopify_actions WHERE shopify_connection_id = $1 AND target_shopify_id = $2 AND action_type = 'remove_broken_link' AND proposed_change->>'brokenUrl' = $3 AND approval_status = 'pending'`,
-        [connection.id, ref.id, ref.href]);
+        `SELECT 1 FROM shopify_actions WHERE shopify_connection_id = $1 AND target_shopify_id = $2 AND target_type = $4 AND action_type = 'remove_broken_link' AND proposed_change->>'brokenUrl' = $3 AND approval_status = 'pending'`,
+        [connection.id, ref.id, ref.href, ref.isPost ? 'post' : 'page']);
       if (waiting.rows.length) { alreadyPendingCount++; continue; }
       const linkText = (content.items.find(i => i.id === ref.id)?.linkTexts || {})[ref.href] || '';
       const inserted = await pool.query(
@@ -17811,8 +17863,8 @@ async function runShopifyBrokenLinksCheck(connection, accessToken) {
   return { brokenLinks: scan.brokenLinks, checkedCount: scan.checkedCount, totalUniqueLinks: scan.totalUniqueLinks, proposals, pendingCount: proposals.length, alreadyPendingCount, autoExecutedCount: 0, scope: content.scope };
 }
 
-// ── Theme and Files access (Shopify) ─────────────────────────────────────────
-// Both go through the GraphQL Admin API: it is the current API for theme files and the only one for Files.
+// ── Theme access (Shopify) ───────────────────────────────────────────────────
+// It goes through the GraphQL Admin API, the current API for theme files.
 // Permissions are checked BEFORE anything is attempted, so a store that has not re-authorized yet keeps working as before and is
 // told plainly what to do. write_x includes read_x, as on Shopify.
 function shopifyError(message, code) { const e = new Error(message); e.code = code; return e; }
@@ -17956,22 +18008,6 @@ async function removeOrganizationSchemaFromTheme(connection, accessToken) {
   return { themeName: theme.name, removedTag, removedSnippet: hadSnippet };
 }
 
-// ── Files: the images already in the store ──
-async function listShopifyImages(connection, accessToken, { first = 24, after = null } = {}) {
-  const data = await shopifyGraphQL(connection, accessToken,
-    'query($first: Int!, $after: String) { files(first: $first, after: $after, sortKey: CREATED_AT, reverse: true, query: "media_type:IMAGE") { nodes { id alt createdAt fileStatus ... on MediaImage { image { url width height } originalSource { fileSize } } } pageInfo { hasNextPage endCursor } } }',
-    { first, after });
-  const files = (data && data.files) || { nodes: [], pageInfo: {} };
-  const nodes = files.nodes || [];
-  const media = nodes.filter(n => n && n.image && typeof n.image.url === 'string' && /^https:\/\//.test(n.image.url)).map(n => {
-    let title = '';
-    try { title = decodeURIComponent(new URL(n.image.url).pathname.split('/').pop() || ''); } catch { /* no name */ }
-    return { id: n.id, url: n.image.url, altText: n.alt || '', title, width: n.image.width || null, height: n.image.height || null, fileSize: (n.originalSource && n.originalSource.fileSize) || null, createdAt: n.createdAt || null };
-  });
-  // Files still being processed have no image yet: counted, not dropped silently
-  return { media, hasMore: !!(files.pageInfo && files.pageInfo.hasNextPage), cursor: (files.pageInfo && files.pageInfo.endCursor) || null, processing: nodes.length - media.length };
-}
-
 // ── Schema markup (Shopify) ─────────────────────────────────────────────────
 // The schema is built from the business profile, and the public storefront's homepage is read to see what is REALLY there: that
 // schema, a different one (often the theme's own), or none. That is the truth the person sees, whatever installed it. A store that
@@ -18006,12 +18042,11 @@ async function checkStorefrontOrganizationSchema(connection, accessToken, desire
 const shopifyKeywordSpec = { table: 'shopify_keyword_rankings', fk: 'shopify_connection_id' };
 const shopifyAiVisibilitySpec = { table: 'shopify_ai_visibility_checks', fk: 'shopify_connection_id' };
 
-// Shopify has no separate activity log, so a manual check is recorded in Agent Activity. The site address looked for in the
+// The caller records the outcome in Agent Activity (a manual run in its route, an automatic one in the cycle). The site address looked for in the
 // AI's cited sources is the store's real domain (what customers use), never its myshopify.com address.
 async function runShopifyAiVisibilityCheck(connection, context) {
   const siteUrl = await shopifyStoreUrlFor(connection);
   const outcome = await runAiVisibilityQueries(shopifyAiVisibilitySpec, connection, context, siteUrl);
-  await logAgentActivity({ businessId: connection.business_id, platform: 'shopify', taskType: 'ai_visibility_checked', outcome: 'success', triggeredBy: 'manual', detail: { checkedCount: outcome.checkedCount, mentionedCount: outcome.mentionedCount } });
   return outcome;
 }
 
@@ -18029,9 +18064,15 @@ async function runShopifyMaintenanceCycle(connection, triggeredBy = 'automatic',
   const context = await getBusinessContext(businessId, biz.user_id);
   const accessToken = decryptSecret(connection.access_token_encrypted);
   const steps = createCycleSteps(run);
+  // The store's real domain (what customers and Google use). Needed up front: whether a keyword snapshot is due depends on it.
+  let siteUrl;
+  try { siteUrl = await getShopifyStoreUrl(connection, accessToken); } catch (e) { siteUrl = `https://${connection.shop_domain}`; }
   // Decided up front so a stop record never lists a step that would not have run anyway.
-  let competitorsDue = false;
+  let competitorsDue = false, aiVisibilityIsDue = false, snapshotDue = false, linksDue = false;
   try { competitorsDue = !!context && await shopifyCompetitorAnalysisDue(connection.id, businessId); } catch (e) { /* not due if it cannot be checked */ }
+  try { aiVisibilityIsDue = !!context && !!context.business.name && await aiVisibilityDue(shopifyAiVisibilitySpec, connection.id); } catch (e) { /* not due if it cannot be checked */ }
+  try { snapshotDue = await keywordSnapshotDue(shopifyKeywordSpec, connection.id, biz.user_id, siteUrl); } catch (e) { /* not due if it cannot be checked */ }
+  try { linksDue = await brokenLinksScanDue(businessId, 'shopify'); } catch (e) { /* not due if it cannot be checked */ }
 
   await steps.run('intelligence', async () => {
     try {
@@ -18047,9 +18088,6 @@ async function runShopifyMaintenanceCycle(connection, triggeredBy = 'automatic',
       await log('audit_completed', 'success', shopifyAuditActivityDetail(audit));
     } catch (e) { await log('audit_completed', 'failed', errDetail(e)); }
   });
-
-  let siteUrl;
-  try { siteUrl = await getShopifyStoreUrl(connection, accessToken); } catch (e) { siteUrl = `https://${connection.shop_domain}`; }
 
   await steps.run('technical check', async () => {
     try {
@@ -18070,6 +18108,11 @@ async function runShopifyMaintenanceCycle(connection, triggeredBy = 'automatic',
       if (row) await runShopifyCompetitorAnalysis(connection, accessToken, context, row.id, triggeredBy);
     });
   }
+
+  // The audit only looks at the 16 most recent pages and posts; this scan reads up to 100 of them.
+  if (aiVisibilityIsDue) await steps.run('ai visibility', () => runAutomaticAiVisibilityStep(log, () => runShopifyAiVisibilityCheck(connection, context)));
+  if (snapshotDue) await steps.run('keyword snapshot', () => runAutomaticKeywordSnapshotStep(log, shopifyKeywordSpec, biz.user_id, connection, siteUrl));
+  if (linksDue) await steps.run('broken links', () => runAutomaticBrokenLinksStep(log, () => runShopifyBrokenLinksCheck(connection, accessToken)));
 
   await steps.finish(log);
 }
