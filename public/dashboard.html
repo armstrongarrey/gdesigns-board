@@ -48,7 +48,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .logout-btn{background:none;border:none;color:var(--muted);cursor:pointer;padding:4px;margin-left:auto;flex-shrink:0}
 .logout-btn:hover{color:var(--red)}
 
-.main{margin-left:240px;flex:1;display:flex;flex-direction:column;min-height:100vh}
+.main{margin-left:240px;flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh}
 .topbar{padding:16px 28px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg2);position:sticky;top:0;z-index:40}
 .topbar-title{font-size:20px;font-weight:700}
 .topbar-sub{font-size:13px;color:var(--muted);margin-top:2px}
@@ -67,6 +67,95 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .mode-switch input:focus-visible + .mode-switch-track{outline:2px solid var(--purple-light);outline-offset:2px}
 .mode-switch input:disabled + .mode-switch-track{opacity:.55;cursor:wait}
 .mode-switch:has(input:checked) .mode-side-auto,.mode-switch:has(input:not(:checked)) .mode-side-manual{color:var(--text);font-weight:600}
+
+/* ═══ Website tool — design system ═══ */
+#section-website .wt-wrap{max-width:1040px}
+.wt-contextbar{display:flex;flex-wrap:wrap;gap:14px 16px;align-items:flex-end;padding:14px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;margin-bottom:22px}
+.wt-field{display:flex;flex-direction:column;gap:5px;min-width:210px}
+.wt-field-label{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.wt-select{appearance:none;-webkit-appearance:none;background-color:var(--bg3);border:1px solid var(--border-light);color:var(--text);border-radius:10px;padding:9px 36px 9px 12px;font-size:13px;font-weight:600;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239a8fc0' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;transition:border-color .15s}
+.wt-select:hover,.wt-select:focus{border-color:var(--purple);outline:none}
+.wt-select.is-active{border-color:var(--purple)}
+.wt-tabs{margin-left:auto;display:flex;gap:6px}
+.wt-tab{background:transparent;border:1px solid transparent;color:var(--muted);border-radius:10px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+.wt-tab:hover{color:var(--text);background:var(--bg3)}
+.wt-tab.active{color:var(--text);background:var(--bg3);border-color:var(--purple)}
+.wt-view{display:flex;flex-direction:column;gap:18px}
+.wt-stack{display:flex;flex-direction:column;gap:18px}
+.wt-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:20px 22px}
+.wt-card{scroll-margin-top:64px}
+#section-website input[type=text],#section-website input[type=date],#section-website input[type=time],#section-website input[type=number],#section-website input[type=url],#section-website input[type=email],#section-website select:not(.form-input):not(.wt-select){background:var(--bg3);border:1px solid var(--border-light);color:var(--text);border-radius:8px;padding:8px 10px;font-size:12.5px;font-family:inherit;color-scheme:dark;max-width:100%}
+#section-website input[type=text]:focus,#section-website input[type=date]:focus,#section-website input[type=time]:focus,#section-website input[type=number]:focus,#section-website select:focus{border-color:var(--purple);outline:none}
+#section-website input::placeholder{color:var(--muted)}
+#section-website .btn-secondary{background:var(--bg3);border:1px solid var(--border-light);color:var(--text);font-size:12.5px;font-weight:600;padding:8px 14px;border-radius:8px;cursor:pointer;font-family:inherit;transition:all .15s}
+#section-website .btn-secondary:hover{border-color:var(--purple)}
+#section-website .btn-secondary:disabled,#section-website .btn-ghost:disabled,#section-website .btn-primary:disabled{opacity:.55;cursor:wait}
+
+.wt-card.collapsed > :not(:first-child){display:none !important}
+.wt-card-head{display:flex;align-items:center;gap:12px;justify-content:space-between}
+.wt-card-head-main{display:flex;align-items:center;gap:12px;min-width:0}
+.wt-card-icon{width:34px;height:34px;border-radius:10px;background:rgba(139,92,246,.14);color:var(--purple-light);display:grid;place-items:center;flex-shrink:0}
+.wt-card-icon svg{width:18px;height:18px}
+.wt-card-title{font-size:15px;font-weight:700;color:var(--text);margin:0}
+.wt-card-sub{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.5}
+.wt-card-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;flex:1;min-width:0}
+.wt-card-head > .wt-chevron{flex-shrink:0;align-self:flex-start;margin-top:3px}
+.wt-chevron{background:transparent;border:none;color:var(--muted);cursor:pointer;padding:6px;border-radius:8px;display:grid;place-items:center;transition:transform .2s,background .15s}
+.wt-chevron:hover{background:var(--bg3);color:var(--text)}
+.wt-chevron svg{width:16px;height:16px}
+.wt-card.collapsed .wt-chevron{transform:rotate(-90deg)}
+.wt-body{margin-top:14px}
+.wt-hero{background:linear-gradient(135deg,rgba(139,92,246,.14),rgba(139,92,246,.03) 55%),var(--bg2);border-color:rgba(139,92,246,.35)}
+.wt-hero-top{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.wt-platform-badge{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--purple-light);background:rgba(139,92,246,.14);border-radius:999px;padding:4px 10px;margin-bottom:8px}
+.wt-platform-badge svg{width:13px;height:13px}
+.wt-hero-name{font-size:22px;font-weight:800;color:var(--text);line-height:1.2}
+.wt-hero-site{font-size:12.5px;color:var(--muted);margin-top:4px}
+.wt-hero-site a{color:var(--purple-light);text-decoration:none}.wt-hero-site a:hover{text-decoration:underline}
+.wt-hero-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.wt-chip{font-size:11px;font-weight:700;padding:5px 11px;border-radius:999px;white-space:nowrap}
+.wt-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:18px}
+.wt-stat{background:rgba(0,0,0,.18);border:1px solid var(--border);border-radius:12px;padding:12px 14px;min-width:0}
+.wt-stat-label{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.wt-stat-value{font-size:14px;font-weight:700;color:var(--text);line-height:1.35;word-break:break-word}
+.wt-stat-value small{display:block;font-size:11px;font-weight:500;color:var(--muted);margin-top:2px}
+.wt-jump{position:sticky;top:0;z-index:20;display:flex;gap:6px;overflow-x:auto;padding:10px 4px;margin:-6px 0 0;background:linear-gradient(var(--bg) 70%,transparent);scrollbar-width:none}
+.wt-jump::-webkit-scrollbar{display:none}
+.wt-jump button{flex-shrink:0;background:var(--bg2);border:1px solid var(--border);color:var(--text2);border-radius:999px;padding:6px 13px;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
+.wt-jump button:hover{border-color:var(--purple);color:var(--text)}
+.wt-agent-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+.wt-inset{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-top:14px}
+.wt-details summary{cursor:pointer;font-size:12.5px;font-weight:700;color:var(--text);list-style:none;display:flex;align-items:center;gap:8px}
+.wt-details summary::-webkit-details-marker{display:none}
+.wt-details summary::before{content:'';width:7px;height:7px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(-45deg);transition:transform .15s}
+.wt-details[open] summary::before{transform:rotate(45deg)}
+.wt-details-body{font-size:12px;color:var(--muted);line-height:1.6;margin-top:8px}
+.wt-sync{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted)}
+.wt-sync .wt-new{color:var(--green);font-weight:700}
+.wt-spin{width:12px;height:12px;border:2px solid var(--border-light);border-top-color:var(--purple-light);border-radius:50%;animation:wtspin .7s linear infinite;display:inline-block}
+@keyframes wtspin{to{transform:rotate(360deg)}}
+.wt-skeleton{height:12px;border-radius:6px;background:linear-gradient(90deg,var(--bg3),var(--bg4),var(--bg3));background-size:200% 100%;animation:wtshimmer 1.3s infinite;margin:8px 0}
+@keyframes wtshimmer{to{background-position:-200% 0}}
+.wt-btn-danger{color:#ef4444}
+.btn-ghost.wt-btn-danger:hover{border-color:#ef4444}
+/* plugins card (before connecting) */
+.wt-plugins{text-align:left;background:var(--bg3);border:1px solid rgba(139,92,246,.35);border-radius:14px;padding:18px 20px;margin:18px auto;max-width:640px}
+.wt-plugins-head{display:flex;gap:12px;align-items:flex-start;margin-bottom:14px}
+.wt-plugins-title{font-size:14px;font-weight:700;color:var(--text)}
+.wt-plugins-sub{font-size:12px;color:var(--muted);line-height:1.5;margin-top:2px}
+.wt-plugin-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.wt-plugin{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:6px}
+.wt-plugin-num{width:22px;height:22px;border-radius:50%;background:var(--purple);color:#fff;font-size:12px;font-weight:700;display:grid;place-items:center}
+.wt-plugin-name{font-size:13px;font-weight:700;color:var(--text)}
+.wt-plugin-desc{font-size:11.5px;color:var(--muted);line-height:1.5;flex:1}
+.wt-plugin .btn-primary{text-decoration:none;text-align:center;font-size:12px;padding:8px 12px;display:block}
+.wt-plugin-raw{font-size:10.5px;color:var(--muted);text-align:center}
+.wt-steps{margin:14px 0 0;padding-left:20px;font-size:12px;color:var(--text2);line-height:1.7}
+.wt-warn{margin-top:14px;font-size:12px;line-height:1.5;color:var(--gold);background:rgba(230,170,0,.1);border:1px solid rgba(230,170,0,.3);border-radius:10px;padding:10px 12px;display:flex;gap:8px}
+.wt-empty{text-align:center}
+/* the Manual / Automatic switch — specific enough to beat the general ".form-group label" rule that used to flatten it */
+.mode-switch,.form-group label.mode-switch{display:inline-flex !important;align-items:center;gap:10px;cursor:pointer;user-select:none;position:relative;text-transform:none !important;letter-spacing:0 !important;font-size:13px !important;font-weight:600;color:var(--muted);margin-bottom:0 !important}
+@media (max-width:760px){.wt-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.wt-plugin-grid,.wt-agent-grid{grid-template-columns:1fr}.wt-tabs{margin-left:0}.wt-hero-name{font-size:19px}}
 
 .content{padding:28px;flex:1}
 .section-view{display:none}
@@ -1777,45 +1866,70 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <div class="section-title" data-i18n="web.title">Website</div>
     <div class="section-sub" data-i18n="web.subtitle">Connect your website so your AI business team can analyze it and help improve it.</div>
 
-    <div class="form-group" style="max-width:400px;margin-bottom:20px">
-      <label data-i18n="web.select_business">Business</label>
-      <select class="form-input" id="websiteBusinessSelect" onchange="onWebsiteBusinessSelectChange()"></select>
-    </div>
-
     <div id="websiteNoBizPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;text-align:center;max-width:500px">
       <div style="font-size:13px;color:var(--muted)" data-i18n="growth.no_business_yet">Analyze a business first so Growth Center has somewhere to track progress.</div>
     </div>
 
-    <div id="websiteMainWrap" style="display:none;max-width:700px">
-
-      <!-- PLATFORM TABS — WordPress and Shopify are genuinely separate
-           connections with genuinely separate content; showing both on one
-           continuous scrolling page (the original design) made an already
-           connected WordPress site and a newly connected Shopify store look
-           like one confusing, mixed list. Only one platform's content is
-           ever visible at a time now. -->
-      <div style="display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0;align-items:flex-end">
-        <!-- One selector for every connected-site platform, instead of
-             one tab per platform — adding Webflow or Wix later is one
-             more option here, never another tab in the row. Backlinks and
-             Partner Network stay as fixed tabs since they belong to the
-             business, not to any one platform, so their count never grows. -->
-        <select id="platformSelector" onchange="switchPlatformTab(this.value)" style="background:none;border:none;border-bottom:2px solid var(--purple);color:var(--text);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px;width:auto;border-radius:0">
-          <option value="" disabled hidden data-i18n="web.platform_selector_placeholder" style="background:var(--bg2);color:var(--text)">Platform</option>
-          <option value="wordpress" selected data-i18n="web.platform_tab_wordpress" style="background:var(--bg2);color:var(--text)">WordPress</option>
-          <option value="shopify" data-i18n="web.platform_tab_shopify" style="background:var(--bg2);color:var(--text)">Shopify</option>
-        </select>
-        <button type="button" onclick="switchPlatformTab('backlinks')" id="platformTabBacklinks" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_backlinks">Backlinks</button>
-        <button type="button" onclick="switchPlatformTab('partnernetwork')" id="platformTabPartnerNetwork" style="background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:13px;font-weight:600;padding:10px 4px;cursor:pointer;margin-right:16px" data-i18n="web.platform_tab_partner_network">Partner Network</button>
-
+    <div id="websiteMainWrap" class="wt-wrap" style="display:none">
+      <div class="wt-contextbar" id="websiteContextBar">
+        <!-- One selector for every connected-site platform. Backlinks and Partner Network are business-level, so they stay fixed tabs. -->
+        <div class="wt-field">
+          <span class="wt-field-label" data-i18n="web.platform_label">Platform</span>
+          <select id="platformSelector" class="wt-select is-active" onchange="switchPlatformTab(this.value)">
+            <option value="" disabled hidden data-i18n="web.platform_selector_placeholder">Platform</option>
+            <option value="wordpress" selected data-i18n="web.platform_tab_wordpress">WordPress</option>
+            <option value="shopify" data-i18n="web.platform_tab_shopify">Shopify</option>
+          </select>
+        </div>
+        <div class="wt-field" id="websiteBusinessPicker">
+          <span class="wt-field-label" data-i18n="web.select_business">Business</span>
+          <select class="wt-select" id="websiteBusinessSelect" onchange="onWebsiteBusinessSelectChange()"></select>
+        </div>
+        <div class="wt-tabs" role="tablist">
+          <button type="button" class="wt-tab" id="platformTabBacklinks" onclick="switchPlatformTab('backlinks')" data-i18n="web.platform_tab_backlinks">Backlinks</button>
+          <button type="button" class="wt-tab" id="platformTabPartnerNetwork" onclick="switchPlatformTab('partnernetwork')" data-i18n="web.platform_tab_partner_network">Partner Network</button>
+        </div>
       </div>
+      <div id="wordpressView" class="wt-view">
+
 
       <!-- EMPTY STATE — spec section 25: explicit about what Arreyon will
            access, and never implies access before the user actually connects. -->
-      <div id="websiteEmptyState" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:28px;text-align:center;margin-bottom:20px">
+      <div id="websiteEmptyState" class="wt-empty" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:28px;text-align:center;margin-bottom:20px">
         <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:8px" data-i18n="web.connect_title">Connect Your Website</div>
         <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:8px;max-width:480px;margin-left:auto;margin-right:auto" data-i18n="web.connect_desc">Connect your website to Arreyon so your AI business team can analyze, monitor and help improve your digital presence.</div>
         <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:12px;max-width:480px;margin-left:auto;margin-right:auto" data-i18n="web.connect_access_note">Arreyon will be able to read your pages and posts to generate analysis. Nothing on your site is accessed until you connect it below.</div>
+        <div class="wt-plugins" id="websitePluginsCard">
+          <div class="wt-plugins-head">
+            <div class="wt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg></div>
+            <div>
+              <div class="wt-plugins-title" data-i18n="web.plugins_title">Before you connect: install 2 free plugins</div>
+              <div class="wt-plugins-sub" data-i18n="web.plugins_sub">Install both on your WordPress site first. Without them, the connection and some SEO updates will not work.</div>
+            </div>
+          </div>
+          <div class="wt-plugin-grid">
+            <div class="wt-plugin">
+              <div class="wt-plugin-num">1</div>
+              <div class="wt-plugin-name" data-i18n="web.plugin_connect_name">Arreyon Connect</div>
+              <div class="wt-plugin-desc" data-i18n="web.plugin_connect_desc">Links your site to Arreyon with a short connection code — no passwords to copy.</div>
+              <a class="btn-primary" href="/api/website-tools/arreyon-connect-plugin.zip" download data-i18n="web.plugin_download">↓ Download plugin</a>
+            </div>
+            <div class="wt-plugin">
+              <div class="wt-plugin-num">2</div>
+              <div class="wt-plugin-name" data-i18n="web.plugin_seo_name">Arreyon SEO REST Bridge</div>
+              <div class="wt-plugin-desc" data-i18n="web.plugin_seo_desc">Lets Arreyon update meta descriptions with Yoast, Rank Math and other SEO plugins.</div>
+              <a class="btn-primary" href="/api/website-tools/seo-rest-bridge-plugin.zip" download data-i18n="web.plugin_download">↓ Download plugin</a>
+            </div>
+          </div>
+          <div class="wt-plugin-raw" style="margin-top:10px"><a href="/api/website-tools/seo-rest-bridge-plugin" download style="color:var(--muted)" data-i18n="web.seo_plugin_download_php">or download the raw file for a developer to install</a></div>
+          <ol class="wt-steps">
+            <li data-i18n="web.plugins_step1">Download both plugin files above.</li>
+            <li data-i18n="web.plugins_step2">In your WordPress admin go to Plugins → Add New → Upload Plugin. Choose a file, click Install Now, then Activate. Do the same for the second plugin.</li>
+            <li data-i18n="web.plugins_step3">Come back here and click “Connect Website”, then “Generate Connection Code”.</li>
+          </ol>
+          <div class="wt-warn"><span>⚠</span><span data-i18n="web.plugins_warning">Install both plugins first, then click Connect Website. If they are not installed, the connection code will not work.</span></div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-top:10px" data-i18n="web.seo_plugin_note">Note: page/post titles can always be updated. Meta description updates depend on your SEO plugin's own settings.</div>
+        </div>
         <div style="font-size:11.5px;color:var(--gold);line-height:1.6;margin-bottom:18px;max-width:480px;margin-left:auto;margin-right:auto;background:rgba(230,170,0,.1);border-radius:8px;padding:10px 14px" data-i18n="web.cloudflare_bot_warning">⚠ If your site uses Cloudflare's free "Bot Fight Mode," the connection will be blocked — confirmed to be a Cloudflare limitation with no workaround on the free plan, not something Arreyon or a WordPress setting can fix. Cloudflare Pro (or turning off Bot Fight Mode for this site) resolves it.</div>
         <button class="btn-primary" onclick="showWebsiteConnectForm()" data-i18n="web.connect_button">Connect Website</button>
       </div>
@@ -1826,12 +1940,17 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
              analyzed yet — creates a minimal business record first, so a
              website can be connected without requiring the full Analyzer
              flow to run beforehand. -->
+                <button type="button" class="btn-ghost" onclick="showWebsiteEmptyState()" style="font-size:12px;padding:5px 11px;margin-bottom:14px" data-i18n="web.back">← Back</button>
+        <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px" data-i18n="web.connect_form_title">Connect Your WordPress Site</div>
+        <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:18px" data-i18n="web.connect_access_note">Arreyon will be able to read your pages and posts to generate analysis. Nothing on your site is accessed until you connect it below.</div>
+<div class="form-group" id="websiteConnectBusinessGroup" style="margin-bottom:14px">
+          <label data-i18n="web.connect_business_label">Which business is this site for?</label>
+          <select class="form-input" id="websiteConnectBusiness" onchange="onConnectBusinessChange('wordpress')"></select>
+        </div>
         <div class="form-group" id="newBusinessNameGroup" style="display:none;margin-bottom:14px">
           <label data-i18n="web.field_business_name">Business Name</label>
           <input type="text" class="form-input" id="wpNewBusinessName" placeholder="e.g. G-DESIGNS Main Website">
         </div>
-        <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px" data-i18n="web.connect_form_title">Connect Your WordPress Site</div>
-        <div style="font-size:12px;color:var(--text2);line-height:1.6;margin-bottom:18px" data-i18n="web.connect_access_note">Arreyon will be able to read your pages and posts to generate analysis. Nothing on your site is accessed until you connect it below.</div>
 
         <!-- Method toggle — Option 1 (paste a credential yourself) vs
              Option 2 (install a plugin, connect with a short code). -->
@@ -1902,22 +2021,33 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <!-- CONNECTION STATUS CARD — never shows "Connected" from stored
            credentials alone; connection_status reflects the last actual
            verification against the live site. -->
-      <div id="websiteStatusCard" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:20px">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px">
-          <div>
-            <div id="websiteSiteName" style="font-size:15px;font-weight:700;color:var(--text)"></div>
-            <div id="websiteSiteUrl" style="font-size:12px;color:var(--muted)"></div>
+      <div id="websiteStatusCard" class="wt-stack" style="display:none">
+        <div class="wt-card wt-hero" id="websiteHeroCard">
+          <div class="wt-hero-top">
+            <div style="min-width:0">
+              <div class="wt-platform-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M3.5 9h4l2.5 8 2-6 2 6 2.5-8h4"/></svg><span data-i18n="web.platform_tab_wordpress">WordPress</span></div>
+              <div class="wt-hero-name" id="websiteBusinessName"></div>
+              <div class="wt-hero-site"><span id="websiteSiteName"></span> · <a id="websiteSiteUrl" href="#" target="_blank" rel="noopener noreferrer"></a></div>
+            </div>
+            <div class="wt-hero-actions">
+              <span id="websiteStatusBadge" class="wt-chip"></span>
+              <button class="btn-ghost" onclick="verifyWebsiteConnection()" id="websiteRefreshBtn" style="font-size:12px;padding:6px 12px" data-i18n="web.recheck_connection">Re-check connection</button>
+              <button class="btn-ghost wt-btn-danger" onclick="disconnectWebsite()" style="font-size:12px;padding:6px 12px" data-i18n="web.disconnect">Disconnect</button>
+            </div>
           </div>
-          <span id="websiteStatusBadge" style="font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:6px;white-space:nowrap"></span>
+          <div id="websiteStatusError" style="display:none;font-size:12px;color:#ff8080;background:rgba(239,68,68,.1);border-radius:8px;padding:10px 12px;margin-top:14px"></div>
+          <div id="websitePollModeNotice" style="display:none;font-size:12px;line-height:1.5;color:#f59e0b;background:rgba(245,158,11,.1);border-radius:8px;padding:10px 12px;margin-top:14px" data-i18n="web.poll_mode_notice"></div>
+          <div class="wt-stats" id="websiteStatTiles">
+            <div class="wt-stat"><div class="wt-stat-label" data-i18n="web.stat_content">Content</div><div class="wt-stat-value" id="websiteStatContent">–</div></div>
+            <div class="wt-stat"><div class="wt-stat-label" data-i18n="web.stat_pending">Waiting for approval</div><div class="wt-stat-value" id="websiteStatPending">–</div></div>
+            <div class="wt-stat"><div class="wt-stat-label" data-i18n="web.stat_technical">Technical health</div><div class="wt-stat-value" id="websiteStatTech">–</div></div>
+            <div class="wt-stat"><div class="wt-stat-label" data-i18n="web.stat_agent">AI agent</div><div class="wt-stat-value" id="websiteStatAgent">–</div></div>
+          </div>
         </div>
-        <div id="websiteStatusError" style="display:none;font-size:12px;color:#ff8080;background:rgba(239,68,68,.1);border-radius:8px;padding:10px 12px;margin-bottom:14px"></div>
-        <div id="websitePollModeNotice" style="display:none;font-size:12px;line-height:1.5;color:#f59e0b;background:rgba(245,158,11,.1);border-radius:8px;padding:10px 12px;margin-bottom:14px" data-i18n="web.poll_mode_notice"></div>
-
-        <!-- PERMISSIONS & AUTOMATION — spec Section 4's 4 tiers, plus the
-             manual/automatic switch. Managed mode still requires approval
-             for destructive actions regardless — that safety rule is
-             enforced server-side, not something this toggle can bypass. -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;padding:14px;background:var(--bg3);border-radius:10px">
+        <div class="wt-jump" id="websiteJumpNav" aria-label="Sections"></div>
+        <div class="wt-card" id="websiteAgentCard" data-nav="web.nav_agent">
+          <div class="wt-card-head"><div class="wt-card-head-main"><div class="wt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg></div><div><div class="wt-card-title" data-i18n="web.ai_agent_title">AI Agent</div><div class="wt-card-sub" data-i18n="web.ai_agent_sub">Choose whether the agent works by itself or waits for you.</div></div></div><div class="wt-card-actions"></div></div>
+          <div class="wt-body"><div class="wt-agent-grid" id="websiteAgentControls">
           <div class="form-group" style="margin-bottom:0">
             <label style="font-size:11px" data-i18n="web.permission_level_label">Permission Level</label>
             <select class="form-input" id="websitePermissionLevel" onchange="updateWebsitePermissions()" style="font-size:12.5px">
@@ -1938,13 +2068,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div id="websiteModeCaption" style="font-size:11px;color:var(--muted);line-height:1.4;margin-top:6px"></div>
           </div>
         </div>
-
-        <!-- AUTOMATIC MODE — the Manual / Automatic switch above is the master switch.
-             This panel says plainly what it does, sets how often it runs, and
-             shows when it last did and anything that would stop it working. -->
-        <div style="margin-bottom:14px;padding:14px;background:var(--bg3);border-radius:10px;border:1px solid rgba(139,92,246,.25)">
-          <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.agent_mode_title">What Automatic mode does</div>
-          <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:10px" data-i18n="web.agent_mode_description"></div>
+          <div class="wt-inset">
+          <details class="wt-details"><summary data-i18n="web.agent_mode_title">What Automatic mode does</summary><div class="wt-details-body" data-i18n="web.agent_mode_description"></div></details>
+          <div style="height:12px"></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
             <label style="font-size:11px;color:var(--muted)" data-i18n="web.agent_frequency_label">Run the agent</label>
             <select class="form-input" id="websiteAgentCycleFrequency" onchange="updateWebsitePermissions()" style="font-size:12.5px;max-width:160px">
@@ -1955,22 +2081,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           </div>
           <div id="websiteAgentModeStatus" style="font-size:11.5px;line-height:1.5"></div>
           <div id="websiteAgentRunBadge" hidden style="margin-top:8px;font-size:11.5px;font-weight:600;color:var(--gold)"></div>
+        </div></div>
         </div>
-
-        <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:14px;padding-top:2px">
-          <span data-i18n="web.seo_plugin_note">Note: page/post titles can always be updated. Meta description updates depend on your SEO plugin's own settings.</span>
-          <a href="/api/website-tools/seo-rest-bridge-plugin.zip" download style="color:var(--purple-light)" data-i18n="web.seo_plugin_download_zip">↓ Download (.zip) — install via WordPress admin: Plugins → Add New → Upload Plugin</a>
-        </div>
-
-        <!-- CONTENT CALENDAR & AUTOMATION — a real rule expands into real,
-             specific calendar entries ahead of time (one per day per time
-             slot, each with its own real action), rather than being
-             checked itself at run time. The calendar below is the one
-             real place to see everything coming up, whether scheduled by
-             a rule or added by hand. -->
-        <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px;border:1px solid rgba(239,68,68,.25)">
-          <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.content_automation_title">Automatic Content Creation</div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.rule_builder_description">Set a date range, how many posts per day/week/month, and how many hours apart. Arreyon writes the actual posts ahead of schedule on the calendar below.</div>
+        <div class="wt-card" id="websiteAutomationCard" data-nav="web.nav_automation">
+          <div class="wt-card-head"><div class="wt-card-head-main"><div class="wt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></div><div><div class="wt-card-title" data-i18n="web.content_automation_title">Automatic Content Creation</div><div class="wt-card-sub" data-i18n="web.rule_builder_description"></div></div></div><div class="wt-card-actions"></div></div>
+          <div class="wt-body">
 
           <div id="websiteActiveRulesContent" style="margin-bottom:12px"></div>
 
@@ -2017,26 +2132,23 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <button class="btn-primary" onclick="createAutomationRule('website')" id="websiteCreateRuleBtn" data-i18n="web.start_automation_button">Start Automation</button>
           </div>
         </div>
-
-        <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div style="font-size:12.5px;font-weight:700;color:var(--text)" data-i18n="web.content_calendar_title">Content Calendar</div>
-            <button class="btn-ghost" onclick="loadContentCalendar('website')" style="font-size:11px;padding:4px 10px" data-i18n="web.refresh">Refresh</button>
-          </div>
+        </div>
+        <div class="wt-card" id="websiteCalendarCard" data-nav="web.nav_calendar">
+          <div class="wt-card-head"><div class="wt-card-head-main"><div class="wt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div><div><div class="wt-card-title" data-i18n="web.content_calendar_title">Content Calendar</div><div class="wt-sync" id="websiteCalendarSync"></div></div></div><div class="wt-card-actions"><button class="btn-ghost" id="websiteCalendarRefreshBtn" onclick="refreshWithFeedback('website','calendar')" style="font-size:11.5px;padding:5px 11px" data-i18n="web.refresh">Refresh</button><button class="btn-ghost wt-btn-danger" onclick="clearHistory('website','calendar')" style="font-size:11.5px;padding:5px 11px" data-i18n="web.clear_history">Clear history</button></div></div>
+          <div class="wt-body">
           <div id="websiteCalendarContent"></div>
         </div>
-
-        <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-            <div style="font-size:12.5px;font-weight:700;color:var(--text)" data-i18n="web.activity_title">Automatic Activity</div>
-            <button class="btn-ghost" onclick="loadAgentActivity('website')" style="font-size:11px;padding:4px 10px" data-i18n="web.refresh">Refresh</button>
-          </div>
+        </div>
+        <div class="wt-card" id="websiteActivityCard" data-nav="web.nav_activity">
+          <div class="wt-card-head"><div class="wt-card-head-main"><div class="wt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div><div><div class="wt-card-title" data-i18n="web.activity_title">Agent Activity</div><div class="wt-sync" id="websiteActivitySync"></div></div></div><div class="wt-card-actions"><button class="btn-ghost" id="websiteActivityRefreshBtn" onclick="refreshWithFeedback('website','activity')" style="font-size:11.5px;padding:5px 11px" data-i18n="web.refresh">Refresh</button><button class="btn-ghost wt-btn-danger" onclick="clearHistory('website','activity')" style="font-size:11.5px;padding:5px 11px" data-i18n="web.clear_history">Clear history</button></div></div>
+          <div class="wt-body">
           <div style="font-size:11px;color:var(--muted);margin-bottom:10px" data-i18n="web.activity_description"></div>
           <div id="websiteActivityContent"></div>
         </div>
-
-        <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px">
-          <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:8px" data-i18n="web.generate_post_now_title">Generate a Blog Post Now</div>
+        </div>
+        <div class="wt-card" id="websiteGeneratorCard" data-nav="web.nav_generator">
+          <div class="wt-card-head"><div class="wt-card-head-main"><div class="wt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></div><div><div class="wt-card-title" data-i18n="web.generate_post_now_title">Generate a Blog Post Now</div></div></div><div class="wt-card-actions"></div></div>
+          <div class="wt-body">
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
             <input type="text" id="websiteBlogPostTopic" data-i18n-placeholder="web.generate_post_topic_placeholder" placeholder="e.g. 5 tips for small business SEO" style="flex:1;min-width:200px">
             <select id="websiteGeneratePublishChoice" style="max-width:180px">
@@ -2052,16 +2164,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <button class="btn-secondary" onclick="suggestBlogPostTopics()" id="websiteSuggestTopicsBtn" data-i18n="web.suggest_topics_button" style="font-size:11.5px;padding:6px 12px">Suggest Topics</button>
           <div id="websiteTopicSuggestions" style="margin-top:10px"></div>
         </div>
-
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <button class="btn-secondary" onclick="verifyWebsiteConnection()" id="websiteRefreshBtn" data-i18n="web.refresh">Refresh</button>
-          <button class="btn-secondary" onclick="disconnectWebsite()" style="color:#ef4444" data-i18n="web.disconnect">Disconnect</button>
         </div>
       </div>
 
       <!-- WEBSITE INTELLIGENCE — read-only structure/SEO/content observations,
            with real measured counts kept visually distinct from AI assessment. -->
-      <div id="websiteIntelligenceSection" style="display:none">
+      <div id="websiteIntelligenceSection" class="wt-card" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.intelligence_title">Website Intelligence</div>
           <div style="display:flex;gap:8px">
@@ -2076,7 +2184,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
            SEO proposals, categories/tags, duplicate titles, and broken-link
            detection into one real, timestamped run with a found/fixed
            report, rather than four separate feature clicks. -->
-      <div id="websiteAuditRunSection" style="display:none;margin-top:28px">
+      <div id="websiteAuditRunSection" class="wt-card" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.audit_run_title">Run Audit &amp; Optimize</div>
           <div style="display:flex;gap:8px">
@@ -2090,7 +2198,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <!-- AI VISIBILITY — the feedback loop the rest of the SEO/AEO/GEO work
            never had: real queries actually sent to Perplexity, checking
            whether this business is genuinely mentioned or cited. -->
-      <div id="websiteAiVisibilitySection" style="display:none;margin-top:28px">
+      <div id="websiteAiVisibilitySection" class="wt-card" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.ai_visibility_title">AI Visibility</div>
           <div style="display:flex;gap:8px">
@@ -2105,7 +2213,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <!-- KEYWORD RANKINGS — real, first-party data pulled directly from
            Google Search Console's own API, never estimated or scraped.
            Requires Search Console connected under Integrations. -->
-      <div id="websiteKeywordRankingsSection" style="display:none;margin-top:28px">
+      <div id="websiteKeywordRankingsSection" class="wt-card" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.keyword_rankings_title">Keyword Rankings</div>
           <button class="btn-primary" onclick="loadKeywordRankings()" id="websiteKeywordRankingsBtn" data-i18n="web.refresh">Refresh</button>
@@ -2118,7 +2226,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
            already do that reliably on their own. This finds the real,
            existing sitemap and submits it to Search Console, which most
            site owners never do manually. -->
-      <div id="websiteSitemapSection" style="display:none;margin-top:28px">
+      <div id="websiteSitemapSection" class="wt-card" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.sitemap_title">Sitemap</div>
           <button class="btn-primary" onclick="submitWebsiteSitemap()" id="websiteSitemapBtn" data-i18n="web.submit_sitemap_button">Find & Submit Sitemap</button>
@@ -2129,7 +2237,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
       <!-- COMPETITOR ANALYSIS (WordPress) — measured on competitors' real public pages and compared with this site.
            The AI may only draw conclusions from that data; anything it cannot trace to a page that was read is dropped. -->
-      <div id="websiteCompetitorSection" style="display:none;margin-top:28px">
+      <div id="websiteCompetitorSection" class="wt-card" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.competitor_title">Competitor Analysis</div>
           <button class="btn-primary" onclick="runCompetitorAnalysis()" id="websiteCompetitorBtn" data-i18n="web.competitor_run_button">Analyze competitors</button>
@@ -2142,7 +2250,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
            Field (real-user) data is shown only when Google actually has
            enough real traffic to report it, which most small-business
            sites won't — lab data is the reliable, always-present metric. -->
-      <div id="websiteTechnicalSeoSection" style="display:none;margin-top:28px">
+      <div id="websiteTechnicalSeoSection" class="wt-card" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.technical_seo_title">Technical SEO</div>
           <button class="btn-primary" onclick="runTechnicalSeoCheck('website')" id="websiteTechnicalSeoBtn" data-i18n="web.run_technical_check_button">Run Check</button>
@@ -2151,65 +2259,151 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div id="websiteTechnicalSeoContent"></div>
       </div>
 
+      <!-- BROKEN INTERNAL LINKS — pure detection, not a proposal. Fixing a
+           broken link means editing body content, which the SEO Agent
+           doesn't touch yet, so this only surfaces the problem for the
+           person to act on themselves. -->
+      <div id="websiteBrokenLinksSection" class="wt-card" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.broken_links_title">Broken Internal Links</div>
+          <button class="btn-secondary" onclick="checkBrokenLinks()" id="websiteBrokenLinksBtn" data-i18n="web.check_links_button">Check Links</button>
+        </div>
+        <div id="websiteBrokenLinksContent"></div>
+      </div>
+
+      <!-- SCHEMA MARKUP — Organization/LocalBusiness JSON-LD, site-wide, built
+           from real business profile data. Output via the bridge plugin's own
+           wp_head hook, never injected into post content, so it can never be
+           stripped by unfiltered_html restrictions on more locked-down sites. -->
+      <div id="websiteSchemaSection" class="wt-card" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.schema_title">Schema Markup</div>
+          <button class="btn-primary" onclick="generateOrganizationSchema()" id="websiteSchemaBtn" data-i18n="web.generate_schema_button">Generate Organization Schema</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.schema_description">Adds structured data describing your business to every page, and FAQ schema to new blog posts that include a natural Q&amp;A — both help AI search engines and Google understand and cite your site.</div>
+        <div id="websiteSchemaContent"></div>
+      </div>
+
+      <!-- MEDIA LIBRARY — pure, read-only browsing of images already on the
+           site, so existing images can be identified for reuse rather than
+           generating or uploading a duplicate. No create/upload here. -->
+      <div id="websiteMediaSection" class="wt-card" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.media_library_title">Media Library</div>
+          <button class="btn-secondary" onclick="loadWebsiteMedia()" id="websiteMediaRefreshBtn" data-i18n="web.refresh">Refresh</button>
+        </div>
+        <div id="websiteMediaContent" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:12px"></div>
+      </div>
+
+      <!-- GENERATED POSTS — the real, local record of every post created via
+           the content-creation agent, so it's visible, editable, and
+           publishable from within Arreyon, not only by visiting the
+           connected site directly. -->
+      <div id="websiteGeneratedPostsSection" class="wt-card" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.generated_posts_title">Generated Blog Posts</div>
+          <button class="btn-secondary" onclick="loadWebsiteGeneratedPosts()" data-i18n="web.refresh">Refresh</button>
+        </div>
+        <div id="websiteGeneratedPostsContent"></div>
+      </div>
+
+      <!-- PROPOSED CHANGES — the approval workflow. Preview, Approve,
+           Reject, Edit, per the spec's explicit requirement; nothing here
+           is ever executed against the live site yet (Increment 3) — the
+           UI is honest about that on every approved item rather than
+           implying a change has gone live. -->
+      <div id="websiteActionsSection" class="wt-card" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.proposed_changes_title">Proposed Changes</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap">
+              <input type="checkbox" id="websiteUseLiveResearch" style="width:auto">
+              <span data-i18n="web.use_live_research">Ground in live competitor research</span>
+            </label>
+            <button class="btn-secondary" onclick="generateTaxonomyProposals()" id="websiteTaxonomyProposalsBtn" data-i18n="web.suggest_categories_tags">Suggest Categories &amp; Tags</button>
+            <button class="btn-secondary" onclick="generateDuplicateTitleProposals()" id="websiteDuplicateTitleBtn" data-i18n="web.fix_duplicate_titles">Fix Duplicate Titles</button>
+            <button class="btn-secondary" onclick="generateFeaturedImageProposals()" id="websiteFeaturedImageBtn" data-i18n="web.generate_featured_images">Generate Featured Images</button>
+            <button class="btn-primary" onclick="generateSeoProposals()" id="websiteSeoProposalsBtn" data-i18n="web.find_seo_improvements">Find SEO Improvements</button>
+          </div>
+        </div>
+        <div id="websiteActionsContent"></div>
+      </div>
+
+      <!-- ACTIVITY LOG — a real, per-feature history of what's happened on
+           this connection, with timestamps and selective clearing. Reads
+           website_audit_log, which has been written to all along but had
+           no view built for it until now. -->
+      <div id="websiteActivityLogSection" class="wt-card" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.activity_log_title">Activity Log</div>
+          <button class="btn-secondary" onclick="loadWebsiteActivityLog()" data-i18n="web.refresh">Refresh</button>
+        </div>
+        <div id="websiteActivityLogTabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer">
+            <input type="checkbox" id="websiteActivityLogSelectAll" onchange="toggleSelectAllActivityLog(this.checked)" style="width:auto">
+            <span data-i18n="web.select_all">Select all</span>
+          </label>
+          <div style="display:flex;gap:8px">
+            <button class="btn-ghost" onclick="clearSelectedActivityLog()" data-i18n="web.clear_selected">Clear Selected</button>
+            <button class="btn-ghost" onclick="clearActivityLogByFeature()" id="websiteClearFeatureBtn" data-i18n="web.clear_this_view">Clear This View</button>
+          </div>
+        </div>
+        <div id="websiteActivityLogContent"></div>
+      </div>
+      </div>
+
+
       <!-- SHOPIFY — stage 1 integration, deliberately separate from the
            WordPress-specific blocks above rather than merged into one
            generic "platform" system, since that unification is real,
            separate future work. Shown independently of WordPress
            connection state — a business can have one, both, or neither. -->
-      <div id="shopifySection" style="display:none">
-        <div class="section-title" style="font-size:16px;margin-bottom:4px" data-i18n="web.shopify_title">Shopify</div>
-        <div style="font-size:11.5px;color:var(--muted);margin-bottom:16px" data-i18n="web.shopify_subtitle">Connect a Shopify store to generate and publish blog content with real SEO fields.</div>
-
-        <div id="shopifyConnectPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;text-align:center">
-          <div style="display:flex;gap:8px;max-width:360px;margin:0 auto 10px">
-            <input type="text" id="shopifyShopDomain" placeholder="yourstore.myshopify.com" style="flex:1">
+      <div id="shopifySection" class="wt-view" style="display:none">
+        <div id="shopifyConnectPrompt" class="wt-card wt-empty" style="display:none">
+          <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:8px" data-i18n="web.shopify_connect_title">Connect Your Shopify Store</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.6;margin:0 auto 18px;max-width:480px" data-i18n="web.shopify_subtitle">Connect a Shopify store to generate and publish blog content with real SEO fields.</div>
+          <div style="max-width:420px;margin:0 auto;text-align:left">
+            <div class="form-group" id="shopifyConnectBusinessGroup" style="margin-bottom:14px">
+              <label data-i18n="web.connect_business_label">Which business is this store for?</label>
+              <select class="form-input" id="shopifyConnectBusiness" onchange="onConnectBusinessChange('shopify')"></select>
+            </div>
+            <div class="form-group" id="shopifyNewBusinessNameGroup" style="margin-bottom:14px">
+              <label data-i18n="web.field_business_name">Business Name</label>
+              <input type="text" class="form-input" id="shopifyNewBusinessName" placeholder="e.g. Bella Boutique Store">
+            </div>
+            <div class="form-group" style="margin-bottom:16px">
+              <label data-i18n="web.shopify_store_label">Your Shopify store address</label>
+              <input type="text" id="shopifyShopDomain" placeholder="yourstore.myshopify.com" class="form-input" style="width:100%">
+            </div>
           </div>
+          <div style="font-size:11.5px;color:var(--muted);line-height:1.6;margin:0 auto 16px;max-width:480px" data-i18n="web.shopify_connect_note">No plugin to install. You will sign in on Shopify's own page and approve the connection there.</div>
           <button class="btn-primary" onclick="connectShopify()" id="shopifyConnectBtn" data-i18n="web.connect_shopify_button">Connect Shopify</button>
         </div>
-
-        <div id="shopifyConnectedWrap" style="display:none">
-          <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg2);border-radius:10px;padding:12px 16px;margin-bottom:16px">
-            <div>
-              <div style="font-size:12.5px;color:var(--text);font-weight:600" id="shopifyDomainLabel"></div>
-              <div style="font-size:11px;color:var(--muted)" data-i18n="web.status_connected">Connected</div>
+        <div id="shopifyConnectedWrap" class="wt-stack" style="display:none">
+        <div class="wt-card wt-hero" id="shopifyHeroCard">
+          <div class="wt-hero-top">
+            <div style="min-width:0">
+              <div class="wt-platform-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg><span data-i18n="web.platform_tab_shopify">Shopify</span></div>
+              <div class="wt-hero-name" id="shopifyBusinessName"></div>
+              <div class="wt-hero-site"><a id="shopifyDomainLabel" href="#" target="_blank" rel="noopener noreferrer"></a></div>
             </div>
-            <button class="btn-ghost" onclick="disconnectShopify()" data-i18n="web.disconnect_button">Disconnect</button>
-          </div>
-
-          <div style="margin-bottom:20px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
-              <div class="section-title" style="margin-bottom:0;font-size:14px" data-i18n="web.intelligence_title">Website Intelligence</div>
-              <div style="display:flex;gap:8px">
-                <button class="btn-ghost" onclick="clearShopifyIntelligence()" data-i18n="web.clear_analysis_button">Clear Analysis</button>
-                <button class="btn-primary" onclick="generateShopifyIntelligence()" id="shopifyIntelligenceBtn" data-i18n="web.generate_button">Analyze Website</button>
-              </div>
+            <div class="wt-hero-actions">
+              <span class="wt-chip" style="color:var(--green);background:rgba(16,185,129,.15)" data-i18n="web.status_connected">Connected</span>
+              <button class="btn-ghost wt-btn-danger" onclick="disconnectShopify()" style="font-size:12px;padding:6px 12px" data-i18n="web.disconnect_button">Disconnect</button>
             </div>
-            <div id="shopifyIntelligenceContent"></div>
           </div>
-
-          <!-- RUN AUDIT & OPTIMIZE — Shopify's leaner equivalent: real
-               meta-tag gaps and real broken internal links only. Every
-               proposal here requires manual approval, since Shopify has
-               no permission/automation settings of its own yet. -->
-          <div style="margin-bottom:20px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
-              <div class="section-title" style="margin-bottom:0;font-size:14px" data-i18n="web.audit_run_title">Run Audit & Optimize</div>
-              <button class="btn-primary" onclick="runShopifyAudit()" id="shopifyRunAuditBtn" data-i18n="web.run_audit_button">Run Audit & Optimize</button>
-            </div>
-            <div id="shopifyAuditRunContent"></div>
+          <div class="wt-stats" id="shopifyStatTiles">
+            <div class="wt-stat"><div class="wt-stat-label" data-i18n="web.stat_content">Content</div><div class="wt-stat-value" id="shopifyStatContent">–</div></div>
+            <div class="wt-stat"><div class="wt-stat-label" data-i18n="web.stat_pending">Waiting for approval</div><div class="wt-stat-value" id="shopifyStatPending">–</div></div>
+            <div class="wt-stat"><div class="wt-stat-label" data-i18n="web.stat_technical">Technical health</div><div class="wt-stat-value" id="shopifyStatTech">–</div></div>
+            <div class="wt-stat"><div class="wt-stat-label" data-i18n="web.stat_agent">AI agent</div><div class="wt-stat-value" id="shopifyStatAgent">–</div></div>
           </div>
-
-          <div style="margin-bottom:20px">
-            <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.proposed_changes_title">Proposed Changes</div>
-            <div id="shopifyActionsContent"></div>
-          </div>
-
-          <!-- AUTOMATIC MODE (Shopify) — same agent, same schedule options. Only the
-               low-risk meta-tag fixes are applied on its own; removing a link always waits for approval. -->
-          <div style="margin-bottom:14px;padding:14px;background:var(--bg3);border-radius:10px;border:1px solid rgba(139,92,246,.25)">
-            <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.agent_mode_title">What Automatic mode does</div>
-            <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:10px" data-i18n="web.agent_mode_description"></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px">
+        </div>
+        <div class="wt-jump" id="shopifyJumpNav" aria-label="Sections"></div>
+        <div class="wt-card" id="shopifyAgentCard">
+          <div class="wt-card-head"><div class="wt-card-head-main"><div class="wt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg></div><div><div class="wt-card-title" data-i18n="web.ai_agent_title">AI Agent</div><div class="wt-card-sub" data-i18n="web.ai_agent_sub">Choose whether the agent works by itself or waits for you.</div></div></div><div class="wt-card-actions"></div></div>
+          <div class="wt-body"><div class="wt-agent-grid" id="shopifyAgentControls">
               <div class="form-group" style="margin-bottom:0">
                 <label style="font-size:11px" data-i18n="web.automation_mode_label">AI Agent Mode</label>
                 <label class="mode-switch" for="shopifyAutomationSwitch">
@@ -2229,16 +2423,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
                 </select>
               </div>
             </div>
-            <div id="shopifyAgentModeStatus" style="font-size:11.5px;line-height:1.5"></div>
-          <div id="shopifyAgentRunBadge" hidden style="margin-top:8px;font-size:11.5px;font-weight:600;color:var(--gold)"></div>
-          </div>
-
-          <!-- CONTENT CALENDAR & AUTOMATION — same real engine as
-               WordPress: a real rule expands into real, specific
-               calendar entries ahead of time, one per day per time slot. -->
-          <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px;border:1px solid rgba(239,68,68,.25)">
-            <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:4px" data-i18n="web.content_automation_title">Automatic Content Creation</div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.rule_builder_description">Set a date range, how many posts per day/week/month, and how many hours apart. Arreyon writes the actual posts ahead of schedule on the calendar below.</div>
+            <div class="wt-inset"><details class="wt-details"><summary data-i18n="web.agent_mode_title">What Automatic mode does</summary><div class="wt-details-body" data-i18n="web.agent_mode_description"></div></details><div style="height:10px"></div><div id="shopifyAgentModeStatus" style="font-size:11.5px;line-height:1.5"></div>
+          <div id="shopifyAgentRunBadge" hidden style="margin-top:8px;font-size:11.5px;font-weight:600;color:var(--gold)"></div></div></div>
+        </div>
+        <div class="wt-card" id="shopifyAutomationCard">
+          <div class="wt-card-head"><div class="wt-card-head-main"><div class="wt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></div><div><div class="wt-card-title" data-i18n="web.content_automation_title">Automatic Content Creation</div><div class="wt-card-sub" data-i18n="web.rule_builder_description"></div></div></div><div class="wt-card-actions"></div></div>
+          <div class="wt-body">
 
             <div id="shopifyActiveRulesContent" style="margin-bottom:12px"></div>
 
@@ -2285,26 +2475,23 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <button class="btn-primary" onclick="createAutomationRule('shopify')" id="shopifyCreateRuleBtn" data-i18n="web.start_automation_button">Start Automation</button>
             </div>
           </div>
-
-          <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-              <div style="font-size:12.5px;font-weight:700;color:var(--text)" data-i18n="web.content_calendar_title">Content Calendar</div>
-              <button class="btn-ghost" onclick="loadContentCalendar('shopify')" style="font-size:11px;padding:4px 10px" data-i18n="web.refresh">Refresh</button>
-            </div>
+        </div>
+        <div class="wt-card" id="shopifyCalendarCard">
+          <div class="wt-card-head"><div class="wt-card-head-main"><div class="wt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div><div><div class="wt-card-title" data-i18n="web.content_calendar_title">Content Calendar</div><div class="wt-sync" id="shopifyCalendarSync"></div></div></div><div class="wt-card-actions"><button class="btn-ghost" id="shopifyCalendarRefreshBtn" onclick="refreshWithFeedback('shopify','calendar')" style="font-size:11.5px;padding:5px 11px" data-i18n="web.refresh">Refresh</button><button class="btn-ghost wt-btn-danger" onclick="clearHistory('shopify','calendar')" style="font-size:11.5px;padding:5px 11px" data-i18n="web.clear_history">Clear history</button></div></div>
+          <div class="wt-body">
             <div id="shopifyCalendarContent"></div>
           </div>
-
-          <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:14px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-              <div style="font-size:12.5px;font-weight:700;color:var(--text)" data-i18n="web.activity_title">Automatic Activity</div>
-              <button class="btn-ghost" onclick="loadAgentActivity('shopify')" style="font-size:11px;padding:4px 10px" data-i18n="web.refresh">Refresh</button>
-            </div>
+        </div>
+        <div class="wt-card" id="shopifyActivityCard">
+          <div class="wt-card-head"><div class="wt-card-head-main"><div class="wt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div><div><div class="wt-card-title" data-i18n="web.activity_title">Agent Activity</div><div class="wt-sync" id="shopifyActivitySync"></div></div></div><div class="wt-card-actions"><button class="btn-ghost" id="shopifyActivityRefreshBtn" onclick="refreshWithFeedback('shopify','activity')" style="font-size:11.5px;padding:5px 11px" data-i18n="web.refresh">Refresh</button><button class="btn-ghost wt-btn-danger" onclick="clearHistory('shopify','activity')" style="font-size:11.5px;padding:5px 11px" data-i18n="web.clear_history">Clear history</button></div></div>
+          <div class="wt-body">
             <div style="font-size:11px;color:var(--muted);margin-bottom:10px" data-i18n="web.activity_description"></div>
             <div id="shopifyActivityContent"></div>
           </div>
-
-          <div style="padding:14px;background:var(--bg3);border-radius:10px;margin-bottom:16px">
-            <div style="font-size:12.5px;font-weight:700;color:var(--text);margin-bottom:8px" data-i18n="web.generate_post_now_title">Generate a Blog Post Now</div>
+        </div>
+        <div class="wt-card" id="shopifyGeneratorCard">
+          <div class="wt-card-head"><div class="wt-card-head-main"><div class="wt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></div><div><div class="wt-card-title" data-i18n="web.generate_post_now_title">Generate a Blog Post Now</div></div></div><div class="wt-card-actions"></div></div>
+          <div class="wt-body">
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <input type="text" id="shopifyBlogPostTopic" data-i18n-placeholder="web.generate_post_topic_placeholder" placeholder="e.g. 5 tips for small business SEO" style="flex:1;min-width:200px">
               <select id="shopifyPublishChoice" style="max-width:180px">
@@ -2314,11 +2501,25 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
               <button class="btn-primary" onclick="generateShopifyPost()" id="shopifyGenerateBtn" data-i18n="web.generate_post_button">Generate &amp; Create</button>
             </div>
           </div>
-
-          <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.generated_posts_title">Generated Blog Posts</div>
-          <div id="shopifyGeneratedPostsContent"></div>
-
-          <div style="margin-top:24px">
+        </div>
+        <div class="wt-card" id="shopifyIntelligenceSection">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+              <div class="section-title" style="margin-bottom:0;font-size:14px" data-i18n="web.intelligence_title">Website Intelligence</div>
+              <div style="display:flex;gap:8px">
+                <button class="btn-ghost" onclick="clearShopifyIntelligence()" data-i18n="web.clear_analysis_button">Clear Analysis</button>
+                <button class="btn-primary" onclick="generateShopifyIntelligence()" id="shopifyIntelligenceBtn" data-i18n="web.generate_button">Analyze Website</button>
+              </div>
+            </div>
+            <div id="shopifyIntelligenceContent"></div>
+          </div>
+        <div class="wt-card" id="shopifyAuditSection">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+              <div class="section-title" style="margin-bottom:0;font-size:14px" data-i18n="web.audit_run_title">Run Audit & Optimize</div>
+              <button class="btn-primary" onclick="runShopifyAudit()" id="shopifyRunAuditBtn" data-i18n="web.run_audit_button">Run Audit & Optimize</button>
+            </div>
+            <div id="shopifyAuditRunContent"></div>
+          </div>
+        <div class="wt-card" id="shopifySitemapSection">
             <div style="display:flex;justify-content:space-between;align-items:center">
               <div class="section-title" style="margin-bottom:0;font-size:14px" data-i18n="web.sitemap_title">Sitemap</div>
               <button class="btn-primary" onclick="submitShopifySitemap()" id="shopifySitemapBtn" data-i18n="web.submit_sitemap_button">Find & Submit Sitemap</button>
@@ -2326,8 +2527,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div style="font-size:11px;color:var(--muted);margin:8px 0 12px" data-i18n="web.shopify_sitemap_description">Finds your store's existing sitemap (generated automatically by Shopify) and submits it to Google Search Console.</div>
             <div id="shopifySitemapContent"></div>
           </div>
-
-          <div style="margin-top:24px">
+        <div class="wt-card" id="shopifyTechnicalSeoSection">
             <div style="display:flex;justify-content:space-between;align-items:center">
               <div class="section-title" style="margin-bottom:0;font-size:14px" data-i18n="web.technical_seo_title">Technical SEO</div>
               <button class="btn-primary" onclick="runTechnicalSeoCheck('shopify')" id="shopifyTechnicalSeoBtn" data-i18n="web.run_technical_check_button">Run Check</button>
@@ -2335,7 +2535,12 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div style="font-size:11px;color:var(--muted);margin:8px 0 12px" data-i18n="web.technical_seo_description">Real Core Web Vitals from Google's own Lighthouse engine, plus a robots.txt check for anything blocking search engines. Can take up to a minute to run.</div>
             <div id="shopifyTechnicalSeoContent"></div>
           </div>
-        </div>
+        <div class="wt-card" id="shopifyGeneratedPostsSection"><div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.generated_posts_title">Generated Blog Posts</div><div id="shopifyGeneratedPostsContent"></div></div>
+        <div class="wt-card" id="shopifyActionsSection">
+            <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.proposed_changes_title">Proposed Changes</div>
+            <div id="shopifyActionsContent"></div>
+          </div>
+      </div>
       </div>
 
       <!-- BACKLINKS — real, legitimately earnable opportunities only: real
@@ -2380,128 +2585,6 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
         <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.links_received_title">Links Received</div>
         <div id="partnerNetworkReceivedContent"></div>
-      </div>
-
-      <!-- CATEGORIES & TAGS — read the site's real, existing taxonomy and
-           create a new one directly. Not part of the approval workflow
-           below: creating a term doesn't touch any existing, live content,
-           so it's a direct action rather than an AI proposal. -->
-      <div id="websiteTaxonomySection" style="display:none;margin-top:28px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.taxonomy_title">Categories &amp; Tags</div>
-          <button class="btn-secondary" onclick="loadWebsiteTaxonomy()" id="websiteTaxonomyRefreshBtn" data-i18n="web.refresh">Refresh</button>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
-          <div>
-            <div style="font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:8px;text-transform:uppercase" data-i18n="web.categories_label">Categories</div>
-            <div style="display:flex;gap:8px;margin-bottom:10px">
-              <input type="text" id="newCategoryName" data-i18n-placeholder="web.new_category_placeholder" placeholder="New category name" style="flex:1" onkeydown="if(event.key==='Enter')createWebsiteTaxonomyTerm('category')">
-              <button class="btn-primary" onclick="createWebsiteTaxonomyTerm('category')" data-i18n="web.add_button">Add</button>
-            </div>
-            <div id="websiteCategoriesList"></div>
-          </div>
-          <div>
-            <div style="font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:8px;text-transform:uppercase" data-i18n="web.tags_label">Tags</div>
-            <div style="display:flex;gap:8px;margin-bottom:10px">
-              <input type="text" id="newTagName" data-i18n-placeholder="web.new_tag_placeholder" placeholder="New tag name" style="flex:1" onkeydown="if(event.key==='Enter')createWebsiteTaxonomyTerm('tag')">
-              <button class="btn-primary" onclick="createWebsiteTaxonomyTerm('tag')" data-i18n="web.add_button">Add</button>
-            </div>
-            <div id="websiteTagsList"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- SCHEMA MARKUP — Organization/LocalBusiness JSON-LD, site-wide, built
-           from real business profile data. Output via the bridge plugin's own
-           wp_head hook, never injected into post content, so it can never be
-           stripped by unfiltered_html restrictions on more locked-down sites. -->
-      <div id="websiteSchemaSection" style="display:none;margin-top:28px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.schema_title">Schema Markup</div>
-          <button class="btn-primary" onclick="generateOrganizationSchema()" id="websiteSchemaBtn" data-i18n="web.generate_schema_button">Generate Organization Schema</button>
-        </div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.schema_description">Adds structured data describing your business to every page, and FAQ schema to new blog posts that include a natural Q&amp;A — both help AI search engines and Google understand and cite your site.</div>
-        <div id="websiteSchemaContent"></div>
-      </div>
-
-      <!-- MEDIA LIBRARY — pure, read-only browsing of images already on the
-           site, so existing images can be identified for reuse rather than
-           generating or uploading a duplicate. No create/upload here. -->
-      <div id="websiteMediaSection" style="display:none;margin-top:28px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.media_library_title">Media Library</div>
-          <button class="btn-secondary" onclick="loadWebsiteMedia()" id="websiteMediaRefreshBtn" data-i18n="web.refresh">Refresh</button>
-        </div>
-        <div id="websiteMediaContent" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:12px"></div>
-      </div>
-
-      <!-- BROKEN INTERNAL LINKS — pure detection, not a proposal. Fixing a
-           broken link means editing body content, which the SEO Agent
-           doesn't touch yet, so this only surfaces the problem for the
-           person to act on themselves. -->
-      <div id="websiteBrokenLinksSection" style="display:none;margin-top:28px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.broken_links_title">Broken Internal Links</div>
-          <button class="btn-secondary" onclick="checkBrokenLinks()" id="websiteBrokenLinksBtn" data-i18n="web.check_links_button">Check Links</button>
-        </div>
-        <div id="websiteBrokenLinksContent"></div>
-      </div>
-
-      <!-- ACTIVITY LOG — a real, per-feature history of what's happened on
-           this connection, with timestamps and selective clearing. Reads
-           website_audit_log, which has been written to all along but had
-           no view built for it until now. -->
-      <div id="websiteActivityLogSection" style="display:none;margin-top:28px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.activity_log_title">Activity Log</div>
-          <button class="btn-secondary" onclick="loadWebsiteActivityLog()" data-i18n="web.refresh">Refresh</button>
-        </div>
-        <div id="websiteActivityLogTabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px"></div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer">
-            <input type="checkbox" id="websiteActivityLogSelectAll" onchange="toggleSelectAllActivityLog(this.checked)" style="width:auto">
-            <span data-i18n="web.select_all">Select all</span>
-          </label>
-          <div style="display:flex;gap:8px">
-            <button class="btn-ghost" onclick="clearSelectedActivityLog()" data-i18n="web.clear_selected">Clear Selected</button>
-            <button class="btn-ghost" onclick="clearActivityLogByFeature()" id="websiteClearFeatureBtn" data-i18n="web.clear_this_view">Clear This View</button>
-          </div>
-        </div>
-        <div id="websiteActivityLogContent"></div>
-      </div>
-
-      <!-- GENERATED POSTS — the real, local record of every post created via
-           the content-creation agent, so it's visible, editable, and
-           publishable from within Arreyon, not only by visiting the
-           connected site directly. -->
-      <div id="websiteGeneratedPostsSection" style="display:none;margin-top:28px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.generated_posts_title">Generated Blog Posts</div>
-          <button class="btn-secondary" onclick="loadWebsiteGeneratedPosts()" data-i18n="web.refresh">Refresh</button>
-        </div>
-        <div id="websiteGeneratedPostsContent"></div>
-      </div>
-
-      <!-- PROPOSED CHANGES — the approval workflow. Preview, Approve,
-           Reject, Edit, per the spec's explicit requirement; nothing here
-           is ever executed against the live site yet (Increment 3) — the
-           UI is honest about that on every approved item rather than
-           implying a change has gone live. -->
-      <div id="websiteActionsSection" style="display:none;margin-top:28px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.proposed_changes_title">Proposed Changes</div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap">
-              <input type="checkbox" id="websiteUseLiveResearch" style="width:auto">
-              <span data-i18n="web.use_live_research">Ground in live competitor research</span>
-            </label>
-            <button class="btn-secondary" onclick="generateTaxonomyProposals()" id="websiteTaxonomyProposalsBtn" data-i18n="web.suggest_categories_tags">Suggest Categories &amp; Tags</button>
-            <button class="btn-secondary" onclick="generateDuplicateTitleProposals()" id="websiteDuplicateTitleBtn" data-i18n="web.fix_duplicate_titles">Fix Duplicate Titles</button>
-            <button class="btn-secondary" onclick="generateFeaturedImageProposals()" id="websiteFeaturedImageBtn" data-i18n="web.generate_featured_images">Generate Featured Images</button>
-            <button class="btn-primary" onclick="generateSeoProposals()" id="websiteSeoProposalsBtn" data-i18n="web.find_seo_improvements">Find SEO Improvements</button>
-          </div>
-        </div>
-        <div id="websiteActionsContent"></div>
       </div>
 
     </div>
@@ -2688,6 +2771,7 @@ async function init() {
       showSection('website');
       if (urlParams.get('connected') === 'shopify') {
         window.pendingPlatformView = 'shopify';
+        if (urlParams.get('business')) { try { localStorage.setItem('arreyon_shopify_business_id', urlParams.get('business')); } catch (e) {} }
         showToast(t('web.shopify_connected_toast'), 'success');
       } else if (urlParams.get('error') === 'shopify_connect_failed') {
         window.pendingPlatformView = 'shopify';
@@ -7688,13 +7772,6 @@ let currentShopifyConnection = null;
 // what actually separates the two platforms into real, distinct views,
 // without needing to touch or re-nest any of the existing, already-
 // working WordPress HTML structure at all.
-const WORDPRESS_TAB_ELEMENT_IDS = [
-  'websiteEmptyState', 'websiteStatusCard', 'websiteStatusError', 'websiteConnectMsg',
-  'websiteIntelligenceSection', 'websiteAuditRunSection', 'websiteAiVisibilitySection',
-  'websiteKeywordRankingsSection', 'websiteSitemapSection', 'websiteCompetitorSection', 'websiteTechnicalSeoSection', 'websiteTaxonomySection', 'websiteBrokenLinksSection',
-  'websiteMediaSection', 'websiteSchemaSection', 'websiteActivityLogSection',
-  'websiteGeneratedPostsSection', 'websiteActionsSection',
-];
 
 // Real, deliberate scalable structure — three tabs now, and any future
 // platform (Webflow, Wix) just adds one more real entry here rather than
@@ -7704,7 +7781,7 @@ const WORDPRESS_TAB_ELEMENT_IDS = [
 // business-level tabs (not tied to any platform) are listed separately
 // below, so adding a platform never adds a tab.
 const PLATFORMS = {
-  wordpress: { sectionId: null },
+  wordpress: { sectionId: 'wordpressView' },
   shopify: { sectionId: 'shopifySection' },
 };
 const PLATFORM_TABS = {
@@ -7713,42 +7790,23 @@ const PLATFORM_TABS = {
 };
 
 function switchPlatformTab(platform) {
-  // The selector shows the active platform, or falls back to its
-  // placeholder while a fixed tab is open — this is what lets picking
-  // the platform that was last shown still count as a change, so
-  // returning from Backlinks to WordPress actually fires.
   const selector = document.getElementById('platformSelector');
   const isPlatformView = platform in PLATFORMS;
   selector.value = isPlatformView ? platform : '';
-  selector.style.borderBottomColor = isPlatformView ? 'var(--purple)' : 'transparent';
-  selector.style.color = isPlatformView ? 'var(--text)' : 'var(--muted)';
+  selector.classList.toggle('is-active', isPlatformView);
+  activeWebsitePlatform = platform;
+  // Exactly one container is ever visible. Everything WordPress lives inside #wordpressView and everything Shopify inside
+  // #shopifySection, so nothing of one platform can show while the other is chosen.
   Object.entries(PLATFORMS).forEach(([key, config]) => {
-    if (config.sectionId) {
-      document.getElementById(config.sectionId).style.display = key === platform ? 'block' : 'none';
-    }
+    document.getElementById(config.sectionId).style.display = key === platform ? '' : 'none';
   });
-
   Object.entries(PLATFORM_TABS).forEach(([key, config]) => {
-    const tabBtn = document.getElementById(config.tabId);
     const isActive = key === platform;
-    tabBtn.style.borderBottomColor = isActive ? 'var(--purple)' : 'transparent';
-    tabBtn.style.color = isActive ? 'var(--text)' : 'var(--muted)';
+    document.getElementById(config.tabId).classList.toggle('active', isActive);
     document.getElementById(config.sectionId).style.display = isActive ? 'block' : 'none';
   });
-
-  if (platform === 'wordpress') {
-    // Real, deliberate re-run of the real, existing, authoritative
-    // WordPress visibility logic — rather than trying to remember and
-    // restore each element's own prior real state here, this just asks
-    // the function that already correctly knows (based on real
-    // connection status) which real elements should show.
-    loadWebsiteSection();
-  } else {
-    WORDPRESS_TAB_ELEMENT_IDS.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
-  }
-
-  if (platform === 'backlinks') loadBacklinkOpportunities();
-  if (platform === 'partnernetwork') loadPartnerNetworkStatus();
+  // The business picker lists only what belongs to the chosen platform (every business for the business-level tabs).
+  applyPlatformBusinessContext(platform);
 }
 
 // ── BACKLINK OPPORTUNITIES ───────────────────────────────────────────────
@@ -7883,10 +7941,14 @@ const CALENDAR_STATUS_COLORS = { scheduled: '#8b5cf6', processing: '#f59e0b', ge
 async function loadContentCalendar(platform) {
   const contentEl = document.getElementById(`${platformUi(platform).prefix}CalendarContent`);
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-schedule?platform=${platform}`);
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-schedule?platform=${platformUi(platform).platform}`);
     const data = await res.json();
-    renderContentCalendar(data.entries || [], contentEl);
+    if (!res.ok) throw new Error(data.error || 'failed');
+    const entries = data.entries || [];
+    renderContentCalendar(entries, contentEl);
+    lastLoaded.calendar[platform] = { ok: true, ids: entries.map(e => `${e.id}:${e.status}`) };
   } catch (e) {
+    lastLoaded.calendar[platform] = { ok: false, ids: [] };
     contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
   }
 }
@@ -8125,15 +8187,16 @@ async function loadShopifyStatus() {
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify`);
     const data = await res.json();
-    if (!res.ok || !data.connection) {
-      document.getElementById('shopifyConnectPrompt').style.display = 'block';
-      document.getElementById('shopifyConnectedWrap').style.display = 'none';
-      return;
-    }
+    if (!res.ok || !data.connection) { showShopifyConnectState(); return; }
     document.getElementById('shopifyConnectPrompt').style.display = 'none';
-    document.getElementById('shopifyConnectedWrap').style.display = 'block';
-    document.getElementById('shopifyDomainLabel').textContent = data.connection.shop_domain;
+    document.getElementById('shopifyConnectedWrap').style.display = '';
+    const domain = document.getElementById('shopifyDomainLabel');
+    domain.textContent = data.connection.shop_domain;
+    domain.href = safeHttpUrl(`https://${data.connection.shop_domain}`) || '#';
+    const bizRec = websiteBusinesses.find(b => b.id === currentWebsiteBusinessId);
+    document.getElementById('shopifyBusinessName').textContent = bizRec ? (bizRec.name || bizRec.website || '') : '';
     currentShopifyConnection = data.connection;
+    overviewState.shopify = { intelligence: data.connection.website_intelligence || null };
     document.getElementById('shopifyAgentCycleFrequency').value = data.connection.agent_cycle_frequency || 'daily';
     renderAgentModeStatus('shopify', data.connection);
     loadActiveRules('shopify');
@@ -8144,8 +8207,9 @@ async function loadShopifyStatus() {
     loadShopifyGeneratedPosts();
     loadShopifySitemapStatus();
     loadTechnicalSeoHistory('shopify');
+    renderJumpNav('shopify');
   } catch (e) {
-    document.getElementById('shopifyConnectPrompt').style.display = 'block';
+    showShopifyConnectState();
   }
 }
 
@@ -8155,10 +8219,15 @@ async function connectShopify() {
     showToast(t('web.invalid_shopify_domain'), 'error');
     return;
   }
+  const isNewBusiness = !currentWebsiteBusinessId;
+  const newName = document.getElementById('shopifyNewBusinessName').value.trim();
+  if (isNewBusiness && !newName) { showToast(t('web.error_missing_business_name'), 'error'); return; }
   const btn = document.getElementById('shopifyConnectBtn');
   btn.disabled = true;
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/connect?shop=${encodeURIComponent(shop)}`);
+    if (!isNewBusiness) rememberBusiness('shopify', currentWebsiteBusinessId);
+    const url = isNewBusiness ? `/api/shopify/connect-new?shop=${encodeURIComponent(shop)}&businessName=${encodeURIComponent(newName)}` : `/api/business/${currentWebsiteBusinessId}/shopify/connect?shop=${encodeURIComponent(shop)}`;
+    const res = await fetch(url);
     const data = await res.json();
     if (!res.ok) {
       showToast(data.error || t('board.connection_error'), 'error');
@@ -8288,119 +8357,117 @@ function renderShopifyGeneratedPosts(posts) {
   }, 5, 'shopifyGeneratedPosts');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Business context — each platform has its own business list and its own remembered business
+// ═══════════════════════════════════════════════════════════════════════════
+let websiteBusinesses = [];            // every business, with has_website_connection / has_shopify_connection
+let activeWebsitePlatform = 'wordpress';
+const PLATFORM_CONN_FLAG = { wordpress: 'has_website_connection', shopify: 'has_shopify_connection' };
+const platformBusinessKey = p => `arreyon_${p}_business_id`;
+const rememberedBusiness = p => { try { return localStorage.getItem(platformBusinessKey(p)); } catch (e) { return null; } };
+const rememberBusiness = (p, id) => { try { localStorage.setItem(platformBusinessKey(p), id); } catch (e) {} };
+const businessLabel = b => escapeHtml(b.name || b.website || 'Untitled business');
+
+// The businesses that belong to this platform: the ones connected to it (all of them for the business-level tabs).
+function businessesForPlatform(platform) {
+  const flag = PLATFORM_CONN_FLAG[platform];
+  return flag ? websiteBusinesses.filter(b => b[flag]) : websiteBusinesses;
+}
+
+function populateBusinessPicker(platform, selectedId) {
+  const select = document.getElementById('websiteBusinessSelect');
+  const list = businessesForPlatform(platform);
+  let html = list.map(b => `<option value="${b.id}">${businessLabel(b)}</option>`).join('');
+  if (platform in PLATFORMS) html += `<option value="__new__">${t('web.add_new_business_option')}</option>`;
+  select.innerHTML = html;
+  select.value = selectedId || (list[0] ? list[0].id : '__new__');
+  return select.value;
+}
+
+// Shows the right business for the chosen platform and loads that platform's view for it — and only that platform's.
+async function applyPlatformBusinessContext(platform) {
+  const list = businessesForPlatform(platform);
+  const saved = rememberedBusiness(platform) || (platform in PLATFORMS ? null : rememberedBusiness('wordpress'));
+  const pick = list.find(b => b.id === saved) || list[0] || null;
+  populateBusinessPicker(platform, pick ? pick.id : '__new__');
+  // With nothing connected on this platform there is nothing to pick: the connect screen takes over.
+  document.getElementById('websiteBusinessPicker').style.display = list.length ? '' : 'none';
+  if (!pick) {
+    currentWebsiteBusinessId = null;
+    if (platform === 'wordpress') showWebsiteEmptyState();
+    else if (platform === 'shopify') showShopifyConnectState();
+    return;
+  }
+  currentWebsiteBusinessId = pick.id;
+  rememberBusiness(platform, pick.id);
+  if (platform === 'wordpress') await loadWebsiteSection();
+  else if (platform === 'shopify') await loadShopifyStatus();
+  else if (platform === 'backlinks') loadBacklinkOpportunities();
+  else if (platform === 'partnernetwork') loadPartnerNetworkStatus();
+}
+
 async function loadWebsiteBusinesses() {
   try {
     const res = await fetch('/api/business');
     const data = await res.json();
-    const businesses = data.businesses || [];
-    const select = document.getElementById('websiteBusinessSelect');
-
+    websiteBusinesses = data.businesses || [];
     document.getElementById('websiteNoBizPrompt').style.display = 'none';
     document.getElementById('websiteMainWrap').style.display = 'block';
-
-    const newBizOption = `<option value="__new__">${t('web.add_new_business_option')}</option>`;
-    select.innerHTML = newBizOption + businesses.map(b => `<option value="${b.id}">${escapeHtml(b.name || b.website || 'Untitled business')}</option>`).join('');
-
-    if (!businesses.length) {
-      // Nothing to select yet — show only the empty state, same as the
-      // existing-business-with-no-connection case below. The dropdown
-      // (and the new-business fields) only appear once "Connect Website"
-      // is actually clicked, not before.
-      currentWebsiteBusinessId = null;
-      select.value = '__new__';
-      select.parentElement.style.display = 'none';
-      document.getElementById('websiteEmptyState').style.display = 'block';
-      document.getElementById('websiteConnectForm').style.display = 'none';
-      document.getElementById('websiteStatusCard').style.display = 'none';
-      document.getElementById('websiteIntelligenceSection').style.display = 'none';
-      document.getElementById('websiteTaxonomySection').style.display = 'none';
-      document.getElementById('websiteBrokenLinksSection').style.display = 'none';
-      document.getElementById('websiteMediaSection').style.display = 'none';
-      document.getElementById('websiteSchemaSection').style.display = 'none';
-      document.getElementById('websiteActivityLogSection').style.display = 'none';
-      document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
-      document.getElementById('websiteAuditRunSection').style.display = 'none';
-      document.getElementById('websiteAiVisibilitySection').style.display = 'none';
-      document.getElementById('websiteKeywordRankingsSection').style.display = 'none';
-      document.getElementById('websiteSitemapSection').style.display = 'none';
-      document.getElementById('websiteCompetitorSection').style.display = 'none';
-      document.getElementById('websiteTechnicalSeoSection').style.display = 'none';
-      document.getElementById('websiteActionsSection').style.display = 'none';
-      return;
-    }
-
-    let savedId;
-    try { savedId = localStorage.getItem('arreyon_website_business_id'); } catch (e) {}
-    const stillExists = savedId && businesses.some(b => b.id === savedId);
-    // Real, deliberate preference for a business that's actually
-    // connected — falling back to plain businesses[0] regardless of
-    // connection status meant "Connect Website" could show even when
-    // a different business in the list genuinely has one.
-    const connectedBusiness = businesses.find(b => b.has_website_connection);
-    currentWebsiteBusinessId = stillExists ? savedId : (connectedBusiness ? connectedBusiness.id : businesses[0].id);
-    select.value = currentWebsiteBusinessId;
-
-    // Real, deliberate independent load — Shopify's own connection state
-    // has nothing to do with whether WordPress is connected, so this
-    // always runs once a real business is selected, regardless of what
-    // loadWebsiteSection() below finds.
-    loadShopifyStatus();
-
-    // The dropdown is revealed only if this default business already has
-    // a real connection to show — genuinely useful at that point for
-    // switching between businesses. If not, only the empty state shows,
-    // and the dropdown stays hidden until "Connect Website" is clicked.
-    const hasConnection = await loadWebsiteSection();
-    select.parentElement.style.display = hasConnection ? 'block' : 'none';
-
-    // Applied only once init has finished, because loadWebsiteSection()
-    // re-shows WordPress elements as it completes — switching earlier
-    // (e.g. straight after the Shopify OAuth redirect lands) would be
-    // silently undone by it.
-    if (window.pendingPlatformView) {
-      switchPlatformTab(window.pendingPlatformView);
-      window.pendingPlatformView = null;
-    }
+    enhanceCards();
+    // Applied once init has finished: the view re-shows its own elements as it loads, so switching earlier (e.g. straight
+    // after the Shopify sign-in redirect lands) would be undone by it.
+    const platform = window.pendingPlatformView || activeWebsitePlatform;
+    window.pendingPlatformView = null;
+    switchPlatformTab(platform);
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
 }
 
-// Handles the business selector's own onchange — either loads the
-// selected existing business's connection state normally, or switches
-// into the new-business path (a text field for the business name, and
-// the connect form itself shown directly, since there's no existing
-// connection state to check yet). Only reachable once the dropdown is
-// already visible, so it never needs to manage the dropdown's own
-// visibility — once shown, it stays shown regardless of which business
-// is picked next.
+
+// Connecting: which business is this site for? One of the businesses with no site on this platform yet, or a new one
+// (which asks for its name).
+function populateConnectBusinessChooser(platform) {
+  const sel = document.getElementById(platform === 'shopify' ? 'shopifyConnectBusiness' : 'websiteConnectBusiness');
+  if (!sel) return;
+  const flag = PLATFORM_CONN_FLAG[platform];
+  sel.innerHTML = `<option value="__new__">${t('web.connect_new_business_option')}</option>` + websiteBusinesses.filter(b => !b[flag]).map(b => `<option value="${b.id}">${businessLabel(b)}</option>`).join('');
+  sel.value = '__new__';
+  onConnectBusinessChange(platform);
+}
+function onConnectBusinessChange(platform) {
+  const sel = document.getElementById(platform === 'shopify' ? 'shopifyConnectBusiness' : 'websiteConnectBusiness');
+  const isNew = !sel || sel.value === '__new__';
+  currentWebsiteBusinessId = isNew ? null : sel.value;
+  const nameGroup = document.getElementById(platform === 'shopify' ? 'shopifyNewBusinessNameGroup' : 'newBusinessNameGroup');
+  if (nameGroup) nameGroup.style.display = isNew ? 'block' : 'none';
+}
+
+// Every WordPress block that only makes sense once a site is connected.
+const WEBSITE_CONNECTED_BLOCKS = ['websiteStatusCard', 'websiteIntelligenceSection', 'websiteAuditRunSection', 'websiteAiVisibilitySection', 'websiteKeywordRankingsSection', 'websiteSitemapSection', 'websiteCompetitorSection', 'websiteTechnicalSeoSection', 'websiteBrokenLinksSection', 'websiteSchemaSection', 'websiteMediaSection', 'websiteGeneratedPostsSection', 'websiteActionsSection', 'websiteActivityLogSection'];
+function setWebsiteConnectedVisible(visible) {
+  WEBSITE_CONNECTED_BLOCKS.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = visible ? '' : 'none'; });
+  document.getElementById('websiteEmptyState').style.display = visible ? 'none' : 'block';
+  if (visible) hideWebsiteConnectForm();
+  renderJumpNav('website');
+}
+function showWebsiteEmptyState() { setWebsiteConnectedVisible(false); hideWebsiteConnectForm(); }
+
+// The business picker's own change: which business this platform shows, or the connect screen for a new one.
 function onWebsiteBusinessSelectChange() {
-  const select = document.getElementById('websiteBusinessSelect');
+  const platform = activeWebsitePlatform, select = document.getElementById('websiteBusinessSelect');
   if (select.value === '__new__') {
+    // "Add a new business": the connect screen of THIS platform (never the other one's).
     currentWebsiteBusinessId = null;
-    document.getElementById('newBusinessNameGroup').style.display = 'block';
-    document.getElementById('websiteEmptyState').style.display = 'none';
-    document.getElementById('websiteConnectForm').style.display = 'block';
-    document.getElementById('websiteStatusCard').style.display = 'none';
-    document.getElementById('websiteIntelligenceSection').style.display = 'none';
-    document.getElementById('websiteTaxonomySection').style.display = 'none';
-    document.getElementById('websiteBrokenLinksSection').style.display = 'none';
-    document.getElementById('websiteMediaSection').style.display = 'none';
-    document.getElementById('websiteSchemaSection').style.display = 'none';
-    document.getElementById('websiteActivityLogSection').style.display = 'none';
-    document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
-    document.getElementById('websiteAuditRunSection').style.display = 'none';
-    document.getElementById('websiteAiVisibilitySection').style.display = 'none';
-    document.getElementById('websiteKeywordRankingsSection').style.display = 'none';
-    document.getElementById('websiteSitemapSection').style.display = 'none';
-    document.getElementById('websiteCompetitorSection').style.display = 'none';
-    document.getElementById('websiteTechnicalSeoSection').style.display = 'none';
-    document.getElementById('websiteActionsSection').style.display = 'none';
-    resetWebsiteConnectForm();
+    if (platform === 'wordpress') showWebsiteConnectForm(); else if (platform === 'shopify') showShopifyConnectState();
     return;
   }
-  document.getElementById('newBusinessNameGroup').style.display = 'none';
-  loadWebsiteSection();
+  currentWebsiteBusinessId = select.value;
+  rememberBusiness(platform, select.value);
+  if (platform === 'wordpress') loadWebsiteSection();
+  else if (platform === 'shopify') loadShopifyStatus();
+  else if (platform === 'backlinks') loadBacklinkOpportunities();
+  else if (platform === 'partnernetwork') loadPartnerNetworkStatus();
 }
 
 const WEBSITE_STATUS_STYLES = {
@@ -8414,7 +8481,11 @@ const WEBSITE_STATUS_STYLES = {
 
 function renderWebsiteStatusCard(connection) {
   document.getElementById('websiteSiteName').textContent = connection.site_name || connection.site_url;
-  document.getElementById('websiteSiteUrl').textContent = connection.site_url;
+  const siteLink = document.getElementById('websiteSiteUrl');
+  siteLink.textContent = connection.site_url;
+  siteLink.href = safeHttpUrl(connection.site_url) || '#';
+  const bizRec = websiteBusinesses.find(b => b.id === currentWebsiteBusinessId);
+  document.getElementById('websiteBusinessName').textContent = bizRec ? (bizRec.name || bizRec.website || '') : '';
   const style = WEBSITE_STATUS_STYLES[connection.connection_status] || WEBSITE_STATUS_STYLES.pending;
   const badge = document.getElementById('websiteStatusBadge');
   badge.textContent = t(style.labelKey);
@@ -8442,13 +8513,9 @@ function renderWebsiteStatusCard(connection) {
 // client-side flag — connection_status can change server-side (e.g. a
 // revoked Application Password) between visits.
 async function loadWebsiteSection() {
-  const select = document.getElementById('websiteBusinessSelect');
-  currentWebsiteBusinessId = select.value || currentWebsiteBusinessId;
   if (!currentWebsiteBusinessId || currentWebsiteBusinessId === '__new__') return false;
-  try { localStorage.setItem('arreyon_website_business_id', currentWebsiteBusinessId); } catch (e) {}
 
   hideWebsiteConnectForm();
-  document.getElementById('newBusinessNameGroup').style.display = 'none';
 
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website?lang=${window.currentLang || 'en'}`);
@@ -8456,44 +8523,14 @@ async function loadWebsiteSection() {
     const connection = data.connection;
 
     if (!connection || connection.connection_status === 'disconnected') {
-      document.getElementById('websiteEmptyState').style.display = 'block';
-      document.getElementById('websiteStatusCard').style.display = 'none';
-      document.getElementById('websiteIntelligenceSection').style.display = 'none';
-      document.getElementById('websiteTaxonomySection').style.display = 'none';
-      document.getElementById('websiteBrokenLinksSection').style.display = 'none';
-      document.getElementById('websiteMediaSection').style.display = 'none';
-      document.getElementById('websiteSchemaSection').style.display = 'none';
-      document.getElementById('websiteActivityLogSection').style.display = 'none';
-      document.getElementById('websiteGeneratedPostsSection').style.display = 'none';
-      document.getElementById('websiteAuditRunSection').style.display = 'none';
-      document.getElementById('websiteAiVisibilitySection').style.display = 'none';
-      document.getElementById('websiteKeywordRankingsSection').style.display = 'none';
-      document.getElementById('websiteSitemapSection').style.display = 'none';
-      document.getElementById('websiteCompetitorSection').style.display = 'none';
-      document.getElementById('websiteTechnicalSeoSection').style.display = 'none';
-      document.getElementById('websiteActionsSection').style.display = 'none';
+      showWebsiteEmptyState();
       return false;
     }
 
-    document.getElementById('websiteEmptyState').style.display = 'none';
-    document.getElementById('websiteStatusCard').style.display = 'block';
-    document.getElementById('websiteIntelligenceSection').style.display = 'block';
-    document.getElementById('websiteTaxonomySection').style.display = 'block';
-    document.getElementById('websiteBrokenLinksSection').style.display = 'block';
-    document.getElementById('websiteMediaSection').style.display = 'block';
-    document.getElementById('websiteSchemaSection').style.display = 'block';
-    document.getElementById('websiteActivityLogSection').style.display = 'block';
-    document.getElementById('websiteGeneratedPostsSection').style.display = 'block';
-    document.getElementById('websiteAuditRunSection').style.display = 'block';
-    document.getElementById('websiteAiVisibilitySection').style.display = 'block';
-    document.getElementById('websiteKeywordRankingsSection').style.display = 'block';
-    document.getElementById('websiteSitemapSection').style.display = 'block';
-    document.getElementById('websiteCompetitorSection').style.display = 'block';
-    document.getElementById('websiteTechnicalSeoSection').style.display = 'block';
-    document.getElementById('websiteActionsSection').style.display = 'block';
+    setWebsiteConnectedVisible(true);
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
-    loadWebsiteTaxonomy();
+    setOverview('website', { intelligence: connection.website_intelligence || null });
     loadWebsiteSchema();
     loadWebsiteActivityLog();
     loadWebsiteGeneratedPosts();
@@ -8521,12 +8558,11 @@ async function loadWebsiteSection() {
 // loadWebsiteBusinesses), so the new-business name field shows exactly
 // when it should without this function needing to know which case it is.
 function showWebsiteConnectForm() {
-  const select = document.getElementById('websiteBusinessSelect');
-  select.parentElement.style.display = 'block';
-  document.getElementById('newBusinessNameGroup').style.display = select.value === '__new__' ? 'block' : 'none';
   document.getElementById('websiteConnectForm').style.display = 'block';
   document.getElementById('websiteEmptyState').style.display = 'none';
   document.getElementById('websiteConnectMsg').style.display = 'none';
+  WEBSITE_CONNECTED_BLOCKS.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+  populateConnectBusinessChooser('wordpress');
   resetWebsiteConnectForm();
 }
 function hideWebsiteConnectForm() {
@@ -8608,10 +8644,7 @@ async function generateWebsiteConnectionCode() {
       return;
     }
 
-    if (isNewBusiness && data.businessId) {
-      currentWebsiteBusinessId = data.businessId;
-      try { localStorage.setItem('arreyon_website_business_id', data.businessId); } catch (e) {}
-    }
+    if (isNewBusiness && data.businessId) currentWebsiteBusinessId = data.businessId;
 
     websiteCodeExpiresAt = new Date(data.expiresAt);
     document.getElementById('wpConnectionCodeText').textContent = data.code;
@@ -8655,6 +8688,8 @@ async function checkWebsiteCodeConnectionProgress() {
     if (data.connection && data.connection.connection_status !== 'disconnected') {
       stopWebsiteCodePolling();
       showToast(t('web.connected_success'), 'success');
+      rememberBusiness('wordpress', currentWebsiteBusinessId);
+      activeWebsitePlatform = 'wordpress';
       loadWebsiteBusinesses();
     }
   } catch (e) {
@@ -8703,10 +8738,9 @@ async function connectWebsite() {
       document.getElementById('wpUsername').value = '';
       document.getElementById('wpAppPassword').value = '';
       showToast(t('web.connected_success'), 'success');
-      if (isNewBusiness && data.businessId) {
-        try { localStorage.setItem('arreyon_website_business_id', data.businessId); } catch (e) {}
-        currentWebsiteBusinessId = data.businessId;
-      }
+      if (isNewBusiness && data.businessId) currentWebsiteBusinessId = data.businessId;
+      if (currentWebsiteBusinessId) rememberBusiness('wordpress', currentWebsiteBusinessId);
+      activeWebsitePlatform = 'wordpress';
       loadWebsiteBusinesses();
     } else {
       msgEl.textContent = data.error || t('board.connection_error');
@@ -8870,6 +8904,7 @@ async function loadShopifyActions() {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/actions`);
     const data = await res.json();
     renderShopifyActions(data.actions || []);
+    setOverview('shopify', { pending: (data.actions || []).filter(a => a.approval_status === 'pending').length });
   } catch (e) {
     contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
   }
@@ -8980,70 +9015,7 @@ async function generateOrganizationSchema() {
   }
 }
 
-async function loadWebsiteTaxonomy() {
-  const catList = document.getElementById('websiteCategoriesList');
-  const tagList = document.getElementById('websiteTagsList');
-  const renderList = (el, items, emptyKey) => {
-    if (!items.length) {
-      el.innerHTML = `<div style="font-size:12.5px;color:var(--muted);padding:8px 0">${t(emptyKey)}</div>`;
-      return;
-    }
-    el.innerHTML = items.map(item => `
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:8px;background:var(--bg2);border:1px solid var(--border);margin-bottom:6px">
-        <span style="font-size:13px;color:var(--text)">${escapeHtml(item.name)}</span>
-        <span style="font-size:11px;color:var(--muted)">${item.count}</span>
-      </div>`).join('');
-  };
 
-  try {
-    const [catRes, tagRes] = await Promise.all([
-      fetch(`/api/business/${currentWebsiteBusinessId}/website/categories`),
-      fetch(`/api/business/${currentWebsiteBusinessId}/website/tags`),
-    ]);
-    const catData = await catRes.json();
-    const tagData = await tagRes.json();
-
-    if (catData.pendingPoll || tagData.pendingPoll) {
-      const msg = `<div style="font-size:12.5px;color:var(--muted);padding:8px 0">${escapeHtml(catData.message || tagData.message)}</div>`;
-      catList.innerHTML = msg;
-      tagList.innerHTML = msg;
-      return;
-    }
-    renderList(catList, catData.categories || [], 'web.no_categories');
-    renderList(tagList, tagData.tags || [], 'web.no_tags');
-  } catch (e) {
-    catList.innerHTML = `<div style="font-size:12.5px;color:#ff8080;padding:8px 0">${t('board.connection_error')}</div>`;
-    tagList.innerHTML = '';
-  }
-}
-
-async function createWebsiteTaxonomyTerm(taxonomyType) {
-  const inputId = taxonomyType === 'tag' ? 'newTagName' : 'newCategoryName';
-  const input = document.getElementById(inputId);
-  const name = input.value.trim();
-  if (!name) return;
-
-  try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/${taxonomyType === 'tag' ? 'tags' : 'categories'}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
-    });
-    const data = await res.json();
-    if (data.queuedForPoll) {
-      showToast(data.message, 'success');
-      input.value = '';
-      return;
-    }
-    if (!res.ok) {
-      showToast(data.error || t('board.connection_error'), 'error');
-      return;
-    }
-    showToast(t('web.taxonomy_created').replace('{name}', name), 'success');
-    input.value = '';
-    loadWebsiteTaxonomy();
-  } catch (e) {
-    showToast(t('board.connection_error'), 'error');
-  }
-}
 
 // Real, deliberate visual separation of AI-generated content (findings,
 // recommendations) visually distinct from the real, measured counts
@@ -9167,6 +9139,7 @@ function syncModeSwitch(prefix, conn) {
 
 function renderAgentModeStatus(prefix, conn) {
   syncModeSwitch(prefix, conn);
+  renderOverviewTiles(prefix);
   const el = document.getElementById(`${prefix}AgentModeStatus`);
   if (!el || !conn) return;
   let html;
@@ -9263,12 +9236,14 @@ async function loadAgentActivity(prefix) {
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/agent-activity?platform=${platformUi(prefix).platform}`);
     const data = await res.json();
-    if (!res.ok) { el.innerHTML = `<div style="font-size:12px;color:#ff8080">${escapeHtml(data.error || t('board.connection_error'))}</div>`; return false; }
+    if (!res.ok) { lastLoaded.activity[prefix] = { ok: false, ids: [] }; el.innerHTML = `<div style="font-size:12px;color:#ff8080">${escapeHtml(data.error || t('board.connection_error'))}</div>`; return false; }
     renderAgentActivity(prefix, data.entries || []);
+    lastLoaded.activity[prefix] = { ok: true, ids: (data.entries || []).map(e => e.id) };
     setAgentRunBadge(prefix, data.running ? (data.stopping ? 'stopping' : 'running') : null);
     if (data.running && !agentRunPollers[prefix]) watchAgentRun(prefix);
     return !!data.running;
   } catch (e) {
+    lastLoaded.activity[prefix] = { ok: false, ids: [] };
     el.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
     return false;
   }
@@ -9873,6 +9848,8 @@ async function loadTechnicalSeoHistory(platform) {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${platformUi(platform).api}/technical-seo/history`);
     const data = await res.json();
     renderTechnicalSeoHistory(contentEl, data.checks || []);
+    const latest = (data.checks || [])[0];
+    setOverview(platform, { tech: latest ? { perf: latest.performance_score, seo: latest.seo_score, at: latest.checked_at } : null });
   } catch (e) {
     contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
   }
@@ -10039,6 +10016,126 @@ function useCompetitorTopic(i) {
   showToast(t('web.competitor_topic_filled'), 'success');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Website tool — overview tiles, jump navigation, cards, refresh feedback, clear history
+// ═══════════════════════════════════════════════════════════════════════════
+const overviewState = { website: {}, shopify: {} };
+function setOverview(prefix, patch) { Object.assign(overviewState[prefix] = overviewState[prefix] || {}, patch); renderOverviewTiles(prefix); }
+
+// Four tiles at the top of a platform view, filled from what the page has already loaded (nothing extra is requested).
+function renderOverviewTiles(prefix) {
+  const s = overviewState[prefix] || {};
+  const conn = prefix === 'shopify' ? currentShopifyConnection : currentWebsiteConnection;
+  const set = (suffix, html) => { const el = document.getElementById(`${prefix}${suffix}`); if (el) el.innerHTML = html; };
+  const m = s.intelligence && s.intelligence.measured;
+  const attention = m ? (m.pagesWithNoMetaDescription || 0) + (m.postsWithNoMetaDescription || 0) + (m.pagesUnder300Words || 0) + (m.postsUnder300Words || 0) : 0;
+  set('StatContent', m ? `${m.pageCount || 0} ${escapeHtml(t('web.pages_label'))} · ${m.postCount || 0} ${escapeHtml(t('web.posts_label'))}<small>${escapeHtml(tf('web.stat_need_attention', { n: attention }))}</small>` : '–');
+  set('StatPending', s.pending == null ? '–' : (s.pending ? `${s.pending}<small>${escapeHtml(t('web.stat_pending_hint'))}</small>` : escapeHtml(t('web.stat_none_waiting'))));
+  set('StatTech', s.tech ? `${escapeHtml(tf('web.stat_perf_seo', { perf: s.tech.perf == null ? '–' : s.tech.perf, seo: s.tech.seo == null ? '–' : s.tech.seo }))}<small>${escapeHtml(formatTimestamp(s.tech.at))}</small>` : '–');
+  if (conn) {
+    const auto = conn.automation_mode === 'automatic';
+    set('StatAgent', `${escapeHtml(t(auto ? 'web.mode_automatic' : 'web.mode_manual'))}<small>${escapeHtml(conn.agent_last_cycle_at ? tf('web.stat_last_run', { time: timeAgo(new Date(conn.agent_last_cycle_at)) }) : t('web.stat_never_run'))}</small>`);
+  }
+}
+
+// A row of chips that jump to a section — only for the sections actually showing.
+const JUMP_TARGETS = {
+  website: [['websiteHeroCard', 'web.nav_overview'], ['websiteAgentCard', 'web.nav_agent'], ['websiteCalendarCard', 'web.nav_calendar'], ['websiteActivityCard', 'web.nav_activity'], ['websiteIntelligenceSection', 'web.nav_intelligence'], ['websiteAuditRunSection', 'web.nav_audit'], ['websiteCompetitorSection', 'web.nav_competitors'], ['websiteTechnicalSeoSection', 'web.nav_technical'], ['websiteGeneratedPostsSection', 'web.nav_posts'], ['websiteActionsSection', 'web.nav_approvals'], ['websiteActivityLogSection', 'web.nav_log']],
+  shopify: [['shopifyHeroCard', 'web.nav_overview'], ['shopifyAgentCard', 'web.nav_agent'], ['shopifyCalendarCard', 'web.nav_calendar'], ['shopifyActivityCard', 'web.nav_activity'], ['shopifyIntelligenceSection', 'web.nav_intelligence'], ['shopifyAuditSection', 'web.nav_audit'], ['shopifyTechnicalSeoSection', 'web.nav_technical'], ['shopifyGeneratedPostsSection', 'web.nav_posts'], ['shopifyActionsSection', 'web.nav_approvals']],
+};
+const isShown = el => !!el && el.getClientRects().length > 0;
+function renderJumpNav(prefix) {
+  const nav = document.getElementById(`${prefix}JumpNav`); if (!nav) return;
+  const chips = (JUMP_TARGETS[prefix] || []).filter(([id]) => isShown(document.getElementById(id)));
+  nav.innerHTML = chips.map(([id, key]) => `<button type="button" onclick="jumpToSection('${id}')">${escapeHtml(t(key))}</button>`).join('');
+  nav.style.display = chips.length ? '' : 'none';
+}
+function jumpToSection(id) { const el = document.getElementById(id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+
+// Cards: every section gets the same header (icon, title, actions, fold-away chevron). Folded state is remembered.
+const ICON_PATHS = {
+  brain: '<path d="M9.5 2A2.5 2.5 0 0 0 7 4.5v0A2.5 2.5 0 0 0 4.5 7v0A2.5 2.5 0 0 0 3 9.5v5A2.5 2.5 0 0 0 5.5 17v0A2.5 2.5 0 0 0 8 19.5v0A2.5 2.5 0 0 0 12 21V3a2.5 2.5 0 0 0-2.5-1zM14.5 2A2.5 2.5 0 0 1 17 4.5v0A2.5 2.5 0 0 1 19.5 7v0A2.5 2.5 0 0 1 21 9.5v5a2.5 2.5 0 0 1-2.5 2.5v0a2.5 2.5 0 0 1-2.5 2.5v0A2.5 2.5 0 0 1 12 21"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>', eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+  chart: '<path d="M3 3v18h18"/><path d="M7 15v3M12 9v9M17 12v6"/>', map: '<path d="M9 3 3 5v16l6-2 6 2 6-2V3l-6 2-6-2zM9 3v16M15 5v16"/>', target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+  gauge: '<path d="m12 14 4-4"/><path d="M3.3 19a10 10 0 1 1 17.4 0"/>', unlink: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/><path d="m2 2 20 20"/>',
+  code: '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>', image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
+  file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>', check: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/>', list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+};
+const SECTION_ICONS = { shopifyIntelligenceSection: 'brain', shopifyAuditSection: 'shield', shopifySitemapSection: 'map', shopifyTechnicalSeoSection: 'gauge', shopifyGeneratedPostsSection: 'file', shopifyActionsSection: 'check', websiteIntelligenceSection: 'brain', websiteAuditRunSection: 'shield', websiteAiVisibilitySection: 'eye', websiteKeywordRankingsSection: 'chart', websiteSitemapSection: 'map', websiteCompetitorSection: 'target', websiteTechnicalSeoSection: 'gauge', websiteBrokenLinksSection: 'unlink', websiteSchemaSection: 'code', websiteMediaSection: 'image', websiteGeneratedPostsSection: 'file', websiteActionsSection: 'check', websiteActivityLogSection: 'list' };
+const iconSvg = key => ICON_PATHS[key] ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[key]}</svg>` : '';
+const CHEVRON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+const readCollapsed = () => { try { return JSON.parse(localStorage.getItem('arreyon_wt_collapsed') || '{}'); } catch (e) { return {}; } };
+const saveCollapsed = map => { try { localStorage.setItem('arreyon_wt_collapsed', JSON.stringify(map)); } catch (e) {} };
+function toggleCard(card) {
+  const folded = card.classList.toggle('collapsed');
+  const map = readCollapsed(); if (folded) map[card.id] = true; else delete map[card.id]; saveCollapsed(map);
+  const btn = card.querySelector(':scope > .wt-card-head .wt-chevron'); if (btn) btn.setAttribute('aria-expanded', folded ? 'false' : 'true');
+}
+let cardsEnhanced = false;
+function enhanceCards() {
+  if (cardsEnhanced) return; cardsEnhanced = true;
+  const folded = readCollapsed();
+  document.querySelectorAll('#wordpressView .wt-card:not(.wt-hero), #shopifySection .wt-card:not(.wt-hero)').forEach(card => {
+    const head = card.firstElementChild; if (!head) return;
+    if (!head.classList.contains('wt-card-head')) {       // an older section header: give it the same look
+      head.classList.add('wt-card-head');
+      const titleEl = head.querySelector('.section-title');
+      const main = document.createElement('div'); main.className = 'wt-card-head-main';
+      if (SECTION_ICONS[card.id]) { const ic = document.createElement('div'); ic.className = 'wt-card-icon'; ic.innerHTML = iconSvg(SECTION_ICONS[card.id]); main.appendChild(ic); }
+      if (titleEl) { titleEl.classList.add('wt-card-title'); titleEl.style.margin = '0'; main.appendChild(titleEl); }
+      const actions = document.createElement('div'); actions.className = 'wt-card-actions';
+      while (head.firstChild) actions.appendChild(head.firstChild);
+      head.appendChild(main); head.appendChild(actions);
+    }
+    let actions = head.querySelector(':scope > .wt-card-actions');
+    if (!actions) { actions = document.createElement('div'); actions.className = 'wt-card-actions'; head.appendChild(actions); }
+    const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'wt-chevron'; btn.innerHTML = CHEVRON_SVG;
+    btn.setAttribute('aria-label', t('web.collapse')); btn.setAttribute('aria-expanded', 'true'); btn.onclick = () => toggleCard(card);
+    head.appendChild(btn);   // beside the actions, not inside them: a wrapping row of buttons must never push the arrow onto its own line
+    if (folded[card.id]) { card.classList.add('collapsed'); btn.setAttribute('aria-expanded', 'false'); }
+  });
+}
+
+// Refresh that visibly does something: a spinner while it works, then when it finished and whether anything is new.
+const lastLoaded = { calendar: {}, activity: {} };
+async function refreshWithFeedback(prefix, kind) {
+  const part = kind === 'calendar' ? 'Calendar' : 'Activity';
+  const btn = document.getElementById(`${prefix}${part}RefreshBtn`), sync = document.getElementById(`${prefix}${part}Sync`);
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  const before = new Set((lastLoaded[kind][prefix] || {}).ids || []);
+  if (sync) sync.innerHTML = `<span class="wt-spin"></span>${escapeHtml(t('web.refreshing'))}`;
+  const started = Date.now();
+  try { if (kind === 'calendar') await loadContentCalendar(prefix); else await loadAgentActivity(prefix); } catch (e) { lastLoaded[kind][prefix] = { ok: false, ids: [] }; }
+  await new Promise(r => setTimeout(r, Math.max(0, 450 - (Date.now() - started)))); // long enough to be seen
+  btn.disabled = false;
+  const now = lastLoaded[kind][prefix];
+  if (!sync) return;
+  if (!now || !now.ok) { sync.innerHTML = `<span style="color:#ff8080">${escapeHtml(t('web.refresh_failed'))}</span>`; return; }
+  const fresh = now.ids.filter(id => !before.has(id)).length;
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  sync.innerHTML = `${escapeHtml(tf('web.updated_at', { time }))} · ${fresh ? `<span class="wt-new">${escapeHtml(tf('web.refresh_new_entries', { n: fresh }))}</span>` : escapeHtml(t('web.refresh_no_new'))}`;
+}
+
+// Clear history: only this platform's entries for this business; the calendar keeps everything still to come.
+async function clearHistory(prefix, kind) {
+  if (!confirm(t(kind === 'calendar' ? 'web.clear_calendar_confirm' : 'web.clear_activity_confirm'))) return;
+  const platform = platformUi(prefix).platform;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${kind === 'calendar' ? 'content-schedule' : 'agent-activity'}?platform=${platform}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
+    showToast(data.removed ? tf('web.cleared_toast', { n: data.removed }) : t('web.nothing_to_clear'), 'success');
+    if (kind === 'calendar') await loadContentCalendar(prefix); else await loadAgentActivity(prefix);
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+}
+
+function showShopifyConnectState() {
+  document.getElementById('shopifyConnectPrompt').style.display = 'block';
+  document.getElementById('shopifyConnectedWrap').style.display = 'none';
+  populateConnectBusinessChooser('shopify');
+}
+
 async function loadWebsiteSitemapStatus() {
   const contentEl = document.getElementById('websiteSitemapContent');
   try {
@@ -10177,11 +10274,40 @@ function renderAuditRunsList(runs) {
   }, 5, 'auditRuns');
 }
 
+// The "Suggest Categories & Tags" button in Proposed Changes: the AI proposes tag assignments, and you approve them.
+async function generateTaxonomyProposals() {
+  const btn = document.getElementById('websiteTaxonomyProposalsBtn');
+  btn.disabled = true;
+  btn.textContent = t('web.finding_categorization');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/taxonomy-proposals`, { method: 'POST' });
+    const data = await res.json();
+    if (data.pendingPoll) {
+      showToast(data.message, 'success');
+    } else if (res.ok) {
+      if (data.proposals && data.proposals.length) {
+        showToast(describeProposalResults(data.proposals), 'success');
+      } else {
+        showToast(data.message || t('web.no_proposals_found_toast'), 'success');
+      }
+      loadWebsiteActions();
+    } else {
+      showToast(data.error || t('board.connection_error'), 'error');
+    }
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.suggest_categories_tags');
+  }
+}
+
 async function loadWebsiteActions() {
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/actions`);
     const data = await res.json();
     renderWebsiteActionsContent(data.actions || []);
+    setOverview('website', { pending: (data.actions || []).filter(a => a.approval_status === 'pending').length });
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
   }
@@ -10488,32 +10614,6 @@ async function generateSeoProposals() {
   }
 }
 
-async function generateTaxonomyProposals() {
-  const btn = document.getElementById('websiteTaxonomyProposalsBtn');
-  btn.disabled = true;
-  btn.textContent = t('web.finding_categorization');
-  try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/taxonomy-proposals`, { method: 'POST' });
-    const data = await res.json();
-    if (data.pendingPoll) {
-      showToast(data.message, 'success');
-    } else if (res.ok) {
-      if (data.proposals && data.proposals.length) {
-        showToast(describeProposalResults(data.proposals), 'success');
-      } else {
-        showToast(data.message || t('web.no_proposals_found_toast'), 'success');
-      }
-      loadWebsiteActions();
-    } else {
-      showToast(data.error || t('board.connection_error'), 'error');
-    }
-  } catch (e) {
-    showToast(t('board.connection_error'), 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = t('web.suggest_categories_tags');
-  }
-}
 
 async function generateDuplicateTitleProposals() {
   const btn = document.getElementById('websiteDuplicateTitleBtn');
