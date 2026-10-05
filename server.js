@@ -6766,7 +6766,7 @@ app.get('/api/business/:id/website/keyword-rankings', authRequired, async (req, 
     if (error) return res.status(status).json({ error });
     const out = await loadKeywordRankingsFor(wordpressKeywordSpec, account.id, siteConnection, siteConnection.site_url);
     if (out.error) return res.status(out.status).json({ error: out.error });
-    res.json({ rankings: out.rankings, snapshotDate: out.snapshotDate });
+    res.json({ rankings: out.rankings, snapshotDate: out.snapshotDate, comparedWith: out.comparedWith, trendAvailable: out.trendAvailable });
   } catch (err) {
     console.error('Keyword rankings error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to load keyword rankings. Please try again.' });
@@ -9241,7 +9241,7 @@ app.get('/api/business/:id/shopify/keyword-rankings', authRequired, async (req, 
     // The store's real domain (what customers and Google use), never its myshopify.com address
     const out = await loadKeywordRankingsFor(shopifyKeywordSpec, account.id, conn, await shopifyStoreUrlFor(conn));
     if (out.error) return res.status(out.status).json({ error: out.error });
-    res.json({ rankings: out.rankings, snapshotDate: out.snapshotDate });
+    res.json({ rankings: out.rankings, snapshotDate: out.snapshotDate, comparedWith: out.comparedWith, trendAvailable: out.trendAvailable });
   } catch (err) {
     console.error('Shopify keyword rankings error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to load keyword rankings. Please try again.' });
@@ -17074,8 +17074,33 @@ async function loadKeywordRankingsFor(spec, accountId, connection, siteUrl) {
       [connection.id, r.query, r.clicks, r.impressions, r.ctr, r.avgPosition, snapshotDate]
     );
   }
-  // Position 11-20 with real impressions: Google already shows the site for this query, just on page two. The most actionable signal here.
-  return { rankings: rankings.map(r => ({ ...r, isPageTwoOpportunity: r.avgPosition >= 11 && r.avgPosition <= 20 && r.impressions >= 5 })), snapshotDate };
+  // Which way each query is moving: its position now against its position in the most recent snapshot that is at least 6 days old
+  // (never today's own, never one from a few hours ago). The snapshot table keeps this history; nothing is compared if there is none.
+  // A LOWER position number is better, so positionChange is previous minus now: positive means it improved. A move of less than half
+  // a position is "steady", not movement. A query with no earlier record is "new" (only once some history exists at all).
+  const earlier = await pool.query(`SELECT MAX(snapshot_date)::text AS compared_with FROM ${spec.table} WHERE ${spec.fk} = $1 AND snapshot_date <= CURRENT_DATE - 6`, [connection.id]);
+  const comparedWith = earlier.rows[0].compared_with || null, trendAvailable = !!comparedWith;
+  const previous = new Map();
+  if (trendAvailable && rankings.length) {
+    const prev = await pool.query(
+      `SELECT DISTINCT ON (query) query, avg_position, snapshot_date::text AS snapshot_date FROM ${spec.table}
+       WHERE ${spec.fk} = $1 AND snapshot_date <= CURRENT_DATE - 6 AND query = ANY($2) ORDER BY query, snapshot_date DESC`, [connection.id, rankings.map(r => r.query)]);
+    for (const p of prev.rows) previous.set(p.query, p);
+  }
+  return {
+    rankings: rankings.map(r => {
+      // Position 11-20 with real impressions: Google already shows the site for this query, just on page two. The most actionable signal here.
+      const out = { ...r, isPageTwoOpportunity: r.avgPosition >= 11 && r.avgPosition <= 20 && r.impressions >= 5, trend: null, positionChange: null, previousPosition: null, previousDate: null };
+      if (!trendAvailable) return out;
+      const p = previous.get(r.query);
+      if (!p) { out.trend = 'new'; return out; }
+      out.previousPosition = Number(p.avg_position); out.previousDate = p.snapshot_date;
+      out.positionChange = Math.round((out.previousPosition - r.avgPosition) * 10) / 10;
+      out.trend = Math.abs(out.positionChange) < 0.5 ? 'steady' : out.positionChange > 0 ? 'up' : 'down';
+      return out;
+    }),
+    snapshotDate, comparedWith, trendAvailable,
+  };
 }
 
 // ── Broken internal links — the scan is the same for every platform ─────────
