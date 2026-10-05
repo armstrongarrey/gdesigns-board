@@ -2290,9 +2290,10 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div id="websiteMediaSection" class="wt-card" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.media_library_title">Media Library</div>
-          <button class="btn-secondary" onclick="loadWebsiteMedia()" id="websiteMediaRefreshBtn" data-i18n="web.refresh">Refresh</button>
+          <button class="btn-secondary" onclick="loadWebsiteMedia('website')" id="websiteMediaRefreshBtn" data-i18n="web.refresh">Refresh</button>
         </div>
         <div id="websiteMediaContent" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:12px"></div>
+        <div id="websiteMediaFooter"></div>
       </div>
 
       <!-- GENERATED POSTS — the real, local record of every post created via
@@ -2568,6 +2569,22 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <button class="btn-secondary" onclick="checkBrokenLinks('shopify')" id="shopifyBrokenLinksBtn" data-i18n="web.check_links_button">Check Links</button>
           </div>
           <div id="shopifyBrokenLinksContent"></div>
+        </div>
+        <div class="wt-card" id="shopifySchemaSection">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.schema_title">Schema Markup</div>
+            <button class="btn-primary" onclick="loadShopifySchema()" id="shopifySchemaBtn" data-i18n="web.shopify_schema_check_button">Check my storefront</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.shopify_schema_description">Builds the structured data that describes your business from your business profile, then checks your live storefront to see whether it already outputs it. Once your store has approved theme access, it can install it in your theme for you; until then you paste the snippet once.</div>
+          <div id="shopifySchemaContent"></div>
+        </div>
+        <div class="wt-card" id="shopifyMediaSection">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.media_library_title">Media Library</div>
+            <button class="btn-secondary" onclick="loadWebsiteMedia('shopify')" id="shopifyMediaRefreshBtn" data-i18n="web.refresh">Refresh</button>
+          </div>
+          <div id="shopifyMediaContent" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:12px"></div>
+          <div id="shopifyMediaFooter"></div>
         </div>
         <div class="wt-card" id="shopifyGeneratedPostsSection"><div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.generated_posts_title">Generated Blog Posts</div><div id="shopifyGeneratedPostsContent"></div></div>
         <div class="wt-card" id="shopifyActionsSection">
@@ -8257,6 +8274,8 @@ async function loadShopifyStatus() {
     loadShopifyGeneratedPosts();
     loadAiVisibilityHistory('shopify');
     loadKeywordRankings('shopify');
+    loadShopifySchema();
+    loadWebsiteMedia('shopify');
     loadShopifySitemapStatus();
     loadCompetitorAnalysis('shopify');
     loadTechnicalSeoHistory('shopify');
@@ -9254,6 +9273,8 @@ function agentActivityText(e) {
     case 'content_failed': return t('web.activity_content_failed');
     case 'ai_visibility_checked': return tf('web.activity_ai_visibility', { mentioned: d.mentionedCount || 0, total: d.checkedCount || 0 });
     case 'content_missed': return t('web.activity_content_missed');
+    case 'schema_installed': return failed ? t('web.activity_schema_installed_failed') : tf('web.activity_schema_installed', { theme: d.theme || '' });
+    case 'schema_removed': return failed ? t('web.activity_schema_removed_failed') : t('web.activity_schema_removed');
     case 'broken_links_checked': return failed ? t('web.activity_broken_links_failed') : tf('web.activity_broken_links', { broken: d.brokenCount || 0, checked: d.checkedCount || 0 });
     case 'intelligence_refreshed': return t(failed ? 'web.activity_intelligence_failed' : 'web.activity_intelligence_refreshed');
     case 'audit_completed': return failed ? t('web.activity_audit_failed') : tf('web.activity_audit_completed', { found: d.issuesFound || 0, fixed: d.autoFixed || 0, pending: d.pendingApproval || 0 });
@@ -10131,7 +10152,7 @@ const ICON_PATHS = {
   code: '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>', image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>', check: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/>', list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
 };
-const SECTION_ICONS = { shopifyIntelligenceSection: 'brain', shopifyAuditSection: 'shield', shopifySitemapSection: 'map', shopifyAiVisibilitySection: 'eye', shopifyKeywordRankingsSection: 'chart', shopifyBrokenLinksSection: 'unlink', shopifyCompetitorSection: 'target', shopifyTechnicalSeoSection: 'gauge', shopifyGeneratedPostsSection: 'file', shopifyActionsSection: 'check', websiteIntelligenceSection: 'brain', websiteAuditRunSection: 'shield', websiteAiVisibilitySection: 'eye', websiteKeywordRankingsSection: 'chart', websiteSitemapSection: 'map', websiteCompetitorSection: 'target', websiteTechnicalSeoSection: 'gauge', websiteBrokenLinksSection: 'unlink', websiteSchemaSection: 'code', websiteMediaSection: 'image', websiteGeneratedPostsSection: 'file', websiteActionsSection: 'check', websiteActivityLogSection: 'list' };
+const SECTION_ICONS = { shopifyIntelligenceSection: 'brain', shopifyAuditSection: 'shield', shopifySitemapSection: 'map', shopifyAiVisibilitySection: 'eye', shopifyKeywordRankingsSection: 'chart', shopifyBrokenLinksSection: 'unlink', shopifySchemaSection: 'code', shopifyMediaSection: 'image', shopifyCompetitorSection: 'target', shopifyTechnicalSeoSection: 'gauge', shopifyGeneratedPostsSection: 'file', shopifyActionsSection: 'check', websiteIntelligenceSection: 'brain', websiteAuditRunSection: 'shield', websiteAiVisibilitySection: 'eye', websiteKeywordRankingsSection: 'chart', websiteSitemapSection: 'map', websiteCompetitorSection: 'target', websiteTechnicalSeoSection: 'gauge', websiteBrokenLinksSection: 'unlink', websiteSchemaSection: 'code', websiteMediaSection: 'image', websiteGeneratedPostsSection: 'file', websiteActionsSection: 'check', websiteActivityLogSection: 'list' };
 const iconSvg = key => ICON_PATHS[key] ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[key]}</svg>` : '';
 const CHEVRON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 const readCollapsed = () => { try { return JSON.parse(localStorage.getItem('arreyon_wt_collapsed') || '{}'); } catch (e) { return {}; } };
@@ -10787,41 +10808,258 @@ async function checkBrokenLinks(prefix = 'website') {
   }
 }
 
-async function loadWebsiteMedia() {
-  const contentEl = document.getElementById('websiteMediaContent');
-  const btn = document.getElementById('websiteMediaRefreshBtn');
+// ── Schema markup (Shopify) ──
+// The page shows the schema built from the business profile and what the live storefront actually outputs. A store that has given
+// the theme permission can install, update, repair or remove it with one click; a store that has not (it connected before that
+// permission existed) is offered a button to grant it, and keeps the manual way (a snippet to paste) in the meantime.
+// Everything that came from the storefront or the theme is third-party text and is always escaped.
+let shopifySchemaSnippet = '';
+const SHOPIFY_SCHEMA_FIELDS = { type: 'web.schema_type_label', name: 'web.schema_name_label', url: 'web.schema_url_label', address: 'web.schema_address_label' };
+
+async function loadShopifySchema() {
+  const btn = document.getElementById('shopifySchemaBtn');
+  const contentEl = document.getElementById('shopifySchemaContent');
   btn.disabled = true;
+  btn.textContent = t('web.checking_storefront');
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/media`);
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/organization-schema`);
     const data = await res.json();
-    if (data.pendingPoll) {
-      contentEl.style.display = 'block';
-      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${escapeHtml(data.message)}</div>`;
-      return;
-    }
     if (!res.ok) {
-      contentEl.style.display = 'block';
-      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+      contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
       return;
     }
-    if (!data.media.length) {
-      contentEl.style.display = 'block';
-      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${t('web.no_media_found')}</div>`;
+    renderShopifySchema(data);
+  } catch (e) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('web.shopify_schema_check_button');
+  }
+}
+
+function renderShopifySchema(data) {
+  const contentEl = document.getElementById('shopifySchemaContent');
+  shopifySchemaSnippet = data.snippet || '';
+  if (data.needsBusinessName || !data.schema) {
+    contentEl.innerHTML = `<div style="font-size:12px;color:var(--muted)">${t('web.shopify_schema_needs_name')}</div>`;
+    return;
+  }
+  const s = data.schema, st = data.status || {}, canInstall = !!(data.permissions && data.permissions.canInstall), inst = data.install || null;
+  const theme = inst && inst.themeName ? inst.themeName : '';
+  const addr = s.address ? [s.address.addressLocality, s.address.addressRegion, s.address.addressCountry].filter(Boolean).map(escapeHtml).join(', ') : '';
+  const fieldName = f => t(SHOPIFY_SCHEMA_FIELDS[f] || 'web.schema_name_label');
+  const addrText = a => a ? [a.addressLocality, a.addressRegion, a.addressCountry].filter(Boolean).join(', ') : '';
+  const valueOf = (o, f) => f === 'address' ? addrText(o.address) : f === 'type' ? String(o['@type'] || o.type || '') : String(o[f] || '');
+  const line = (colour, text) => `<div style="font-size:12.5px;font-weight:600;color:${colour};margin-bottom:6px">${escapeHtml(text)}</div>`;
+
+  // What the live storefront shows (the same for every store)
+  const colour = { installed: '#22c55e', not_found: '#f59e0b', different: '#f59e0b', password_protected: 'var(--muted)', unreachable: 'var(--muted)' }[st.state] || 'var(--muted)';
+  const storefrontMessage = {
+    installed: () => t('web.shopify_schema_state_installed'),
+    not_found: () => t('web.shopify_schema_state_not_found'),
+    different: () => tf('web.shopify_schema_state_different', { fields: (st.differences || []).map(fieldName).join(', ') }),
+    password_protected: () => t('web.shopify_schema_state_password'),
+    unreachable: () => tf('web.shopify_schema_state_unreachable', { error: st.error || '' }),
+  }[st.state];
+
+  let html = `
+    <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${t('web.shopify_schema_from_profile')}</div>
+      <div style="font-size:12px;color:var(--text)"><span style="color:var(--muted)">${t('web.schema_type_label')}:</span> ${escapeHtml(s['@type'] || '')}</div>
+      <div style="font-size:12px;color:var(--text);margin-top:3px"><span style="color:var(--muted)">${t('web.schema_name_label')}:</span> ${escapeHtml(s.name || '')}</div>
+      <div style="font-size:12px;color:var(--text);margin-top:3px"><span style="color:var(--muted)">${t('web.schema_url_label')}:</span> ${escapeHtml(s.url || '')}</div>
+      ${addr ? `<div style="font-size:12px;color:var(--text);margin-top:3px"><span style="color:var(--muted)">${t('web.schema_address_label')}:</span> ${addr}</div>` : ''}
+    </div>`;
+
+  const ours = canInstall && inst && inst.state === 'installed', partial = canInstall && inst && inst.state === 'partial', ready = canInstall && inst && inst.state === 'not_installed';
+  if (ours) {
+    html += line(st.state === 'installed' ? '#22c55e' : '#f59e0b', tf(st.state === 'installed' ? 'web.shopify_schema_theme_installed' : 'web.shopify_schema_theme_installed_not_live', { theme }));
+    if (st.state !== 'installed' && storefrontMessage) html += line(colour, storefrontMessage());
+  } else if (partial) {
+    html += line('#f59e0b', tf('web.shopify_schema_theme_partial', { theme }));
+    if (storefrontMessage) html += line(colour, storefrontMessage());
+  } else if (storefrontMessage) {
+    html += line(colour, storefrontMessage());
+  }
+  if (st.checkedUrl) html += `<div style="font-size:10.5px;color:var(--muted);margin-bottom:10px;word-break:break-all">${escapeHtml(tf('web.shopify_schema_checked', { url: st.checkedUrl }))}</div>`;
+
+  if (st.state === 'different' && st.found) {
+    html += `<div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:12px"><div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 14px;font-size:11.5px">
+        <div></div><div style="color:var(--muted)">${t('web.shopify_schema_on_storefront')}</div><div style="color:var(--muted)">${t('web.shopify_schema_from_profile')}</div>
+        ${(st.differences || []).map(f => `<div style="color:var(--muted)">${escapeHtml(fieldName(f))}</div><div style="color:var(--text);word-break:break-word">${escapeHtml(valueOf(st.found, f)) || '–'}</div><div style="color:var(--text);word-break:break-word">${escapeHtml(valueOf(s, f)) || '–'}</div>`).join('')}
+      </div></div>`;
+  }
+
+  // The one-click actions, only for a store that has given the theme permission
+  if (ours || partial) {
+    html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 4px">
+        <button class="btn-primary" id="shopifySchemaInstallBtn" onclick="installShopifySchema()" style="font-size:12px">${t(ours ? 'web.shopify_schema_update_button' : 'web.shopify_schema_repair_button')}</button>
+        <button class="btn-ghost wt-btn-danger" id="shopifySchemaRemoveBtn" onclick="removeShopifySchema()" style="font-size:12px">${t('web.shopify_schema_remove_button')}</button>
+      </div>`;
+  } else if (ready && st.state !== 'installed') {
+    html += `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0 4px">
+        <button class="btn-primary" id="shopifySchemaInstallBtn" onclick="installShopifySchema()" style="font-size:12px">${t('web.shopify_schema_install_button')}</button>
+        <span style="font-size:11px;color:var(--muted);line-height:1.5;flex:1;min-width:220px">${t('web.shopify_schema_install_note')}</span>
+      </div>`;
+  } else if (!canInstall && st.state !== 'installed') {
+    html += `<div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin:6px 0 10px;border-left:3px solid #f59e0b">
+        <div style="font-size:12px;font-weight:600;color:var(--text)">${t('web.shopify_permission_needed')}</div>
+        <div style="font-size:11px;color:var(--muted);margin:4px 0 8px;line-height:1.5">${t('web.shopify_permission_help')}</div>
+        <button class="btn-primary" onclick="reauthorizeShopify()" style="font-size:12px">${t('web.shopify_grant_permission')}</button>
+      </div>`;
+  } else if (canInstall && inst && st.state !== 'installed') {
+    html += `<div style="font-size:11.5px;color:var(--muted);margin:6px 0 10px;line-height:1.5">${t('web.shopify_schema_theme_unreadable')}</div>`;
+  }
+
+  // The manual way: always available when nothing is installed, tucked away when one click would do
+  const needsManual = !ours && st.state !== 'installed' && shopifySchemaSnippet;
+  if (needsManual) {
+    const body = `
+      <div style="font-size:12px;font-weight:700;color:var(--text);margin:10px 0 6px">${t('web.shopify_schema_steps_title')}</div>
+      <ol style="margin:0 0 10px;padding-left:20px;font-size:12px;color:var(--text2);line-height:1.7">
+        ${[1, 2, 3, 4].map(n => `<li>${escapeHtml(t('web.shopify_schema_step_' + n))}</li>`).join('')}
+      </ol>
+      ${st.state === 'different' ? `<div style="font-size:11.5px;color:#f59e0b;margin-bottom:10px;line-height:1.5">${t('web.shopify_schema_replace_note')}</div>` : ''}
+      <pre style="background:var(--bg3);border-radius:10px;padding:12px 14px;font-size:11px;color:var(--text2);overflow-x:auto;margin:0 0 8px;white-space:pre">${escapeHtml(shopifySchemaSnippet)}</pre>
+      <button class="btn-ghost" onclick="copyShopifySchemaSnippet()" style="font-size:12px">${t('web.shopify_schema_copy')}</button>`;
+    html += (ready || partial) ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">${t('web.shopify_schema_manual_summary')}</summary>${body}</details>` : body;
+  }
+  contentEl.innerHTML = html;
+}
+
+async function copyShopifySchemaSnippet() {
+  const text = shopifySchemaSnippet;
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    // Older browsers or a page without clipboard permission: select the text in a temporary box and copy it
+    const box = document.createElement('textarea');
+    box.value = text; box.style.position = 'fixed'; box.style.opacity = '0';
+    document.body.appendChild(box); box.select();
+    try { document.execCommand('copy'); } catch (e2) { showToast(t('board.connection_error'), 'error'); document.body.removeChild(box); return; }
+    document.body.removeChild(box);
+  }
+  showToast(t('web.shopify_schema_copied'), 'success');
+}
+
+function navigateTo(url) { window.location.href = url; }
+
+// Sends the person to Shopify's own approval screen to give this store's connection the extra permission, then back here.
+// Everything about the connection (history, settings, queue) stays; only the permission list changes.
+async function reauthorizeShopify() {
+  const shop = currentShopifyConnection && currentShopifyConnection.shop_domain;
+  if (!shop || !currentWebsiteBusinessId) { showToast(t('board.connection_error'), 'error'); return; }
+  try {
+    rememberBusiness('shopify', currentWebsiteBusinessId);
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/connect?shop=${encodeURIComponent(shop)}&upgrade=1`);   // upgrade=1: ask for the theme and Files permissions too
+    const data = await res.json();
+    if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
+    navigateTo(data.authorizeUrl);
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
+}
+
+// Installs (or refreshes, or repairs) the schema in the live theme.
+async function installShopifySchema() {
+  const btn = document.getElementById('shopifySchemaInstallBtn');
+  const original = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = t('web.shopify_schema_installing'); }
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/organization-schema`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      if (data.needsReauth) await loadShopifySchema(); // the card then offers the permission prompt
       return;
     }
-    contentEl.style.display = 'grid';
-    contentEl.innerHTML = data.media.map(m => `
+    showToast(tf('web.shopify_schema_installed_toast', { theme: data.themeName || '' }), 'success');
+    await loadShopifySchema();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    if (btn && document.body.contains(btn)) { btn.disabled = false; btn.textContent = original; }
+    loadAgentActivity('shopify'); // the install, or its failure, is recorded in Agent Activity
+  }
+}
+
+async function removeShopifySchema() {
+  if (!confirm(t('web.shopify_schema_confirm_remove'))) return;
+  const btn = document.getElementById('shopifySchemaRemoveBtn');
+  const original = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = t('web.shopify_schema_removing'); }
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/organization-schema`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || t('board.connection_error'), 'error');
+      if (data.needsReauth) await loadShopifySchema();
+      return;
+    }
+    showToast(t('web.shopify_schema_removed_toast'), 'success');
+    await loadShopifySchema();
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  } finally {
+    if (btn && document.body.contains(btn)) { btn.disabled = false; btn.textContent = original; }
+    loadAgentActivity('shopify');
+  }
+}
+
+// ── Media Library (WordPress and Shopify) ──
+// One implementation serves both platforms: the platform table says which route (<api>/media); the element ids are
+// <prefix>MediaContent (the grid), <prefix>MediaFooter and <prefix>MediaRefreshBtn. Shopify returns a page at a time.
+const mediaState = { website: { cursor: null }, shopify: { cursor: null } };
+const mediaEl = (prefix, part) => document.getElementById(`${prefix}Media${part}`);
+
+function renderMediaItem(m) {
+  const src = safeHttpUrl(m.url);
+  const size = m.fileSize ? ` · ${Math.max(1, Math.round(m.fileSize / 1024))} KB` : '';
+  return `
       <div style="background:var(--bg3);border-radius:10px;overflow:hidden;border:1px solid var(--border)">
-        <img src="${escapeHtml(m.url)}" alt="${escapeHtml(m.altText)}" style="width:100%;height:100px;object-fit:cover;display:block;background:var(--bg2)" loading="lazy">
+        ${src ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(m.altText)}" style="width:100%;height:100px;object-fit:cover;display:block;background:var(--bg2)" loading="lazy">` : `<div style="height:100px;background:var(--bg2)"></div>`}
         <div style="padding:8px 10px">
           <div style="font-size:11px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(m.title)}">${escapeHtml(m.title || t('web.value_none'))}</div>
-          <div style="font-size:10px;color:var(--muted);margin-top:2px">${m.width && m.height ? `${m.width}×${m.height}` : ''}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">${m.width && m.height ? `${m.width}×${m.height}` : ''}${size}</div>
           ${!m.altText ? `<div style="font-size:10px;color:#f59e0b;margin-top:2px">${t('web.no_alt_text')}</div>` : ''}
         </div>
-      </div>`).join('');
+      </div>`;
+}
+
+async function loadWebsiteMedia(prefix = 'website', append = false) {
+  const contentEl = mediaEl(prefix, 'Content');
+  const footerEl = mediaEl(prefix, 'Footer');
+  const btn = mediaEl(prefix, 'RefreshBtn');
+  const note = (colour, text) => { contentEl.style.display = 'block'; contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:${colour};font-size:13px">${text}</div>`; if (footerEl) footerEl.innerHTML = ''; };
+  btn.disabled = true;
+  try {
+    const after = append ? mediaState[prefix].cursor : null;
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${platformUi(prefix).api}/media${after ? `?after=${encodeURIComponent(after)}` : ''}`);
+    const data = await res.json();
+    if (data.pendingPoll) { note('var(--muted)', escapeHtml(data.message)); return; }
+    if (!res.ok) { note('#ff8080', escapeHtml(data.error || t('board.connection_error'))); return; }
+    if (data.needsReauth) {
+      contentEl.style.display = 'block';
+      contentEl.innerHTML = `<div style="background:var(--bg3);border-radius:10px;padding:12px 14px;border-left:3px solid #f59e0b">
+          <div style="font-size:12px;font-weight:600;color:var(--text)">${t('web.shopify_media_permission_needed')}</div>
+          <div style="font-size:11px;color:var(--muted);margin:4px 0 8px;line-height:1.5">${t('web.shopify_permission_help')}</div>
+          <button class="btn-primary" onclick="reauthorizeShopify()" style="font-size:12px">${t('web.shopify_grant_permission')}</button>
+        </div>`;
+      if (footerEl) footerEl.innerHTML = '';
+      return;
+    }
+    if (!data.media.length && !append) { note('var(--muted)', t('web.no_media_found')); return; }
+    contentEl.style.display = 'grid';
+    const html = data.media.map(renderMediaItem).join('');
+    if (append) contentEl.insertAdjacentHTML('beforeend', html); else contentEl.innerHTML = html;
+    mediaState[prefix].cursor = data.cursor || null;
+    if (footerEl) {
+      footerEl.innerHTML = (data.processing ? `<div style="font-size:11px;color:var(--muted);margin-top:8px">${escapeHtml(tf('web.media_processing_note', { n: data.processing }))}</div>` : '')
+        + (data.hasMore ? `<div style="text-align:center;margin-top:12px"><button class="btn-ghost" onclick="loadWebsiteMedia('${prefix}', true)" style="font-size:12px">${t('web.load_more')}</button></div>` : '');
+    }
   } catch (e) {
-    contentEl.style.display = 'block';
-    contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
+    note('#ff8080', t('board.connection_error'));
   } finally {
     btn.disabled = false;
   }
