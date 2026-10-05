@@ -8120,7 +8120,12 @@ app.post('/api/business/:id/website/actions/:actionId/reject', authRequired, asy
 // as a WordPress site.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const SHOPIFY_SCOPES = 'read_content,write_content,read_themes';
+// What a NEW connection asks for is exactly what it always asked for. The two extra permissions (installing into the theme, reading
+// Files) are asked for only when the person presses "Grant permission" (?upgrade=1), so a problem with them can never stop a store
+// from connecting. Set SHOPIFY_REQUEST_ALL_SCOPES=true to ask for everything at first connection instead.
+const SHOPIFY_BASE_SCOPES = 'read_content,write_content,read_themes';
+const SHOPIFY_FULL_SCOPES = 'read_content,write_content,read_themes,write_themes,read_files';
+const SHOPIFY_SCOPES = process.env.SHOPIFY_REQUEST_ALL_SCOPES === 'true' ? SHOPIFY_FULL_SCOPES : SHOPIFY_BASE_SCOPES;
 const SHOPIFY_CALLBACK_URL = `${BASE_URL}/api/shopify/callback`;
 
 app.get('/api/business/:id/shopify/connect', authRequired, async (req, res) => {
@@ -8143,7 +8148,7 @@ app.get('/api/business/:id/shopify/connect', authRequired, async (req, res) => {
     const state = jwt.sign({ businessId: req.params.id, userId: req.userId, shop }, JWT_SECRET, { expiresIn: '10m' });
     const params = new URLSearchParams({
       client_id: process.env.SHOPIFY_API_KEY,
-      scope: SHOPIFY_SCOPES,
+      scope: req.query.upgrade === '1' ? SHOPIFY_FULL_SCOPES : SHOPIFY_SCOPES,
       redirect_uri: SHOPIFY_CALLBACK_URL,
       state,
     });
@@ -9238,6 +9243,90 @@ app.post('/api/business/:id/shopify/broken-links', authRequired, async (req, res
     console.error('Shopify broken links check error:', err.message);
     if (owned) await logManual(req.params.id, 'shopify', 'broken_links_checked', 'failed', errDetail(err));
     res.status(500).json({ error: err.message || 'Failed to check for broken links. Please try again.' });
+  }
+});
+
+app.get('/api/business/:id/shopify/organization-schema', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    const connection = (await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
+    if (!connection) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
+
+    const accessToken = decryptSecret(connection.access_token_encrypted);
+    // The store's real domain (what customers and Google use), never its myshopify.com address
+    const schema = buildOrganizationSchema(context, await getShopifyStoreUrl(connection, accessToken));
+    if (!schema) return res.json({ schema: null, snippet: null, status: null, needsBusinessName: true });
+    // A store that has not re-authorized yet cannot be installed into: it is told so, and keeps the manual way
+    const canInstall = shopifyHasScope(connection, 'write_themes');
+    let install = null;
+    if (canInstall) { try { install = await getThemeSchemaInstallState(connection, accessToken); } catch (e) { install = { state: 'unknown', error: String(e.message || e).slice(0, 200) }; } }
+    res.json({ schema, snippet: buildSchemaSnippet(schema), status: await checkStorefrontOrganizationSchema(connection, accessToken, schema), permissions: { canInstall }, install, shopDomain: connection.shop_domain });
+  } catch (err) {
+    console.error('Shopify organization schema error:', err.message);
+    res.status(500).json({ error: err.message || 'Could not check the schema markup. Please try again.' });
+  }
+});
+
+// Installs (or refreshes) the schema in the live theme. A store that has not given the theme permission yet gets a plain answer
+// that it needs to be authorized again, and nothing is attempted.
+app.post('/api/business/:id/shopify/organization-schema', authRequired, async (req, res) => {
+  let owned = false;
+  try {
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    owned = true;
+    const connection = (await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
+    if (!connection) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
+    if (!shopifyHasScope(connection, 'write_themes')) return res.status(409).json({ needsReauth: true, error: 'This store needs to be authorized once more before the schema can be installed for you.' });
+    const accessToken = decryptSecret(connection.access_token_encrypted);
+    const schema = buildOrganizationSchema(context, await getShopifyStoreUrl(connection, accessToken));
+    if (!schema) return res.status(400).json({ error: 'A business name is required before schema markup can be generated — add one on the business profile first.' });
+    const result = await installOrganizationSchemaInTheme(connection, accessToken, schema);
+    await logManual(req.params.id, 'shopify', 'schema_installed', 'success', { schemaType: schema['@type'], theme: result.themeName });
+    res.json({ success: true, schema, themeName: result.themeName, layoutChanged: result.layoutChanged });
+  } catch (err) {
+    console.error('Shopify schema install error:', err.message);
+    if (owned) await logManual(req.params.id, 'shopify', 'schema_installed', 'failed', errDetail(err));
+    if (err.code === 'ACCESS_DENIED') return res.status(409).json({ needsReauth: true, error: err.message });
+    res.status(['NO_THEME', 'NO_LAYOUT', 'NO_HEAD', 'THEME_REJECTED', 'VERIFY_FAILED'].includes(err.code) ? 400 : 500).json({ error: err.message || 'Could not install the schema markup. Please try again.' });
+  }
+});
+
+app.delete('/api/business/:id/shopify/organization-schema', authRequired, async (req, res) => {
+  let owned = false;
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    owned = true;
+    const connection = (await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
+    if (!connection) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
+    if (!shopifyHasScope(connection, 'write_themes')) return res.status(409).json({ needsReauth: true, error: 'This store needs to be authorized once more before the schema can be removed for you.' });
+    const result = await removeOrganizationSchemaFromTheme(connection, decryptSecret(connection.access_token_encrypted));
+    await logManual(req.params.id, 'shopify', 'schema_removed', 'success', { theme: result.themeName });
+    res.json({ success: true, themeName: result.themeName, removedTag: result.removedTag, removedSnippet: result.removedSnippet });
+  } catch (err) {
+    console.error('Shopify schema removal error:', err.message);
+    if (owned) await logManual(req.params.id, 'shopify', 'schema_removed', 'failed', errDetail(err));
+    if (err.code === 'ACCESS_DENIED') return res.status(409).json({ needsReauth: true, error: err.message });
+    res.status(['NO_THEME', 'THEME_REJECTED', 'VERIFY_FAILED'].includes(err.code) ? 400 : 500).json({ error: err.message || 'Could not remove the schema markup. Please try again.' });
+  }
+});
+
+// The images already in the store (read-only), newest first, a page at a time
+app.get('/api/business/:id/shopify/media', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    const connection = (await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
+    if (!connection) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
+    if (!shopifyHasScope(connection, 'read_files')) return res.json({ needsReauth: true, media: [], hasMore: false, cursor: null });
+    const after = typeof req.query.after === 'string' && req.query.after.length <= 200 ? req.query.after : null;
+    res.json(await listShopifyImages(connection, decryptSecret(connection.access_token_encrypted), { first: 24, after }));
+  } catch (err) {
+    console.error('Shopify media error:', err.message);
+    if (err.code === 'ACCESS_DENIED') return res.json({ needsReauth: true, media: [], hasMore: false, cursor: null });
+    res.status(err.code === 'THROTTLED' ? 429 : 502).json({ error: err.code === 'THROTTLED' ? err.message : 'Could not read the images from this store right now.' });
   }
 });
 
@@ -17018,6 +17107,57 @@ async function scanForBrokenInternalLinks(items, siteUrl, cap = 40) {
   return { brokenLinks, checkedCount: toCheck.length, totalUniqueLinks: addresses.length };
 }
 
+// ── Structured data (JSON-LD) in a page: reading it, and comparing it with what the business profile says ──
+// Reads every <script type="application/ld+json"> block (a block may hold one item, a list, or an @graph) and returns the
+// individual items. Blocks that are not valid JSON are skipped: a broken block on someone's page is not our error.
+function extractJsonLdBlocks(html, max = 20) {
+  const items = [];
+  const re = /<script\b[^>]*\btype\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m, blocks = 0;
+  while ((m = re.exec(html || '')) && blocks < max) {
+    blocks++;
+    let parsed;
+    try { parsed = JSON.parse(m[1].trim()); } catch { continue; }
+    for (const node of [].concat(parsed)) {
+      if (!node || typeof node !== 'object') continue;
+      if (Array.isArray(node['@graph'])) { for (const g of node['@graph']) if (g && typeof g === 'object') items.push(g); }
+      if (node['@type']) items.push(node);
+    }
+  }
+  return items;
+}
+
+// An item that describes the business itself (as opposed to a product, a breadcrumb, a website...)
+function isOrganizationLike(node) {
+  return [].concat((node && node['@type']) || []).some(t => /^(Organization|Corporation|NGO|OnlineBusiness|OnlineStore|LocalBusiness)$|Store$|Business$/.test(String(t)));
+}
+
+// How a schema found on a page differs from the one built from the business profile. Names compare ignoring capitals and
+// spacing, the address by the website's host (www. and https:// do not matter). A business with a location should be a
+// LocalBusiness; a plain Organization is fine for one without.
+function compareOrganizationSchema(found, desired) {
+  const norm = s => String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' ');
+  const host = u => { try { return new URL(u).hostname.replace(/^www\./, '').toLowerCase(); } catch { return norm(u); } };
+  const types = [].concat(found['@type'] || []).map(String);
+  const differences = [];
+  const typeOk = desired['@type'] === 'LocalBusiness' ? types.some(t => /^LocalBusiness$|Store$/.test(t)) : isOrganizationLike(found);
+  if (!typeOk) differences.push('type');
+  if (norm(found.name) !== norm(desired.name)) differences.push('name');
+  if (!found.url || host(found.url) !== host(desired.url)) differences.push('url');
+  if (desired.address) {
+    const fa = [].concat(found.address || [])[0];
+    const same = fa && typeof fa === 'object' && ['addressLocality', 'addressRegion', 'addressCountry'].every(k => !desired.address[k] || norm(fa[k]) === norm(desired.address[k]));
+    if (!same) differences.push('address');
+  }
+  return { matches: differences.length === 0, differences };
+}
+
+// The text a person pastes into their own theme. "<" is written as \u003c inside the JSON, so a business name containing
+// "</script>" can never close the tag early; the JSON means exactly the same thing.
+function buildSchemaSnippet(schema) {
+  return `<script type="application/ld+json">\n${JSON.stringify(schema, null, 2).replace(/</g, '\\u003c')}\n</script>`;
+}
+
 // ── Runs in progress, and stopping them ──────────────────────────────────────
 // One entry per site while its cycle is running. 'cancelled' is how a run is stopped: the cycle checks it
 // between steps and skips what is left, and the code that applies fixes re-reads the live mode, so once a
@@ -17669,6 +17809,198 @@ async function runShopifyBrokenLinksCheck(connection, accessToken) {
     }
   }
   return { brokenLinks: scan.brokenLinks, checkedCount: scan.checkedCount, totalUniqueLinks: scan.totalUniqueLinks, proposals, pendingCount: proposals.length, alreadyPendingCount, autoExecutedCount: 0, scope: content.scope };
+}
+
+// ── Theme and Files access (Shopify) ─────────────────────────────────────────
+// Both go through the GraphQL Admin API: it is the current API for theme files and the only one for Files.
+// Permissions are checked BEFORE anything is attempted, so a store that has not re-authorized yet keeps working as before and is
+// told plainly what to do. write_x includes read_x, as on Shopify.
+function shopifyError(message, code) { const e = new Error(message); e.code = code; return e; }
+
+function shopifyGrantedScopes(connection) { return new Set(String((connection && connection.scope) || '').split(/[,\s]+/).filter(Boolean)); }
+function shopifyHasScope(connection, scope) {
+  const granted = shopifyGrantedScopes(connection);
+  return granted.has(scope) || (scope.startsWith('read_') && granted.has('write_' + scope.slice(5)));
+}
+
+async function shopifyGraphQL(connection, accessToken, query, variables = {}) {
+  const res = await shopifyApiRequest(connection.shop_domain, accessToken, '/graphql.json', { method: 'POST', body: { query, variables }, timeoutMs: 20000 });
+  if (res.status === 401 || res.status === 403) throw shopifyError('Shopify did not accept this connection — it needs to be authorized again.', 'ACCESS_DENIED');
+  if (res.status === 429) throw shopifyError('Shopify asked us to slow down. Please try again in a moment.', 'THROTTLED');
+  if (!res.ok) throw shopifyError(`Shopify returned an error (status ${res.status}).`, 'HTTP_ERROR');
+  const body = await res.json();
+  if (Array.isArray(body.errors) && body.errors.length) {
+    const first = body.errors[0] || {}, code = (first.extensions && first.extensions.code) || '', message = String(first.message || 'Shopify reported an error.').slice(0, 300);
+    if (code === 'ACCESS_DENIED' || /access denied|required access/i.test(message)) throw shopifyError('This store has not given permission for that yet — it needs to be authorized again.', 'ACCESS_DENIED');
+    if (code === 'THROTTLED') throw shopifyError('Shopify asked us to slow down. Please try again in a moment.', 'THROTTLED');
+    throw shopifyError(message, code || 'GRAPHQL_ERROR');
+  }
+  return body.data;
+}
+
+// ── the theme: where the schema is installed ──
+const ARREYON_SCHEMA_SNIPPET = 'snippets/arreyon-organization-schema.liquid';
+const ARREYON_SCHEMA_TAG = "{% render 'arreyon-organization-schema' %}";
+const ARREYON_SCHEMA_TAG_SOURCE = "\\{%-?\\s*render\\s+['\"]arreyon-organization-schema['\"]\\s*-?%\\}";
+
+// The snippet file. The JSON sits inside a Liquid file, so anything Liquid would act on must never reach it: "{%" and "{{" can
+// only come from text values (JSON itself never contains them) and are written as unicode escapes, which mean the same thing to
+// a JSON reader; "<" is escaped so a business name cannot close the script tag; {% raw %} is the second guard.
+function buildThemeSchemaSnippet(schema) {
+  const json = JSON.stringify(schema, null, 2).replace(/</g, '\\u003c').replace(/\{%/g, '\\u007b%').replace(/\{\{/g, '\\u007b\\u007b');
+  return `{% comment %}Added by Arreyon Consult to describe this business to search engines and AI assistants. Remove it from the Schema Markup card in Arreyon.{% endcomment %}\n{% raw %}\n<script type="application/ld+json">\n${json}\n</script>\n{% endraw %}\n`;
+}
+
+// Adds the one line to layout/theme.liquid, just above </head>, keeping the file's own line endings and indentation.
+// Already there: nothing changes. No </head>: nothing is edited (an error comes back instead).
+function insertThemeSchemaTag(text) {
+  if (new RegExp(ARREYON_SCHEMA_TAG_SOURCE).test(text)) return { text, changed: false };
+  const m = /<\/head\s*>/i.exec(text);
+  if (!m) return { error: 'no_head' };
+  const nl = text.includes('\r\n') ? '\r\n' : '\n';
+  const lineStart = text.lastIndexOf('\n', m.index) + 1, before = text.slice(lineStart, m.index);
+  if (/^[ \t]*$/.test(before)) return { text: text.slice(0, lineStart) + before + ARREYON_SCHEMA_TAG + nl + text.slice(lineStart), changed: true };
+  return { text: text.slice(0, m.index) + ARREYON_SCHEMA_TAG + text.slice(m.index), changed: true };
+}
+
+// Removes ONLY that line (or just the tag if it shares a line with something else); nothing else in the file is touched.
+function removeThemeSchemaTag(text) {
+  if (!new RegExp(ARREYON_SCHEMA_TAG_SOURCE).test(text)) return { text, changed: false };
+  let out = text.replace(new RegExp('^[ \\t]*' + ARREYON_SCHEMA_TAG_SOURCE + '[ \\t]*\\r?\\n', 'gm'), '');
+  out = out.replace(new RegExp(ARREYON_SCHEMA_TAG_SOURCE, 'g'), '');
+  return { text: out, changed: out !== text };
+}
+
+async function getMainShopifyTheme(connection, accessToken) {
+  const data = await shopifyGraphQL(connection, accessToken, 'query { themes(first: 1, roles: [MAIN]) { nodes { id name } } }');
+  const t = data && data.themes && data.themes.nodes && data.themes.nodes[0];
+  return t ? { id: t.id, name: t.name } : null;
+}
+
+// The text of one theme file, or null when the theme has no such file.
+async function readShopifyThemeFile(connection, accessToken, themeId, filename) {
+  const data = await shopifyGraphQL(connection, accessToken,
+    'query($id: ID!, $names: [String!]!) { theme(id: $id) { files(filenames: $names, first: 1) { nodes { filename body { ... on OnlineStoreThemeFileBodyText { content } } } } } }',
+    { id: themeId, names: [filename] });
+  const node = data && data.theme && data.theme.files && data.theme.files.nodes && data.theme.files.nodes[0];
+  return node && node.body && typeof node.body.content === 'string' ? node.body.content : null;
+}
+
+async function upsertShopifyThemeFile(connection, accessToken, themeId, filename, content) {
+  const data = await shopifyGraphQL(connection, accessToken,
+    'mutation($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) { themeFilesUpsert(themeId: $themeId, files: $files) { upsertedThemeFiles { filename } userErrors { message code filename } } }',
+    { themeId, files: [{ filename, body: { type: 'TEXT', value: content } }] });
+  const errs = data && data.themeFilesUpsert && data.themeFilesUpsert.userErrors;
+  if (errs && errs.length) throw shopifyError(`Shopify did not accept the change to ${filename}: ${String(errs[0].message || errs[0].code || 'rejected').slice(0, 200)}`, 'THEME_REJECTED');
+}
+
+async function deleteShopifyThemeFile(connection, accessToken, themeId, filename) {
+  const data = await shopifyGraphQL(connection, accessToken,
+    'mutation($themeId: ID!, $files: [String!]!) { themeFilesDelete(themeId: $themeId, files: $files) { deletedThemeFiles { filename } userErrors { message code filename } } }',
+    { themeId, files: [filename] });
+  const errs = data && data.themeFilesDelete && data.themeFilesDelete.userErrors;
+  if (errs && errs.length) throw shopifyError(`Shopify did not remove ${filename}: ${String(errs[0].message || errs[0].code || 'rejected').slice(0, 200)}`, 'THEME_REJECTED');
+}
+
+// What is in the live theme right now: installed | partial (one half is missing, which needs repairing) | not_installed | no_theme | unreadable
+async function getThemeSchemaInstallState(connection, accessToken) {
+  const theme = await getMainShopifyTheme(connection, accessToken);
+  if (!theme) return { state: 'no_theme' };
+  const layout = await readShopifyThemeFile(connection, accessToken, theme.id, 'layout/theme.liquid');
+  if (layout === null) return { state: 'unreadable', themeName: theme.name };
+  const hasTag = new RegExp(ARREYON_SCHEMA_TAG_SOURCE).test(layout);
+  const hasSnippet = (await readShopifyThemeFile(connection, accessToken, theme.id, ARREYON_SCHEMA_SNIPPET)) !== null;
+  return { state: hasTag && hasSnippet ? 'installed' : (hasTag || hasSnippet) ? 'partial' : 'not_installed', themeName: theme.name };
+}
+
+// The snippet is written FIRST, so the line in theme.liquid can never point at a snippet that does not exist (that would show a
+// Liquid error on every page). The change is read back to confirm it is really there. Installing again simply refreshes the snippet.
+async function installOrganizationSchemaInTheme(connection, accessToken, schema) {
+  const theme = await getMainShopifyTheme(connection, accessToken);
+  if (!theme) throw shopifyError('Your store has no published theme to add this to.', 'NO_THEME');
+  const layout = await readShopifyThemeFile(connection, accessToken, theme.id, 'layout/theme.liquid');
+  if (layout === null) throw shopifyError("Your theme's layout/theme.liquid could not be read.", 'NO_LAYOUT');
+  const edit = insertThemeSchemaTag(layout);
+  if (edit.error) throw shopifyError('This theme has no closing </head> tag in layout/theme.liquid, so the schema cannot be added automatically. Use the manual steps instead.', 'NO_HEAD');
+  const hadSnippet = (await readShopifyThemeFile(connection, accessToken, theme.id, ARREYON_SCHEMA_SNIPPET)) !== null;
+  await upsertShopifyThemeFile(connection, accessToken, theme.id, ARREYON_SCHEMA_SNIPPET, buildThemeSchemaSnippet(schema));
+  if (edit.changed) {
+    try { await upsertShopifyThemeFile(connection, accessToken, theme.id, 'layout/theme.liquid', edit.text); }
+    catch (e) {
+      if (!hadSnippet) { try { await deleteShopifyThemeFile(connection, accessToken, theme.id, ARREYON_SCHEMA_SNIPPET); } catch (e2) { /* an unused snippet is harmless */ } }
+      throw e;
+    }
+    const after = await readShopifyThemeFile(connection, accessToken, theme.id, 'layout/theme.liquid');
+    if (after === null || !new RegExp(ARREYON_SCHEMA_TAG_SOURCE).test(after)) throw shopifyError('Shopify accepted the change, but your theme does not show it yet. Please check again in a moment.', 'VERIFY_FAILED');
+  }
+  return { themeName: theme.name, layoutChanged: edit.changed };
+}
+
+// The reverse order: the line goes first and is confirmed gone, and only then is the snippet deleted.
+async function removeOrganizationSchemaFromTheme(connection, accessToken) {
+  const theme = await getMainShopifyTheme(connection, accessToken);
+  if (!theme) throw shopifyError('Your store has no published theme.', 'NO_THEME');
+  let removedTag = false;
+  const layout = await readShopifyThemeFile(connection, accessToken, theme.id, 'layout/theme.liquid');
+  if (layout !== null) {
+    const edit = removeThemeSchemaTag(layout);
+    if (edit.changed) {
+      await upsertShopifyThemeFile(connection, accessToken, theme.id, 'layout/theme.liquid', edit.text);
+      const after = await readShopifyThemeFile(connection, accessToken, theme.id, 'layout/theme.liquid');
+      if (after === null || new RegExp(ARREYON_SCHEMA_TAG_SOURCE).test(after)) throw shopifyError('Shopify accepted the change, but your theme still shows it. Please try again.', 'VERIFY_FAILED');
+      removedTag = true;
+    }
+  }
+  const hadSnippet = (await readShopifyThemeFile(connection, accessToken, theme.id, ARREYON_SCHEMA_SNIPPET)) !== null;
+  if (hadSnippet) await deleteShopifyThemeFile(connection, accessToken, theme.id, ARREYON_SCHEMA_SNIPPET);
+  return { themeName: theme.name, removedTag, removedSnippet: hadSnippet };
+}
+
+// ── Files: the images already in the store ──
+async function listShopifyImages(connection, accessToken, { first = 24, after = null } = {}) {
+  const data = await shopifyGraphQL(connection, accessToken,
+    'query($first: Int!, $after: String) { files(first: $first, after: $after, sortKey: CREATED_AT, reverse: true, query: "media_type:IMAGE") { nodes { id alt createdAt fileStatus ... on MediaImage { image { url width height } originalSource { fileSize } } } pageInfo { hasNextPage endCursor } } }',
+    { first, after });
+  const files = (data && data.files) || { nodes: [], pageInfo: {} };
+  const nodes = files.nodes || [];
+  const media = nodes.filter(n => n && n.image && typeof n.image.url === 'string' && /^https:\/\//.test(n.image.url)).map(n => {
+    let title = '';
+    try { title = decodeURIComponent(new URL(n.image.url).pathname.split('/').pop() || ''); } catch { /* no name */ }
+    return { id: n.id, url: n.image.url, altText: n.alt || '', title, width: n.image.width || null, height: n.image.height || null, fileSize: (n.originalSource && n.originalSource.fileSize) || null, createdAt: n.createdAt || null };
+  });
+  // Files still being processed have no image yet: counted, not dropped silently
+  return { media, hasMore: !!(files.pageInfo && files.pageInfo.hasNextPage), cursor: (files.pageInfo && files.pageInfo.endCursor) || null, processing: nodes.length - media.length };
+}
+
+// ── Schema markup (Shopify) ─────────────────────────────────────────────────
+// The schema is built from the business profile, and the public storefront's homepage is read to see what is REALLY there: that
+// schema, a different one (often the theme's own), or none. That is the truth the person sees, whatever installed it. A store that
+// has given the theme permission can have it installed for it (see the theme functions above); one that has not keeps the manual
+// way, a snippet to paste, which this same check then confirms.
+// The result is one of: installed | different | not_found | password_protected | unreachable.
+async function checkStorefrontOrganizationSchema(connection, accessToken, desired) {
+  const storeUrl = await getShopifyStoreUrl(connection, accessToken);
+  let page;
+  try { page = await safeFetch(storeUrl + '/', { maxBytes: 3_000_000, timeoutMs: 10000 }); }
+  catch (e) { return { state: 'unreachable', error: String(e.message || e).slice(0, 200), checkedUrl: storeUrl }; }
+  let finalPath = '/';
+  try { finalPath = new URL(page.finalUrl).pathname; } catch { /* keep the default */ }
+  // A store with its password page on shows that page to everyone, so its real pages cannot be read
+  if (/^\/password\/?$/.test(finalPath)) return { state: 'password_protected', checkedUrl: page.finalUrl };
+
+  const candidates = extractJsonLdBlocks(page.html).filter(isOrganizationLike);
+  if (!candidates.length) return { state: 'not_found', checkedUrl: page.finalUrl };
+  const scored = candidates.map(c => ({ c, cmp: compareOrganizationSchema(c, desired) }));
+  const best = scored.find(s => s.cmp.matches) || scored.sort((a, b) => a.cmp.differences.length - b.cmp.differences.length)[0];
+  if (best.cmp.matches) return { state: 'installed', checkedUrl: page.finalUrl };
+  const addr = [].concat(best.c.address || [])[0];
+  return {
+    state: 'different', checkedUrl: page.finalUrl, differences: best.cmp.differences,
+    found: {
+      type: [].concat(best.c['@type'] || []).join(', ').slice(0, 100), name: String(best.c.name || '').slice(0, 200), url: String(best.c.url || '').slice(0, 300),
+      address: addr && typeof addr === 'object' ? { addressLocality: String(addr.addressLocality || '').slice(0, 100), addressRegion: String(addr.addressRegion || '').slice(0, 100), addressCountry: String(addr.addressCountry || '').slice(0, 100) } : null,
+    },
+  };
 }
 
 const shopifyKeywordSpec = { table: 'shopify_keyword_rankings', fk: 'shopify_connection_id' };
