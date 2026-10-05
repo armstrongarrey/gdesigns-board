@@ -1682,3 +1682,16 @@ CREATE TABLE IF NOT EXISTS shopify_competitor_analyses (
   completed_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_shopify_competitor_analyses_conn ON shopify_competitor_analyses (shopify_connection_id, created_at DESC);
+
+-- AI Visibility (Shopify): the same record as the WordPress one, tied to the Shopify connection. The two platforms never share rows.
+CREATE TABLE IF NOT EXISTS shopify_ai_visibility_checks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  shopify_connection_id UUID REFERENCES shopify_connections(id) ON DELETE CASCADE,
+  query TEXT NOT NULL,
+  mentioned_by_name BOOLEAN DEFAULT FALSE,
+  cited_by_domain BOOLEAN DEFAULT FALSE,
+  answer_excerpt TEXT, -- the real answer text returned, for a person to read in context
+  citations JSONB, -- the real list of URLs the AI assistant actually cited for this query
+  checked_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_shopify_ai_visibility_conn ON shopify_ai_visibility_checks (shopify_connection_id, checked_at DESC);
