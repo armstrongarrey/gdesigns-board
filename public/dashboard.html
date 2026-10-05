@@ -2290,10 +2290,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div id="websiteMediaSection" class="wt-card" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.media_library_title">Media Library</div>
-          <button class="btn-secondary" onclick="loadWebsiteMedia('website')" id="websiteMediaRefreshBtn" data-i18n="web.refresh">Refresh</button>
+          <button class="btn-secondary" onclick="loadWebsiteMedia()" id="websiteMediaRefreshBtn" data-i18n="web.refresh">Refresh</button>
         </div>
         <div id="websiteMediaContent" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:12px"></div>
-        <div id="websiteMediaFooter"></div>
       </div>
 
       <!-- GENERATED POSTS — the real, local record of every post created via
@@ -2577,14 +2576,6 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           </div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:12px" data-i18n="web.shopify_schema_description">Builds the structured data that describes your business from your business profile, then checks your live storefront to see whether it already outputs it. Once your store has approved theme access, it can install it in your theme for you; until then you paste the snippet once.</div>
           <div id="shopifySchemaContent"></div>
-        </div>
-        <div class="wt-card" id="shopifyMediaSection">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-            <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.media_library_title">Media Library</div>
-            <button class="btn-secondary" onclick="loadWebsiteMedia('shopify')" id="shopifyMediaRefreshBtn" data-i18n="web.refresh">Refresh</button>
-          </div>
-          <div id="shopifyMediaContent" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:12px"></div>
-          <div id="shopifyMediaFooter"></div>
         </div>
         <div class="wt-card" id="shopifyGeneratedPostsSection"><div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.generated_posts_title">Generated Blog Posts</div><div id="shopifyGeneratedPostsContent"></div></div>
         <div class="wt-card" id="shopifyActionsSection">
@@ -8275,7 +8266,6 @@ async function loadShopifyStatus() {
     loadAiVisibilityHistory('shopify');
     loadKeywordRankings('shopify');
     loadShopifySchema();
-    loadWebsiteMedia('shopify');
     loadShopifySitemapStatus();
     loadCompetitorAnalysis('shopify');
     loadTechnicalSeoHistory('shopify');
@@ -9271,7 +9261,8 @@ function agentActivityText(e) {
   switch (e.task_type) {
     case 'content_generated': return tf(d.status === 'publish' ? 'web.activity_content_published' : 'web.activity_content_drafted', { title: d.title || '' });
     case 'content_failed': return t('web.activity_content_failed');
-    case 'ai_visibility_checked': return tf('web.activity_ai_visibility', { mentioned: d.mentionedCount || 0, total: d.checkedCount || 0 });
+    case 'ai_visibility_checked': return failed ? t('web.activity_ai_visibility_failed') : tf('web.activity_ai_visibility', { mentioned: d.mentionedCount || 0, total: d.checkedCount || 0 });
+    case 'keyword_snapshot': return failed ? t('web.activity_keyword_snapshot_failed') : tf('web.activity_keyword_snapshot', { queries: d.queries || 0, opportunities: d.opportunities || 0 });
     case 'content_missed': return t('web.activity_content_missed');
     case 'schema_installed': return failed ? t('web.activity_schema_installed_failed') : tf('web.activity_schema_installed', { theme: d.theme || '' });
     case 'schema_removed': return failed ? t('web.activity_schema_removed_failed') : t('web.activity_schema_removed');
@@ -10152,7 +10143,7 @@ const ICON_PATHS = {
   code: '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>', image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>', check: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/>', list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
 };
-const SECTION_ICONS = { shopifyIntelligenceSection: 'brain', shopifyAuditSection: 'shield', shopifySitemapSection: 'map', shopifyAiVisibilitySection: 'eye', shopifyKeywordRankingsSection: 'chart', shopifyBrokenLinksSection: 'unlink', shopifySchemaSection: 'code', shopifyMediaSection: 'image', shopifyCompetitorSection: 'target', shopifyTechnicalSeoSection: 'gauge', shopifyGeneratedPostsSection: 'file', shopifyActionsSection: 'check', websiteIntelligenceSection: 'brain', websiteAuditRunSection: 'shield', websiteAiVisibilitySection: 'eye', websiteKeywordRankingsSection: 'chart', websiteSitemapSection: 'map', websiteCompetitorSection: 'target', websiteTechnicalSeoSection: 'gauge', websiteBrokenLinksSection: 'unlink', websiteSchemaSection: 'code', websiteMediaSection: 'image', websiteGeneratedPostsSection: 'file', websiteActionsSection: 'check', websiteActivityLogSection: 'list' };
+const SECTION_ICONS = { shopifyIntelligenceSection: 'brain', shopifyAuditSection: 'shield', shopifySitemapSection: 'map', shopifyAiVisibilitySection: 'eye', shopifyKeywordRankingsSection: 'chart', shopifyBrokenLinksSection: 'unlink', shopifySchemaSection: 'code', shopifyCompetitorSection: 'target', shopifyTechnicalSeoSection: 'gauge', shopifyGeneratedPostsSection: 'file', shopifyActionsSection: 'check', websiteIntelligenceSection: 'brain', websiteAuditRunSection: 'shield', websiteAiVisibilitySection: 'eye', websiteKeywordRankingsSection: 'chart', websiteSitemapSection: 'map', websiteCompetitorSection: 'target', websiteTechnicalSeoSection: 'gauge', websiteBrokenLinksSection: 'unlink', websiteSchemaSection: 'code', websiteMediaSection: 'image', websiteGeneratedPostsSection: 'file', websiteActionsSection: 'check', websiteActivityLogSection: 'list' };
 const iconSvg = key => ICON_PATHS[key] ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[key]}</svg>` : '';
 const CHEVRON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 const readCollapsed = () => { try { return JSON.parse(localStorage.getItem('arreyon_wt_collapsed') || '{}'); } catch (e) { return {}; } };
@@ -11007,59 +10998,41 @@ async function removeShopifySchema() {
   }
 }
 
-// ── Media Library (WordPress and Shopify) ──
-// One implementation serves both platforms: the platform table says which route (<api>/media); the element ids are
-// <prefix>MediaContent (the grid), <prefix>MediaFooter and <prefix>MediaRefreshBtn. Shopify returns a page at a time.
-const mediaState = { website: { cursor: null }, shopify: { cursor: null } };
-const mediaEl = (prefix, part) => document.getElementById(`${prefix}Media${part}`);
-
-function renderMediaItem(m) {
-  const src = safeHttpUrl(m.url);
-  const size = m.fileSize ? ` · ${Math.max(1, Math.round(m.fileSize / 1024))} KB` : '';
-  return `
-      <div style="background:var(--bg3);border-radius:10px;overflow:hidden;border:1px solid var(--border)">
-        ${src ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(m.altText)}" style="width:100%;height:100px;object-fit:cover;display:block;background:var(--bg2)" loading="lazy">` : `<div style="height:100px;background:var(--bg2)"></div>`}
-        <div style="padding:8px 10px">
-          <div style="font-size:11px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(m.title)}">${escapeHtml(m.title || t('web.value_none'))}</div>
-          <div style="font-size:10px;color:var(--muted);margin-top:2px">${m.width && m.height ? `${m.width}×${m.height}` : ''}${size}</div>
-          ${!m.altText ? `<div style="font-size:10px;color:#f59e0b;margin-top:2px">${t('web.no_alt_text')}</div>` : ''}
-        </div>
-      </div>`;
-}
-
-async function loadWebsiteMedia(prefix = 'website', append = false) {
-  const contentEl = mediaEl(prefix, 'Content');
-  const footerEl = mediaEl(prefix, 'Footer');
-  const btn = mediaEl(prefix, 'RefreshBtn');
-  const note = (colour, text) => { contentEl.style.display = 'block'; contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:${colour};font-size:13px">${text}</div>`; if (footerEl) footerEl.innerHTML = ''; };
+async function loadWebsiteMedia() {
+  const contentEl = document.getElementById('websiteMediaContent');
+  const btn = document.getElementById('websiteMediaRefreshBtn');
   btn.disabled = true;
   try {
-    const after = append ? mediaState[prefix].cursor : null;
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${platformUi(prefix).api}/media${after ? `?after=${encodeURIComponent(after)}` : ''}`);
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/media`);
     const data = await res.json();
-    if (data.pendingPoll) { note('var(--muted)', escapeHtml(data.message)); return; }
-    if (!res.ok) { note('#ff8080', escapeHtml(data.error || t('board.connection_error'))); return; }
-    if (data.needsReauth) {
+    if (data.pendingPoll) {
       contentEl.style.display = 'block';
-      contentEl.innerHTML = `<div style="background:var(--bg3);border-radius:10px;padding:12px 14px;border-left:3px solid #f59e0b">
-          <div style="font-size:12px;font-weight:600;color:var(--text)">${t('web.shopify_media_permission_needed')}</div>
-          <div style="font-size:11px;color:var(--muted);margin:4px 0 8px;line-height:1.5">${t('web.shopify_permission_help')}</div>
-          <button class="btn-primary" onclick="reauthorizeShopify()" style="font-size:12px">${t('web.shopify_grant_permission')}</button>
-        </div>`;
-      if (footerEl) footerEl.innerHTML = '';
+      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${escapeHtml(data.message)}</div>`;
       return;
     }
-    if (!data.media.length && !append) { note('var(--muted)', t('web.no_media_found')); return; }
-    contentEl.style.display = 'grid';
-    const html = data.media.map(renderMediaItem).join('');
-    if (append) contentEl.insertAdjacentHTML('beforeend', html); else contentEl.innerHTML = html;
-    mediaState[prefix].cursor = data.cursor || null;
-    if (footerEl) {
-      footerEl.innerHTML = (data.processing ? `<div style="font-size:11px;color:var(--muted);margin-top:8px">${escapeHtml(tf('web.media_processing_note', { n: data.processing }))}</div>` : '')
-        + (data.hasMore ? `<div style="text-align:center;margin-top:12px"><button class="btn-ghost" onclick="loadWebsiteMedia('${prefix}', true)" style="font-size:12px">${t('web.load_more')}</button></div>` : '');
+    if (!res.ok) {
+      contentEl.style.display = 'block';
+      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
+      return;
     }
+    if (!data.media.length) {
+      contentEl.style.display = 'block';
+      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${t('web.no_media_found')}</div>`;
+      return;
+    }
+    contentEl.style.display = 'grid';
+    contentEl.innerHTML = data.media.map(m => `
+      <div style="background:var(--bg3);border-radius:10px;overflow:hidden;border:1px solid var(--border)">
+        <img src="${escapeHtml(m.url)}" alt="${escapeHtml(m.altText)}" style="width:100%;height:100px;object-fit:cover;display:block;background:var(--bg2)" loading="lazy">
+        <div style="padding:8px 10px">
+          <div style="font-size:11px;color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escapeHtml(m.title)}">${escapeHtml(m.title || t('web.value_none'))}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">${m.width && m.height ? `${m.width}×${m.height}` : ''}</div>
+          ${!m.altText ? `<div style="font-size:10px;color:#f59e0b;margin-top:2px">${t('web.no_alt_text')}</div>` : ''}
+        </div>
+      </div>`).join('');
   } catch (e) {
-    note('#ff8080', t('board.connection_error'));
+    contentEl.style.display = 'block';
+    contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
   } finally {
     btn.disabled = false;
   }
