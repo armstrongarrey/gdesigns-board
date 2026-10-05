@@ -2266,7 +2266,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div id="websiteBrokenLinksSection" class="wt-card" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.broken_links_title">Broken Internal Links</div>
-          <button class="btn-secondary" onclick="checkBrokenLinks()" id="websiteBrokenLinksBtn" data-i18n="web.check_links_button">Check Links</button>
+          <button class="btn-secondary" onclick="checkBrokenLinks('website')" id="websiteBrokenLinksBtn" data-i18n="web.check_links_button">Check Links</button>
         </div>
         <div id="websiteBrokenLinksContent"></div>
       </div>
@@ -2562,6 +2562,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div style="font-size:11px;color:var(--muted);margin:8px 0 12px" data-i18n="web.technical_seo_description">Real Core Web Vitals from Google's own Lighthouse engine, plus a robots.txt check for anything blocking search engines. Can take up to a minute to run.</div>
             <div id="shopifyTechnicalSeoContent"></div>
           </div>
+        <div class="wt-card" id="shopifyBrokenLinksSection">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.broken_links_title">Broken Internal Links</div>
+            <button class="btn-secondary" onclick="checkBrokenLinks('shopify')" id="shopifyBrokenLinksBtn" data-i18n="web.check_links_button">Check Links</button>
+          </div>
+          <div id="shopifyBrokenLinksContent"></div>
+        </div>
         <div class="wt-card" id="shopifyGeneratedPostsSection"><div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.generated_posts_title">Generated Blog Posts</div><div id="shopifyGeneratedPostsContent"></div></div>
         <div class="wt-card" id="shopifyActionsSection">
             <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.proposed_changes_title">Proposed Changes</div>
@@ -9247,6 +9254,7 @@ function agentActivityText(e) {
     case 'content_failed': return t('web.activity_content_failed');
     case 'ai_visibility_checked': return tf('web.activity_ai_visibility', { mentioned: d.mentionedCount || 0, total: d.checkedCount || 0 });
     case 'content_missed': return t('web.activity_content_missed');
+    case 'broken_links_checked': return failed ? t('web.activity_broken_links_failed') : tf('web.activity_broken_links', { broken: d.brokenCount || 0, checked: d.checkedCount || 0 });
     case 'intelligence_refreshed': return t(failed ? 'web.activity_intelligence_failed' : 'web.activity_intelligence_refreshed');
     case 'audit_completed': return failed ? t('web.activity_audit_failed') : tf('web.activity_audit_completed', { found: d.issuesFound || 0, fixed: d.autoFixed || 0, pending: d.pendingApproval || 0 });
     case 'technical_check':
@@ -10123,7 +10131,7 @@ const ICON_PATHS = {
   code: '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>', image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>', check: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/>', list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
 };
-const SECTION_ICONS = { shopifyIntelligenceSection: 'brain', shopifyAuditSection: 'shield', shopifySitemapSection: 'map', shopifyAiVisibilitySection: 'eye', shopifyKeywordRankingsSection: 'chart', shopifyCompetitorSection: 'target', shopifyTechnicalSeoSection: 'gauge', shopifyGeneratedPostsSection: 'file', shopifyActionsSection: 'check', websiteIntelligenceSection: 'brain', websiteAuditRunSection: 'shield', websiteAiVisibilitySection: 'eye', websiteKeywordRankingsSection: 'chart', websiteSitemapSection: 'map', websiteCompetitorSection: 'target', websiteTechnicalSeoSection: 'gauge', websiteBrokenLinksSection: 'unlink', websiteSchemaSection: 'code', websiteMediaSection: 'image', websiteGeneratedPostsSection: 'file', websiteActionsSection: 'check', websiteActivityLogSection: 'list' };
+const SECTION_ICONS = { shopifyIntelligenceSection: 'brain', shopifyAuditSection: 'shield', shopifySitemapSection: 'map', shopifyAiVisibilitySection: 'eye', shopifyKeywordRankingsSection: 'chart', shopifyBrokenLinksSection: 'unlink', shopifyCompetitorSection: 'target', shopifyTechnicalSeoSection: 'gauge', shopifyGeneratedPostsSection: 'file', shopifyActionsSection: 'check', websiteIntelligenceSection: 'brain', websiteAuditRunSection: 'shield', websiteAiVisibilitySection: 'eye', websiteKeywordRankingsSection: 'chart', websiteSitemapSection: 'map', websiteCompetitorSection: 'target', websiteTechnicalSeoSection: 'gauge', websiteBrokenLinksSection: 'unlink', websiteSchemaSection: 'code', websiteMediaSection: 'image', websiteGeneratedPostsSection: 'file', websiteActionsSection: 'check', websiteActivityLogSection: 'list' };
 const iconSvg = key => ICON_PATHS[key] ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[key]}</svg>` : '';
 const CHEVRON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 const readCollapsed = () => { try { return JSON.parse(localStorage.getItem('arreyon_wt_collapsed') || '{}'); } catch (e) { return {}; } };
@@ -10735,36 +10743,47 @@ async function generateFeaturedImageProposals() {
   }
 }
 
-async function checkBrokenLinks() {
-  const btn = document.getElementById('websiteBrokenLinksBtn');
-  const contentEl = document.getElementById('websiteBrokenLinksContent');
+// ── Broken internal links (WordPress and Shopify) ──
+// One implementation serves both platforms: the platform table says which route (<api>/broken-links), the element ids are
+// <prefix>BrokenLinksContent / <prefix>BrokenLinksBtn, and fixes proposed by the scan appear in that platform's approvals list.
+const blEl = (prefix, part) => document.getElementById(`${prefix}BrokenLinks${part}`);
+
+async function checkBrokenLinks(prefix = 'website') {
+  const btn = blEl(prefix, 'Btn');
+  const contentEl = blEl(prefix, 'Content');
   btn.disabled = true;
   btn.textContent = t('web.checking_links');
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/broken-links`, { method: 'POST' });
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${platformUi(prefix).api}/broken-links`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) {
       contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${escapeHtml(data.error || t('board.connection_error'))}</div>`;
       return;
     }
+    const checkedLine = t('web.links_checked_of').replace('{checked}', data.checkedCount).replace('{total}', data.totalUniqueLinks);
+    // Only Shopify reports how much of the store it read (a part of it, when the store is large): say so
+    const scopeLine = data.scope ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">${t('web.links_scope').replace('{posts}', data.scope.posts).replace('{totalPosts}', data.scope.totalPosts).replace('{pages}', data.scope.pages).replace('{totalPages}', data.scope.totalPages)}</div>` : '';
     if (!data.brokenLinks.length) {
-      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${escapeHtml(data.message)} (${t('web.links_checked_of').replace('{checked}', data.checkedCount).replace('{total}', data.totalUniqueLinks)})</div>`;
+      contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${escapeHtml(data.message)} (${checkedLine})${scopeLine}</div>`;
       return;
     }
+    const proposedNote = data.proposals && data.proposals.length ? ` · ${t('web.link_fixes_proposed').replace('{n}', data.proposals.length)}` : '';
+    const waitingNote = data.alreadyPendingCount ? ` · ${t('web.link_fixes_already_pending').replace('{n}', data.alreadyPendingCount)}` : '';
     contentEl.innerHTML = `
-      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${t('web.links_checked_of').replace('{checked}', data.checkedCount).replace('{total}', data.totalUniqueLinks)}${data.proposals && data.proposals.length ? ` · ${t('web.link_fixes_proposed').replace('{n}', data.proposals.length)}` : ''}</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${checkedLine}${proposedNote}${waitingNote}${scopeLine}</div>
       ${data.brokenLinks.map(b => `
         <div style="background:var(--bg3);border-radius:10px;padding:14px 16px;margin-bottom:10px;border-left:3px solid #ef4444">
           <div style="font-size:12.5px;font-weight:600;color:var(--text);margin-bottom:4px;word-break:break-all">${escapeHtml(b.url)}</div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${b.status ? t('web.link_status').replace('{status}', b.status) : escapeHtml(b.error || '')}</div>
           <div style="font-size:11px;color:var(--muted)">${t('web.found_on')}: ${b.foundOn.map(f => `${targetTypeBadge(f.isPost ? 'post' : 'page')}${escapeHtml(f.title)}`).join(', ')}</div>
         </div>`).join('')}`;
-    if (data.proposals && data.proposals.length) loadWebsiteActions();
+    if (data.proposals && data.proposals.length) (prefix === 'shopify' ? loadShopifyActions() : loadWebsiteActions());
   } catch (e) {
     contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
   } finally {
     btn.disabled = false;
     btn.textContent = t('web.check_links_button');
+    if (prefix === 'shopify') loadAgentActivity(prefix); // a Shopify check is recorded in Agent Activity
   }
 }
 
