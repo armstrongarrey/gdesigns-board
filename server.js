@@ -9202,6 +9202,43 @@ app.get('/api/business/:id/shopify/technical-seo/history', authRequired, async (
   }
 });
 
+app.post('/api/business/:id/shopify/competitor-analysis', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    const conn = (await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
+    if (!conn) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
+    const n = (await pool.query(`SELECT COUNT(*)::int AS n FROM tracked_competitors WHERE business_id = $1 AND website IS NOT NULL AND TRIM(website) <> ''`, [req.params.id])).rows[0].n;
+    if (!n) return res.status(400).json({ error: 'Add at least one competitor with a website first, then run the analysis.' });
+    const biz = (await pool.query('SELECT id, user_id FROM businesses WHERE id = $1', [req.params.id])).rows[0];
+    const context = await getBusinessContext(req.params.id, biz.user_id);
+    if (!context) return res.status(500).json({ error: 'Business details could not be loaded.' });
+    const accessToken = decryptSecret(conn.access_token_encrypted);
+    const row = await startShopifyCompetitorAnalysisRow(conn.id, 'manual');
+    if (!row) return res.status(409).json({ error: 'An analysis is already running for this store.' });
+    res.status(202).json({ id: row.id });
+    // Carries on after answering: reading several sites takes a while. Its outcome lands in the record and in Agent Activity.
+    runShopifyCompetitorAnalysis(conn, accessToken, context, row.id, 'manual');
+  } catch (e) {
+    console.error('Start Shopify competitor analysis error:', e.message);
+    res.status(500).json({ error: 'Could not start the competitor analysis.' });
+  }
+});
+
+app.get('/api/business/:id/shopify/competitor-analysis', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    const counts = (await pool.query(`SELECT COUNT(*)::int AS tracked, COUNT(*) FILTER (WHERE website IS NOT NULL AND TRIM(website) <> '')::int AS with_website FROM tracked_competitors WHERE business_id = $1`, [req.params.id])).rows[0];
+    const conn = (await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id])).rows[0];
+    if (!conn) return res.json({ latest: null, running: false, trackedCompetitors: counts.tracked, competitorsWithWebsite: counts.with_website });
+    const running = (await pool.query(`SELECT 1 FROM shopify_competitor_analyses WHERE shopify_connection_id = $1 AND status = 'running' AND created_at > NOW() - INTERVAL '15 minutes'`, [conn.id])).rows.length > 0;
+    const latest = (await pool.query(`SELECT id, status, triggered_by, own, competitors, insights, error_message, created_at, completed_at FROM shopify_competitor_analyses WHERE shopify_connection_id = $1 AND status <> 'running' ORDER BY created_at DESC LIMIT 1`, [conn.id])).rows[0] || null;
+    res.json({ latest, running, trackedCompetitors: counts.tracked, competitorsWithWebsite: counts.with_website });
+  } catch (e) {
+    console.error('Get Shopify competitor analysis error:', e.message);
+    res.status(500).json({ error: 'Could not load the competitor analysis.' });
+  }
+});
+
 app.post('/api/business/:id/shopify/sitemap/submit', authRequired, async (req, res) => {
   let owned = false;
   try {
@@ -14655,11 +14692,14 @@ async function collectCompetitorSiteData(rawUrl, { maxPages = 6, now = Date.now(
 async function synthesizeCompetitorInsights(context, ownSite, competitors) {
   const known = new Map();
   for (const c of competitors) for (const p of c.sampledPages) known.set(p.url.replace(/\/+$/, ''), { competitor: c.name, title: p.title });
+  // When the AI sees only some of the site's titles, it must not claim the site lacks a topic just because it is not in the list.
+  const ownTitles = (ownSite.titles || []).length, ownTotal = ownSite.titlesTotal || 0, sampled = ownTotal > ownTitles;
+  const sampleNote = sampled ? `\n(IMPORTANT: the titles in YOUR SITE are only a SAMPLE — ${ownTitles} of ${ownTotal} items. A topic missing from them may well exist elsewhere on the site, so say "not seen in the sampled titles" instead of claiming the site lacks it.)` : '';
   const prompt = `You are a content strategist comparing a business's website with its competitors' websites. You may use ONLY the measured data below. Never state or guess traffic, rankings, revenue, or anything not in the data. If the data is thin, say so in data_limits.
 
 THE BUSINESS: ${summarizeBusinessContextForAI(context) || 'No detailed context is available.'}
 
-YOUR SITE (measured): ${JSON.stringify(ownSite)}
+YOUR SITE (measured): ${JSON.stringify(ownSite)}${sampleNote}
 
 COMPETITOR SITES (measured; each page below was really fetched):
 ${JSON.stringify(competitors.map(c => ({ name: c.name, totalUrlsInSitemap: c.totalUrls, urlsUpdatedLast90Days: c.urlsLast90Days, avgWordsOnSampledPages: c.avgWords, pctSampledPagesWithMetaDescription: c.pctWithMetaDescription, pages: c.sampledPages.map(p => ({ url: p.url, title: p.title, h1: p.h1, h2s: p.h2s, words: p.wordCount })) })))}
@@ -14681,7 +14721,9 @@ Find topics competitors cover on the pages above that the business's site does n
     return { topic: String(g.topic).slice(0, 200), why_it_matters: String(g.why_it_matters || '').slice(0, 400), suggested_post_title: String(g.suggested_post_title || '').slice(0, 200), evidence: urls.map(u => ({ url: u, competitor: known.get(u).competitor, title: known.get(u).title })) };
   }).filter(Boolean).slice(0, 8);
   const list = v => (Array.isArray(v) ? v.map(x => String(x).slice(0, 300)).slice(0, 8) : []);
-  return { summary: String(parsed.summary || '').slice(0, 800), content_gaps: gaps, where_you_are_ahead: list(parsed.where_you_are_ahead), quick_wins: list(parsed.quick_wins), data_limits: list(parsed.data_limits), ungrounded_gaps_dropped: dropped };
+  const limits = list(parsed.data_limits);
+  if (sampled) limits.unshift(`Only ${ownTitles} of your ${ownTotal} titles were compared, so a gap listed here may already be covered elsewhere on your site.`);
+  return { summary: String(parsed.summary || '').slice(0, 800), content_gaps: gaps, where_you_are_ahead: list(parsed.where_you_are_ahead), quick_wins: list(parsed.quick_wins), data_limits: limits.slice(0, 8), ungrounded_gaps_dropped: dropped };
 }
 
 
@@ -16829,6 +16871,58 @@ function isWebsitePlatform(platform) {
   return typeof platform === 'string' && Object.prototype.hasOwnProperty.call(WEBSITE_AGENTS, platform);
 }
 
+// ── Competitor analysis engine — the same for every platform ─────────────────
+// What differs per platform is only how YOUR OWN site is read; the rest (who is compared, how a run is recorded, when it
+// is due) is identical. A platform describes itself with a spec: { platform, table, fk, measureOwn(connection, secret) }.
+const MAX_COMPETITORS_PER_ANALYSIS = 5;
+
+// Weekly in Automatic mode, whatever the agent's own schedule, and only when there is something to compare against.
+// An analysis that failed does not count as done, so the next run tries again.
+async function competitorAnalysisDue(spec, connectionId, businessId) {
+  const comps = await pool.query(`SELECT COUNT(*)::int AS n FROM tracked_competitors WHERE business_id = $1 AND website IS NOT NULL AND TRIM(website) <> ''`, [businessId]);
+  if (!comps.rows[0].n) return false;
+  const recent = await pool.query(
+    `SELECT 1 FROM ${spec.table} WHERE ${spec.fk} = $1
+     AND ((status = 'completed' AND created_at > NOW() - INTERVAL '7 days') OR (status = 'running' AND created_at > NOW() - INTERVAL '15 minutes')) LIMIT 1`, [connectionId]);
+  return recent.rows.length === 0;
+}
+
+// Creates the 'running' record, unless one is already running (checked in the same statement, so two requests cannot both start).
+async function startCompetitorAnalysisRow(spec, connectionId, triggeredBy) {
+  const r = await pool.query(
+    `INSERT INTO ${spec.table} (${spec.fk}, triggered_by)
+     SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM ${spec.table} WHERE ${spec.fk} = $1 AND status = 'running' AND created_at > NOW() - INTERVAL '15 minutes')
+     RETURNING id`, [connectionId, triggeredBy]);
+  return r.rows[0] || null;
+}
+
+// Never throws: the outcome is written to the record and to the feed, so a failure is visible and never silent.
+async function runCompetitorAnalysis(spec, connection, secret, context, rowId, triggeredBy) {
+  const businessId = connection.business_id;
+  const log = (outcome, detail) => logAgentActivity({ businessId, platform: spec.platform, taskType: 'competitor_analysis', outcome, triggeredBy, detail });
+  try {
+    // Each analysis reads at most 5 competitors (the oldest tracked first) — more would make it too slow and too many requests
+    // to other people's sites. Whatever is left out is counted and shown, never silently ignored.
+    const tracked = (await pool.query(`SELECT id, name, website FROM tracked_competitors WHERE business_id = $1 AND website IS NOT NULL AND TRIM(website) <> '' ORDER BY created_at ASC`, [businessId])).rows;
+    const comps = tracked.slice(0, MAX_COMPETITORS_PER_ANALYSIS), notIncluded = tracked.length - comps.length;
+    if (!comps.length) throw new Error('No competitor with a website is being tracked.');
+    const own = await spec.measureOwn(connection, secret);
+    const measured = await Promise.all(comps.map(async c => ({ id: c.id, name: c.name, ...(await collectCompetitorSiteData(c.website)) })));
+    const usable = measured.filter(m => m.reachable);
+    if (!usable.length) throw new Error('None of the competitor websites could be read right now.');
+    const insights = await synthesizeCompetitorInsights(context, own, usable);
+    insights.competitors_not_included = notIncluded;
+    await pool.query(`UPDATE ${spec.table} SET status = 'completed', own = $2, competitors = $3, insights = $4, completed_at = NOW() WHERE id = $1`, [rowId, JSON.stringify(own), JSON.stringify(measured), JSON.stringify(insights)]);
+    await pool.query(`DELETE FROM ${spec.table} WHERE ${spec.fk} = $1 AND id NOT IN (SELECT id FROM ${spec.table} WHERE ${spec.fk} = $1 ORDER BY created_at DESC LIMIT 10)`, [connection.id]);
+    await log('success', { competitorsAnalyzed: usable.length, competitorsUnreachable: measured.length - usable.length, competitorsNotIncluded: notIncluded, gaps: insights.content_gaps.length });
+    return { ok: true };
+  } catch (e) {
+    try { await pool.query(`UPDATE ${spec.table} SET status = 'failed', error_message = $2, completed_at = NOW() WHERE id = $1`, [rowId, String(e.message).slice(0, 500)]); } catch (e2) { console.error('Could not record competitor analysis failure:', e2.message); }
+    await log('failed', errDetail(e));
+    return { ok: false };
+  }
+}
+
 // ── Runs in progress, and stopping them ──────────────────────────────────────
 // One entry per site while its cycle is running. 'cancelled' is how a run is stopped: the cycle checks it
 // between steps and skips what is left, and the code that applies fixes re-reads the live mode, so once a
@@ -17244,65 +17338,33 @@ async function generateWordPressScheduledPost(entry, context, connection) {
 }
 
 // ── Competitor analysis (WordPress) ──────────────────────────────────────────
-const MAX_COMPETITORS_PER_ANALYSIS = 5;
+// The engine is shared; this is only how a WordPress site is read, and the names the routes and the cycle use.
 // Your own site, measured in the same terms as a competitor's pages. Only what WordPress reports is used.
 function measureOwnWordPressSite(pages, posts) {
   const all = [...pages, ...posts];
   const avg = list => (list.length ? Math.round(list.reduce((s, i) => s + (i.wordCount || 0), 0) / list.length) : null);
+  const titles = all.map(i => i.title).filter(Boolean);
   return {
     postCount: posts.length, pageCount: pages.length, avgWordsOnPosts: avg(posts), avgWordsOnPages: avg(pages),
     pctWithMetaDescription: all.length ? Math.round(100 * all.filter(i => i.metaDescription).length / all.length) : null,
-    titles: all.map(i => i.title).filter(Boolean).slice(0, 60),
+    titles: titles.slice(0, 60), titlesTotal: titles.length,   // the AI is told when it only sees some of the titles
   };
 }
 
 // Weekly in Automatic mode, whatever the agent's own schedule, and only when there is something to compare against.
 // An analysis that failed does not count as done, so the next run tries again.
-async function wordpressCompetitorAnalysisDue(connectionId, businessId) {
-  const comps = await pool.query(`SELECT COUNT(*)::int AS n FROM tracked_competitors WHERE business_id = $1 AND website IS NOT NULL AND TRIM(website) <> ''`, [businessId]);
-  if (!comps.rows[0].n) return false;
-  const recent = await pool.query(
-    `SELECT 1 FROM website_competitor_analyses WHERE website_connection_id = $1
-     AND ((status = 'completed' AND created_at > NOW() - INTERVAL '7 days') OR (status = 'running' AND created_at > NOW() - INTERVAL '15 minutes')) LIMIT 1`, [connectionId]);
-  return recent.rows.length === 0;
-}
+async function wordpressCompetitorAnalysisDue(connectionId, businessId) { return competitorAnalysisDue(wordpressCompetitorSpec, connectionId, businessId); }
 
 // Creates the 'running' record, unless one is already running (checked in the same statement, so two requests cannot both start).
-async function startWordPressCompetitorAnalysisRow(connectionId, triggeredBy) {
-  const r = await pool.query(
-    `INSERT INTO website_competitor_analyses (website_connection_id, triggered_by)
-     SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM website_competitor_analyses WHERE website_connection_id = $1 AND status = 'running' AND created_at > NOW() - INTERVAL '15 minutes')
-     RETURNING id`, [connectionId, triggeredBy]);
-  return r.rows[0] || null;
-}
+async function startWordPressCompetitorAnalysisRow(connectionId, triggeredBy) { return startCompetitorAnalysisRow(wordpressCompetitorSpec, connectionId, triggeredBy); }
 
 // Never throws: the outcome is written to the record and to the feed, so a failure is visible and never silent.
-async function runWordPressCompetitorAnalysis(connection, decryptedPassword, context, rowId, triggeredBy) {
-  const businessId = connection.business_id;
-  const log = (outcome, detail) => logAgentActivity({ businessId, platform: 'wordpress', taskType: 'competitor_analysis', outcome, triggeredBy, detail });
-  try {
-    // Each analysis reads at most 5 competitors (the oldest tracked first) — more would make it too slow and too many requests
-    // to other people's sites. Whatever is left out is counted and shown, never silently ignored.
-    const tracked = (await pool.query(`SELECT id, name, website FROM tracked_competitors WHERE business_id = $1 AND website IS NOT NULL AND TRIM(website) <> '' ORDER BY created_at ASC`, [businessId])).rows;
-    const comps = tracked.slice(0, MAX_COMPETITORS_PER_ANALYSIS), notIncluded = tracked.length - comps.length;
-    if (!comps.length) throw new Error('No competitor with a website is being tracked.');
-    const { pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword);
-    const own = measureOwnWordPressSite(pages || [], posts || []);
-    const measured = await Promise.all(comps.map(async c => ({ id: c.id, name: c.name, ...(await collectCompetitorSiteData(c.website)) })));
-    const usable = measured.filter(m => m.reachable);
-    if (!usable.length) throw new Error('None of the competitor websites could be read right now.');
-    const insights = await synthesizeCompetitorInsights(context, own, usable);
-    insights.competitors_not_included = notIncluded;
-    await pool.query(`UPDATE website_competitor_analyses SET status = 'completed', own = $2, competitors = $3, insights = $4, completed_at = NOW() WHERE id = $1`, [rowId, JSON.stringify(own), JSON.stringify(measured), JSON.stringify(insights)]);
-    await pool.query(`DELETE FROM website_competitor_analyses WHERE website_connection_id = $1 AND id NOT IN (SELECT id FROM website_competitor_analyses WHERE website_connection_id = $1 ORDER BY created_at DESC LIMIT 10)`, [connection.id]);
-    await log('success', { competitorsAnalyzed: usable.length, competitorsUnreachable: measured.length - usable.length, competitorsNotIncluded: notIncluded, gaps: insights.content_gaps.length });
-    return { ok: true };
-  } catch (e) {
-    try { await pool.query(`UPDATE website_competitor_analyses SET status = 'failed', error_message = $2, completed_at = NOW() WHERE id = $1`, [rowId, String(e.message).slice(0, 500)]); } catch (e2) { console.error('Could not record competitor analysis failure:', e2.message); }
-    await log('failed', errDetail(e));
-    return { ok: false };
-  }
-}
+async function runWordPressCompetitorAnalysis(connection, decryptedPassword, context, rowId, triggeredBy) { return runCompetitorAnalysis(wordpressCompetitorSpec, connection, decryptedPassword, context, rowId, triggeredBy); }
+
+const wordpressCompetitorSpec = {
+  platform: 'wordpress', table: 'website_competitor_analyses', fk: 'website_connection_id',
+  async measureOwn(connection, password) { const { pages, posts } = await getWordPressContentForAnalysis(connection, password); return measureOwnWordPressSite(pages || [], posts || []); },
+};
 
 // A post this app generated for WordPress, only if it belongs to this business.
 async function previewWordPressPost(businessId, postId) {
@@ -17416,6 +17478,30 @@ function describeShopifyActionChange(action) {
   return parts.join(' · ') || action.action_type;
 }
 
+// ── Competitor analysis (Shopify) ──────────────────────────────────────────
+// The engine is shared; this is only how a Shopify store is read. Shopify's loader returns the most recent pages and posts
+// together with the store's true totals, so the counts are exact and the averages come from that sample.
+function measureOwnShopifyStore(content) {
+  const items = (content && content.items) || [];
+  const posts = items.filter(i => i.type === 'post'), pages = items.filter(i => i.type === 'page');
+  const avg = list => (list.length ? Math.round(list.reduce((s, i) => s + (i.wordCount || 0), 0) / list.length) : null);
+  const titles = items.map(i => i.title).filter(Boolean);
+  const totalPosts = content && Number.isInteger(content.totalArticleCount) ? content.totalArticleCount : posts.length;
+  const totalPages = content && Number.isInteger(content.totalPageCount) ? content.totalPageCount : pages.length;
+  return {
+    postCount: totalPosts, pageCount: totalPages, avgWordsOnPosts: avg(posts), avgWordsOnPages: avg(pages),
+    pctWithMetaDescription: items.length ? Math.round(100 * items.filter(i => i.metaDescription).length / items.length) : null,
+    titles, titlesTotal: totalPosts + totalPages, sampledItems: items.length,
+  };
+}
+async function shopifyCompetitorAnalysisDue(connectionId, businessId) { return competitorAnalysisDue(shopifyCompetitorSpec, connectionId, businessId); }
+async function startShopifyCompetitorAnalysisRow(connectionId, triggeredBy) { return startCompetitorAnalysisRow(shopifyCompetitorSpec, connectionId, triggeredBy); }
+async function runShopifyCompetitorAnalysis(connection, accessToken, context, rowId, triggeredBy) { return runCompetitorAnalysis(shopifyCompetitorSpec, connection, accessToken, context, rowId, triggeredBy); }
+const shopifyCompetitorSpec = {
+  platform: 'shopify', table: 'shopify_competitor_analyses', fk: 'shopify_connection_id',
+  async measureOwn(connection, accessToken) { return measureOwnShopifyStore(await getShopifyContentForIntelligence(connection, accessToken)); },
+};
+
 async function runShopifyMaintenanceCycle(connection, triggeredBy = 'automatic', run = null) {
   const businessId = connection.business_id;
   const log = (taskType, outcome, detail) => logAgentActivity({ businessId, platform: 'shopify', taskType, outcome, triggeredBy, detail });
@@ -17425,6 +17511,9 @@ async function runShopifyMaintenanceCycle(connection, triggeredBy = 'automatic',
   const context = await getBusinessContext(businessId, biz.user_id);
   const accessToken = decryptSecret(connection.access_token_encrypted);
   const steps = createCycleSteps(run);
+  // Decided up front so a stop record never lists a step that would not have run anyway.
+  let competitorsDue = false;
+  try { competitorsDue = !!context && await shopifyCompetitorAnalysisDue(connection.id, businessId); } catch (e) { /* not due if it cannot be checked */ }
 
   await steps.run('intelligence', async () => {
     try {
@@ -17456,6 +17545,13 @@ async function runShopifyMaintenanceCycle(connection, triggeredBy = 'automatic',
   await steps.run('sitemap', async () => {
     await runSitemapTask(biz.user_id, businessId, 'shopify', siteUrl, triggeredBy);
   });
+
+  if (competitorsDue) {
+    await steps.run('competitor analysis', async () => {
+      const row = await startShopifyCompetitorAnalysisRow(connection.id, triggeredBy);
+      if (row) await runShopifyCompetitorAnalysis(connection, accessToken, context, row.id, triggeredBy);
+    });
+  }
 
   await steps.finish(log);
 }
