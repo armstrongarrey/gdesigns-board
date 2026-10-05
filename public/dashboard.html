@@ -2240,7 +2240,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <div id="websiteCompetitorSection" class="wt-card" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.competitor_title">Competitor Analysis</div>
-          <button class="btn-primary" onclick="runCompetitorAnalysis()" id="websiteCompetitorBtn" data-i18n="web.competitor_run_button">Analyze competitors</button>
+          <button class="btn-primary" onclick="runCompetitorAnalysis('website')" id="websiteCompetitorBtn" data-i18n="web.competitor_run_button">Analyze competitors</button>
         </div>
         <div style="font-size:11px;color:var(--muted);margin:8px 0 12px;line-height:1.5" data-i18n="web.competitor_description"></div>
         <div id="websiteCompetitorContent"></div>
@@ -2527,6 +2527,14 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div style="font-size:11px;color:var(--muted);margin:8px 0 12px" data-i18n="web.shopify_sitemap_description">Finds your store's existing sitemap (generated automatically by Shopify) and submits it to Google Search Console.</div>
             <div id="shopifySitemapContent"></div>
           </div>
+        <div class="wt-card" id="shopifyCompetitorSection">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.competitor_title">Competitor Analysis</div>
+            <button class="btn-primary" onclick="runCompetitorAnalysis('shopify')" id="shopifyCompetitorBtn" data-i18n="web.competitor_run_button">Analyze competitors</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin:8px 0 12px;line-height:1.5" data-i18n="web.competitor_description"></div>
+          <div id="shopifyCompetitorContent"></div>
+        </div>
         <div class="wt-card" id="shopifyTechnicalSeoSection">
             <div style="display:flex;justify-content:space-between;align-items:center">
               <div class="section-title" style="margin-bottom:0;font-size:14px" data-i18n="web.technical_seo_title">Technical SEO</div>
@@ -8206,6 +8214,7 @@ async function loadShopifyStatus() {
     loadShopifyActions();
     loadShopifyGeneratedPosts();
     loadShopifySitemapStatus();
+    loadCompetitorAnalysis('shopify');
     loadTechnicalSeoHistory('shopify');
     renderJumpNav('shopify');
   } catch (e) {
@@ -8538,7 +8547,7 @@ async function loadWebsiteSection() {
     loadAiVisibilityHistory();
     loadKeywordRankings();
     loadWebsiteSitemapStatus();
-    loadCompetitorAnalysis();
+    loadCompetitorAnalysis('website');
     loadTechnicalSeoHistory('website');
     loadActiveRules('website');
     loadContentCalendar('website');
@@ -9222,8 +9231,8 @@ function agentActivityText(e) {
 //   pollMode / permissionLevel — whether this platform has that setting at all
 // A new platform is one entry here (and its own section of the page).
 const WEBSITE_PLATFORM_UI = {
-  website: { prefix: 'website', platform: 'wordpress', api: 'website', pollMode: true, permissionLevel: true },
-  shopify: { prefix: 'shopify', platform: 'shopify', api: 'shopify', pollMode: false, permissionLevel: false },
+  website: { prefix: 'website', platform: 'wordpress', api: 'website', pollMode: true, permissionLevel: true, ownLabelKey: 'web.competitor_you', tableNoteKey: 'web.competitor_table_note' },
+  shopify: { prefix: 'shopify', platform: 'shopify', api: 'shopify', pollMode: false, permissionLevel: false, ownLabelKey: 'web.competitor_you_shopify', tableNoteKey: 'web.competitor_table_note_shopify' },
 };
 const platformUi = key => WEBSITE_PLATFORM_UI[key] || WEBSITE_PLATFORM_UI.website;
 
@@ -9902,34 +9911,37 @@ function renderTechnicalSeoHistory(contentEl, checks) {
 }
 
 
-// ── Competitor analysis (WordPress) ──
+// ── Competitor analysis (WordPress and Shopify) ──
 // Everything from a competitor's site (titles, topics, URLs) is third-party text: it is always escaped, links are checked,
-// and the "Use this topic" button carries only a number.
-let competitorGaps = [];
-let competitorPoller = null;
+// and the "Use this topic" button carries only a number. One implementation serves both platforms: the platform table says
+// which route, which labels and which element ids (<prefix>CompetitorContent, <prefix>CompetitorBtn, <prefix>BlogPostTopic).
+const competitorState = { website: { gaps: [], poller: null }, shopify: { gaps: [], poller: null } };
+const competitorEl = (prefix, part) => document.getElementById(`${prefix}Competitor${part}`);
+const competitorUrl = prefix => `/api/business/${currentWebsiteBusinessId}/${platformUi(prefix).api}/competitor-analysis`;
 
-function setCompetitorButton(running) {
-  const btn = document.getElementById('websiteCompetitorBtn');
+function setCompetitorButton(prefix, running) {
+  const btn = competitorEl(prefix, 'Btn');
   if (!btn) return;
   btn.disabled = running;
   btn.textContent = t(running ? 'web.competitor_running_button' : 'web.competitor_run_button');
 }
 
-function renderCompetitorAnalysis(el, data) {
+function renderCompetitorAnalysis(el, data, prefix = 'website') {
+  const state = competitorState[prefix], ui = platformUi(prefix);
   const dash = v => (v === null || v === undefined ? '–' : v);
   const list = (titleKey, items) => (items && items.length)
     ? `<div style="margin-top:14px"><div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;margin-bottom:6px">${t(titleKey)}</div><ul style="margin:0;padding-left:18px;font-size:12px;color:var(--text2);line-height:1.6">${items.map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul></div>` : '';
   let html = '';
   if (data.running) html += `<div style="font-size:12px;color:var(--gold);margin-bottom:10px">${t('web.competitor_running')}</div>`;
   if (!data.competitorsWithWebsite) {
-    competitorGaps = [];
+    state.gaps = [];
     el.innerHTML = html + `<div style="font-size:12px;color:var(--muted)">${t(data.trackedCompetitors ? 'web.competitor_none_website' : 'web.competitor_none_tracked')}</div>`;
     return;
   }
   const latest = data.latest;
-  if (!latest) { competitorGaps = []; el.innerHTML = html + (data.running ? '' : `<div style="font-size:12px;color:var(--muted)">${t('web.competitor_not_run')}</div>`); return; }
+  if (!latest) { state.gaps = []; el.innerHTML = html + (data.running ? '' : `<div style="font-size:12px;color:var(--muted)">${t('web.competitor_not_run')}</div>`); return; }
   if (latest.status === 'failed') html += `<div style="font-size:12px;color:#ff8080;margin-bottom:10px">${escapeHtml(tf('web.competitor_failed', { error: latest.error_message || '' }))}</div>`;
-  if (latest.status !== 'completed') { competitorGaps = []; el.innerHTML = html; return; }
+  if (latest.status !== 'completed') { state.gaps = []; el.innerHTML = html; return; }
 
   const own = latest.own || {}, ins = latest.insights || {}, comps = latest.competitors || [];
   html += `<div style="font-size:11px;color:var(--muted);margin-bottom:8px">${escapeHtml(tf('web.competitor_analyzed_at', { time: formatTimestamp(latest.completed_at || latest.created_at) }))}</div>`;
@@ -9938,19 +9950,19 @@ function renderCompetitorAnalysis(el, data) {
   const cell = 'padding:6px 10px;border-bottom:1px solid var(--border);font-size:12px';
   html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:520px"><thead><tr style="text-align:left;color:var(--muted);font-size:11px">`
     + ['site', 'pages', 'recent', 'words', 'meta'].map(k => `<th style="${cell}">${t('web.competitor_col_' + k)}</th>`).join('') + `</tr></thead><tbody>`
-    + `<tr style="color:var(--text)"><td style="${cell};font-weight:600">${t('web.competitor_you')}</td><td style="${cell}">${(own.postCount || 0) + (own.pageCount || 0)}</td><td style="${cell}">–</td><td style="${cell}">${dash(own.avgWordsOnPosts)}</td><td style="${cell}">${own.pctWithMetaDescription == null ? '–' : own.pctWithMetaDescription + '%'}</td></tr>`
+    + `<tr style="color:var(--text)"><td style="${cell};font-weight:600">${t(ui.ownLabelKey)}</td><td style="${cell}">${(own.postCount || 0) + (own.pageCount || 0)}</td><td style="${cell}">–</td><td style="${cell}">${dash(own.avgWordsOnPosts)}</td><td style="${cell}">${own.pctWithMetaDescription == null ? '–' : own.pctWithMetaDescription + '%'}</td></tr>`
     + comps.map(c => c.reachable
       ? `<tr style="color:var(--text2)"><td style="${cell}">${escapeHtml(c.name || '')}</td><td style="${cell}">${c.sitemapFound ? c.totalUrls : '–'}</td><td style="${cell}">${c.sitemapFound ? c.urlsLast90Days : '–'}</td><td style="${cell}">${dash(c.avgWords)}</td><td style="${cell}">${c.pctWithMetaDescription == null ? '–' : c.pctWithMetaDescription + '%'}</td></tr>`
       : `<tr style="color:var(--muted)"><td style="${cell}">${escapeHtml(c.name || '')}</td><td style="${cell}" colspan="4">${t('web.competitor_unreadable')}</td></tr>`).join('')
-    + `</tbody></table></div><div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.5">${t('web.competitor_table_note')}</div>`;
-
+    + `</tbody></table></div><div style="font-size:10.5px;color:var(--muted);margin-top:6px;line-height:1.5">${t(ui.tableNoteKey)}</div>`;
   if (ins.competitors_not_included > 0) html += `<div style="font-size:10.5px;color:var(--gold);margin-top:4px;line-height:1.5">${escapeHtml(tf('web.competitor_not_included_note', { n: ins.competitors_not_included }))}</div>`;
-  competitorGaps = ins.content_gaps || [];
+
+  state.gaps = ins.content_gaps || [];
   html += `<div style="margin-top:16px;font-size:12.5px;font-weight:700;color:var(--text)">${t('web.competitor_gaps_title')}</div>`;
-  if (!competitorGaps.length) html += `<div style="font-size:12px;color:var(--muted);margin-top:6px">${t('web.competitor_no_gaps')}</div>`;
-  html += competitorGaps.map((g, i) => {
+  if (!state.gaps.length) html += `<div style="font-size:12px;color:var(--muted);margin-top:6px">${t('web.competitor_no_gaps')}</div>`;
+  html += state.gaps.map((g, i) => {
     const links = (g.evidence || []).map(ev => { const u = safeHttpUrl(ev.url); const label = escapeHtml(`${ev.competitor || ''}: ${ev.title || ev.url}`); return u ? `<a href="${escapeHtml(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--purple-light)">${label}</a>` : label; }).join(' · ');
-    return `<div style="margin-top:10px;padding:10px 12px;background:var(--bg3);border-radius:8px"><div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(g.topic)}</div><button class="btn-ghost" style="font-size:11px;padding:4px 10px;flex-shrink:0" onclick="useCompetitorTopic(${i})">${t('web.competitor_use_topic')}</button></div>`
+    return `<div style="margin-top:10px;padding:10px 12px;background:var(--bg3);border-radius:8px"><div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(g.topic)}</div><button class="btn-ghost" style="font-size:11px;padding:4px 10px;flex-shrink:0" onclick="useCompetitorTopic('${prefix}', ${i})">${t('web.competitor_use_topic')}</button></div>`
       + (g.why_it_matters ? `<div style="font-size:11.5px;color:var(--text2);margin-top:4px;line-height:1.5">${escapeHtml(g.why_it_matters)}</div>` : '')
       + `<div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5">${t('web.competitor_evidence')} ${links}</div></div>`;
   }).join('');
@@ -9960,16 +9972,16 @@ function renderCompetitorAnalysis(el, data) {
 }
 
 // Returns whether an analysis is running (and picks up watching one started earlier or elsewhere).
-async function loadCompetitorAnalysis() {
-  const el = document.getElementById('websiteCompetitorContent');
+async function loadCompetitorAnalysis(prefix = 'website') {
+  const el = competitorEl(prefix, 'Content');
   if (!el) return false;
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/competitor-analysis`);
+    const res = await fetch(competitorUrl(prefix));
     const data = await res.json();
     if (!res.ok) { el.innerHTML = `<div style="font-size:12px;color:#ff8080">${escapeHtml(data.error || t('board.connection_error'))}</div>`; return false; }
-    renderCompetitorAnalysis(el, data);
-    setCompetitorButton(!!data.running);
-    if (data.running) watchCompetitorAnalysis();
+    renderCompetitorAnalysis(el, data, prefix);
+    setCompetitorButton(prefix, !!data.running);
+    if (data.running) watchCompetitorAnalysis(prefix);
     return !!data.running;
   } catch (e) {
     el.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
@@ -9977,38 +9989,39 @@ async function loadCompetitorAnalysis() {
   }
 }
 
-function watchCompetitorAnalysis() {
-  if (competitorPoller) return;
+function watchCompetitorAnalysis(prefix = 'website') {
+  const state = competitorState[prefix];
+  if (state.poller) return;
   let ticks = 0;
-  competitorPoller = setInterval(async () => {
+  state.poller = setInterval(async () => {
     ticks++;
-    const running = await loadCompetitorAnalysis();
+    const running = await loadCompetitorAnalysis(prefix);
     if (!running || ticks >= 60) {
-      clearInterval(competitorPoller); competitorPoller = null;
-      setCompetitorButton(false);
-      loadAgentActivity('website'); // the outcome is in Agent Activity too
+      clearInterval(state.poller); state.poller = null;
+      setCompetitorButton(prefix, false);
+      loadAgentActivity(prefix); // the outcome is in Agent Activity too
     }
   }, 4000);
 }
 
-async function runCompetitorAnalysis() {
-  setCompetitorButton(true);
+async function runCompetitorAnalysis(prefix = 'website') {
+  setCompetitorButton(prefix, true);
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/competitor-analysis`, { method: 'POST' });
+    const res = await fetch(competitorUrl(prefix), { method: 'POST' });
     const data = await res.json().catch(() => ({}));
-    if (res.status === 202) { showToast(t('web.competitor_started_toast'), 'success'); await loadCompetitorAnalysis(); watchCompetitorAnalysis(); return; }
+    if (res.status === 202) { showToast(t('web.competitor_started_toast'), 'success'); await loadCompetitorAnalysis(prefix); watchCompetitorAnalysis(prefix); return; }
     showToast(data.error || t('board.connection_error'), 'error');
-    if (res.status === 409) watchCompetitorAnalysis(); else setCompetitorButton(false);
+    if (res.status === 409) watchCompetitorAnalysis(prefix); else setCompetitorButton(prefix, false);
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
-    setCompetitorButton(false);
+    setCompetitorButton(prefix, false);
   }
 }
 
-// Puts a suggested topic into the blog post generator. Only the index travels through the page, never the text.
-function useCompetitorTopic(i) {
-  const gap = competitorGaps[i];
-  const input = document.getElementById('websiteBlogPostTopic');
+// Puts a suggested topic into this platform's blog post generator. Only the index travels through the page, never the text.
+function useCompetitorTopic(prefix, i) {
+  const gap = (competitorState[prefix] || { gaps: [] }).gaps[i];
+  const input = document.getElementById(`${prefix}BlogPostTopic`);
   if (!gap || !input) return;
   input.value = gap.suggested_post_title || gap.topic;
   input.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -10041,7 +10054,7 @@ function renderOverviewTiles(prefix) {
 // A row of chips that jump to a section — only for the sections actually showing.
 const JUMP_TARGETS = {
   website: [['websiteHeroCard', 'web.nav_overview'], ['websiteAgentCard', 'web.nav_agent'], ['websiteCalendarCard', 'web.nav_calendar'], ['websiteActivityCard', 'web.nav_activity'], ['websiteIntelligenceSection', 'web.nav_intelligence'], ['websiteAuditRunSection', 'web.nav_audit'], ['websiteCompetitorSection', 'web.nav_competitors'], ['websiteTechnicalSeoSection', 'web.nav_technical'], ['websiteGeneratedPostsSection', 'web.nav_posts'], ['websiteActionsSection', 'web.nav_approvals'], ['websiteActivityLogSection', 'web.nav_log']],
-  shopify: [['shopifyHeroCard', 'web.nav_overview'], ['shopifyAgentCard', 'web.nav_agent'], ['shopifyCalendarCard', 'web.nav_calendar'], ['shopifyActivityCard', 'web.nav_activity'], ['shopifyIntelligenceSection', 'web.nav_intelligence'], ['shopifyAuditSection', 'web.nav_audit'], ['shopifyTechnicalSeoSection', 'web.nav_technical'], ['shopifyGeneratedPostsSection', 'web.nav_posts'], ['shopifyActionsSection', 'web.nav_approvals']],
+  shopify: [['shopifyHeroCard', 'web.nav_overview'], ['shopifyAgentCard', 'web.nav_agent'], ['shopifyCalendarCard', 'web.nav_calendar'], ['shopifyActivityCard', 'web.nav_activity'], ['shopifyIntelligenceSection', 'web.nav_intelligence'], ['shopifyAuditSection', 'web.nav_audit'], ['shopifyCompetitorSection', 'web.nav_competitors'], ['shopifyTechnicalSeoSection', 'web.nav_technical'], ['shopifyGeneratedPostsSection', 'web.nav_posts'], ['shopifyActionsSection', 'web.nav_approvals']],
 };
 const isShown = el => !!el && el.getClientRects().length > 0;
 function renderJumpNav(prefix) {
@@ -10061,7 +10074,7 @@ const ICON_PATHS = {
   code: '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>', image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>', check: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4"/>', list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
 };
-const SECTION_ICONS = { shopifyIntelligenceSection: 'brain', shopifyAuditSection: 'shield', shopifySitemapSection: 'map', shopifyTechnicalSeoSection: 'gauge', shopifyGeneratedPostsSection: 'file', shopifyActionsSection: 'check', websiteIntelligenceSection: 'brain', websiteAuditRunSection: 'shield', websiteAiVisibilitySection: 'eye', websiteKeywordRankingsSection: 'chart', websiteSitemapSection: 'map', websiteCompetitorSection: 'target', websiteTechnicalSeoSection: 'gauge', websiteBrokenLinksSection: 'unlink', websiteSchemaSection: 'code', websiteMediaSection: 'image', websiteGeneratedPostsSection: 'file', websiteActionsSection: 'check', websiteActivityLogSection: 'list' };
+const SECTION_ICONS = { shopifyIntelligenceSection: 'brain', shopifyAuditSection: 'shield', shopifySitemapSection: 'map', shopifyCompetitorSection: 'target', shopifyTechnicalSeoSection: 'gauge', shopifyGeneratedPostsSection: 'file', shopifyActionsSection: 'check', websiteIntelligenceSection: 'brain', websiteAuditRunSection: 'shield', websiteAiVisibilitySection: 'eye', websiteKeywordRankingsSection: 'chart', websiteSitemapSection: 'map', websiteCompetitorSection: 'target', websiteTechnicalSeoSection: 'gauge', websiteBrokenLinksSection: 'unlink', websiteSchemaSection: 'code', websiteMediaSection: 'image', websiteGeneratedPostsSection: 'file', websiteActionsSection: 'check', websiteActivityLogSection: 'list' };
 const iconSvg = key => ICON_PATHS[key] ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[key]}</svg>` : '';
 const CHEVRON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 const readCollapsed = () => { try { return JSON.parse(localStorage.getItem('arreyon_wt_collapsed') || '{}'); } catch (e) { return {}; } };
