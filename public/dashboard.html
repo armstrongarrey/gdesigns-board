@@ -2085,7 +2085,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
         <div class="wt-card" id="websiteAutomationCard" data-nav="web.nav_automation">
           <div class="wt-card-head"><div class="wt-card-head-main"><div class="wt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></div><div><div class="wt-card-title" data-i18n="web.content_automation_title">Automatic Content Creation</div><div class="wt-card-sub" data-i18n="web.rule_builder_description"></div></div></div><div class="wt-card-actions"></div></div>
-          <div class="wt-body">
+          <div class="wt-body"><div class="wt-warn" id="websiteContentModeNotice" style="display:none;margin-top:0;margin-bottom:14px"><span>⚠</span><span data-i18n="web.content_paused_notice">The agent is in Manual mode, so posts scheduled below will be skipped and marked Missed. Switch to Automatic for them to be written.</span></div>
 
           <div id="websiteActiveRulesContent" style="margin-bottom:12px"></div>
 
@@ -2428,7 +2428,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
         <div class="wt-card" id="shopifyAutomationCard">
           <div class="wt-card-head"><div class="wt-card-head-main"><div class="wt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></div><div><div class="wt-card-title" data-i18n="web.content_automation_title">Automatic Content Creation</div><div class="wt-card-sub" data-i18n="web.rule_builder_description"></div></div></div><div class="wt-card-actions"></div></div>
-          <div class="wt-body">
+          <div class="wt-body"><div class="wt-warn" id="shopifyContentModeNotice" style="display:none;margin-top:0;margin-bottom:14px"><span>⚠</span><span data-i18n="web.content_paused_notice">The agent is in Manual mode, so posts scheduled below will be skipped and marked Missed. Switch to Automatic for them to be written.</span></div>
 
             <div id="shopifyActiveRulesContent" style="margin-bottom:12px"></div>
 
@@ -7944,7 +7944,7 @@ async function clearBacklinkOpportunities() {
 // ── CONTENT CALENDAR ──────────────────────────────────────────────────────
 // ── CONTENT CALENDAR (now platform-scoped, living inside each platform's
 // own view rather than a standalone tab) ────────────────────────────────
-const CALENDAR_STATUS_COLORS = { scheduled: '#8b5cf6', processing: '#f59e0b', generated: '#22c55e', failed: '#ef4444', cancelled: 'var(--muted)' };
+const CALENDAR_STATUS_COLORS = { scheduled: '#8b5cf6', processing: '#f59e0b', generated: '#22c55e', failed: '#ef4444', cancelled: 'var(--muted)', missed: '#f59e0b' };
 
 async function loadContentCalendar(platform) {
   const contentEl = document.getElementById(`${platformUi(platform).prefix}CalendarContent`);
@@ -7953,7 +7953,7 @@ async function loadContentCalendar(platform) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'failed');
     const entries = data.entries || [];
-    renderContentCalendar(entries, contentEl);
+    renderContentCalendar(entries, contentEl, platformUi(platform).prefix);
     lastLoaded.calendar[platform] = { ok: true, ids: entries.map(e => `${e.id}:${e.status}`) };
   } catch (e) {
     lastLoaded.calendar[platform] = { ok: false, ids: [] };
@@ -7961,7 +7961,8 @@ async function loadContentCalendar(platform) {
   }
 }
 
-function renderContentCalendar(entries, contentEl) {
+function renderContentCalendar(entries, contentEl, prefix) {
+  prefix = prefix || (contentEl && contentEl.id && contentEl.id.startsWith('shopify') ? 'shopify' : 'website');
   if (!entries.length) {
     contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_calendar_entries')}</div>`;
     return;
@@ -7986,14 +7987,29 @@ function renderContentCalendar(entries, contentEl) {
         <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(actionLabel)}</div>
         ${overdue ? `<div style="font-size:11px;color:#f59e0b;margin-top:3px">${t('web.calendar_overdue')}</div>` : ''}
         ${entry.status === 'failed' && entry.error_message ? `<div style="font-size:11px;color:#ef4444;margin-top:3px">${escapeHtml(entry.error_message)}</div>` : ''}
+        ${entry.status === 'missed' ? `<div style="font-size:11px;color:#f59e0b;margin-top:3px">${t('web.calendar_missed_reason')}</div>` : ''}
         ${safeHttpUrl(entry.generated_url) ? `<a href="${escapeAttr(safeHttpUrl(entry.generated_url))}" target="_blank" rel="noopener" style="font-size:11px;color:var(--purple-light)">${t('web.view_full_post_button')}</a>` : ''}
       </div>
       <div style="text-align:right;white-space:nowrap">
         <span style="font-size:9px;font-weight:700;color:${statusColor};text-transform:uppercase">${t('web.calendar_status_' + entry.status)}</span>
         ${entry.status === 'scheduled' ? `<div style="margin-top:4px"><button class="btn-ghost" onclick="cancelContentCalendarEntry('${entry.id}')" style="font-size:10px;padding:3px 8px">${t('web.cancel_button')}</button></div>` : ''}
+        ${entry.status === 'missed' || entry.status === 'failed' ? `<div style="margin-top:4px"><button class="btn-ghost" onclick="dismissCalendarEntry('${prefix}', '${entry.id}')" style="font-size:10px;padding:3px 8px">${t('web.dismiss')}</button></div>` : ''}
       </div>
     </div>`;
   }, 10, 'contentCalendar');
+}
+
+// Dismisses one entry that did not happen (missed or failed) so it does not sit in the calendar forever.
+async function dismissCalendarEntry(prefix, entryId) {
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/content-schedule/${entryId}/dismiss`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
+    showToast(t('web.dismissed_toast'), 'success');
+    loadContentCalendar(prefix);
+  } catch (e) {
+    showToast(t('board.connection_error'), 'error');
+  }
 }
 
 async function cancelContentCalendarEntry(entryId) {
@@ -9144,6 +9160,9 @@ function syncModeSwitch(prefix, conn) {
   if (sw) sw.checked = conn.automation_mode === 'automatic';
   const cap = document.getElementById(`${prefix}ModeCaption`);
   if (cap) cap.textContent = t(conn.automation_mode === 'automatic' ? 'web.mode_automatic_caption' : 'web.mode_manual_caption');
+  // Manual mode also pauses scheduled posts, so say so where they are scheduled
+  const notice = document.getElementById(`${prefix}ContentModeNotice`);
+  if (notice) notice.style.display = conn.automation_mode === 'automatic' ? 'none' : 'flex';
 }
 
 function renderAgentModeStatus(prefix, conn) {
@@ -9205,6 +9224,7 @@ function agentActivityText(e) {
   switch (e.task_type) {
     case 'content_generated': return tf(d.status === 'publish' ? 'web.activity_content_published' : 'web.activity_content_drafted', { title: d.title || '' });
     case 'content_failed': return t('web.activity_content_failed');
+    case 'content_missed': return t('web.activity_content_missed');
     case 'intelligence_refreshed': return t(failed ? 'web.activity_intelligence_failed' : 'web.activity_intelligence_refreshed');
     case 'audit_completed': return failed ? t('web.activity_audit_failed') : tf('web.activity_audit_completed', { found: d.issuesFound || 0, fixed: d.autoFixed || 0, pending: d.pendingApproval || 0 });
     case 'technical_check':
