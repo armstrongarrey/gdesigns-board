@@ -1452,7 +1452,7 @@ CREATE TABLE IF NOT EXISTS content_calendar_entries (
   automation_rule_id UUID, -- NULL for a manually-added entry; set when a real recurring rule generated this real entry, so editing or cancelling that rule can find and remove only its own real, still-pending future entries
   topic TEXT, -- NULL means "pick a topic automatically on the day", same as the automatic cycle already does
   publish_mode VARCHAR(20) DEFAULT 'draft', -- 'draft' | 'publish' — this real entry's own real action, independent of any other entry's
-  status VARCHAR(20) DEFAULT 'scheduled', -- 'scheduled' | 'processing' (claimed by a sweep; processed_at is the claim time, and a claim older than 30 min is treated as a crashed sweep and retried) | 'generated' | 'failed' | 'cancelled'
+  status VARCHAR(20) DEFAULT 'scheduled', -- 'scheduled' | 'processing' (claimed by a sweep; processed_at is the claim time, and a claim older than 30 min is treated as a crashed sweep and retried) | 'generated' | 'failed' | 'cancelled' | 'missed' (due while the platform was in Manual mode: not written, kept until the person dismisses it)
   generated_title TEXT,
   generated_url TEXT,
   error_message TEXT,
