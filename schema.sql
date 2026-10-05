@@ -1667,3 +1667,18 @@ CREATE TABLE IF NOT EXISTS website_competitor_analyses (
   completed_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_competitor_analyses_conn ON website_competitor_analyses (website_connection_id, created_at DESC);
+
+-- Competitor analysis (Shopify): the same record as the WordPress one, tied to the Shopify connection. The two platforms never share rows.
+CREATE TABLE IF NOT EXISTS shopify_competitor_analyses (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  shopify_connection_id UUID REFERENCES shopify_connections(id) ON DELETE CASCADE,
+  status VARCHAR(20) NOT NULL DEFAULT 'running', -- 'running' | 'completed' | 'failed'
+  triggered_by VARCHAR(20) DEFAULT 'manual',
+  own JSONB,
+  competitors JSONB,
+  insights JSONB,
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_shopify_competitor_analyses_conn ON shopify_competitor_analyses (shopify_connection_id, created_at DESC);
