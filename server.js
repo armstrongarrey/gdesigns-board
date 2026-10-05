@@ -7496,24 +7496,7 @@ async function runBrokenLinksCheck(connection, decryptedPassword, preloadedConte
   }
 
   const allItems = [...pages.map(p => ({ ...p, isPost: false })), ...posts.map(p => ({ ...p, isPost: true }))];
-  const linkToReferrers = new Map();
-  for (const item of allItems) {
-    for (const link of item.internalLinks || []) {
-      if (!linkToReferrers.has(link)) linkToReferrers.set(link, []);
-      linkToReferrers.get(link).push({ id: item.id, title: item.title, url: item.url, isPost: item.isPost });
-    }
-  }
-
-  const uniqueLinks = [...linkToReferrers.keys()];
-  const cappedLinks = uniqueLinks.slice(0, 40);
-
-  const checks = await Promise.all(cappedLinks.map(async (link) => ({ link, ...(await checkInternalLinkResolves(link)) })));
-  const brokenLinks = checks.filter(c => c.broken).map(c => ({
-    url: c.link,
-    status: c.status,
-    error: c.error || null,
-    foundOn: linkToReferrers.get(c.link),
-  }));
+  const { brokenLinks, checkedCount, totalUniqueLinks } = await scanForBrokenInternalLinks(allItems, connection.site_url);
 
   // Real, deliberate real fix proposal for every real (broken link,
   // page it appears on) pair — the same broken link on three different
@@ -7531,17 +7514,17 @@ async function runBrokenLinksCheck(connection, decryptedPassword, preloadedConte
       const inserted = await pool.query(
         `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
          VALUES ($1, 'seo_agent', 'remove_broken_link', $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [connection.id, referrer.isPost ? 'post' : 'page', referrer.id, referrer.url, referrer.title, JSON.stringify({}), JSON.stringify({ brokenUrl: broken.url }), `This link no longer resolves (${broken.status || broken.error || 'unreachable'}) — removing it unlinks the text but keeps it in place, rather than leaving a dead link.`]
+        [connection.id, referrer.isPost ? 'post' : 'page', referrer.id, referrer.url, referrer.title, JSON.stringify({}), JSON.stringify({ brokenUrl: referrer.href }), `This link no longer resolves (${broken.status || broken.error || 'unreachable'}) — removing it unlinks the text but keeps it in place, rather than leaving a dead link.`]
       );
       insertedProposals.push(inserted.rows[0]);
     }
   }
 
   await logWebsiteAudit(connection.id, 'ai_agent', null, 'broken_links_checked',
-    `Checked ${cappedLinks.length} unique internal link(s), found ${brokenLinks.length} broken, proposed ${insertedProposals.length} fix(es)`,
-    { checkedCount: cappedLinks.length, brokenCount: brokenLinks.length, totalUniqueLinks: uniqueLinks.length, proposedCount: insertedProposals.length }, 'broken_links');
+    `Checked ${checkedCount} unique internal link(s), found ${brokenLinks.length} broken, proposed ${insertedProposals.length} fix(es)`,
+    { checkedCount: checkedCount, brokenCount: brokenLinks.length, totalUniqueLinks: totalUniqueLinks, proposedCount: insertedProposals.length }, 'broken_links');
 
-  return { brokenLinks, checkedCount: cappedLinks.length, totalUniqueLinks: uniqueLinks.length, proposals: insertedProposals, pendingCount: insertedProposals.length, autoExecutedCount: 0 };
+  return { brokenLinks, checkedCount: checkedCount, totalUniqueLinks: totalUniqueLinks, proposals: insertedProposals, pendingCount: insertedProposals.length, autoExecutedCount: 0 };
 }
 
 app.post('/api/business/:id/website/broken-links', authRequired, async (req, res) => {
@@ -8727,7 +8710,10 @@ Return ONLY valid JSON, no markdown:
     const links = extractLinksFromHtml(item.bodyHtml, auditStoreUrl);
     const internalLinks = links.filter(l => l.isInternal);
     for (const link of internalLinks) {
-      const check = await checkInternalLinkResolves(link.url);
+      // checked as a full address: a relative link (/pages/about) is resolved against the store first, because as written it can never be fetched
+      const address = resolveInternalLinkUrl(link.url, auditStoreUrl);
+      if (!address) continue;
+      const check = await checkInternalLinkResolves(address);
       if (!check.broken) continue;
       foundIssues.brokenLinks++;
 
@@ -9235,6 +9221,23 @@ app.get('/api/business/:id/shopify/keyword-rankings', authRequired, async (req, 
   } catch (err) {
     console.error('Shopify keyword rankings error:', err.message);
     res.status(500).json({ error: err.message || 'Failed to load keyword rankings. Please try again.' });
+  }
+});
+
+app.post('/api/business/:id/shopify/broken-links', authRequired, async (req, res) => {
+  let owned = false;
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    owned = true;
+    const connection = (await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
+    if (!connection) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
+    const result = await runShopifyBrokenLinksCheck(connection, decryptSecret(connection.access_token_encrypted));
+    await logManual(req.params.id, 'shopify', 'broken_links_checked', 'success', { checkedCount: result.checkedCount, totalUniqueLinks: result.totalUniqueLinks, brokenCount: result.brokenLinks.length, proposedCount: result.proposals.length });
+    res.json({ ...result, message: result.brokenLinks.length ? null : 'No broken internal links were found among the ones checked.' });
+  } catch (err) {
+    console.error('Shopify broken links check error:', err.message);
+    if (owned) await logManual(req.params.id, 'shopify', 'broken_links_checked', 'failed', errDetail(err));
+    res.status(500).json({ error: err.message || 'Failed to check for broken links. Please try again.' });
   }
 });
 
@@ -16983,6 +16986,38 @@ async function loadKeywordRankingsFor(spec, accountId, connection, siteUrl) {
   return { rankings: rankings.map(r => ({ ...r, isPageTwoOpportunity: r.avgPosition >= 11 && r.avgPosition <= 20 && r.impressions >= 5 })), snapshotDate };
 }
 
+// ── Broken internal links — the scan is the same for every platform ─────────
+// An href found in content may be relative ("/pages/about"), and a relative address can never be fetched, so checking it as
+// written would report a perfectly good link as broken. It is resolved against the site first. Anything that is not an
+// http(s) address (mailto:, tel:, javascript:) is not a page and is never checked; a #fragment does not change the page.
+function resolveInternalLinkUrl(href, siteUrl) {
+  let u;
+  try { u = new URL(href); }                                   // already a full address: it does not need the site's
+  catch { try { u = new URL(href, siteUrl); } catch { return null; } }   // relative: resolved against the site
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  u.hash = '';
+  return u.href;
+}
+
+// items: [{ id, title, url, isPost, internalLinks: [href as written] }]. Returns every broken link with the pages it is on.
+// Each page entry keeps the href EXACTLY as written, because that is what a removal has to match in the page's content.
+// At most 40 different addresses are checked per scan (in parallel); the caller is told how many exist and how many were checked.
+async function scanForBrokenInternalLinks(items, siteUrl, cap = 40) {
+  const byAddress = new Map();
+  for (const item of items) {
+    for (const href of item.internalLinks || []) {
+      const address = resolveInternalLinkUrl(href, siteUrl);
+      if (!address) continue;
+      if (!byAddress.has(address)) byAddress.set(address, []);
+      byAddress.get(address).push({ id: item.id, title: item.title, url: item.url, isPost: item.isPost, href });
+    }
+  }
+  const addresses = [...byAddress.keys()], toCheck = addresses.slice(0, cap);
+  const checks = await Promise.all(toCheck.map(async address => ({ address, ...(await checkInternalLinkResolves(address)) })));
+  const brokenLinks = checks.filter(c => c.broken).map(c => ({ url: c.address, status: c.status, error: c.error || null, foundOn: byAddress.get(c.address) }));
+  return { brokenLinks, checkedCount: toCheck.length, totalUniqueLinks: addresses.length };
+}
+
 // ── Runs in progress, and stopping them ──────────────────────────────────────
 // One entry per site while its cycle is running. 'cancelled' is how a run is stopped: the cycle checks it
 // between steps and skips what is left, and the code that applies fixes re-reads the live mode, so once a
@@ -17570,6 +17605,72 @@ function measureOwnShopifyStore(content) {
 async function shopifyCompetitorAnalysisDue(connectionId, businessId) { return competitorAnalysisDue(shopifyCompetitorSpec, connectionId, businessId); }
 async function startShopifyCompetitorAnalysisRow(connectionId, triggeredBy) { return startCompetitorAnalysisRow(shopifyCompetitorSpec, connectionId, triggeredBy); }
 async function runShopifyCompetitorAnalysis(connection, accessToken, context, rowId, triggeredBy) { return runCompetitorAnalysis(shopifyCompetitorSpec, connection, accessToken, context, rowId, triggeredBy); }
+// ── Broken links (Shopify) ──────────────────────────────────────────────────
+// Reads the store's pages and blog posts (up to 50 of each), finds every internal link and checks it with the shared scan.
+// Nothing is changed by the scan: a removal is QUEUED for the person to approve, one per (link, page it is on).
+async function getShopifyContentForLinkCheck(connection, accessToken) {
+  const storeUrl = await getShopifyStoreUrl(connection, accessToken);
+  let blogHandle = 'news';
+  try {
+    if (connection.blog_id) {
+      const blogRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}.json`);
+      if (blogRes.ok) { const d = await blogRes.json(); blogHandle = d.blog?.handle || blogHandle; }
+    }
+  } catch (e) { /* the default handle; a wrong guess only means a link back to the page itself cannot be told apart */ }
+
+  const count = async p => { try { const r = await shopifyApiRequest(connection.shop_domain, accessToken, p); if (r.ok) return (await r.json()).count || 0; } catch (e) { /* unknown */ } return 0; };
+  const items = [], scope = { posts: 0, totalPosts: 0, pages: 0, totalPages: 0 };
+  let attempted = 0, succeeded = 0;
+  const add = (type, r, url) => {
+    const links = extractLinksFromHtml(r.body_html || '', storeUrl).filter(l => l.isInternal);
+    items.push({ id: r.id, type, isPost: type === 'post', title: r.title, url, internalLinks: links.map(l => l.url), linkTexts: Object.fromEntries(links.map(l => [l.url, l.text])) });
+  };
+  if (connection.blog_id) {
+    attempted++;
+    try {
+      scope.totalPosts = await count(`/blogs/${connection.blog_id}/articles/count.json`);
+      const res = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles.json?limit=50&fields=id,title,handle,body_html`);
+      if (res.ok) { succeeded++; for (const a of ((await res.json()).articles || [])) { add('post', a, `${storeUrl}/blogs/${blogHandle}/${a.handle}`); scope.posts++; } }
+    } catch (e) { /* counted as a failed read below */ }
+  }
+  attempted++;
+  try {
+    scope.totalPages = await count('/pages/count.json');
+    const res = await shopifyApiRequest(connection.shop_domain, accessToken, '/pages.json?limit=50&fields=id,title,handle,body_html');
+    if (res.ok) { succeeded++; for (const p of ((await res.json()).pages || [])) { add('page', p, `${storeUrl}/pages/${p.handle}`); scope.pages++; } }
+  } catch (e) { /* counted as a failed read below */ }
+  // Nothing readable is an error, never "no broken links"
+  if (!succeeded) throw new Error("Your store's pages and posts could not be read from Shopify right now. Please try again in a moment.");
+  return { items, storeUrl, scope };
+}
+
+async function runShopifyBrokenLinksCheck(connection, accessToken) {
+  const content = await getShopifyContentForLinkCheck(connection, accessToken);
+  const scan = await scanForBrokenInternalLinks(content.items, content.storeUrl);
+
+  // One removal proposal per (broken link, page it is on) — the same link on three pages needs three separate content edits.
+  // Capped, so one broken link in a footer shared by every page cannot flood the queue. One already waiting is not proposed twice.
+  const proposals = []; let alreadyPendingCount = 0; const MAX_LINK_PROPOSALS = 30;
+  outer:
+  for (const broken of scan.brokenLinks) {
+    for (const ref of broken.foundOn) {
+      if (proposals.length >= MAX_LINK_PROPOSALS) break outer;
+      const waiting = await pool.query(
+        `SELECT 1 FROM shopify_actions WHERE shopify_connection_id = $1 AND target_shopify_id = $2 AND action_type = 'remove_broken_link' AND proposed_change->>'brokenUrl' = $3 AND approval_status = 'pending'`,
+        [connection.id, ref.id, ref.href]);
+      if (waiting.rows.length) { alreadyPendingCount++; continue; }
+      const linkText = (content.items.find(i => i.id === ref.id)?.linkTexts || {})[ref.href] || '';
+      const inserted = await pool.query(
+        `INSERT INTO shopify_actions (shopify_connection_id, action_type, target_type, target_shopify_id, target_url, target_title, previous_state, proposed_change, reasoning)
+         VALUES ($1,'remove_broken_link',$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [connection.id, ref.isPost ? 'post' : 'page', ref.id, ref.url, ref.title, JSON.stringify({ linkText }), JSON.stringify({ brokenUrl: ref.href }),
+         `This link to ${ref.href} no longer resolves${broken.status ? ` (it returns ${broken.status})` : broken.error ? ` (${broken.error})` : ''}.`]);
+      proposals.push(inserted.rows[0]);
+    }
+  }
+  return { brokenLinks: scan.brokenLinks, checkedCount: scan.checkedCount, totalUniqueLinks: scan.totalUniqueLinks, proposals, pendingCount: proposals.length, alreadyPendingCount, autoExecutedCount: 0, scope: content.scope };
+}
+
 const shopifyKeywordSpec = { table: 'shopify_keyword_rankings', fk: 'shopify_connection_id' };
 const shopifyAiVisibilitySpec = { table: 'shopify_ai_visibility_checks', fk: 'shopify_connection_id' };
 
