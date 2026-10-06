@@ -9994,8 +9994,70 @@ async function resolveMatchingGscConnection(accountId, siteUrl) {
 // traffic for Google to report it, which most small-business sites
 // genuinely won't. Building around field data alone would make this
 // real feature useless for exactly the sites Arreyon serves.
+// ── Mobile-friendliness ──────────────────────────────────────────────────────
+// Google retired its standalone Mobile-Friendly Test, so this is built from the two sources that remain, both real evidence:
+// (1) the layout audits Google PageSpeed already returns for the page loaded as a PHONE, and (2) the page's own viewport tag.
+// A check appears ONLY when there is evidence for it. Lighthouse changes which audits it includes from version to version; one it
+// does not report is simply absent, never assumed to pass.
+const MOBILE_CHECK_ORDER = ['viewport', 'text', 'tap', 'width', 'zoom'];
+
+// What the page's <meta name="viewport"> says: whether it exists, its width, and whether it stops people from zooming in.
+function parseViewportMeta(html) {
+  // A tag inside an HTML comment (old theme code that was commented out) is not part of the page, so comments are removed first
+  const tag = (String(html || '').replace(/<!--[\s\S]*?-->/g, '').match(/<meta\b[^>]*\bname\s*=\s*["']viewport["'][^>]*>/i) || [])[0];
+  if (!tag) return { present: false };
+  const content = (tag.match(/\bcontent\s*=\s*["']([^"']*)["']/i) || [])[1] || '';
+  const get = key => { const m = content.match(new RegExp('(?:^|[,;\\s])' + key + '\\s*=\\s*([^,;\\s]+)', 'i')); return m ? m[1].toLowerCase() : null; };
+  const maxScale = parseFloat(get('maximum-scale')), userScalable = get('user-scalable');
+  return {
+    present: true, content: content.slice(0, 120), width: get('width'), initialScale: get('initial-scale'),
+    // Zoom is blocked by user-scalable=no (or 0) or a maximum scale below 2: people who need larger text cannot get it
+    blocksZoom: userScalable === 'no' || userScalable === '0' || (Number.isFinite(maxScale) && maxScale < 2),
+  };
+}
+
+// Never throws and never fails the technical check: if the page cannot be read, the checks that need it are simply absent.
+async function fetchHomepageViewport(siteUrl) {
+  try { return parseViewportMeta((await safeFetch(siteUrl, { maxBytes: 1_500_000, timeoutMs: 10000 })).html); }
+  catch (e) { return null; }
+}
+
+// audits: Lighthouse's audits from PageSpeed (mobile). viewportInfo: parseViewportMeta's result, or null if the page could not be read.
+// Returns { overall, checks: [{ id, status: pass|fail|warn, detail }] } with overall: good | needs_work | poor | unknown.
+function buildMobileFriendliness(audits, viewportInfo) {
+  const checks = [];
+  const audit = id => (audits && audits[id] && audits[id].score !== null && audits[id].score !== undefined ? audits[id] : null);
+  const detailOf = a => (a && a.displayValue ? String(a.displayValue).slice(0, 100) : null);
+
+  // 1. Scales to the phone screen. Lighthouse judges the page AS RENDERED, so it is trusted over the raw HTML when it reports.
+  const vp = audit('viewport');
+  const fixedWidth = !!(viewportInfo && viewportInfo.present && /^\d+(px)?$/.test(viewportInfo.width || ''));
+  if (vp) {
+    // A viewport can "have a width" and still be a fixed one (width=980): the page then cannot adapt to different phones
+    if (vp.score >= 0.9) checks.push(fixedWidth ? { id: 'viewport', status: 'warn', detail: `width=${viewportInfo.width}` } : { id: 'viewport', status: 'pass', detail: null });
+    else checks.push({ id: 'viewport', status: 'fail', detail: null });
+  } else if (viewportInfo) {
+    if (!viewportInfo.present) checks.push({ id: 'viewport', status: 'fail', detail: null });
+    else if (fixedWidth) checks.push({ id: 'viewport', status: 'warn', detail: `width=${viewportInfo.width}` });
+    else checks.push({ id: 'viewport', status: 'pass', detail: null });
+  }
+  // 2-4. From Google's mobile test, only when it reports them
+  for (const [auditId, id] of [['font-size', 'text'], ['tap-targets', 'tap'], ['content-width', 'width']]) {
+    const a = audit(auditId);
+    if (a) checks.push({ id, status: a.score >= 0.9 ? 'pass' : 'fail', detail: detailOf(a) });
+  }
+  // 5. Pinch-zoom, from the page's own viewport tag (only meaningful when the page has one)
+  if (viewportInfo && viewportInfo.present) checks.push(viewportInfo.blocksZoom ? { id: 'zoom', status: 'warn', detail: viewportInfo.content } : { id: 'zoom', status: 'pass', detail: null });
+
+  checks.sort((a, b) => MOBILE_CHECK_ORDER.indexOf(a.id) - MOBILE_CHECK_ORDER.indexOf(b.id));
+  let overall = 'unknown';
+  if (checks.length) overall = checks.some(c => c.id === 'viewport' && c.status === 'fail') ? 'poor' : checks.some(c => c.status !== 'pass') ? 'needs_work' : 'good';
+  return { overall, checks };
+}
+
 async function checkCoreWebVitals(siteUrl) {
   const apiKey = process.env.PAGESPEED_API_KEY;
+  const viewportPromise = fetchHomepageViewport(siteUrl);   // read while Google runs its (slow) test, so it adds no waiting; never rejects
   const params = new URLSearchParams({ url: siteUrl, strategy: 'mobile', category: 'PERFORMANCE' });
   params.append('category', 'SEO');
   params.append('category', 'ACCESSIBILITY');
@@ -10015,8 +10077,10 @@ async function checkCoreWebVitals(siteUrl) {
   const audits = data.lighthouseResult?.audits || {};
   const categories = data.lighthouseResult?.categories || {};
   const fieldMetrics = data.loadingExperience?.metrics || null;
+  const viewportInfo = await viewportPromise;
 
   return {
+    mobile: buildMobileFriendliness(audits, viewportInfo),
     performanceScore: categories.performance?.score != null ? Math.round(categories.performance.score * 100) : null,
     seoScore: categories.seo?.score != null ? Math.round(categories.seo.score * 100) : null,
     accessibilityScore: categories.accessibility?.score != null ? Math.round(categories.accessibility.score * 100) : null,
@@ -16939,11 +17003,11 @@ async function insertTechnicalSeoCheck(businessId, vitals, robots, platform) {
     `INSERT INTO website_technical_seo_checks
      (business_id, platform, performance_score, seo_score, accessibility_score, lcp_ms, cls_score, tbt_ms,
       field_data_available, field_lcp_category, field_cls_category, field_inp_category,
-      robots_txt_exists, robots_txt_blocks_everything, robots_txt_references_sitemap, top_issues)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+      robots_txt_exists, robots_txt_blocks_everything, robots_txt_references_sitemap, top_issues, mobile_friendly)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
     [businessId, platform, vitals.performanceScore, vitals.seoScore, vitals.accessibilityScore, vitals.lcpMs, vitals.clsScore, vitals.tbtMs,
      vitals.fieldDataAvailable, vitals.fieldLcpCategory, vitals.fieldClsCategory, vitals.fieldInpCategory,
-     robots.exists, robots.blocksEverything, robots.referencesSitemap, JSON.stringify(vitals.topIssues)]
+     robots.exists, robots.blocksEverything, robots.referencesSitemap, JSON.stringify(vitals.topIssues), vitals.mobile ? JSON.stringify(vitals.mobile) : null]
   );
   return inserted.rows[0];
 }
@@ -17319,9 +17383,11 @@ async function startAgentRunOnSwitch(platform, connectionId) {
 // Switching back to Manual: stop whatever is running for this site.
 function stopAgentOnSwitch(platform, businessId) { return { stopping: stopAgentRun(platform, businessId) }; }
 function technicalCheckActivity(vitals, robots) {
+  const mobile = vitals.mobile ? vitals.mobile.overall : null;
   return {
-    outcome: robots.blocksEverything ? 'attention' : 'success',
-    detail: { performanceScore: vitals.performanceScore, seoScore: vitals.seoScore, accessibilityScore: vitals.accessibilityScore, robotsBlocksEverything: !!robots.blocksEverything },
+    // A site that blocks every search engine, or has no phone setup at all, needs the person's attention
+    outcome: robots.blocksEverything || mobile === 'poor' ? 'attention' : 'success',
+    detail: { performanceScore: vitals.performanceScore, seoScore: vitals.seoScore, accessibilityScore: vitals.accessibilityScore, robotsBlocksEverything: !!robots.blocksEverything, mobile },
   };
 }
 // Automatic runs log only when something happened or needs attention — "already submitted" every
