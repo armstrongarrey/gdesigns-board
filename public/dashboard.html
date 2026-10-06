@@ -9274,7 +9274,8 @@ function agentActivityText(e) {
     case 'audit_completed': return failed ? t('web.activity_audit_failed') : tf('web.activity_audit_completed', { found: d.issuesFound || 0, fixed: d.autoFixed || 0, pending: d.pendingApproval || 0 });
     case 'technical_check':
       if (failed) return t('web.activity_technical_failed');
-      if (e.outcome === 'attention') return t('web.activity_technical_attention');
+      if (e.outcome === 'attention') return t(d.robotsBlocksEverything ? 'web.activity_technical_attention' : 'web.activity_technical_mobile_poor');   // robots.txt blocking everything is the more serious of the two
+      if (d.mobile && ['good', 'needs_work', 'unknown'].includes(d.mobile)) return tf('web.activity_technical_check_mobile', { perf: d.performanceScore != null ? d.performanceScore : '–', seo: d.seoScore != null ? d.seoScore : '–', mobile: t(`web.mobile_short_${d.mobile}`) });
       return tf('web.activity_technical_check', { perf: d.performanceScore != null ? d.performanceScore : '–', seo: d.seoScore != null ? d.seoScore : '–' });
     case 'sitemap_submitted':
       if (failed) return t('web.activity_sitemap_failed');
@@ -9936,6 +9937,39 @@ async function loadTechnicalSeoHistory(platform) {
   }
 }
 
+// ── Mobile-friendliness (inside the Technical SEO card, for both platforms) ──
+// Everything here comes from the stored check: statuses are ours, but "detail" text can come from Google's report, so it is escaped.
+const MOBILE_STATUS_STYLE = {
+  good: { color: '#22c55e', key: 'web.mobile_overall_good' },
+  needs_work: { color: '#f59e0b', key: 'web.mobile_overall_needs_work' },
+  poor: { color: '#ef4444', key: 'web.mobile_overall_poor' },
+  unknown: { color: 'var(--muted)', key: 'web.mobile_overall_unknown' },
+};
+const MOBILE_CHECK_IDS = ['viewport', 'text', 'tap', 'width', 'zoom'];
+
+function renderMobileFriendly(mf) {
+  if (!mf || !mf.overall) return '';   // a check made before this existed has nothing to show
+  const st = MOBILE_STATUS_STYLE[mf.overall] || MOBILE_STATUS_STYLE.unknown;
+  const mark = { pass: ['✓', '#22c55e'], fail: ['✗', '#ef4444'], warn: ['!', '#f59e0b'] };
+  const checks = (Array.isArray(mf.checks) ? mf.checks : []).filter(c => c && MOBILE_CHECK_IDS.includes(c.id));
+  const rows = checks.map(c => {
+    const [symbol, colour] = mark[c.status] || mark.warn;
+    const adviceKey = c.status === 'pass' ? null : (c.id === 'viewport' && c.status === 'warn') ? 'web.mobile_advice_viewport_fixed' : `web.mobile_advice_${c.id}`;
+    return `<div style="padding:7px 0;border-top:1px solid var(--border)">
+        <div style="display:flex;gap:8px;align-items:baseline;font-size:12px"><span style="color:${colour};font-weight:700;width:14px;flex-shrink:0">${symbol}</span><span style="color:var(--text)">${escapeHtml(t(`web.mobile_check_${c.id}`))}</span>${c.detail ? `<span style="color:var(--muted);font-size:11px;word-break:break-word">· ${escapeHtml(c.detail)}</span>` : ''}</div>
+        ${adviceKey ? `<div style="font-size:11px;color:var(--text2);margin:3px 0 0 22px;line-height:1.5">${escapeHtml(tf(adviceKey, { detail: c.detail || '' }))}</div>` : ''}
+      </div>`;
+  }).join('');
+  return `<div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:${rows ? '8px' : '4px'}">
+        <div style="font-size:11px;color:var(--muted)">${t('web.mobile_title')}</div>
+        <div style="font-size:12px;font-weight:700;color:${st.color}">${t(st.key)}</div>
+      </div>
+      ${rows || `<div style="font-size:11.5px;color:var(--muted);line-height:1.5">${t('web.mobile_unknown_note')}</div>`}
+      ${rows ? `<div style="font-size:10px;color:var(--muted);margin-top:8px">${t('web.mobile_source_note')}</div>` : ''}
+    </div>`;
+}
+
 function renderTechnicalSeoHistory(contentEl, checks) {
   if (!checks.length) {
     contentEl.innerHTML = `<div style="font-size:12px;color:var(--muted)">${t('web.no_technical_checks')}</div>`;
@@ -9965,6 +9999,8 @@ function renderTechnicalSeoHistory(contentEl, checks) {
     </div>
     ${latest.field_data_available ? `<div style="font-size:10px;color:var(--muted);margin-top:8px">${t('web.field_data_label')}: LCP ${latest.field_lcp_category || '—'} · CLS ${latest.field_cls_category || '—'} · INP ${latest.field_inp_category || '—'}</div>` : `<div style="font-size:10px;color:var(--muted);margin-top:8px">${t('web.no_field_data_note')}</div>`}
   </div>`;
+
+  html += renderMobileFriendly(latest.mobile_friendly);
 
   if (latest.robots_txt_blocks_everything) {
     html += `<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#ef4444">${t('web.robots_blocks_everything_warning')}</div>`;
