@@ -1645,6 +1645,7 @@ ALTER TABLE shopify_actions ADD COLUMN IF NOT EXISTS auto_applied BOOLEAN DEFAUL
 -- business that has only a Shopify store. Rows written by an older server during a deploy overlap are picked up the
 -- same way on the next start. Nothing is ever deleted.
 ALTER TABLE website_technical_seo_checks ADD COLUMN IF NOT EXISTS platform VARCHAR(20); -- 'wordpress' | 'shopify'
+ALTER TABLE website_technical_seo_checks ADD COLUMN IF NOT EXISTS mobile_friendly JSONB; -- { overall: good | needs_work | poor | unknown, checks: [{ id, status, detail }] }; NULL for checks made before this existed
 UPDATE website_technical_seo_checks c SET platform = CASE
   WHEN EXISTS (SELECT 1 FROM shopify_connections s WHERE s.business_id = c.business_id)
    AND NOT EXISTS (SELECT 1 FROM website_connections w WHERE w.business_id = c.business_id) THEN 'shopify'
