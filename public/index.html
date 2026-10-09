@@ -234,7 +234,14 @@ section { padding: 80px 5%; }
 .toggle-knob { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .2s; }
 .toggle-switch.on .toggle-knob { transform: translateX(22px); }
 .toggle-badge { background: var(--green); color: #fff; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px; }
-.pricing-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; }
+.pricing-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; }
+.price-card.wide { margin-top: 20px; display: grid; grid-template-columns: 1fr 1.5fr; gap: 32px; align-items: center; }
+.price-tag { display: inline-block; background: rgba(16,185,129,.15); color: var(--green); font-size: 10px; font-weight: 700; padding: 2px 10px; border-radius: 10px; margin-bottom: 10px; text-transform: uppercase; letter-spacing: .06em; }
+.coming-row { margin-top: 32px; text-align: center; }
+.coming-label { font-size: 11px; color: var(--purple-light); text-transform: uppercase; letter-spacing: .12em; font-weight: 600; margin-bottom: 10px; }
+.coming-chip { display: inline-block; background: var(--bg3); border: 1px solid var(--border); color: var(--text2); font-size: 12px; padding: 5px 14px; border-radius: 20px; margin: 4px; }
+@media(max-width:1180px) { .pricing-grid { grid-template-columns: 1fr 1fr; } }
+@media(max-width:900px) { .price-card.wide { grid-template-columns: 1fr; gap: 12px; } }
 .price-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; padding: 28px; position: relative; }
 .price-card.featured { border-color: var(--purple); background: linear-gradient(135deg, var(--bg3), var(--bg2)); }
 .price-card.featured::before { content: 'Most Popular'; position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: var(--purple); color: #fff; font-size: 11px; font-weight: 700; padding: 4px 16px; border-radius: 10px; white-space: nowrap; }
@@ -324,6 +331,7 @@ footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 4
     <div class="nav-links">
       <a href="#how-it-works" data-i18n="nav.how_it_works">How It Works</a>
       <a href="#directors" data-i18n="nav.the_board">The Board</a>
+      <a href="#website-tool" data-i18n="nav.website_tool">Website Tool</a>
       <a href="#pricing" data-i18n="nav.pricing">Pricing</a>
       <a href="#contact" data-i18n="nav.contact">Contact</a>
     </div>
@@ -423,22 +431,58 @@ footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 4
   </div>
 </section>
 
+<section id="website-tool">
+  <div class="section-inner">
+    <div class="section-label" data-i18n="nav.website_tool">Website Tool</div>
+    <h2 class="section-title" id="wtTitle">Grow your website on autopilot</h2>
+    <p class="section-sub" style="margin:0 auto;text-align:center" id="wtSub">Connect your WordPress or Shopify site and let your AI agent audit it, improve its SEO, write blog posts and track your rankings — with your approval, or fully automatic.</p>
+    <div class="features-grid">
+      <div class="feature-card"><div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div><div class="feature-title" id="wt1Title">Connect in minutes</div><div class="feature-desc" id="wt1Desc">Link your WordPress or Shopify site securely. Your credentials are encrypted, and you decide what the agent is allowed to change.</div></div>
+      <div class="feature-card"><div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg></div><div class="feature-title" id="wt2Title">An AI agent that works for you</div><div class="feature-desc" id="wt2Desc">Have it ask for your approval first, or let it run automatically. Every action is logged, so you always know what changed.</div></div>
+      <div class="feature-card"><div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div class="feature-title" id="wt3Title">Blog posts &amp; content calendar</div><div class="feature-desc" id="wt3Desc">Generate SEO-optimised blog posts, schedule them in a content calendar, or let automation publish them on your rules.</div></div>
+      <div class="feature-card"><div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div><div class="feature-title" id="wt4Title">Audit &amp; SEO fixes</div><div class="feature-desc" id="wt4Desc">Spot weak titles and descriptions, broken links and technical issues, then review and approve the fixes.</div></div>
+      <div class="feature-card"><div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div><div class="feature-title" id="wt5Title">Rankings, competitors &amp; AI visibility</div><div class="feature-desc" id="wt5Desc">Track keyword rankings, compare yourself with competitors, and see how visible your site is to AI assistants (AEO/GEO).</div></div>
+      <div class="feature-card"><div class="feature-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div><div class="feature-title" id="wt6Title">Schema, sitemap &amp; media</div><div class="feature-desc" id="wt6Desc">Add structured data, submit your sitemap to Google and keep your media library organised.</div></div>
+    </div>
+    <div class="coming-row"><div class="coming-label" id="wtComingLabel">Coming soon</div><div id="wtComingList"><span class="coming-chip">Website alerts</span><span class="coming-chip">Page content editing</span><span class="coming-chip">Thin-content expansion</span><span class="coming-chip">Deeper crawl checks (noindex, canonicals, redirects)</span><span class="coming-chip">XML sitemap generation</span></div></div>
+  </div>
+</section>
+
 <section id="pricing" style="background:var(--bg2);border-top:1px solid var(--border);border-bottom:1px solid var(--border)">
   <div class="section-inner">
     <div class="section-label">Pricing</div>
     <h2 class="section-title" id="pricingTitle">Simple, transparent pricing</h2>
-    <p class="section-sub" style="margin:0 auto;text-align:center" id="pricingSubtitle">Start free. Upgrade when you need more.</p>
+    <p class="section-sub" style="margin:0 auto;text-align:center" id="pricingSubtitle">Start with a 7-day free trial. Upgrade when you need more.</p>
     <div class="pricing-toggle">
-      <span class="toggle-label active" id="monthlyLabel">Monthly</span>
+      <span class="toggle-label active" id="monthlyLabel" data-i18n="home.monthly">Monthly</span>
       <div class="toggle-switch" id="billingToggle" onclick="toggleBilling()"><div class="toggle-knob"></div></div>
-      <span class="toggle-label" id="annualLabel">Annual <span class="toggle-badge">Save 20%</span></span>
+      <span class="toggle-label" id="annualLabel"><span data-i18n="home.annual">Annual</span> <span class="toggle-badge" id="annualBadge">Save 15%</span></span>
     </div>
     <div class="pricing-grid">
-      <div class="price-card">
-        <div class="price-name" id="starterName">Starter</div>
-        <div class="price-amount">Free <span></span></div>
-        <div class="price-cfa">Free forever</div>
-        <div class="price-desc" id="starterDesc">For founders exploring AI-powered strategic advice</div>
+      <div class="price-card" id="card_free">
+        <div class="price-name" id="freeName">Arreyon Free</div>
+        <div class="price-amount" id="freePrice">Free <span></span></div>
+        <div class="price-cfa" id="freeCFA">7-day free trial</div>
+        <div class="price-desc" id="freeDesc">Try Arreyon free for 7 days — no credit card</div>
+        <hr class="price-divider">
+        <div id="freeFeaturesList">
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 3 consultations during your 7-day trial</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 5 starter directors</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Board Secretary Q&amp;A</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Basic board report</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 3 core financial calculators</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Website Analyzer (1 scan)</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Entrepreneur Mode &amp; Scenario Comparison</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 1 team member</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Website tool: connect 1 website + 2 blog posts</div>
+        </div>
+        <a href="/auth?mode=signup&plan=free" class="btn-primary price-btn btn-outline" id="freeCTA">Start 7-Day Free Trial</a>
+      </div>
+      <div class="price-card" id="card_starter">
+        <div class="price-name" id="starterName">Arreyon Starter</div>
+        <div class="price-amount" id="starterPrice">$35 <span>/mo</span></div>
+        <div class="price-cfa" id="starterCFA">20,125 FCFA/month</div>
+        <div class="price-desc" id="starterDesc">For founders who want AI business advice and an AI website agent</div>
         <hr class="price-divider">
         <div id="starterFeaturesList">
         <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 3 consultations per month</div>
@@ -449,17 +493,15 @@ footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 4
         <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Website Analyzer (1 scan/month)</div>
         <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Entrepreneur Mode &amp; Scenario Comparison</div>
         <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 1 team member</div>
-        <div class="price-feature disabled"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Report download</div>
-        <div class="price-feature disabled"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Consultation history</div>
-        <div class="price-feature disabled"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Video report</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Website tool: 1 website, AI Agent &amp; Content Calendar, 5 blog posts/month</div>
         </div>
-        <a href="/auth?mode=signup&plan=starter" class="btn-primary price-btn btn-outline">Get Started Free</a>
+        <a href="/auth?mode=signup&plan=starter" class="btn-primary price-btn" id="starterCTA">Get Arreyon Starter</a>
       </div>
-      <div class="price-card featured">
+      <div class="price-card featured" id="card_pro">
         <div class="price-name" id="proName">Arreyon Pro</div>
-        <div class="price-amount" id="proPrice">$35 <span>/mo</span></div>
-        <div class="price-cfa" id="proCFA">20,125 FCFA/month</div>
-        <div class="price-desc" id="proDesc">For serious founders who need regular strategic guidance</div>
+        <div class="price-amount" id="proPrice">$120 <span>/mo</span></div>
+        <div class="price-cfa" id="proCFA">69,000 FCFA/month</div>
+        <div class="price-desc" id="proDesc">For serious founders who need regular guidance and a full SEO toolkit</div>
         <hr class="price-divider">
         <div id="proFeaturesList">
         <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 10 consultations per month</div>
@@ -472,15 +514,15 @@ footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 4
         <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 2 team members</div>
         <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Priority email support</div>
         <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Board Secretary deep-dive</div>
-        <div class="price-feature disabled"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Video report</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Website tool: 2 websites, 10 blog posts/month, site audit, competitor analysis, technical SEO</div>
         </div>
-        <a href="/auth?mode=signup&plan=pro" class="btn-primary price-btn">Get Arreyon Pro</a>
+        <a href="/auth?mode=signup&plan=pro" class="btn-primary price-btn" id="proCTA">Get Arreyon Pro</a>
       </div>
-      <div class="price-card">
+      <div class="price-card" id="card_business">
         <div class="price-name" id="bizName">Arreyon Business</div>
-        <div class="price-amount" id="bizPrice">$150 <span>/mo</span></div>
-        <div class="price-cfa" id="bizCFA">86,250 FCFA/month</div>
-        <div class="price-desc" id="bizDesc">For teams and growing organisations that need unlimited access</div>
+        <div class="price-amount" id="bizPrice">$300 <span>/mo</span></div>
+        <div class="price-cfa" id="bizCFA">172,500 FCFA/month</div>
+        <div class="price-desc" id="bizDesc">For teams that need unlimited access and the complete website toolkit</div>
         <hr class="price-divider">
         <div id="bizFeaturesList">
         <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Unlimited consultations</div>
@@ -494,8 +536,29 @@ footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 4
         <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Custom AI director personas</div>
         <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Priority WhatsApp support</div>
         <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Full consultation history</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Website tool: 3 websites, 25 blog posts/month, keyword rankings, sitemap, schema markup, AI visibility, media library, SEO fixes</div>
         </div>
-        <a href="/auth?mode=signup&plan=business" class="btn-primary price-btn">Get Arreyon Business</a>
+        <a href="/auth?mode=signup&plan=business" class="btn-primary price-btn" id="bizCTA">Get Arreyon Business</a>
+      </div>
+    </div>
+    <div class="price-card wide" id="card_auto_seo">
+      <div>
+        <div class="price-tag" data-i18n="home.website_only_badge">Website only</div>
+        <div class="price-name" id="autoName">Arreyon Auto SEO/AEO/GEO</div>
+        <div class="price-amount" id="autoPrice">$100 <span>/mo</span></div>
+        <div class="price-cfa" id="autoCFA">57,500 FCFA/month</div>
+        <div class="price-desc" id="autoDesc">For website owners who only want automatic SEO, AEO and GEO — none of the other Arreyon Consult features</div>
+        <a href="/auth?mode=signup&plan=auto_seo" class="btn-primary price-btn" id="autoCTA">Get Auto SEO</a>
+      </div>
+      <div id="autoFeaturesList">
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 1 website (WordPress or Shopify)</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> 20 blog posts per month</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> AI Agent that works automatically + Content Calendar</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Site audit, competitor analysis, technical SEO</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Keyword rankings, sitemap, schema markup</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> AI visibility (AEO/GEO)</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Website alerts (coming soon)</div>
+        <div class="price-feature"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Website tool only — the other Arreyon Consult features are not included</div>
       </div>
     </div>
   </div>
@@ -522,7 +585,7 @@ footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 4
       <div class="faq-item"><button class="faq-question" onclick="toggleFaq(this)"><span id="q2q">Can I use it from Africa?</span><svg class="faq-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button><div class="faq-answer" id="q2a">Yes. Arreyon Consult was built with African founders in mind. Payment via MTN MoMo is supported. Several directors are specifically tuned for African market dynamics.</div></div>
       <div class="faq-item"><button class="faq-question" onclick="toggleFaq(this)"><span id="q3q">How does payment work?</span><svg class="faq-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button><div class="faq-answer" id="q3a">We accept MTN MoMo (Cameroon) and international bank transfer. Our team manually verifies and activates your plan within 24 hours.</div></div>
       <div class="faq-item"><button class="faq-question" onclick="toggleFaq(this)"><span id="q4q">Is my consultation data private?</span><svg class="faq-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button><div class="faq-answer" id="q4a">Yes. Your consultations are private to your account. We do not share your business information with third parties or use it to train AI models.</div></div>
-      <div class="faq-item"><button class="faq-question" onclick="toggleFaq(this)"><span id="q5q">What happens when I hit my consultation limit?</span><svg class="faq-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button><div class="faq-answer" id="q5a">Your limit resets at the start of each calendar month. You can upgrade your plan at any time to get more consultations immediately.</div></div>
+      <div class="faq-item"><button class="faq-question" onclick="toggleFaq(this)"><span id="q5q">What happens when I hit my consultation limit?</span><svg class="faq-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button><div class="faq-answer" id="q5a">During your 7-day free trial you have 3 consultations. On paid plans your limit resets every month. You can upgrade your plan at any time for more consultations immediately.</div></div>
     </div>
   </div>
 </section>
@@ -531,7 +594,7 @@ footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 4
   <div class="section-inner">
     <div class="cta-section">
       <h2 id="ctaTitle">Bring your hardest decision to the board</h2>
-      <p id="ctaSubtitle">Your first consultation is free. No credit card required. No setup. Just strategy.</p>
+      <p id="ctaSubtitle">Start your 7-day free trial. No credit card required. No setup. Just strategy.</p>
       <div class="cta-actions">
         <a href="/auth?mode=signup" class="btn-primary btn-large" id="ctaBtn">Convene Your Board</a>
         <a href="#pricing" class="btn-ghost btn-large">View Pricing</a>
@@ -592,17 +655,39 @@ footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 4
 
 <script>
 let isAnnual = false;
-const prices = { pro: { monthly: { usd: 35, cfa: 20125 }, annual: { usd: 28, cfa: 16100 } }, business: { monthly: { usd: 150, cfa: 86250 }, annual: { usd: 120, cfa: 69000 } } };
+let pricingData = null;   // from /api/plans/pricing — the same numbers the dashboard shows and every payment charges
+const PRICE_IDS = { starter: ['starterPrice', 'starterCFA'], pro: ['proPrice', 'proCFA'], business: ['bizPrice', 'bizCFA'], auto_seo: ['autoPrice', 'autoCFA'] };
+function fmtUsd(n) { n = Number(n); return '$' + (Number.isInteger(n) ? n.toLocaleString('en-US') : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); }
+function fmtNum(n) { return Math.round(Number(n)).toLocaleString('en-US'); }
 
+function renderPrices() {
+  const freePrice = document.getElementById('freePrice'), freeCfa = document.getElementById('freeCFA');
+  if (freePrice) freePrice.innerHTML = t('home.free_label') + ' <span></span>';
+  if (freeCfa) freeCfa.textContent = t('home.trial_note');
+  if (!pricingData) return;
+  const badge = document.getElementById('annualBadge');
+  if (badge) badge.textContent = tf('home.save_pct', { n: pricingData.discountPercent });
+  Object.keys(PRICE_IDS).forEach(function(plan) {
+    const p = pricingData.plans[plan], priceEl = document.getElementById(PRICE_IDS[plan][0]), cfaEl = document.getElementById(PRICE_IDS[plan][1]);
+    if (!p || !priceEl || !cfaEl) return;
+    if (isAnnual) {
+      priceEl.innerHTML = fmtUsd(p.annual.usdPerMonth) + ' <span>' + t('home.per_mo') + '</span>';
+      cfaEl.textContent = tf('home.billed_yearly', { usd: fmtUsd(p.annual.usdTotal), cfa: fmtNum(p.annual.cfaTotal) });
+    } else {
+      priceEl.innerHTML = fmtUsd(p.monthly.usd) + ' <span>' + t('home.per_mo') + '</span>';
+      cfaEl.textContent = tf('home.fcfa_per_month', { cfa: fmtNum(p.monthly.cfa) });
+    }
+  });
+}
+async function loadPricing() {
+  try { const res = await fetch('/api/plans/pricing'); if (res.ok) { pricingData = await res.json(); renderPrices(); } } catch (e) { /* the built-in prices stay */ }
+}
 function toggleBilling() {
   isAnnual = !isAnnual;
-  const t = document.getElementById('billingToggle'), ml = document.getElementById('monthlyLabel'), al = document.getElementById('annualLabel');
-  t.classList.toggle('on', isAnnual); ml.classList.toggle('active', !isAnnual); al.classList.toggle('active', isAnnual);
-  const p = isAnnual ? prices.pro.annual : prices.pro.monthly, b = isAnnual ? prices.business.annual : prices.business.monthly;
-  document.getElementById('proPrice').innerHTML = '$' + p.usd + ' <span>/mo</span>';
-  document.getElementById('proCFA').textContent = p.cfa.toLocaleString() + ' FCFA/month' + (isAnnual?' (billed annually)':'');
-  document.getElementById('bizPrice').innerHTML = '$' + b.usd + ' <span>/mo</span>';
-  document.getElementById('bizCFA').textContent = b.cfa.toLocaleString() + ' FCFA/month' + (isAnnual?' (billed annually)':'');
+  document.getElementById('billingToggle').classList.toggle('on', isAnnual);
+  document.getElementById('monthlyLabel').classList.toggle('active', !isAnnual);
+  document.getElementById('annualLabel').classList.toggle('active', isAnnual);
+  renderPrices();
 }
 
 function toggleFaq(btn) {
@@ -647,17 +732,34 @@ async function loadCMS() {
       });
     }
     if (content.pricing) {
+      const p = content.pricing;
       const checkIcon = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> ';
+      const esc = function(x) { return String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;'); };
       const renderList = function(containerId, text) {
         if (!text) return;
         const lines = text.split('\n').map(function(l){return l.trim()}).filter(Boolean);
         document.getElementById(containerId).innerHTML = lines.map(function(l){
-          return '<div class="price-feature">' + checkIcon + l + '</div>';
+          return '<div class="price-feature">' + checkIcon + esc(l) + '</div>';
         }).join('');
       };
-      renderList('starterFeaturesList', content.pricing.starter_features);
-      renderList('proFeaturesList', content.pricing.pro_features);
-      renderList('bizFeaturesList', content.pricing.business_features);
+      [['free','free'],['starter','starter'],['pro','pro'],['business','biz'],['auto_seo','auto']].forEach(function(pair) {
+        const plan = pair[0], pre = pair[1];
+        if (p['plan_' + plan + '_name']) document.getElementById(pre + 'Name').textContent = p['plan_' + plan + '_name'];
+        if (p['plan_' + plan + '_description']) document.getElementById(pre + 'Desc').textContent = p['plan_' + plan + '_description'];
+        renderList(pre + 'FeaturesList', p['plan_' + plan + '_features']);
+        if (p['plan_' + plan + '_cta']) document.getElementById(pre + 'CTA').textContent = p['plan_' + plan + '_cta'];
+      });
+    }
+    if (content.website_tool) {
+      const w = content.website_tool;
+      if (w.headline) document.getElementById('wtTitle').textContent = w.headline;
+      if (w.subheadline) document.getElementById('wtSub').textContent = w.subheadline;
+      [1,2,3,4,5,6].forEach(function(n) {
+        if (w['feature'+n+'_title']) document.getElementById('wt'+n+'Title').textContent = w['feature'+n+'_title'];
+        if (w['feature'+n+'_desc']) document.getElementById('wt'+n+'Desc').textContent = w['feature'+n+'_desc'];
+      });
+      if (w.coming_label) document.getElementById('wtComingLabel').textContent = w.coming_label;
+      if (w.coming_items) document.getElementById('wtComingList').innerHTML = w.coming_items.split('\n').map(function(l){return l.trim()}).filter(Boolean).map(function(l){ return '<span class="coming-chip">' + l.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</span>'; }).join('');
     }
     if (content.about) {
       if (content.about.headline) document.getElementById('aboutHeadline').textContent = content.about.headline;
@@ -677,18 +779,6 @@ async function loadCMS() {
       const p = content.pricing;
       if (p.headline) document.getElementById('pricingTitle').textContent = p.headline;
       if (p.subheadline) document.getElementById('pricingSubtitle').textContent = p.subheadline;
-      if (p.pro_price_usd) document.getElementById('proPrice').innerHTML = '$' + p.pro_price_usd + ' <span>/mo</span>';
-      if (p.pro_price_cfa) document.getElementById('proCFA').textContent = parseInt(p.pro_price_cfa).toLocaleString() + ' FCFA/month';
-      if (p.business_price_usd) document.getElementById('bizPrice').innerHTML = '$' + p.business_price_usd + ' <span>/mo</span>';
-      if (p.business_price_cfa) document.getElementById('bizCFA').textContent = parseInt(p.business_price_cfa).toLocaleString() + ' FCFA/month';
-      if (p.pro_price_usd) prices.pro.monthly.usd = parseInt(p.pro_price_usd);
-      if (p.pro_price_cfa) prices.pro.monthly.cfa = parseInt(p.pro_price_cfa);
-      if (p.pro_price_usd_annual) prices.pro.annual.usd = parseInt(p.pro_price_usd_annual);
-      if (p.pro_price_cfa_annual) prices.pro.annual.cfa = parseInt(p.pro_price_cfa_annual);
-      if (p.business_price_usd) prices.business.monthly.usd = parseInt(p.business_price_usd);
-      if (p.business_price_cfa) prices.business.monthly.cfa = parseInt(p.business_price_cfa);
-      if (p.business_price_usd_annual) prices.business.annual.usd = parseInt(p.business_price_usd_annual);
-      if (p.business_price_cfa_annual) prices.business.annual.cfa = parseInt(p.business_price_cfa_annual);
     }
     if (content.testimonials) {
       const t = content.testimonials;
@@ -752,12 +842,13 @@ async function loadAnnouncements() {
 // Calling loadCMS() again here would just be a redundant duplicate fetch.
 document.addEventListener('DOMContentLoaded', () => {
   loadAnnouncements();
+  loadPricing();
 });
 
 // Fetch CMS content in the current language — covers both the initial load
 // (triggered by i18n.js's first language-detection dispatch) and any manual
 // language switch afterward.
-document.addEventListener('arreyon:langchange', () => { loadCMS(); });
+document.addEventListener('arreyon:langchange', () => { loadCMS(); renderPrices(); });
 </script>
 </body>
 </html>
