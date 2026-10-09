@@ -69,6 +69,9 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .badge-starter{background:var(--bg3);color:var(--muted)}
 .badge-pro{background:rgba(108,59,255,.2);color:#9d7dff}
 .badge-business{background:rgba(245,158,11,.15);color:var(--gold)}
+.badge-free{background:var(--bg3);color:var(--muted)}
+.badge-auto_seo{background:rgba(16,185,129,.15);color:var(--green)}
+.badge-expired{background:rgba(239,68,68,.15);color:#ef4444}
 .td-actions{display:flex;align-items:center;gap:6px}
 
 .form-group{margin-bottom:16px}
@@ -136,6 +139,9 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     </button>
     <button class="nav-item" onclick="showSection('payments')" id="nav-payments">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg><span data-i18n="admin.nav_payments">Payments</span>
+    </button>
+    <button class="nav-item" onclick="showSection('pricing')" id="nav-pricing">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span data-i18n="admin.nav_pricing">Plans &amp; Pricing</span>
     </button>
     <button class="nav-item" onclick="showSection('users')" id="nav-users">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span data-i18n="admin.nav_users">Users</span>
@@ -208,6 +214,25 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     </div>
 
     <!-- USERS -->
+    <div class="section-view" id="section-pricing">
+      <div class="section-title" data-i18n="admin.nav_pricing">Plans &amp; Pricing</div>
+      <div class="section-sub" data-i18n="admin.pricing_desc">One place for every price.</div>
+      <div style="max-width:780px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px">
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:18px">
+          <div class="form-group" style="flex:1;min-width:170px;margin-bottom:0"><label data-i18n="admin.pricing_rate">FCFA per $1</label><input class="form-input" type="number" id="pricingRate" min="1" step="0.01" oninput="renderPricingPreview()"></div>
+          <div class="form-group" style="flex:1;min-width:170px;margin-bottom:0"><label data-i18n="admin.pricing_discount">Annual discount (%)</label><input class="form-input" type="number" id="pricingDiscount" min="0" max="90" step="0.5" oninput="renderPricingPreview()"></div>
+        </div>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th data-i18n="admin.pricing_col_plan">Plan</th><th data-i18n="admin.pricing_col_usd">USD per month</th><th data-i18n="admin.pricing_col_cfa">FCFA per month</th><th data-i18n="admin.pricing_col_annual">Annual</th></tr></thead>
+          <tbody id="pricingRows"></tbody>
+        </table>
+        </div>
+        <div id="pricingMsg" style="display:none;font-size:13px;margin:14px 0 0"></div>
+        <button class="btn-primary" style="margin-top:16px" onclick="savePlanPricing()" data-i18n="admin.pricing_save">Save pricing</button>
+      </div>
+    </div>
+
     <div class="section-view" id="section-users">
       <div class="table-wrap">
         <div class="table-header"><div class="table-title" data-i18n="admin.all_users">All Users</div><button class="btn-primary" onclick="loadUsers()" data-i18n="admin.refresh">Refresh</button></div>
@@ -373,8 +398,10 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
             <label data-i18n="coup.applies_to">Applies To</label>
             <select class="form-input" id="couponApplies">
               <option value="all" data-i18n="coup.all_plans">All Plans</option>
+              <option value="starter" data-i18n="coup.starter_only">Arreyon Starter Only</option>
               <option value="pro" data-i18n="coup.pro_only">Arreyon Pro Only</option>
               <option value="business" data-i18n="coup.business_only">Arreyon Business Only</option>
+              <option value="auto_seo" data-i18n="coup.auto_seo_only">Arreyon Auto SEO/AEO/GEO Only</option>
             </select>
           </div>
           <div class="form-group"><label data-i18n="coup.max_uses">Max Uses (optional)</label><input class="form-input" type="number" id="couponMax" data-i18n-placeholder="coup.max_uses_placeholder" placeholder="Leave empty for unlimited"></div>
@@ -455,9 +482,10 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const nav = document.getElementById('nav-' + name);
   if (nav) nav.classList.add('active');
-  const titleKeys = {overview:'admin.nav_overview',payments:'admin.nav_payments',users:'admin.nav_users','team-members':'admin.nav_team_members','partner-network':'admin.nav_partner_network',usage:'admin.nav_usage',cms:'admin.nav_cms',announcements:'admin.nav_announcements',coupons:'admin.nav_coupons'};
+  const titleKeys = {pricing:'admin.nav_pricing',overview:'admin.nav_overview',payments:'admin.nav_payments',users:'admin.nav_users','team-members':'admin.nav_team_members','partner-network':'admin.nav_partner_network',usage:'admin.nav_usage',cms:'admin.nav_cms',announcements:'admin.nav_announcements',coupons:'admin.nav_coupons'};
   document.getElementById('topbarTitle').textContent = titleKeys[name] ? t(titleKeys[name]) : name;
   if (name === 'usage') loadUsageStats();
+  if (name === 'pricing') loadPlanPricingAdmin();
   if (name === 'team-members') loadAdminTeamMembers();
   if (name === 'partner-network') { loadPartnerNetworkOverview(); loadPartnerNetworkPlacements(); }
 }
@@ -511,7 +539,7 @@ async function loadUsageStats() {
     }
 
     document.getElementById('usageTopUsers').innerHTML = (data.topUsers || []).map(u => `
-      <tr><td>${[u.first_name,u.last_name].filter(Boolean).join(' ')||'—'}</td><td>${u.email}</td><td style="text-transform:capitalize">${u.plan}</td><td>${u.calls}</td></tr>
+      <tr><td>${[u.first_name,u.last_name].filter(Boolean).join(' ')||'—'}</td><td>${u.email}</td><td>${adminPlanLabel(u.plan)}</td><td>${u.calls}</td></tr>
     `).join('') || `<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">${t('admin.no_data_yet')}</td></tr>`;
   } catch(e) { console.log('Usage stats error:', e.message); }
 }
@@ -529,7 +557,7 @@ async function loadOverview() {
     const pending = payments?.filter(p => p.status === 'pending').length || 0;
     const approved = payments?.filter(p => p.status === 'approved') || [];
     const revenue = approved.reduce((s,p) => s + parseFloat(p.amount_usd||0), 0);
-    const proUsers = users?.filter(u => u.plan !== 'starter').length || 0;
+    const proUsers = users?.filter(u => ['starter','pro','business','auto_seo'].includes(u.plan)).length || 0;
     document.getElementById('statPending').textContent = pending;
     document.getElementById('statPro').textContent = proUsers;
     document.getElementById('statRevenue').textContent = '$' + revenue.toFixed(0);
@@ -598,10 +626,9 @@ async function loadUsers() {
         <td style="font-size:12px">${u.email}</td>
         <td>
           <select style="background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text2);font-size:11px;padding:3px 6px;cursor:pointer" onchange="updateUserPlan('${u.id}',this.value)">
-            <option value="starter" ${u.plan==='starter'?'selected':''}>${t('plan.starter_name')}</option>
-            <option value="pro" ${u.plan==='pro'?'selected':''}>${t('plan.pro_name')}</option>
-            <option value="business" ${u.plan==='business'?'selected':''}>${t('plan.business_name')}</option>
+            ${['free','starter','pro','business','auto_seo','expired'].map(p => `<option value="${p}" ${u.plan===p?'selected':''}>${t('plan.' + p + '_name')}</option>`).join('')}
           </select>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px">${u.plan_expires_at ? tf('admin.plan_ends', { date: new Date(u.plan_expires_at).toLocaleDateString('en-GB') }) : ''}</div>
         </td>
         <td>${u.consultations_used||0}</td>
         <td style="color:${u.email_verified?'var(--green)':'var(--gold)'}">${u.email_verified?t('admin.verified'):t('admin.pending')}</td>
@@ -626,7 +653,7 @@ async function loadAdminTeamMembers() {
       return `
       <tr>
         <td>${ownerName}<div style="font-size:11px;color:var(--muted)">${m.owner_email}</div></td>
-        <td style="text-transform:capitalize">${m.owner_plan}</td>
+        <td>${adminPlanLabel(m.owner_plan)}</td>
         <td style="font-size:12px">${m.member_email}</td>
         <td style="color:${statusColors[m.status]||'var(--muted)'};text-transform:capitalize">${m.status}</td>
         <td style="font-size:11px;color:var(--muted2);max-width:220px">${permsSummary}</td>
@@ -713,10 +740,70 @@ async function resolveReport(placementId) {
   } catch(e) {}
 }
 
+// Changing a plan gives it a real period. An empty date uses the default (7 days for Free, 1 month for paid plans).
 async function updateUserPlan(userId, plan) {
+  let expiresAt;
+  if (plan !== 'expired') {
+    const v = prompt(t('admin.plan_expiry_prompt'), '');
+    if (v === null) { reloadAdminUsers(); return; }          // cancelled: put the selector back
+    expiresAt = v.trim() || undefined;
+    if (expiresAt && isNaN(new Date(expiresAt).getTime())) { alert(t('admin.plan_update_failed')); reloadAdminUsers(); return; }
+  }
   try {
-    await fetch(`/api/admin/users/${userId}/plan`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({plan}) });
-  } catch(e) {}
+    const res = await fetch(`/api/admin/users/${userId}/plan`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ plan, expiresAt }) });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) alert(d.error || t('admin.plan_update_failed'));
+  } catch(e) { alert(t('admin.plan_update_failed')); }
+  reloadAdminUsers();
+}
+function reloadAdminUsers() { loadUsers(); }
+function adminPlanLabel(plan) { const k = 'plan.' + plan + '_name'; const v = t(k); return v === k ? (plan || '') : v; }
+
+// ── PLANS & PRICING ──────────────────────────────────────────────────────────
+let pricingPlanKeys = [];
+async function loadPlanPricingAdmin() {
+  const msg = document.getElementById('pricingMsg'); msg.style.display = 'none';
+  try {
+    const res = await fetch('/api/admin/plan-pricing');
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'failed');
+    pricingPlanKeys = d.paidPlans;
+    document.getElementById('pricingRate').value = d.rate;
+    document.getElementById('pricingDiscount').value = d.discountPercent;
+    document.getElementById('pricingRows').innerHTML = d.paidPlans.map(k => `
+      <tr data-plan="${k}">
+        <td style="font-weight:600">${d.planNames[k] || k}</td>
+        <td><input class="form-input" style="width:110px" type="number" min="0.5" step="0.01" id="pp_usd_${k}" value="${d.plans[k].usd}" oninput="renderPricingPreview()"></td>
+        <td><input class="form-input" style="width:130px" type="number" min="0" step="1" id="pp_cfa_${k}" value="${d.plans[k].cfa === null ? '' : d.plans[k].cfa}" placeholder="${Math.round(d.plans[k].usd * d.rate)}" oninput="renderPricingPreview()"></td>
+        <td id="pp_annual_${k}" style="font-size:12px;color:var(--text2)"></td>
+      </tr>`).join('');
+    renderPricingPreview();
+  } catch (e) { msg.style.display = 'block'; msg.style.color = 'var(--red)'; msg.textContent = t('admin.pricing_failed'); }
+}
+// Preview only — the saved prices are computed by the server (same formula).
+function renderPricingPreview() {
+  const rate = parseFloat(document.getElementById('pricingRate').value) || 0;
+  const disc = parseFloat(document.getElementById('pricingDiscount').value) || 0;
+  const f = 1 - disc / 100;
+  pricingPlanKeys.forEach(k => {
+    const usd = parseFloat(document.getElementById('pp_usd_' + k).value) || 0;
+    const cfaIn = document.getElementById('pp_cfa_' + k).value;
+    const cfaM = cfaIn !== '' ? Math.round(parseFloat(cfaIn)) : Math.round(usd * rate);
+    document.getElementById('pp_cfa_' + k).placeholder = Math.round(usd * rate);
+    document.getElementById('pp_annual_' + k).textContent = '$' + (Math.round(usd * 12 * f * 100) / 100).toLocaleString('en-US') + ' · ' + Math.round(cfaM * 12 * f).toLocaleString('en-US') + ' FCFA';
+  });
+}
+async function savePlanPricing() {
+  const msg = document.getElementById('pricingMsg');
+  const plans = {};
+  pricingPlanKeys.forEach(k => { plans[k] = { usd: document.getElementById('pp_usd_' + k).value, cfa: document.getElementById('pp_cfa_' + k).value }; });
+  try {
+    const res = await fetch('/api/admin/plan-pricing', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rate: document.getElementById('pricingRate').value, discountPercent: document.getElementById('pricingDiscount').value, plans }) });
+    const d = await res.json().catch(() => ({}));
+    msg.style.display = 'block';
+    if (res.ok) { await loadPlanPricingAdmin(); msg.style.display = 'block'; msg.style.color = 'var(--green)'; msg.textContent = t('admin.pricing_saved'); }
+    else { msg.style.color = 'var(--red)'; msg.textContent = d.error || t('admin.pricing_failed'); }
+  } catch (e) { msg.style.display = 'block'; msg.style.color = 'var(--red)'; msg.textContent = t('admin.pricing_failed'); }
 }
 
 // ── CMS ────────────────────────────────────────────────────────────────────
@@ -928,7 +1015,7 @@ async function loadCoupons() {
       <tr>
         <td style="font-weight:700;font-family:monospace;color:var(--purple-light)">${c.code}</td>
         <td style="color:var(--green);font-weight:600">${c.discount_percent}%</td>
-        <td>${c.applies_to==='all' ? t('coup.all_plans') : (c.applies_to==='pro' ? t('coup.pro_only') : (c.applies_to==='business' ? t('coup.business_only') : (c.applies_to||'all')))}</td>
+        <td>${c.applies_to==='all' ? t('coup.all_plans') : (t('coup.' + c.applies_to + '_only') !== 'coup.' + c.applies_to + '_only' ? t('coup.' + c.applies_to + '_only') : (c.applies_to||'all'))}</td>
         <td>${c.used_count||0} / ${c.max_uses||'∞'}</td>
         <td style="font-size:11px">${c.valid_until ? new Date(c.valid_until).toLocaleDateString('en-GB') : t('coup.no_expiry')}</td>
         <td style="color:${c.is_active?'var(--green)':'var(--muted)'}">${c.is_active?t('ann.active'):t('ann.off')}</td>
