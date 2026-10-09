@@ -1774,3 +1774,147 @@ CREATE TABLE IF NOT EXISTS website_post_usage (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_website_post_usage_account ON website_post_usage(account_id, created_at DESC);
+
+-- CMS-PLANS-V2 (generated; safe to re-run: new rows use ON CONFLICT DO NOTHING, old text is changed only if still the original)
+INSERT INTO cms_content (section, key, value, value_fr, type) VALUES
+  ('pricing', 'plan_free_name', $c$Arreyon Free$c$, $c$Arreyon Gratuit$c$, 'text'),
+  ('pricing', 'plan_free_description', $c$Try Arreyon free for 7 days — no credit card$c$, $c$Essayez Arreyon gratuitement pendant 7 jours — sans carte bancaire$c$, 'text'),
+  ('pricing', 'plan_free_features', $c$3 consultations during your 7-day trial
+5 starter directors
+Board Secretary Q&A
+Basic board report
+3 core financial calculators
+Website Analyzer (1 scan)
+Entrepreneur Mode & Scenario Comparison
+1 team member
+Website tool: connect 1 website + 2 blog posts$c$, $c$3 consultations pendant votre essai de 7 jours
+5 directeurs de départ
+Questions-réponses avec la Secrétaire du conseil
+Rapport de conseil de base
+3 calculateurs financiers essentiels
+Analyseur de site web (1 analyse)
+Mode Entrepreneur et comparaison de scénarios
+1 membre d'équipe
+Outil site web : connectez 1 site + 2 articles de blog$c$, 'textarea'),
+  ('pricing', 'plan_free_cta', $c$Start 7-Day Free Trial$c$, $c$Commencer l'essai gratuit de 7 jours$c$, 'text'),
+  ('pricing', 'plan_starter_name', $c$Arreyon Starter$c$, $c$Arreyon Starter$c$, 'text'),
+  ('pricing', 'plan_starter_description', $c$For founders who want AI business advice and an AI website agent$c$, $c$Pour les fondateurs qui veulent des conseils d'affaires par IA et un agent IA pour leur site web$c$, 'text'),
+  ('pricing', 'plan_starter_features', $c$3 consultations per month
+5 starter directors
+Board Secretary Q&A
+Basic board report
+3 core financial calculators
+Website Analyzer (1 scan/month)
+Entrepreneur Mode & Scenario Comparison
+1 team member
+Website tool: 1 website, AI Agent & Content Calendar, 5 blog posts/month$c$, $c$3 consultations par mois
+5 directeurs de départ
+Questions-réponses avec la Secrétaire du conseil
+Rapport de conseil de base
+3 calculateurs financiers essentiels
+Analyseur de site web (1 analyse/mois)
+Mode Entrepreneur et comparaison de scénarios
+1 membre d'équipe
+Outil site web : 1 site, Agent IA et Calendrier de contenu, 5 articles/mois$c$, 'textarea'),
+  ('pricing', 'plan_starter_cta', $c$Get Arreyon Starter$c$, $c$Choisir Arreyon Starter$c$, 'text'),
+  ('pricing', 'plan_pro_name', $c$Arreyon Pro$c$, $c$Arreyon Pro$c$, 'text'),
+  ('pricing', 'plan_pro_description', $c$For serious founders who need regular guidance and a full SEO toolkit$c$, $c$Pour les fondateurs sérieux qui ont besoin d'un accompagnement régulier et d'une boîte à outils SEO complète$c$, 'text'),
+  ('pricing', 'plan_pro_features', $c$10 consultations per month
+All 29 directors
+Report download (PDF)
+Full consultation history
+Full financial calculator suite (10 tools)
+Market Research & Website Analyzer (5-10/month)
+Research-backed Entrepreneur Mode
+2 team members
+Priority email support
+Board Secretary deep-dive
+Website tool: 2 websites, 10 blog posts/month, site audit, competitor analysis, technical SEO$c$, $c$10 consultations par mois
+Les 29 directeurs
+Téléchargement du rapport (PDF)
+Historique complet des consultations
+Suite complète de calculateurs financiers (10 outils)
+Étude de marché et analyseur de site web (5-10/mois)
+Mode Entrepreneur appuyé sur la recherche
+2 membres d'équipe
+Support prioritaire par e-mail
+Analyse approfondie de la Secrétaire du conseil
+Outil site web : 2 sites, 10 articles/mois, audit du site, analyse de la concurrence, SEO technique$c$, 'textarea'),
+  ('pricing', 'plan_pro_cta', $c$Get Arreyon Pro$c$, $c$Choisir Arreyon Pro$c$, 'text'),
+  ('pricing', 'plan_business_name', $c$Arreyon Business$c$, $c$Arreyon Business$c$, 'text'),
+  ('pricing', 'plan_business_description', $c$For teams that need unlimited access and the complete website toolkit$c$, $c$Pour les équipes qui ont besoin d'un accès illimité et de la boîte à outils web complète$c$, 'text'),
+  ('pricing', 'plan_business_features', $c$Unlimited consultations
+All 29 directors
+PDF + Word download
+Video report (HeyGen)
+Full financial calculator suite (10 tools)
+Unlimited Market Research & Website Analyzer
+Research-backed Entrepreneur Mode
+5 team members
+Custom AI director personas
+Priority WhatsApp support
+Full consultation history
+Website tool: 3 websites, 25 blog posts/month, keyword rankings, sitemap, schema markup, AI visibility, media library, SEO fixes$c$, $c$Consultations illimitées
+Les 29 directeurs
+Téléchargement PDF + Word
+Rapport vidéo (HeyGen)
+Suite complète de calculateurs financiers (10 outils)
+Étude de marché et analyseur de site web illimités
+Mode Entrepreneur appuyé sur la recherche
+5 membres d'équipe
+Personas de directeurs IA personnalisés
+Support prioritaire par WhatsApp
+Historique complet des consultations
+Outil site web : 3 sites, 25 articles/mois, classement des mots-clés, plan du site, balisage schema, visibilité IA, médiathèque, corrections SEO$c$, 'textarea'),
+  ('pricing', 'plan_business_cta', $c$Get Arreyon Business$c$, $c$Choisir Arreyon Business$c$, 'text'),
+  ('pricing', 'plan_auto_seo_name', $c$Arreyon Auto SEO/AEO/GEO$c$, $c$Arreyon Auto SEO/AEO/GEO$c$, 'text'),
+  ('pricing', 'plan_auto_seo_description', $c$For website owners who only want automatic SEO, AEO and GEO — none of the other Arreyon Consult features$c$, $c$Pour les propriétaires de sites qui ne veulent que le SEO, l'AEO et le GEO automatiques — sans les autres fonctionnalités d'Arreyon Consult$c$, 'text'),
+  ('pricing', 'plan_auto_seo_features', $c$1 website (WordPress or Shopify)
+20 blog posts per month
+AI Agent that works automatically + Content Calendar
+Site audit, competitor analysis, technical SEO
+Keyword rankings, sitemap, schema markup
+AI visibility (AEO/GEO)
+Website alerts (coming soon)
+Website tool only — the other Arreyon Consult features are not included$c$, $c$1 site web (WordPress ou Shopify)
+20 articles de blog par mois
+Agent IA qui travaille automatiquement + Calendrier de contenu
+Audit du site, analyse de la concurrence, SEO technique
+Classement des mots-clés, plan du site, balisage schema
+Visibilité IA (AEO/GEO)
+Alertes du site web (bientôt disponibles)
+Outil site web uniquement — les autres fonctionnalités d'Arreyon Consult ne sont pas incluses$c$, 'textarea'),
+  ('pricing', 'plan_auto_seo_cta', $c$Get Auto SEO$c$, $c$Choisir Auto SEO$c$, 'text'),
+  ('website_tool', 'headline', $c$Grow your website on autopilot$c$, $c$Développez votre site web en pilotage automatique$c$, 'text'),
+  ('website_tool', 'subheadline', $c$Connect your WordPress or Shopify site and let your AI agent audit it, improve its SEO, write blog posts and track your rankings — with your approval, or fully automatic.$c$, $c$Connectez votre site WordPress ou Shopify et laissez votre agent IA l'auditer, améliorer son SEO, rédiger des articles et suivre votre classement — avec votre accord, ou en mode entièrement automatique.$c$, 'textarea'),
+  ('website_tool', 'feature1_title', $c$Connect in minutes$c$, $c$Connectez-vous en quelques minutes$c$, 'text'),
+  ('website_tool', 'feature1_desc', $c$Link your WordPress or Shopify site securely. Your credentials are encrypted, and you decide what the agent is allowed to change.$c$, $c$Reliez votre site WordPress ou Shopify en toute sécurité. Vos identifiants sont chiffrés et vous décidez de ce que l'agent peut modifier.$c$, 'textarea'),
+  ('website_tool', 'feature2_title', $c$An AI agent that works for you$c$, $c$Un agent IA qui travaille pour vous$c$, 'text'),
+  ('website_tool', 'feature2_desc', $c$Have it ask for your approval first, or let it run automatically. Every action is logged, so you always know what changed.$c$, $c$Demandez-lui votre accord avant d'agir, ou laissez-le tourner automatiquement. Chaque action est enregistrée : vous savez toujours ce qui a changé.$c$, 'textarea'),
+  ('website_tool', 'feature3_title', $c$Blog posts & content calendar$c$, $c$Articles de blog et calendrier de contenu$c$, 'text'),
+  ('website_tool', 'feature3_desc', $c$Generate SEO-optimised blog posts, schedule them in a content calendar, or let automation publish them on your rules.$c$, $c$Générez des articles de blog optimisés pour le SEO, planifiez-les dans un calendrier de contenu, ou laissez l'automatisation les publier selon vos règles.$c$, 'textarea'),
+  ('website_tool', 'feature4_title', $c$Audit & SEO fixes$c$, $c$Audit et corrections SEO$c$, 'text'),
+  ('website_tool', 'feature4_desc', $c$Spot weak titles and descriptions, broken links and technical issues, then review and approve the fixes.$c$, $c$Repérez les titres et descriptions faibles, les liens cassés et les problèmes techniques, puis examinez et approuvez les corrections.$c$, 'textarea'),
+  ('website_tool', 'feature5_title', $c$Rankings, competitors & AI visibility$c$, $c$Classement, concurrents et visibilité IA$c$, 'text'),
+  ('website_tool', 'feature5_desc', $c$Track keyword rankings, compare yourself with competitors, and see how visible your site is to AI assistants (AEO/GEO).$c$, $c$Suivez votre classement par mots-clés, comparez-vous à vos concurrents et voyez la visibilité de votre site auprès des assistants IA (AEO/GEO).$c$, 'textarea'),
+  ('website_tool', 'feature6_title', $c$Schema, sitemap & media$c$, $c$Schema, plan du site et médias$c$, 'text'),
+  ('website_tool', 'feature6_desc', $c$Add structured data, submit your sitemap to Google and keep your media library organised.$c$, $c$Ajoutez des données structurées, soumettez votre plan du site à Google et gardez votre médiathèque organisée.$c$, 'textarea'),
+  ('website_tool', 'coming_label', $c$Coming soon$c$, $c$Bientôt disponible$c$, 'text'),
+  ('website_tool', 'coming_items', $c$Website alerts
+Page content editing
+Thin-content expansion
+Deeper crawl checks (noindex, canonicals, redirects)
+XML sitemap generation$c$, $c$Alertes du site web
+Modification du contenu des pages
+Enrichissement des contenus trop courts
+Contrôles d'exploration approfondis (noindex, canoniques, redirections)
+Génération du plan du site XML$c$, 'textarea')
+ON CONFLICT (section, key) DO NOTHING;
+
+UPDATE cms_content SET value = $c$Start with a 7-day free trial. Upgrade when you need more.$c$, value_fr = $c$Commencez par un essai gratuit de 7 jours. Passez au niveau supérieur quand vous en avez besoin.$c$, updated_at = NOW()
+ WHERE section = 'pricing' AND key = 'subheadline' AND value = $c$Start free. Upgrade when you need more.$c$;
+UPDATE cms_content SET value = $c$Start your 7-day free trial. No credit card required.$c$, value_fr = $c$Commencez votre essai gratuit de 7 jours. Aucune carte bancaire requise.$c$, updated_at = NOW()
+ WHERE section = 'cta' AND key = 'subheadline' AND value = $c$Your first consultation is free. No credit card required.$c$;
+UPDATE cms_content SET value = $c$During your 7-day free trial you have 3 consultations. On paid plans your limit resets every month. You can upgrade your plan at any time for more consultations immediately.$c$, value_fr = $c$Pendant votre essai gratuit de 7 jours, vous disposez de 3 consultations. Avec un forfait payant, votre limite se réinitialise chaque mois. Vous pouvez passer à un forfait supérieur à tout moment pour obtenir immédiatement plus de consultations.$c$, updated_at = NOW()
+ WHERE section = 'faq' AND key = 'q5_answer' AND value = $c$Your limit resets at the start of each calendar month. You can upgrade your plan at any time for more consultations immediately.$c$;
+
