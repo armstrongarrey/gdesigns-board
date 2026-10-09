@@ -100,21 +100,238 @@ const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'info@gdesignsme.com';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2026';
 const BASE_URL = process.env.BASE_URL || 'https://consult.gdesignsme.com';
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PLANS v2 — the single place that defines every plan, what it includes, how
+// the website tool is gated, and how prices are computed. Pure functions only
+// (no database), so the whole block can be tested on its own.
+// <PLAN-CORE-START>
+// ═══════════════════════════════════════════════════════════════════════════
+const TRIAL_DAYS = 7;
+const PAID_PLANS = ['starter', 'pro', 'business', 'auto_seo'];
+const ALL_PLAN_KEYS = ['free', ...PAID_PLANS, 'expired'];
+// Free and the paid Starter plan share the same five "starter" directors.
+const BASIC_DIRECTOR_PLANS = ['free', 'starter'];
+const PLAN_NAMES = {
+  free: 'Arreyon Free', starter: 'Arreyon Starter', pro: 'Arreyon Pro',
+  business: 'Arreyon Business', auto_seo: 'Arreyon Auto SEO/AEO/GEO'
+};
+
+// Free's 3 consultations last the whole 7-day trial (no monthly reset).
+// Auto SEO is website-only: every non-website feature is locked.
 const PLAN_LIMITS = {
+  free:     { consultations: 3,  directors: 5,   download: false, video: false, history: false, team: 1 },
   starter:  { consultations: 3,  directors: 5,   download: false, video: false, history: false, team: 1 },
   pro:      { consultations: 10, directors: 29,  download: true,  video: false, history: true,  team: 2 },
   business: { consultations: -1, directors: 29,  download: true,  video: true,  history: true,  team: 5 },
+  auto_seo: { consultations: 0,  directors: 0,   download: false, video: false, history: false, team: 0 },
   expired:  { consultations: 0,  directors: 0,   download: false, video: false, history: false, team: 0 }
 };
 
-// Financial Tools: which calculators each plan can access. Starter gets the
+// Financial Tools: which calculators each plan can access. Free/Starter get the
 // three most fundamental ones; Pro and Business get the full engine.
+const FINANCIAL_BASIC_TOOLS = ['roi', 'breakeven', 'growth_projection'];
+const FINANCIAL_FULL_TOOLS = ['revenue', 'profit_margin', 'breakeven', 'roi', 'cac', 'ltv', 'ltv_cac_ratio', 'roas', 'growth_projection', 'cashflow_projection', 'pricing', 'markup', 'runway', 'budget_variance', 'valuation', 'loan_payment', 'cost_of_hire', 'discount_impact'];
 const FINANCIAL_TOOLS_ACCESS = {
-  starter:  ['roi', 'breakeven', 'growth_projection'],
-  pro:      ['revenue', 'profit_margin', 'breakeven', 'roi', 'cac', 'ltv', 'ltv_cac_ratio', 'roas', 'growth_projection', 'cashflow_projection', 'pricing', 'markup', 'runway', 'budget_variance', 'valuation', 'loan_payment', 'cost_of_hire', 'discount_impact'],
-  business: ['revenue', 'profit_margin', 'breakeven', 'roi', 'cac', 'ltv', 'ltv_cac_ratio', 'roas', 'growth_projection', 'cashflow_projection', 'pricing', 'markup', 'runway', 'budget_variance', 'valuation', 'loan_payment', 'cost_of_hire', 'discount_impact'],
+  free:     FINANCIAL_BASIC_TOOLS,
+  starter:  FINANCIAL_BASIC_TOOLS,
+  pro:      FINANCIAL_FULL_TOOLS,
+  business: FINANCIAL_FULL_TOOLS,
+  auto_seo: [],
   expired:  []
 };
+
+// ── Website tool: what each plan unlocks ────────────────────────────────────
+const WEBSITE_BASE_FEATURES = ['connect', 'generate_post', 'posts_list', 'taxonomy_read'];
+const WEBSITE_STARTER_FEATURES = [...WEBSITE_BASE_FEATURES, 'agent', 'calendar', 'agent_activity'];
+const WEBSITE_PRO_FEATURES = [...WEBSITE_STARTER_FEATURES, 'intelligence', 'audit', 'activity_log', 'competitor', 'technical_seo', 'proposed_changes'];
+const WEBSITE_FULL_FEATURES = [...WEBSITE_PRO_FEATURES, 'keyword_rankings', 'sitemap', 'broken_links', 'schema', 'media', 'find_improve_seo', 'ai_visibility', 'automation', 'taxonomy_create', 'backlinks'];
+
+const WEBSITE_PLANS = {
+  free:     { sites: 1, posts: 2,  postsPeriod: 'trial', features: WEBSITE_BASE_FEATURES },
+  starter:  { sites: 1, posts: 5,  postsPeriod: 'month', features: WEBSITE_STARTER_FEATURES },
+  pro:      { sites: 2, posts: 10, postsPeriod: 'month', features: WEBSITE_PRO_FEATURES },
+  business: { sites: 3, posts: 25, postsPeriod: 'month', features: WEBSITE_FULL_FEATURES },
+  auto_seo: { sites: 1, posts: 20, postsPeriod: 'month', features: WEBSITE_FULL_FEATURES },
+  expired:  { sites: 0, posts: 0,  postsPeriod: 'month', features: [] }
+};
+function websitePlanFor(plan) { return WEBSITE_PLANS[plan] || WEBSITE_PLANS.expired; }
+function planHasWebsiteFeature(plan, feature) { return websitePlanFor(plan).features.includes(feature); }
+// The cheapest plan that unlocks a feature (used in upgrade messages).
+function minPlanForWebsiteFeature(feature) {
+  return ['free', 'starter', 'pro', 'business'].find(p => WEBSITE_PLANS[p].features.includes(feature)) || 'business';
+}
+
+// Which steps of the background AI Agent cycle each plan may run. null = all.
+// Starter's agent only writes scheduled posts (no maintenance steps at all).
+const AGENT_STEPS_BY_PLAN = { pro: ['intelligence', 'audit', 'technical check', 'competitor analysis'] };
+function agentStepsForPlan(plan) {
+  if (plan === 'business' || plan === 'auto_seo') return null;
+  return new Set(AGENT_STEPS_BY_PLAN[plan] || []);
+}
+
+// ── Website routes → the feature that unlocks them ──────────────────────────
+const BIZ_PATH = '/api/business/[^/]+';
+const routeRx = (s) => new RegExp('^' + s + '$');
+// [method ('*' = any), path pattern, feature, options]
+const WEBSITE_ROUTES = [
+  // connecting a site (counted against the plan's site limit when it adds one)
+  ['POST', routeRx('/api/business/website/connect-new'), 'connect', { newSite: true }],
+  ['POST', routeRx('/api/business/website/generate-code-new'), 'connect', { newSite: true }],
+  ['GET',  routeRx('/api/shopify/connect-new'), 'connect', { newSite: true }],
+  ['GET',  routeRx('/api/shopify/callback'), 'connect'],
+  ['POST', routeRx(BIZ_PATH + '/website/generate-code'), 'connect', { connectSite: true }],
+  ['POST', routeRx(BIZ_PATH + '/website/connect'), 'connect', { connectSite: true }],
+  ['GET',  routeRx(BIZ_PATH + '/shopify/connect'), 'connect', { connectSite: true }],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)'), 'connect', { allowWhenPaused: true }],
+  ['POST', routeRx(BIZ_PATH + '/website/verify'), 'connect', { allowWhenPaused: true }],
+  ['PUT',  routeRx(BIZ_PATH + '/website/permissions'), 'connect', { permissions: true }],
+  ['PUT',  routeRx(BIZ_PATH + '/shopify/automation'), 'connect', { shopifyAutomation: true }],
+  // writing and managing posts
+  ['POST', routeRx(BIZ_PATH + '/website/generate-blog-post'), 'generate_post', { postQuota: true }],
+  ['POST', routeRx(BIZ_PATH + '/shopify/generate-post'), 'generate_post', { postQuota: true }],
+  ['POST', routeRx(BIZ_PATH + '/website/topic-suggestions'), 'generate_post'],
+  ['*',    routeRx(BIZ_PATH + '/website/generated-posts(/[^/]+(/(publish|log-entries))?)?'), 'posts_list'],
+  ['GET',  routeRx(BIZ_PATH + '/shopify/generated-posts'), 'posts_list'],
+  ['GET',  routeRx(BIZ_PATH + '/website/(categories|tags)'), 'taxonomy_read'],
+  ['POST', routeRx(BIZ_PATH + '/website/(categories|tags)'), 'taxonomy_create'],
+  ['GET',  routeRx(BIZ_PATH + '/website/media'), 'media'],
+  // automation
+  ['*',    routeRx(BIZ_PATH + '/content-schedule(/[^/]+(/dismiss)?)?'), 'calendar'],
+  ['*',    routeRx(BIZ_PATH + '/content-automation-rule(/[^/]+)?'), 'automation'],
+  ['*',    routeRx(BIZ_PATH + '/agent-activity(/post/[^/]+/[^/]+)?'), 'agent_activity'],
+  // analysis
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/intelligence'), 'intelligence'],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/run-audit'), 'audit'],
+  ['*',    routeRx(BIZ_PATH + '/website/audit-runs'), 'audit'],
+  ['*',    routeRx(BIZ_PATH + '/website/activity-log'), 'activity_log'],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/competitor-analysis'), 'competitor'],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/technical-seo/(check|history)'), 'technical_seo'],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/keyword-rankings'), 'keyword_rankings'],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/sitemap/(submit|status)'), 'sitemap'],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/broken-links'), 'broken_links'],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/organization-schema'), 'schema'],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/ai-visibility/(check|history)'), 'ai_visibility'],
+  // proposed changes: reviewing/approving is Pro+, generating new proposals is Business+
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/actions(/[^/]+/(approve|execute|re-verify|confirm-manually|reject))?'), 'proposed_changes'],
+  ['POST', routeRx(BIZ_PATH + '/website/(seo-proposals|duplicate-title-proposals|taxonomy-proposals|featured-image-proposals)'), 'find_improve_seo'],
+  // partner network / backlinks
+  ['*',    routeRx(BIZ_PATH + '/(backlinks|reciprocal-network)(/.*)?'), 'backlinks'],
+];
+// Anything in the website tool's URL space. A path in here that is NOT in the
+// table above is treated as Business-level (safe default for future routes).
+const WEBSITE_FAMILY_RX = new RegExp(
+  '^(/api/business/website/|/api/shopify/|' + BIZ_PATH + '/(website|shopify)(/|$)|' +
+  BIZ_PATH + '/(content-schedule|content-automation-rule|agent-activity|backlinks|reciprocal-network)(/|$))'
+);
+function isWebsiteFamilyPath(path) { return WEBSITE_FAMILY_RX.test(path); }
+function featureForRoute(method, path) {
+  for (const [m, re, feature, opts] of WEBSITE_ROUTES) {
+    if ((m === '*' || m === method) && re.test(path)) return { feature, ...(opts || {}) };
+  }
+  return null;
+}
+
+// Account pages that stay reachable even when a plan has expired or is
+// website-only (billing, profile, sign-in).
+const ACCOUNT_PATHS = [
+  /^\/api\/auth\//, /^\/api\/user\/(profile|language)$/, /^\/api\/payments\//, /^\/api\/coupons\//,
+  /^\/api\/plans\//, /^\/api\/cms/, /^\/api\/announcements$/, /^\/api\/translate-messages$/
+];
+// Beyond the website tool itself, what a website-only (Auto SEO) account needs
+// to make the website tool work: alerts, Google Search Console (Keyword
+// Rankings + Sitemap depend on it), the business list, and the competitor list
+// (Competitor Analysis reads it). Not the AI competitor analysis itself.
+const AUTO_SEO_EXTRA_PATHS = [
+  ['*',   /^\/api\/alerts(\/|$)/],
+  ['*',   /^\/api\/integrations\/google-search-console(\/|$)/],
+  ['GET', /^\/api\/business$/],
+  ['*',   routeRx(BIZ_PATH)],
+  ['*',   routeRx(BIZ_PATH + '/competitors(/[^/]+)?')],
+];
+
+function lockReasonFor(previousPlan) { return (previousPlan && previousPlan !== 'free') ? 'renew' : 'upgrade'; }
+
+// Pure access decision. Returns { allow:true, needs } or { allow:false, code, ... }.
+// The caller adds the checks that need the database (site limit, post quota, paused sites).
+function decidePlanAccess({ plan, method, path, body, previousPlan }) {
+  const isAccount = ACCOUNT_PATHS.some(re => re.test(path));
+  if (plan === 'expired') {
+    if (isAccount) return { allow: true, needs: {} };
+    const renew = lockReasonFor(previousPlan) === 'renew';
+    return { allow: false, code: 'expired', lockReason: renew ? 'renew' : 'upgrade',
+      message: renew ? 'Your subscription has expired. Renew your plan to continue.' : 'Your free trial has ended. Upgrade to a paid plan to continue.' };
+  }
+  if (isAccount) return { allow: true, needs: {} };
+
+  const family = isWebsiteFamilyPath(path);
+  if (plan === 'auto_seo' && !family) {
+    if (AUTO_SEO_EXTRA_PATHS.some(([m, re]) => (m === '*' || m === method) && re.test(path))) return { allow: true, needs: {} };
+    return { allow: false, code: 'plan_scope', message: 'Arreyon Auto SEO/AEO/GEO includes the Website tool only. Upgrade to Starter, Pro or Business to use the rest of Arreyon Consult.' };
+  }
+  if (!family) return { allow: true, needs: {} };   // other plans: each route keeps its own checks
+
+  const hit = featureForRoute(method, path);
+  if (!hit) {
+    // A website route nobody mapped yet: Business-level access only.
+    if (planHasWebsiteFeature(plan, 'find_improve_seo')) return { allow: true, needs: {} };
+    return { allow: false, code: 'feature', feature: 'unmapped', requiredPlan: 'business', message: 'This website feature is available on Arreyon Business and above.' };
+  }
+  const deny = (feature) => {
+    const req = minPlanForWebsiteFeature(feature);
+    return { allow: false, code: 'feature', feature, requiredPlan: req, message: `This website feature is available on ${PLAN_NAMES[req]} and above.` };
+  };
+  if (!planHasWebsiteFeature(plan, hit.feature)) return deny(hit.feature);
+
+  // Settings routes that bundle several features: only the parts being switched ON are gated.
+  const b = body || {};
+  if (hit.permissions) {
+    if (b.automationMode === 'automatic' && !planHasWebsiteFeature(plan, 'agent')) return deny('agent');
+    if (b.agentCycleFrequency && !planHasWebsiteFeature(plan, 'agent')) return deny('agent');
+    if (b.contentAutomationEnabled === true && !planHasWebsiteFeature(plan, 'automation')) return deny('automation');
+  }
+  if (hit.shopifyAutomation) {
+    if (b.automationMode === 'automatic' && !planHasWebsiteFeature(plan, 'agent')) return deny('agent');
+  }
+  return { allow: true, needs: { newSite: !!hit.newSite, connectSite: !!hit.connectSite, postQuota: !!hit.postQuota, checkPaused: !hit.allowWhenPaused && !hit.newSite } };
+}
+
+// ── Pricing (USD is the source of truth; FCFA follows a rate unless overridden) ──
+const DEFAULT_PLAN_PRICES_USD = { starter: 35, pro: 120, business: 300, auto_seo: 100 };
+const DEFAULT_FCFA_RATE = 575;
+const DEFAULT_ANNUAL_DISCOUNT = 15;
+const roundMoney = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+function computePlanPrices(cfg) {
+  const f = 1 - (Number(cfg.discount) || 0) / 100;
+  const out = {};
+  for (const key of PAID_PLANS) {
+    const p = (cfg.plans && cfg.plans[key]) || { usd: DEFAULT_PLAN_PRICES_USD[key], cfa: null };
+    const usd = Number(p.usd);
+    const cfaMonthly = (p.cfa !== null && p.cfa !== undefined && p.cfa !== '') ? Math.round(Number(p.cfa)) : Math.round(usd * cfg.rate);
+    const cfaTotal = Math.round(cfaMonthly * 12 * f);
+    out[key] = {
+      monthly: { usd: roundMoney(usd), cfa: cfaMonthly },
+      annual: { usdPerMonth: roundMoney(usd * f), cfaPerMonth: Math.round(cfaTotal / 12), usdTotal: roundMoney(usd * 12 * f), cfaTotal }
+    };
+  }
+  return out;
+}
+// What a payment for this plan/cycle actually costs (annual = the full yearly total).
+function paymentAmountsFor(plan, cycle, prices) {
+  const p = prices[plan];
+  if (!p) return null;
+  if (cycle === 'annual') return { usd: p.annual.usdTotal, cfa: p.annual.cfaTotal };
+  if (cycle === 'monthly') return { usd: p.monthly.usd, cfa: p.monthly.cfa };
+  return null;
+}
+function buildPublicPricing(cfg) {
+  const prices = computePlanPrices(cfg);
+  const plans = { free: { name: PLAN_NAMES.free, trialDays: TRIAL_DAYS, website: { sites: WEBSITE_PLANS.free.sites, posts: WEBSITE_PLANS.free.posts, postsPeriod: 'trial' } } };
+  for (const key of PAID_PLANS) {
+    plans[key] = { name: PLAN_NAMES[key], ...prices[key], website: { sites: WEBSITE_PLANS[key].sites, posts: WEBSITE_PLANS[key].posts, postsPeriod: 'month' } };
+  }
+  return { rate: cfg.rate, discountPercent: cfg.discount, plans };
+}
+// <PLAN-CORE-END>
 
 const STARTER_DIRECTORS = ['rockefeller', 'ogilvy', 'buffett', 'dangote', 'kotler'];
 
@@ -313,8 +530,8 @@ passport.use(new GoogleStrategy({
 
     if (!user) {
       const insert = await pool.query(
-        `INSERT INTO users (email, google_id, first_name, last_name, avatar_url, email_verified, plan)
-         VALUES ($1, $2, $3, $4, $5, true, 'starter') RETURNING *`,
+        `INSERT INTO users (email, google_id, first_name, last_name, avatar_url, email_verified, plan, plan_started_at, plan_expires_at)
+         VALUES ($1, $2, $3, $4, $5, true, 'free', NOW(), NOW() + INTERVAL '${TRIAL_DAYS} days') RETURNING *`,
         [email, googleId, firstName, lastName, avatar]
       );
       user = insert.rows[0];
@@ -373,8 +590,9 @@ async function resolveAccount(userId) {
   // frontend can show a real "subscribe to continue" lockout instead of
   // quietly treating expiration as equivalent to the free tier.
   if (account.plan !== 'expired' && account.plan_expires_at && new Date(account.plan_expires_at) < new Date()) {
+    // previous_plan lets the lockout say "renew your Pro plan" (paid) rather than "upgrade" (free trial).
     const updated = await pool.query(
-      `UPDATE users SET plan = 'expired', updated_at = NOW() WHERE id = $1 RETURNING *`,
+      `UPDATE users SET previous_plan = plan, plan = 'expired', updated_at = NOW() WHERE id = $1 RETURNING *`,
       [account.id]
     );
     account = updated.rows[0];
@@ -382,6 +600,225 @@ async function resolveAccount(userId) {
 
   return account;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PLANS v2 — database-backed helpers and the plan gate middleware.
+// <PLAN-DB-START>
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Pricing configuration (editable from admin; cached briefly) ─────────────
+let pricingCache = { at: 0, cfg: null };
+function defaultPricingConfig() {
+  const plans = {};
+  for (const k of PAID_PLANS) plans[k] = { usd: DEFAULT_PLAN_PRICES_USD[k], cfa: null };
+  return { rate: DEFAULT_FCFA_RATE, discount: DEFAULT_ANNUAL_DISCOUNT, plans };
+}
+async function loadPricingConfig(force = false) {
+  if (!force && pricingCache.cfg && Date.now() - pricingCache.at < 60 * 1000) return pricingCache.cfg;
+  const cfg = defaultPricingConfig();
+  try {
+    const [settings, rows] = await Promise.all([
+      pool.query(`SELECT key, value FROM app_settings WHERE key IN ('fcfa_rate', 'annual_discount_percent')`),
+      pool.query(`SELECT plan_key, usd_monthly, cfa_monthly FROM plan_pricing`)
+    ]);
+    for (const s of settings.rows) {
+      if (s.key === 'fcfa_rate' && Number(s.value) > 0) cfg.rate = Number(s.value);
+      if (s.key === 'annual_discount_percent' && Number(s.value) >= 0) cfg.discount = Number(s.value);
+    }
+    for (const r of rows.rows) {
+      if (cfg.plans[r.plan_key]) cfg.plans[r.plan_key] = { usd: Number(r.usd_monthly), cfa: r.cfa_monthly === null ? null : Number(r.cfa_monthly) };
+    }
+  } catch (e) {
+    // If the pricing tables are not there yet, the defaults above are used rather than failing every page.
+    console.error('loadPricingConfig fell back to defaults:', e.message);
+  }
+  pricingCache = { at: Date.now(), cfg };
+  return cfg;
+}
+
+// ── Connected sites (WordPress and Shopify count the same) ──────────────────
+async function siteRowsOldestFirst(accountId) {
+  const r = await pool.query(
+    `SELECT wc.business_id, wc.connected_at, 'wordpress' AS platform
+       FROM website_connections wc JOIN businesses b ON b.id = wc.business_id
+      WHERE b.user_id = $1 AND wc.connection_status <> 'disconnected'
+     UNION ALL
+     SELECT sc.business_id, sc.connected_at, 'shopify' AS platform
+       FROM shopify_connections sc JOIN businesses b ON b.id = sc.business_id
+      WHERE b.user_id = $1 AND sc.connection_status <> 'disconnected'
+     ORDER BY connected_at ASC NULLS LAST`,
+    [accountId]
+  );
+  return r.rows;
+}
+async function countAccountSites(accountId, excludeBusinessId = null) {
+  const rows = await siteRowsOldestFirst(accountId);
+  return rows.filter(r => r.business_id !== excludeBusinessId).length;
+}
+// After a downgrade (or an admin change) an account can hold more sites than its
+// plan allows: the oldest ones stay active, the rest are paused until the person
+// upgrades or disconnects one.
+async function pausedBusinessIds(account) {
+  const limit = websitePlanFor(account.plan).sites;
+  const rows = await siteRowsOldestFirst(account.id);
+  if (rows.length <= limit) return [];
+  const allowed = new Set(rows.slice(0, limit).map(r => r.business_id));
+  return [...new Set(rows.slice(limit).map(r => r.business_id).filter(id => !allowed.has(id)))];
+}
+
+// ── Blog post quota ─────────────────────────────────────────────────────────
+// Counted from a usage log (not from the posts themselves) so deleting a draft
+// can never hand the allowance back.
+async function postsUsedInPeriod(account) {
+  const cfg = websitePlanFor(account.plan);
+  const r = cfg.postsPeriod === 'trial'
+    ? await pool.query(`SELECT COUNT(*)::int AS n FROM website_post_usage WHERE account_id = $1 AND created_at >= $2`, [account.id, account.plan_started_at || new Date(0)])
+    : await pool.query(`SELECT COUNT(*)::int AS n FROM website_post_usage WHERE account_id = $1 AND created_at >= date_trunc('month', NOW())`, [account.id]);
+  return r.rows[0].n;
+}
+async function checkPostQuota(account) {
+  const cfg = websitePlanFor(account.plan);
+  const used = await postsUsedInPeriod(account);
+  return { ok: used < cfg.posts, used, limit: cfg.posts, period: cfg.postsPeriod };
+}
+function postQuotaMessage(plan, q) {
+  if (q.period === 'trial') return `Limit reached: you've used your ${q.limit} free blog posts. Upgrade to Arreyon Starter or above to keep generating posts.`;
+  return `Limit reached: you've used all ${q.limit} blog posts included in ${PLAN_NAMES[plan] || 'your plan'} this month. Upgrade for more, or try again next month.`;
+}
+async function checkPostQuotaForBusiness(businessId) {
+  const b = await pool.query('SELECT user_id FROM businesses WHERE id = $1', [businessId]);
+  if (!b.rows.length) return { ok: false, message: 'This business no longer exists.' };
+  const account = await resolveAccount(b.rows[0].user_id);
+  if (!account || account.plan === 'expired') return { ok: false, message: 'Your plan has expired. Renew or upgrade to keep generating posts.' };
+  const q = await checkPostQuota(account);
+  return q.ok ? { ok: true, account, quota: q } : { ok: false, message: postQuotaMessage(account.plan, q), quota: q };
+}
+async function recordPostUsage(accountId, businessId, platform) {
+  try {
+    await pool.query('INSERT INTO website_post_usage (account_id, business_id, platform) VALUES ($1, $2, $3)', [accountId, businessId, platform]);
+  } catch (e) { console.error('recordPostUsage failed:', e.message); }
+}
+
+// ── Background work (agent cycles, scheduled posts) respects the owner's plan ──
+async function ownerPlanKey(userId) {
+  const a = await resolveAccount(userId);
+  return a ? a.plan : 'expired';
+}
+async function backgroundAccessFor(ownerUserId, businessId, feature) {
+  const account = await resolveAccount(ownerUserId);
+  if (!account || account.plan === 'expired') return { ok: false, message: 'Skipped: your plan has expired. Renew or upgrade to resume this.' };
+  if (!planHasWebsiteFeature(account.plan, feature)) return { ok: false, message: `Skipped: this is available on ${PLAN_NAMES[minPlanForWebsiteFeature(feature)]} and above.` };
+  const paused = await pausedBusinessIds(account);
+  if (paused.includes(businessId)) return { ok: false, message: `Skipped: this website is paused because ${PLAN_NAMES[account.plan]} includes ${websitePlanFor(account.plan).sites} connected website${websitePlanFor(account.plan).sites === 1 ? '' : 's'}.` };
+  return { ok: true, account };
+}
+
+// ── What the frontend needs to know about this account ──────────────────────
+async function buildAccessInfo(account) {
+  const plan = account.plan;
+  const wp = websitePlanFor(plan);
+  const steps = agentStepsForPlan(plan);
+  let sitesUsed = 0, postsUsed = 0, paused = [];
+  try {
+    [sitesUsed, postsUsed, paused] = await Promise.all([countAccountSites(account.id), postsUsedInPeriod(account), pausedBusinessIds(account)]);
+  } catch (e) { console.error('buildAccessInfo counts failed:', e.message); }
+  const previous = account.previous_plan || null;
+  return {
+    plan, previousPlan: previous,
+    locked: plan === 'expired',
+    lockReason: plan === 'expired' ? lockReasonFor(previous) : null,
+    websiteOnly: plan === 'auto_seo',
+    trialDays: TRIAL_DAYS,
+    website: { sites: wp.sites, sitesUsed, posts: wp.posts, postsUsed, postsPeriod: wp.postsPeriod, features: wp.features, pausedBusinessIds: paused },
+    agentSteps: steps === null ? 'all' : Array.from(steps),
+    // Which plan first unlocks each website feature, so the dashboard can say "available on Pro" without keeping its own copy of the tiers.
+    featureMinPlan: Object.fromEntries(WEBSITE_FULL_FEATURES.map(f => [f, minPlanForWebsiteFeature(f)]))
+  };
+}
+
+// ── The plan gate ───────────────────────────────────────────────────────────
+// Runs before every API route. Expired accounts keep only their account pages;
+// Auto SEO accounts keep only the website tool; everyone's website-tool access
+// follows their plan. Public routes and admin routes are left alone.
+const PLAN_GATE_SKIP = [/^\/api\/auth\//, /^\/api\/admin\//, /^\/api\/cms/, /^\/api\/announcements$/, /^\/api\/website-tools\//, /^\/api\/website-connector\//, /^\/api\/plans\//, /^\/api\/share\//];
+const gateAccountCache = new Map();   // userId -> { at, account }  (5 seconds: the dashboard fires many calls at once)
+async function gateAccountFor(userId) {
+  const hit = gateAccountCache.get(userId);
+  if (hit && Date.now() - hit.at < 5000) return hit.account;
+  const account = await resolveAccount(userId);
+  if (gateAccountCache.size > 5000) gateAccountCache.clear();
+  gateAccountCache.set(userId, { at: Date.now(), account });
+  return account;
+}
+function planDenyPayload(account, d) {
+  return {
+    error: d.message, code: d.code,
+    locked: d.code === 'expired' || d.code === 'plan_scope',
+    lockReason: d.lockReason || null,
+    upgradeRequired: d.code === 'feature' || d.code === 'site_limit' || d.code === 'post_limit',
+    requiredPlan: d.requiredPlan || null, feature: d.feature || null,
+    plan: account.plan, previousPlan: account.previous_plan || null,
+    ...(d.extra || {})
+  };
+}
+async function planGate(req, res, next) {
+  try {
+    const path = req.path;
+    if (!path.startsWith('/api/') || PLAN_GATE_SKIP.some(re => re.test(path))) return next();
+    const token = req.cookies?.arreyon_token || (req.headers.authorization || '').replace('Bearer ', '');
+    if (!token) return next();                       // the route's own sign-in check answers this
+    let decoded;
+    try { decoded = jwt.verify(token, JWT_SECRET); } catch (e) { return next(); }
+    if (!decoded || !decoded.userId) return next();
+    const account = await gateAccountFor(decoded.userId);
+    if (!account) return next();
+    req.planAccount = account;
+
+    const decision = decidePlanAccess({ plan: account.plan, method: req.method, path, body: req.body, previousPlan: account.previous_plan });
+    if (!decision.allow) return res.status(403).json(planDenyPayload(account, decision));
+
+    const needs = decision.needs || {};
+    if (needs.newSite || needs.connectSite || needs.postQuota || needs.checkPaused) {
+      const bizMatch = path.match(/^\/api\/business\/([0-9a-fA-F-]{36})\//);
+      const pathBizId = bizMatch ? bizMatch[1] : null;
+      const wp = websitePlanFor(account.plan);
+
+      if (needs.newSite || needs.connectSite) {
+        const used = await countAccountSites(account.id, needs.connectSite ? pathBizId : null);
+        if (used >= wp.sites) {
+          return res.status(403).json(planDenyPayload(account, {
+            code: 'site_limit',
+            message: `${PLAN_NAMES[account.plan]} includes ${wp.sites} connected website${wp.sites === 1 ? '' : 's'}. Disconnect one, or upgrade, to connect another.`,
+            extra: { limit: wp.sites, used }
+          }));
+        }
+      }
+      if (needs.postQuota) {
+        const q = await checkPostQuota(account);
+        if (!q.ok) {
+          return res.status(403).json(planDenyPayload(account, { code: 'post_limit', message: postQuotaMessage(account.plan, q), extra: { limit: q.limit, used: q.used, period: q.period } }));
+        }
+      }
+      if (needs.checkPaused && pathBizId) {
+        const paused = await pausedBusinessIds(account);
+        if (paused.includes(pathBizId)) {
+          return res.status(403).json(planDenyPayload(account, {
+            code: 'site_paused',
+            message: `This website is paused because ${PLAN_NAMES[account.plan]} includes ${wp.sites} connected website${wp.sites === 1 ? '' : 's'}. Upgrade, or disconnect another site, to resume it.`,
+            extra: { limit: wp.sites }
+          }));
+        }
+      }
+    }
+    next();
+  } catch (e) {
+    // A fault in the gate itself must never take the whole app down; the route's own checks still apply.
+    console.error('planGate error (request allowed through):', e.message);
+    next();
+  }
+}
+app.use(planGate);
+// <PLAN-DB-END>
 
 // Real, deliberate single, shared resolution — a business's real site URL
 // genuinely can come from three different real places (a manually entered
@@ -4075,6 +4512,10 @@ app.post('/api/website-connector/register', async (req, res) => {
     const biz = await pool.query('SELECT id, user_id FROM businesses WHERE id = $1', [codeRow.business_id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'The business associated with this code no longer exists.' });
 
+    const ownerAccount = await resolveAccount(biz.rows[0].user_id);
+    if (!ownerAccount || ownerAccount.plan === 'expired') return res.status(403).json({ error: 'Your Arreyon Consult plan has expired. Renew or upgrade, then try connecting again.' });
+    const usedSites = await countAccountSites(ownerAccount.id, codeRow.business_id);
+    if (usedSites >= websitePlanFor(ownerAccount.plan).sites) return res.status(403).json({ error: `${PLAN_NAMES[ownerAccount.plan]} includes ${websitePlanFor(ownerAccount.plan).sites} connected website${websitePlanFor(ownerAccount.plan).sites === 1 ? '' : 's'}. Disconnect one in Arreyon Consult, or upgrade, then try again.` });
     const result = await connectWordPressSite(codeRow.business_id, siteUrl, username, appPassword, biz.rows[0].user_id);
     if (!result.ok) return res.status(result.statusCode).json({ error: result.error });
 
@@ -6519,7 +6960,7 @@ function describeActionChange(action) {
   return action.action_type;
 }
 
-async function runFullWebsiteAudit(connection, decryptedPassword, context, triggeredBy, userId = null) {
+async function runFullWebsiteAudit(connection, decryptedPassword, context, triggeredBy, userId = null, options = {}) {
   const runInsert = await pool.query(
     `INSERT INTO website_audit_runs (website_connection_id, triggered_by, status) VALUES ($1, $2, 'running') RETURNING id`,
     [connection.id, triggeredBy]
@@ -6590,7 +7031,7 @@ async function runFullWebsiteAudit(connection, decryptedPassword, context, trigg
   // Real, deliberate consistent handling — broken links now produce
   // real, approvable remove_broken_link proposals just like every
   // other category above, not a separate, detection-only special case.
-  if (connection.connection_mode !== 'poll') {
+  if (options.includeBrokenLinks !== false && connection.connection_mode !== 'poll') {
     try {
       const linksResult = await runBrokenLinksCheck(connection, decryptedPassword, preloadedContent);
       const found = linksResult.brokenLinks.length;
@@ -6634,7 +7075,7 @@ app.post('/api/business/:id/website/run-audit', authRequired, async (req, res) =
     if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
 
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
-    const result = await runFullWebsiteAudit(connection, decryptedPassword, context, 'manual', req.userId);
+    const result = await runFullWebsiteAudit(connection, decryptedPassword, context, 'manual', req.userId, { includeBrokenLinks: planHasWebsiteFeature(account.plan, 'broken_links') });
     if (!result.pendingPoll) await logManual(req.params.id, 'wordpress', 'audit_completed', 'success', wordpressAuditActivityDetail(result));
     res.json(result);
   } catch (err) {
@@ -6684,6 +7125,14 @@ app.delete('/api/business/:id/website/audit-runs', authRequired, async (req, res
 });
 
 async function runBlogPostGeneration(connection, decryptedPassword, context, topic, generateFeaturedImage = false, publishStatusOverride = null) {
+  // Every WordPress post goes through here (manual, calendar and automatic): check the plan's allowance first, count it after.
+  const gate = await checkPostQuotaForBusiness(connection.business_id);
+  if (!gate.ok) return { success: false, error: gate.message, limitReached: true };
+  const result = await _runBlogPostGenerationCore(connection, decryptedPassword, context, topic, generateFeaturedImage, publishStatusOverride);
+  if (result && result.success) await recordPostUsage(gate.account.id, connection.business_id, 'wordpress');
+  return result;
+}
+async function _runBlogPostGenerationCore(connection, decryptedPassword, context, topic, generateFeaturedImage = false, publishStatusOverride = null) {
   let pages, posts;
   ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
 
@@ -8244,6 +8693,13 @@ app.get('/api/shopify/callback', async (req, res) => {
     // New-business path: the store is approved, so only now is the business created (a reused sign-in code fails at the token
     // exchange above, so this can never run twice for one approval). A store address is deliberately NOT written to the business's
     // website field: the store's real domain is looked up from Shopify itself.
+    // Plan check: this connection must fit within the account's website allowance.
+    {
+      const ownerAccount = decoded.userId ? await resolveAccount(decoded.userId) : null;
+      if (!ownerAccount) return res.redirect('/dashboard?section=website&error=shopify_connect_failed');
+      const usedSites = await countAccountSites(ownerAccount.id, decoded.businessId || null);
+      if (ownerAccount.plan === 'expired' || usedSites >= websitePlanFor(ownerAccount.plan).sites) return res.redirect('/dashboard?section=website&error=site_limit');
+    }
     let businessId = decoded.businessId;
     if (!businessId) {
       const name = String(decoded.businessName || '').trim();
@@ -9430,6 +9886,7 @@ app.post('/api/business/:id/shopify/generate-post', authRequired, async (req, re
       return res.status(400).json({ error: result.error });
     }
 
+    await recordPostUsage(account.id, req.params.id, 'shopify');
     const savedPost = await pool.query(
       `INSERT INTO shopify_generated_posts (shopify_connection_id, shopify_article_id, topic, title, handle, body_html, meta_title, meta_description, tags, status, article_url)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
@@ -10711,12 +11168,12 @@ app.post('/api/auth/register', async (req, res) => {
     const preferredLang = language === 'fr' ? 'fr' : 'en';
     const planStartedAt = new Date();
     const planExpiresAt = new Date();
-    planExpiresAt.setMonth(planExpiresAt.getMonth() + 1);
+    planExpiresAt.setDate(planExpiresAt.getDate() + TRIAL_DAYS);
 
     const result = await pool.query(
       `INSERT INTO users (email, password_hash, first_name, last_name, phone, country,
        verification_token, verification_expires, plan, preferred_language, plan_started_at, plan_expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'starter', $9, $10, $11) RETURNING *`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'free', $9, $10, $11) RETURNING *`,
       [email, hash, firstName, lastName, phone, country, token, expires, preferredLang, planStartedAt, planExpiresAt]
     );
     const user = result.rows[0];
@@ -10859,14 +11316,15 @@ app.get('/api/auth/me', authRequired, async (req, res) => {
       const memberResult = await pool.query('SELECT permissions FROM team_members WHERE owner_id = $1 AND member_id = $2 AND status = $3', [user.team_owner_id, req.userId, 'active']);
       const permissions = memberResult.rows[0]?.permissions || {};
       return res.json({
-        user: { ...user, plan: account?.plan || 'starter', consultations_used: account?.consultations_used || 0, plan_expires_at: account?.plan_expires_at || null },
+        user: { ...user, plan: account?.plan || 'free', previous_plan: account?.previous_plan || null, consultations_used: account?.consultations_used || 0, plan_started_at: account?.plan_started_at || null, plan_expires_at: account?.plan_expires_at || null },
         isTeamMember: true,
+        access: account ? await buildAccessInfo(account) : null,
         teamOwnerName: account ? [account.first_name, account.last_name].filter(Boolean).join(' ') : null,
         permissions
       });
     }
 
-    res.json({ user: { ...user, plan: account?.plan || user.plan, plan_started_at: account?.plan_started_at || null, plan_expires_at: account?.plan_expires_at || null }, isTeamMember: false });
+    res.json({ user: { ...user, plan: account?.plan || user.plan, previous_plan: account?.previous_plan || null, plan_started_at: account?.plan_started_at || null, plan_expires_at: account?.plan_expires_at || null }, isTeamMember: false, access: account ? await buildAccessInfo(account) : null });
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
 
@@ -11291,19 +11749,89 @@ app.put('/api/admin/coupons/:id', adminRequired, async (req, res) => {
 // PAYMENT ROUTES
 // ═══════════════════════════════════════════════════════════════════════════
 
-app.post('/api/payments/submit', async (req, res) => {
-  const { userId, plan, billingCycle, paymentMethod, payerName, payerEmail, payerPhone, payerCountry, couponCode, transactionRef } = req.body;
+// ═══════════════════════════════════════════════════════════════════════════
+// PLANS & PRICING endpoints — one source of truth for the Home page, the
+// dashboard's billing screen, and what a payment is actually charged.
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/api/plans/pricing', async (req, res) => {
   try {
-    const plans = {
-      pro:      { monthly: { usd: 35, cfa: 20125 }, annual: { usd: 28, cfa: 16100 } },
-      business: { monthly: { usd: 150, cfa: 86250 }, annual: { usd: 120, cfa: 69000 } }
-    };
+    res.json(buildPublicPricing(await loadPricingConfig()));
+  } catch (e) {
+    console.error('Public pricing error:', e.message);
+    res.status(500).json({ error: 'Failed to load pricing' });
+  }
+});
+
+app.get('/api/admin/plan-pricing', adminRequired, async (req, res) => {
+  try {
+    const cfg = await loadPricingConfig(true);
+    res.json({ rate: cfg.rate, discountPercent: cfg.discount, plans: cfg.plans, computed: computePlanPrices(cfg), planNames: PLAN_NAMES, paidPlans: PAID_PLANS });
+  } catch (e) { res.status(500).json({ error: 'Failed to load pricing' }); }
+});
+
+app.put('/api/admin/plan-pricing', adminRequired, async (req, res) => {
+  const { rate, discountPercent, plans } = req.body || {};
+  const num = (v) => (v === '' || v === null || v === undefined) ? NaN : Number(v);
+  const r = num(rate), d = num(discountPercent);
+  if (!(r > 0 && r < 100000)) return res.status(400).json({ error: 'The FCFA rate must be a positive number (for example 575).' });
+  if (!(d >= 0 && d <= 90)) return res.status(400).json({ error: 'The annual discount must be between 0 and 90 percent.' });
+  if (!plans || typeof plans !== 'object') return res.status(400).json({ error: 'Plan prices are required.' });
+  const rows = [];
+  for (const key of PAID_PLANS) {
+    const p = plans[key];
+    if (!p) return res.status(400).json({ error: `Missing price for ${PLAN_NAMES[key]}.` });
+    const usd = num(p.usd);
+    if (!(usd >= 0.5 && usd <= 100000)) return res.status(400).json({ error: `${PLAN_NAMES[key]}: the USD price must be between 0.50 and 100,000.` });
+    let cfa = null;
+    if (p.cfa !== null && p.cfa !== undefined && p.cfa !== '') {
+      cfa = num(p.cfa);
+      if (!(cfa >= 0 && Number.isFinite(cfa))) return res.status(400).json({ error: `${PLAN_NAMES[key]}: the FCFA price must be a positive number, or left empty to follow the rate.` });
+      cfa = Math.round(cfa);
+    }
+    rows.push([key, Math.round(usd * 100) / 100, cfa]);
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`INSERT INTO app_settings (key, value, updated_at) VALUES ('fcfa_rate', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`, [String(r)]);
+    await client.query(`INSERT INTO app_settings (key, value, updated_at) VALUES ('annual_discount_percent', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`, [String(d)]);
+    for (const [key, usd, cfa] of rows) {
+      await client.query(`INSERT INTO plan_pricing (plan_key, usd_monthly, cfa_monthly, updated_at) VALUES ($1, $2, $3, NOW())
+                          ON CONFLICT (plan_key) DO UPDATE SET usd_monthly = $2, cfa_monthly = $3, updated_at = NOW()`, [key, usd, cfa]);
+    }
+    await client.query('COMMIT');
+    pricingCache = { at: 0, cfg: null };
+    const cfg = await loadPricingConfig(true);
+    res.json({ success: true, rate: cfg.rate, discountPercent: cfg.discount, plans: cfg.plans, computed: computePlanPrices(cfg) });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Save pricing error:', e.message);
+    res.status(500).json({ error: 'Failed to save pricing' });
+  } finally { client.release(); }
+});
+
+app.post('/api/payments/submit', async (req, res) => {
+  const { plan, billingCycle, paymentMethod, payerName, payerEmail, payerPhone, payerCountry, couponCode, transactionRef } = req.body;
+  try {
+    // Who is paying: the signed-in person wherever there is a session, so a payment can't be filed
+    // against someone else's account by editing the request.
+    let userId = req.body.userId;
+    const token = req.cookies?.arreyon_token || (req.headers.authorization || '').replace('Bearer ', '');
+    if (token) { try { userId = jwt.verify(token, JWT_SECRET).userId || userId; } catch (e) { /* keep the submitted id */ } }
+
+    // Only a real paid plan and a real billing cycle can be purchased. (This used to quietly record
+    // an unknown plan as a $0 payment.)
+    const pricing = computePlanPrices(await loadPricingConfig());
+    const amounts = paymentAmountsFor(plan, billingCycle, pricing);
+    if (!amounts) return res.status(400).json({ error: 'Please choose a valid plan and billing cycle.' });
 
     let discount = 0;
     if (couponCode) {
       const couponResult = await pool.query(
         `SELECT * FROM coupons WHERE UPPER(code) = UPPER($1) AND is_active = true
-         AND (valid_until IS NULL OR valid_until >= NOW())`, [couponCode]
+         AND (valid_until IS NULL OR valid_until >= NOW())
+         AND (max_uses IS NULL OR used_count < max_uses)
+         AND (applies_to = 'all' OR applies_to = $2)`, [couponCode, plan]
       );
       if (couponResult.rows.length) {
         discount = couponResult.rows[0].discount_percent;
@@ -11311,8 +11839,8 @@ app.post('/api/payments/submit', async (req, res) => {
       }
     }
 
-    const amounts = plans[plan]?.[billingCycle] || { usd: 0, cfa: 0 };
-    const finalUsd = amounts.usd * (1 - discount / 100);
+    // Annual payments are recorded and charged as the FULL yearly amount.
+    const finalUsd = Math.round(amounts.usd * (1 - discount / 100) * 100) / 100;
     const finalCfa = Math.round(amounts.cfa * (1 - discount / 100));
 
     const result = await pool.query(
@@ -11324,11 +11852,11 @@ app.post('/api/payments/submit', async (req, res) => {
     );
 
     // Notify admin
-    await sendEmail(ADMIN_EMAIL, `New Payment Submission — ${plan} plan`,
+    await sendEmail(ADMIN_EMAIL, `New Payment Submission — ${PLAN_NAMES[plan] || plan}`,
       `<p><strong>Name:</strong> ${payerName}<br>
        <strong>Email:</strong> ${payerEmail}<br>
-       <strong>Plan:</strong> ${plan} (${billingCycle})<br>
-       <strong>Amount:</strong> $${finalUsd} / ${finalCfa} FCFA<br>
+       <strong>Plan:</strong> ${PLAN_NAMES[plan] || plan} (${billingCycle})<br>
+       <strong>Amount:</strong> $${finalUsd} / ${finalCfa.toLocaleString()} FCFA${billingCycle === 'annual' ? ' (full year)' : ''}<br>
        <strong>Method:</strong> ${paymentMethod}<br>
        <strong>Ref:</strong> ${transactionRef || 'N/A'}</p>
        <p><a href="${BASE_URL}/admin">Review in Admin Panel</a></p>`
@@ -11348,6 +11876,8 @@ app.post('/api/admin/payments/:id/approve', adminRequired, async (req, res) => {
     const payment = await pool.query('SELECT * FROM payments WHERE id = $1', [id]);
     if (!payment.rows.length) return res.status(404).json({ error: 'Payment not found' });
     const p = payment.rows[0];
+    if (!PAID_PLANS.includes(p.plan)) return res.status(400).json({ error: `"${p.plan}" is not a plan that can be activated.` });
+    if (p.status === 'approved') return res.status(400).json({ error: 'This payment was already approved.' });
 
     const expiresAt = new Date();
     if (p.billing_cycle === 'annual') expiresAt.setFullYear(expiresAt.getFullYear() + 1);
@@ -11356,10 +11886,13 @@ app.post('/api/admin/payments/:id/approve', adminRequired, async (req, res) => {
     await pool.query(
       `UPDATE payments SET status = 'approved', approved_at = NOW() WHERE id = $1`, [id]
     );
+    // A new subscription period starts clean: fresh dates, fresh consultation count, no "previous plan".
     await pool.query(
-      `UPDATE users SET plan = $1, plan_started_at = NOW(), plan_expires_at = $2, plan_expiry_notified_at = NULL, updated_at = NOW() WHERE id = $3`,
+      `UPDATE users SET plan = $1, plan_started_at = NOW(), plan_expires_at = $2, plan_expiry_notified_at = NULL,
+         previous_plan = NULL, consultations_used = 0, consultations_reset_date = NOW(), updated_at = NOW() WHERE id = $3`,
       [p.plan, expiresAt, p.user_id]
     );
+    gateAccountCache.delete(p.user_id);
     await pool.query(
       `INSERT INTO subscriptions (user_id, plan, billing_cycle, amount_usd, amount_cfa, payment_method, status, expires_at)
        VALUES ($1, $2, $3, $4, $5, $6, 'active', $7)
@@ -11371,7 +11904,7 @@ app.post('/api/admin/payments/:id/approve', adminRequired, async (req, res) => {
     const user = await pool.query('SELECT * FROM users WHERE id = $1', [p.user_id]);
     if (user.rows.length) {
       const { subject, html } = buildEmail('planActive', user.rows[0].preferred_language, {
-        firstName: user.rows[0].first_name, plan: p.plan, dashboardUrl: `${BASE_URL}/dashboard`
+        firstName: user.rows[0].first_name, plan: PLAN_NAMES[p.plan] || p.plan, dashboardUrl: `${BASE_URL}/dashboard`
       });
       await sendEmail(user.rows[0].email, subject, html);
     }
@@ -11398,7 +11931,7 @@ app.get('/api/admin/payments', adminRequired, async (req, res) => {
 app.get('/api/admin/users', adminRequired, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, email, first_name, last_name, plan, email_verified, consultations_used, created_at
+      `SELECT id, email, first_name, last_name, plan, previous_plan, plan_expires_at, email_verified, consultations_used, created_at
        FROM users ORDER BY created_at DESC`
     );
     res.json({ users: result.rows });
@@ -11500,9 +12033,25 @@ app.get('/api/admin/team-members', adminRequired, async (req, res) => {
 });
 
 app.put('/api/admin/users/:id/plan', adminRequired, async (req, res) => {
-  const { plan } = req.body;
+  const { plan, expiresAt } = req.body || {};
+  if (!ALL_PLAN_KEYS.includes(plan)) return res.status(400).json({ error: 'Unknown plan.' });
   try {
-    await pool.query('UPDATE users SET plan = $1 WHERE id = $2', [plan, req.params.id]);
+    const cur = await pool.query('SELECT plan FROM users WHERE id = $1', [req.params.id]);
+    if (!cur.rows.length) return res.status(404).json({ error: 'User not found' });
+    if (plan === 'expired') {
+      await pool.query(
+        `UPDATE users SET previous_plan = CASE WHEN plan <> 'expired' THEN plan ELSE previous_plan END, plan = 'expired',
+           plan_expires_at = LEAST(COALESCE(plan_expires_at, NOW()), NOW()), updated_at = NOW() WHERE id = $1`, [req.params.id]);
+    } else {
+      // Giving someone a plan also gives it a real period, so it never inherits an old trial's end date.
+      const ends = expiresAt ? new Date(expiresAt) : new Date();
+      if (isNaN(ends.getTime())) return res.status(400).json({ error: 'Invalid expiry date.' });
+      if (!expiresAt) { if (plan === 'free') ends.setDate(ends.getDate() + TRIAL_DAYS); else ends.setMonth(ends.getMonth() + 1); }
+      await pool.query(
+        `UPDATE users SET plan = $1, plan_started_at = NOW(), plan_expires_at = $2, plan_expiry_notified_at = NULL, previous_plan = NULL,
+           consultations_used = 0, consultations_reset_date = NOW(), updated_at = NOW() WHERE id = $3`, [plan, ends, req.params.id]);
+    }
+    gateAccountCache.delete(req.params.id);
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
@@ -11646,7 +12195,7 @@ app.get('/api/team', authRequired, async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
     if (user.team_owner_id) return res.status(403).json({ error: 'Only the account owner can manage team members' });
 
-    const limits = PLAN_LIMITS[user.plan] || PLAN_LIMITS.starter;
+    const limits = PLAN_LIMITS[user.plan] || PLAN_LIMITS.free;
     const members = await pool.query(
       `SELECT id, member_email, member_id, status, permissions, invited_at, joined_at FROM team_members
        WHERE owner_id = $1 AND status != 'removed' ORDER BY invited_at ASC`,
@@ -11667,7 +12216,7 @@ app.post('/api/team/invite', authRequired, async (req, res) => {
     if (user.team_owner_id) return res.status(403).json({ error: 'Only the account owner can invite team members' });
     if (email.toLowerCase() === user.email.toLowerCase()) return res.status(400).json({ error: "You can't invite yourself" });
 
-    const limits = PLAN_LIMITS[user.plan] || PLAN_LIMITS.starter;
+    const limits = PLAN_LIMITS[user.plan] || PLAN_LIMITS.free;
     const existing = await pool.query(`SELECT COUNT(*) FROM team_members WHERE owner_id = $1 AND status != 'removed'`, [req.userId]);
     const seatsUsed = parseInt(existing.rows[0].count, 10) + 1; // +1 for the owner
     if (seatsUsed >= limits.team) {
@@ -11780,7 +12329,7 @@ app.delete('/api/team/:id', authRequired, async (req, res) => {
 app.get('/api/user/consultations', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId); // shared history across the whole team
-    const plan = account?.plan || 'starter';
+    const plan = account?.plan || 'free';
     if (!PLAN_LIMITS[plan]?.history) {
       return res.json({ consultations: [], upgradeRequired: true });
     }
@@ -11846,23 +12395,23 @@ app.post('/api/board/chat', authRequired, async (req, res) => {
   try {
     const u = await resolveAccount(req.userId); // team members share the owner's plan/limits
     if (!u) return res.status(404).json({ error: 'Account not found' });
-    const limits = PLAN_LIMITS[u.plan] || PLAN_LIMITS.starter;
+    const limits = PLAN_LIMITS[u.plan] || PLAN_LIMITS.free;
 
     // Check director access
-    if (u.plan === 'starter' && directorId && !STARTER_DIRECTORS.includes(directorId)) {
+    if (BASIC_DIRECTOR_PLANS.includes(u.plan) && directorId && !STARTER_DIRECTORS.includes(directorId)) {
       return res.status(403).json({ error: 'This director is available on Arreyon Pro and above', upgradeRequired: true });
     }
 
-    // Check consultation limits (reset monthly)
+    // Paid plans reset monthly. Free's 3 consultations cover the whole 7-day trial, so they never reset.
     const resetDate = new Date(u.consultations_reset_date);
     const now = new Date();
-    if (now.getMonth() !== resetDate.getMonth() || now.getFullYear() !== resetDate.getFullYear()) {
+    if (u.plan !== 'free' && (now.getMonth() !== resetDate.getMonth() || now.getFullYear() !== resetDate.getFullYear())) {
       await pool.query('UPDATE users SET consultations_used = 0, consultations_reset_date = NOW() WHERE id = $1', [u.id]);
       u.consultations_used = 0;
     }
 
     if (limits.consultations !== -1 && u.consultations_used >= limits.consultations) {
-      return res.status(403).json({ error: `Monthly consultation limit reached (${limits.consultations}/month). Upgrade for more.`, upgradeRequired: true });
+      return res.status(403).json({ error: u.plan === 'free' ? `Free trial consultation limit reached (${limits.consultations}). Upgrade to continue.` : `Monthly consultation limit reached (${limits.consultations}/month). Upgrade for more.`, upgradeRequired: true });
     }
 
     // Optional business link — validated against this account before ever
@@ -11917,8 +12466,8 @@ app.post('/api/board/synthesize', authRequired, async (req, res) => {
 
   try {
     const account = await resolveAccount(req.userId); // team members share the owner's plan
-    const plan = account?.plan || 'starter';
-    if (plan === 'starter') {
+    const plan = account?.plan || 'free';
+    if (BASIC_DIRECTOR_PLANS.includes(plan)) {
       return res.status(403).json({ error: 'Chairman Synthesis (a final board verdict across your conversations) is available on Arreyon Pro and above.', upgradeRequired: true });
     }
 
@@ -12127,7 +12676,7 @@ function formatEntrepreneurContext(input) {
 app.post('/api/entrepreneur/find-opportunities', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
-    const plan = account?.plan || 'starter';
+    const plan = account?.plan || 'free';
     const researchBacked = plan === 'pro' || plan === 'business';
 
     const input = req.body || {};
@@ -12244,7 +12793,7 @@ app.post('/api/entrepreneur/:sessionId/more-opportunities', authRequired, async 
     const existingNames = existingOpportunities.map(o => o.name);
 
     const account = await resolveAccount(req.userId);
-    const plan = account?.plan || 'starter';
+    const plan = account?.plan || 'free';
     const researchBacked = plan === 'pro' || plan === 'business';
 
     const context = formatEntrepreneurContext(input);
@@ -12338,7 +12887,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 app.post('/api/entrepreneur/validate-idea', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
-    const plan = account?.plan || 'starter';
+    const plan = account?.plan || 'free';
     const researchBacked = plan === 'pro' || plan === 'business';
 
     const input = req.body || {};
@@ -12900,7 +13449,7 @@ app.post('/api/board/save', authRequired, async (req, res) => {
   const { title, businessType, industry, directorsUsed, reportText, synthesis, videoUrl, messages } = req.body;
   try {
     const account = await resolveAccount(req.userId); // team members' consultations are saved under the shared account
-    const plan = account?.plan || 'starter';
+    const plan = account?.plan || 'free';
 
     const consult = await pool.query(
       `INSERT INTO consultations (user_id, title, business_type, industry, directors_used, report_text, synthesis, video_url, status, completed_at)
@@ -13341,8 +13890,8 @@ const FINANCIAL_CALCULATORS = {
 app.get('/api/financial/access', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
-    const plan = account?.plan || 'starter';
-    res.json({ plan, allowed: FINANCIAL_TOOLS_ACCESS[plan] || FINANCIAL_TOOLS_ACCESS.starter });
+    const plan = account?.plan || 'free';
+    res.json({ plan, allowed: FINANCIAL_TOOLS_ACCESS[plan] || FINANCIAL_TOOLS_ACCESS.free });
   } catch (e) { res.status(500).json({ error: 'Failed to load access info' }); }
 });
 
@@ -13352,8 +13901,8 @@ app.post('/api/financial/calculate', authRequired, async (req, res) => {
   if (!calculator) return res.status(400).json({ error: 'Unknown calculator type.' });
 
   const account = await resolveAccount(req.userId); // team members share the owner's plan
-  const plan = account?.plan || 'starter';
-  const allowed = FINANCIAL_TOOLS_ACCESS[plan] || FINANCIAL_TOOLS_ACCESS.starter;
+  const plan = account?.plan || 'free';
+  const allowed = FINANCIAL_TOOLS_ACCESS[plan] || FINANCIAL_TOOLS_ACCESS.free;
   if (!allowed.includes(type)) {
     return res.status(403).json({ error: 'This calculator is available on Arreyon Pro and above.', upgradeRequired: true });
   }
@@ -14066,7 +14615,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 // one new function here, not touching any call site.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const RESEARCH_LIMITS = { starter: 0, pro: 5, business: -1 };
+const RESEARCH_LIMITS = { free: 0, starter: 0, pro: 5, business: -1, auto_seo: 0 };
 
 // ── ResearchProvider: Tavily implementation ─────────────────────────────────
 async function tavilySearch(query, { maxResults = 5 } = {}) {
@@ -14290,7 +14839,7 @@ List up to 8 competitors total${includeInternational ? ', aiming for a mix of lo
 app.post('/api/business/:id/research', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
-    const plan = account?.plan || 'starter';
+    const plan = account?.plan || 'free';
     const limit = RESEARCH_LIMITS[plan] ?? 0;
 
     if (limit === 0) {
@@ -15057,7 +15606,7 @@ Omit any key entirely if you have no supporting evidence for it. Do not include 
 }
 
 // Website Analyzer monthly limits per plan (Section 27 tier matrix, agreed)
-const ANALYZER_LIMITS = { starter: 1, pro: 10, business: -1 };
+const ANALYZER_LIMITS = { free: 1, starter: 1, pro: 10, business: -1, auto_seo: 0 };
 
 // ── Website Analyzer endpoint (also handles no-website description input) ──
 app.post('/api/business/analyze', authRequired, async (req, res) => {
@@ -15080,7 +15629,7 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
 
   try {
     const account = await resolveAccount(req.userId);
-    const plan = account?.plan || 'starter';
+    const plan = account?.plan || 'free';
     const limit = ANALYZER_LIMITS[plan] ?? 1;
 
     if (limit !== -1) {
@@ -15088,15 +15637,17 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
       // each call (kept that way deliberately, for meaningful admin
       // analytics) — so counting a SHARED team quota here needs to look
       // across every member of the account, not just the owner's own calls.
+      // Free's single scan covers the whole 7-day trial (not a calendar month, which could straddle two months).
+      const periodSql = plan === 'free' ? `created_at >= $2` : `date_trunc('month', created_at) = date_trunc('month', NOW())`;
       const usedThisMonth = await pool.query(
         `SELECT COUNT(*) FROM ai_usage WHERE user_id IN (SELECT id FROM users WHERE id = $1 OR team_owner_id = $1) AND feature = 'website_analyzer'
-         AND date_trunc('month', created_at) = date_trunc('month', NOW())`,
-        [account.id]
+         AND ${periodSql}`,
+        plan === 'free' ? [account.id, account.plan_started_at || new Date(0)] : [account.id]
       );
       const used = parseInt(usedThisMonth.rows[0].count, 10);
       if (used >= limit) {
         return res.status(403).json({
-          error: `You've used your ${limit} business ${limit === 1 ? 'analysis' : 'analyses'} this month. Upgrade for more.`,
+          error: `You've used your ${limit} business ${limit === 1 ? 'analysis' : 'analyses'} ${plan === 'free' ? 'for your free trial' : 'this month'}. Upgrade for more.`,
           upgradeRequired: true
         });
       }
@@ -16466,16 +17017,16 @@ const ALERT_MESSAGES = {
   },
   subscriptionExpiringSoon: {
     en: (plan, daysLeft) => ({
-      title: `Your ${plan === 'starter' ? 'free trial' : plan} plan expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`,
-      message: plan === 'starter'
-        ? `Your 1-month free trial ends in ${daysLeft} day${daysLeft === 1 ? '' : 's'}. Subscribe to a paid plan to keep full access — after it expires, features will be locked until you upgrade.`
-        : `Your ${plan} subscription expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}. Renew to avoid losing access — after it expires, features will be locked until you renew.`
+      title: `Your ${plan === 'free' ? 'free trial' : (PLAN_NAMES[plan] || plan)} plan expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`,
+      message: plan === 'free'
+        ? `Your 7-day free trial ends in ${daysLeft} day${daysLeft === 1 ? '' : 's'}. Subscribe to a paid plan to keep full access — after it expires, features will be locked until you upgrade.`
+        : `Your ${PLAN_NAMES[plan] || plan} subscription expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}. Renew to avoid losing access — after it expires, features will be locked until you renew.`
     }),
     fr: (plan, daysLeft) => ({
-      title: `Votre ${plan === 'starter' ? 'essai gratuit' : 'forfait ' + plan} expire dans ${daysLeft} jour${daysLeft === 1 ? '' : 's'}`,
-      message: plan === 'starter'
-        ? `Votre essai gratuit d'un mois se termine dans ${daysLeft} jour${daysLeft === 1 ? '' : 's'}. Abonnez-vous à un forfait payant pour conserver un accès complet — une fois expiré, les fonctionnalités seront verrouillées jusqu'à votre mise à niveau.`
-        : `Votre abonnement ${plan} expire dans ${daysLeft} jour${daysLeft === 1 ? '' : 's'}. Renouvelez pour éviter de perdre l'accès — une fois expiré, les fonctionnalités seront verrouillées jusqu'à votre renouvellement.`
+      title: `Votre ${plan === 'free' ? 'essai gratuit' : 'forfait ' + (PLAN_NAMES[plan] || plan)} expire dans ${daysLeft} jour${daysLeft === 1 ? '' : 's'}`,
+      message: plan === 'free'
+        ? `Votre essai gratuit de 7 jours se termine dans ${daysLeft} jour${daysLeft === 1 ? '' : 's'}. Abonnez-vous à un forfait payant pour conserver un accès complet — une fois expiré, les fonctionnalités seront verrouillées jusqu'à votre mise à niveau.`
+        : `Votre abonnement ${PLAN_NAMES[plan] || plan} expire dans ${daysLeft} jour${daysLeft === 1 ? '' : 's'}. Renouvelez pour éviter de perdre l'accès — une fois expiré, les fonctionnalités seront verrouillées jusqu'à votre renouvellement.`
     })
   }
 };
@@ -16590,7 +17141,7 @@ async function checkTeamActivity(ownerId, ownerPlan, prefs, language) {
   // Seat limit reached — only worth surfacing once per day at most, so this
   // simply fires every day the account happens to be at capacity, same as
   // the other checks; not tracked separately to avoid duplicate suppression complexity.
-  const limits = PLAN_LIMITS[ownerPlan] || PLAN_LIMITS.starter;
+  const limits = PLAN_LIMITS[ownerPlan] || PLAN_LIMITS.free;
   const activeCount = await pool.query(`SELECT COUNT(*) FROM team_members WHERE owner_id = $1 AND status != 'removed'`, [ownerId]);
   const seatsUsed = parseInt(activeCount.rows[0].count, 10) + 1; // +1 for the owner's own seat
   if (seatsUsed >= limits.team) {
@@ -16617,7 +17168,7 @@ async function checkSubscriptionExpiry(ownerId, prefs, language) {
   const result = await pool.query(
     `SELECT plan, plan_expires_at, first_name FROM users
      WHERE id = $1 AND plan != 'expired' AND plan_expires_at IS NOT NULL
-       AND plan_expires_at > NOW() AND plan_expires_at < NOW() + INTERVAL '5 days'
+       AND plan_expires_at > NOW() AND plan_expires_at < NOW() + (CASE WHEN plan = 'free' THEN INTERVAL '2 days' ELSE INTERVAL '5 days' END)
        AND plan_expiry_notified_at IS NULL`,
     [ownerId]
   );
@@ -17312,10 +17863,12 @@ function stopAgentRun(platform, businessId) {
 }
 
 // Splits a cycle into named steps so it can be stopped between them. Whatever was skipped is recorded.
-function createCycleSteps(run) {
+function createCycleSteps(run, allowedSteps = null) {
   const completed = [], skipped = [];
   return {
     async run(name, fn) {
+      // A step the owner's plan doesn't include is left out quietly (it is not a "stopped" step).
+      if (allowedSteps && !allowedSteps.has(name)) return;
       if (run && run.cancelled) { skipped.push(name); return; }
       await fn();
       completed.push(name);
@@ -17473,6 +18026,8 @@ async function runContentCalendarSweep() {
       if (mode.rows.length && mode.rows[0].automation_mode !== 'automatic') { await markMissed(); continue; }
       const bizResult = await pool.query('SELECT id, name, user_id FROM businesses WHERE id = $1', [entry.business_id]);
       if (!bizResult.rows.length) throw new Error('This business no longer exists.');
+      const scheduleAccess = await backgroundAccessFor(bizResult.rows[0].user_id, entry.business_id, 'calendar');
+      if (!scheduleAccess.ok) { await finish({ success: false, error: scheduleAccess.message }); continue; }
       const context = await getBusinessContext(entry.business_id, bizResult.rows[0].user_id);
       if (!context) throw new Error('Business details could not be loaded for this post.');
 
@@ -17495,10 +18050,18 @@ async function runAgentMaintenanceSweep() {
   try {
     for (const [platform, agent] of Object.entries(WEBSITE_AGENTS)) {
       const due = await pool.query(
-        `SELECT id FROM ${agent.table} WHERE automation_mode = 'automatic' AND ${agent.runnableWhere} AND ${AGENT_CYCLE_DUE_CLAUSE}`
+        `SELECT id, business_id FROM ${agent.table} WHERE automation_mode = 'automatic' AND ${agent.runnableWhere} AND ${AGENT_CYCLE_DUE_CLAUSE}`
       );
       for (const row of due.rows) {
         touchSweepProgress();
+        // Only owners whose plan includes the AI Agent (and at least one maintenance step) get a cycle.
+        // Expired accounts and sites paused by the plan's website limit are skipped without being claimed.
+        const ownerRow = await pool.query('SELECT user_id FROM businesses WHERE id = $1', [row.business_id]);
+        if (!ownerRow.rows.length) continue;
+        const access = await backgroundAccessFor(ownerRow.rows[0].user_id, row.business_id, 'agent');
+        if (!access.ok) continue;
+        const allowedSteps = agentStepsForPlan(access.account.plan);
+        if (allowedSteps && allowedSteps.size === 0) continue;   // Starter: the agent only writes scheduled posts
         const claimed = await pool.query(
           `UPDATE ${agent.table} SET agent_last_cycle_at = NOW()
            WHERE id = $1 AND automation_mode = 'automatic' AND ${agent.runnableWhere} AND ${AGENT_CYCLE_DUE_CLAUSE}
@@ -17655,7 +18218,8 @@ async function runWordPressMaintenanceCycle(connection, triggeredBy = 'automatic
   const biz = bizResult.rows[0];
   const context = await getBusinessContext(businessId, biz.user_id);
   const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
-  const steps = createCycleSteps(run);
+  const cyclePlan = await ownerPlanKey(biz.user_id);
+  const steps = createCycleSteps(run, agentStepsForPlan(cyclePlan));
   // Decided up front so a stop record never lists a step that would not have run anyway.
   let competitorsDue = false;
   try { competitorsDue = !!context && await wordpressCompetitorAnalysisDue(connection.id, businessId); } catch (e) { /* not due if it cannot be checked */ }
@@ -17677,7 +18241,7 @@ async function runWordPressMaintenanceCycle(connection, triggeredBy = 'automatic
       return;
     }
     try {
-      const audit = await runFullWebsiteAudit(connection, decryptedPassword, context, triggeredBy, null);
+      const audit = await runFullWebsiteAudit(connection, decryptedPassword, context, triggeredBy, null, { includeBrokenLinks: planHasWebsiteFeature(cyclePlan, 'broken_links') });
       await log('audit_completed', 'success', wordpressAuditActivityDetail(audit));
     } catch (e) { await log('audit_completed', 'failed', errDetail(e)); }
   });
@@ -18154,7 +18718,8 @@ async function runShopifyMaintenanceCycle(connection, triggeredBy = 'automatic',
   const biz = bizResult.rows[0];
   const context = await getBusinessContext(businessId, biz.user_id);
   const accessToken = decryptSecret(connection.access_token_encrypted);
-  const steps = createCycleSteps(run);
+  const cyclePlan = await ownerPlanKey(biz.user_id);
+  const steps = createCycleSteps(run, agentStepsForPlan(cyclePlan));
   // The store's real domain (what customers and Google use). Needed up front: whether a keyword snapshot is due depends on it.
   let siteUrl;
   try { siteUrl = await getShopifyStoreUrl(connection, accessToken); } catch (e) { siteUrl = `https://${connection.shop_domain}`; }
@@ -18217,6 +18782,8 @@ async function shopifyAutoApplyAllowed(connection) {
 
 // How a scheduled post is written and published on Shopify. Returns what the calendar records.
 async function generateShopifyScheduledPost(entry, context, connection) {
+  const quotaGate = await checkPostQuotaForBusiness(entry.business_id);
+  if (!quotaGate.ok) return { success: false, title: entry.topic || null, error: quotaGate.message };
   const accessToken = decryptSecret(connection.access_token_encrypted);
 
   let existingTitles = [];
@@ -18236,6 +18803,7 @@ async function generateShopifyScheduledPost(entry, context, connection) {
 
   let postId = null;
   if (result.success) {
+    await recordPostUsage(quotaGate.account.id, entry.business_id, 'shopify');
     const saved = await pool.query(
       `INSERT INTO shopify_generated_posts (shopify_connection_id, shopify_article_id, topic, title, handle, body_html, meta_title, meta_description, tags, status, article_url)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
