@@ -1710,3 +1710,67 @@ CREATE TABLE IF NOT EXISTS shopify_keyword_rankings (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(shopify_connection_id, query, snapshot_date)
 );
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- PLANS v2 — a 7-day Free plan, paid Starter / Pro / Business, and the
+-- website-only Auto SEO/AEO/GEO plan.
+--
+-- IMPORTANT: this file runs on every server start. Anything that changes
+-- existing data is guarded by schema_migrations so it happens exactly once;
+-- without that, a restart would turn every paid Starter customer back into a
+-- free user (the old free plan used to be called 'starter').
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  key VARCHAR(120) PRIMARY KEY,
+  applied_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- The plan an account was on before it expired — lets the lockout say
+-- "renew your Pro plan" (paid) instead of "upgrade" (free trial).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS previous_plan VARCHAR(50);
+ALTER TABLE users ALTER COLUMN plan SET DEFAULT 'free';
+
+-- One time only: the old free plan was named 'starter'. 'starter' now means the
+-- paid $35 plan, so every existing free account is renamed 'free'. Paid Pro and
+-- Business accounts, and their dates, are untouched.
+UPDATE users SET plan = 'free'
+ WHERE plan = 'starter'
+   AND NOT EXISTS (SELECT 1 FROM schema_migrations WHERE key = 'plans_v2_rename_starter_to_free');
+INSERT INTO schema_migrations (key) VALUES ('plans_v2_rename_starter_to_free') ON CONFLICT (key) DO NOTHING;
+
+-- Accounts that already expired: remember the paid plan they last had (if any).
+UPDATE users u SET previous_plan = (
+    SELECT p.plan FROM payments p WHERE p.user_id = u.id AND p.status = 'approved'
+    ORDER BY p.approved_at DESC NULLS LAST LIMIT 1)
+ WHERE u.plan = 'expired' AND u.previous_plan IS NULL;
+
+-- Editable from the admin panel (Plans & Pricing).
+CREATE TABLE IF NOT EXISTS app_settings (
+  key VARCHAR(100) PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+INSERT INTO app_settings (key, value) VALUES ('fcfa_rate', '575'), ('annual_discount_percent', '15')
+  ON CONFLICT (key) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS plan_pricing (
+  plan_key VARCHAR(50) PRIMARY KEY,
+  usd_monthly NUMERIC(10,2) NOT NULL,
+  cfa_monthly INTEGER,                 -- NULL = follow the FCFA rate
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+INSERT INTO plan_pricing (plan_key, usd_monthly, cfa_monthly) VALUES
+  ('starter', 35, NULL), ('pro', 120, NULL), ('business', 300, NULL), ('auto_seo', 100, NULL)
+  ON CONFLICT (plan_key) DO NOTHING;
+
+-- Every blog post the website tool writes (manual, calendar, automatic), for
+-- the plan's post allowance. A log, not a count of existing posts, so deleting
+-- a draft never gives the allowance back.
+CREATE TABLE IF NOT EXISTS website_post_usage (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  account_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  business_id UUID,
+  platform VARCHAR(20),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_website_post_usage_account ON website_post_usage(account_id, created_at DESC);
