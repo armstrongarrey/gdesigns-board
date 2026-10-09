@@ -2854,7 +2854,7 @@ function planFeatureLines(plan) {
     free:     [['plan.f_free_consult'], ['plan.f_free_basic'], ['plan.f_dirs5'], ['plan.f_secretary'], ['plan.f_basic_report'], ['plan.f_calc3'], ['plan.f_analyzer_trial'], ['plan.f_entrepreneur'], ['plan.f_team1'], ['plan.f_web_free', P]],
     starter:  [['plan.f_starter_consult'], ['plan.f_free_basic'], ['plan.f_dirs5'], ['plan.f_secretary'], ['plan.f_basic_report'], ['plan.f_calc3'], ['plan.f_analyzer_month1'], ['plan.f_entrepreneur'], ['plan.f_team1'], ['plan.f_web_starter', P]],
     pro:      [['plan.f_pro_consult'], ['plan.f_all_dirs'], ['plan.f_pdf'], ['plan.f_history'], ['plan.f_calc10'], ['plan.f_pro_research'], ['plan.f_research_entrepreneur'], ['plan.f_team2'], ['plan.f_email_support'], ['plan.f_secretary_deep'], ['plan.f_web_pro', P]],
-    business: [['plan.f_biz_consult'], ['plan.f_all_dirs'], ['plan.f_download_both'], ['plan.f_video'], ['plan.f_calc10'], ['plan.f_biz_research'], ['plan.f_research_entrepreneur'], ['plan.f_team5'], ['plan.f_whatsapp_support'], ['plan.f_history'], ['plan.f_web_business', P]],
+    business: [['plan.f_biz_consult'], ['plan.f_all_dirs'], ['plan.f_download_both'], ['plan.f_video'], ['plan.f_calc10'], ['plan.f_biz_research'], ['plan.f_research_entrepreneur'], ['plan.f_team5'], ['plan.f_personas'], ['plan.f_whatsapp_support'], ['plan.f_history'], ['plan.f_web_business', P]],
     auto_seo: [['plan.f_auto_web', P], ['plan.f_auto_agent'], ['plan.f_auto_all'], ['plan.f_auto_alerts'], ['plan.f_auto_only']]
   };
   return (lines[plan] || []).map(([key, params]) => params ? tf(key, params) : t(key));
