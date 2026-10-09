@@ -200,7 +200,22 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .form-input:focus{border-color:var(--purple)}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 
-.plan-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.plan-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+.plan-locked{display:none !important}
+.plan-badge.free{background:var(--bg4);color:var(--muted)}
+.plan-badge.auto_seo{background:rgba(16,185,129,.15);color:var(--green)}
+.plan-badge.expired{background:rgba(239,68,68,.15);color:#ef4444}
+.plan-card-features{list-style:none;margin:0 0 16px;padding:0;font-size:12px;color:var(--text2);line-height:1.5}
+.plan-card-features li{padding:3px 0 3px 18px;position:relative}
+.plan-card-features li:before{content:'✓';position:absolute;left:0;color:var(--green);font-weight:700}
+.billing-cycle-switch{display:flex;gap:6px;margin-bottom:16px;max-width:340px}
+.web-usage-bar{display:none;gap:18px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:16px;max-width:760px}
+.web-usage-bar a{color:var(--purple-light);cursor:pointer;margin-left:auto;font-weight:600}
+.web-locked-panel{background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:18px 20px;margin-top:16px}
+.web-locked-panel h4{font-size:13.5px;margin:0 0 4px}
+.web-locked-panel ul{margin:8px 0 12px;padding-left:18px;font-size:12.5px;color:var(--text2);line-height:1.7}
+.trial-banner{display:none;align-items:center;gap:12px;flex-wrap:wrap;background:rgba(245,158,11,.1);border:1px solid var(--gold);border-radius:10px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--text)}
+.trial-banner button{margin-left:auto}
 .plan-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:24px;position:relative}
 .plan-card.current{border-color:var(--purple)}
 .plan-card-name{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
@@ -251,9 +266,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 <div id="expiredLockoutOverlay" style="display:none;position:fixed;inset:0;z-index:9998;background:rgba(10,10,15,.92);align-items:center;justify-content:center;padding:20px">
   <div style="max-width:420px;background:var(--bg2);border:1px solid #ef4444;border-radius:16px;padding:32px;text-align:center">
     <div style="font-size:32px;margin-bottom:12px">🔒</div>
-    <div style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:10px" data-i18n="billing.lockout_title">Your access has expired</div>
-    <div style="font-size:13.5px;color:var(--text2);line-height:1.6;margin-bottom:22px" data-i18n="billing.lockout_desc">Your subscription has ended. Subscribe to a plan to restore full access to your dashboard.</div>
-    <button class="btn-primary" style="width:100%;padding:12px" onclick="dismissExpiredLockout()" data-i18n="billing.lockout_cta">View Plans</button>
+    <div id="lockoutTitle" style="font-size:17px;font-weight:700;color:var(--text);margin-bottom:10px">Your access has expired</div>
+    <div id="lockoutDesc" style="font-size:13.5px;color:var(--text2);line-height:1.6;margin-bottom:22px">Your subscription has ended. Subscribe to a plan to restore full access to your dashboard.</div>
+    <button id="lockoutCta" class="btn-primary" style="width:100%;padding:12px" onclick="dismissExpiredLockout()">View Plans</button>
   </div>
 </div>
 
@@ -328,7 +343,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
   </nav>
   <div class="sidebar-plan" id="sidebarPlan">
     <div class="plan-name" data-i18n="dash.current_plan">Current Plan</div>
-    <div class="plan-badge starter" id="sidebarPlanBadge">Starter</div>
+    <div class="plan-badge free" id="sidebarPlanBadge">Free</div>
     <a href="#" onclick="showSection('billing');return false" class="upgrade-btn" id="upgradeBtn">Upgrade Plan</a>
   </div>
   <div class="sidebar-user">
@@ -363,6 +378,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
   </div>
 
   <div class="content">
+    <div id="trialBanner" class="trial-banner"></div>
 
     <!-- HOME SECTION -->
     <div class="section-view active" id="section-home">
@@ -569,14 +585,22 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
       </div>
 
+      <div class="billing-cycle-switch" id="billingCycleSwitch"></div>
       <div class="plan-cards" id="planCards"></div>
 
       <div style="margin-top:32px">
         <div class="section-title" data-i18n="billing.usage_this_month">Usage this month</div>
-        <div style="max-width:400px">
+        <div id="billingConsultUsage" style="max-width:400px">
           <div style="font-size:13px;color:var(--text2);margin-bottom:8px" data-i18n="billing.consultations">Consultations</div>
           <div class="usage-bar"><div class="usage-fill" id="usageFill" style="width:0%"></div></div>
           <div class="usage-text" id="usageText">0 of 3 used</div>
+        </div>
+        <div id="billingWebsiteUsage" style="max-width:400px;margin-top:22px;display:none">
+          <div style="font-size:13px;color:var(--text2);margin-bottom:8px" data-i18n="billing.website_usage">Website tool</div>
+          <div class="usage-bar"><div class="usage-fill" id="usageSitesFill" style="width:0%"></div></div>
+          <div class="usage-text" id="usageSitesText"></div>
+          <div class="usage-bar"><div class="usage-fill" id="usagePostsFill" style="width:0%"></div></div>
+          <div class="usage-text" id="usagePostsText"></div>
         </div>
       </div>
     </div>
@@ -1865,6 +1889,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
   <div class="section-view" id="section-website">
     <div class="section-title" data-i18n="web.title">Website</div>
     <div class="section-sub" data-i18n="web.subtitle">Connect your website so your AI business team can analyze it and help improve it.</div>
+    <div id="websiteUsageBar" class="web-usage-bar"></div>
 
     <div id="websiteNoBizPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;text-align:center;max-width:500px">
       <div style="font-size:13px;color:var(--muted)" data-i18n="growth.no_business_yet">Analyze a business first so Growth Center has somewhere to track progress.</div>
@@ -2655,7 +2680,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 <div id="paymentModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:200;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--bg2);border:1px solid var(--border-light);border-radius:16px;width:100%;max-width:500px;max-height:90vh;overflow-y:auto;padding:32px;position:relative">
     <button onclick="closePayment()" style="position:absolute;top:14px;right:14px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;line-height:1">×</button>
-    <h2 style="font-size:20px;font-weight:800;margin-bottom:4px">Upgrade Plan</h2>
+    <h2 id="paymentTitle" style="font-size:20px;font-weight:800;margin-bottom:4px">Upgrade Plan</h2>
     <div id="paymentPlanName" style="font-size:14px;color:var(--muted);margin-bottom:24px"></div>
 
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:20px">
@@ -2675,7 +2700,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <label style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:block;margin-bottom:8px">Billing Cycle</label>
       <div style="display:flex;gap:8px">
         <button class="billing-cycle-btn active" data-cycle="monthly" onclick="setCycle('monthly')">Monthly</button>
-        <button class="billing-cycle-btn" data-cycle="annual" onclick="setCycle('annual')">Annual <span style="font-size:10px;background:var(--green);color:#fff;padding:2px 6px;border-radius:4px;margin-left:4px">-20%</span></button>
+        <button class="billing-cycle-btn" data-cycle="annual" onclick="setCycle('annual')">Annual <span id="annualDiscountBadge" style="font-size:10px;background:var(--green);color:#fff;padding:2px 6px;border-radius:4px;margin-left:4px">-15%</span></button>
       </div>
     </div>
 
@@ -2733,17 +2758,293 @@ let selectedPlan = 'pro';
 let selectedCycle = 'monthly';
 let discountPct = 0;
 
-const planPrices = {
-  pro:      { monthly:{usd:35,cfa:20125}, annual:{usd:28,cfa:16100} },
-  business: { monthly:{usd:150,cfa:86250}, annual:{usd:120,cfa:69000} }
-};
+// ═══════════════════════════════════════════════════════════════════════════
+// PLANS v2 — plan data, prices and what each account can see. Everything here
+// follows what the server says (/api/plans/pricing and /api/auth/me); the server
+// is the authority and refuses anything the plan doesn't include, so this code
+// only decides what to SHOW.
+// ═══════════════════════════════════════════════════════════════════════════
+let planPricing = null;      // { rate, discountPercent, plans: { free, starter, pro, business, auto_seo } }
+let planAccess = null;       // from /api/auth/me: this account's plan, limits and website features
+window.planAccess = null;
+let planAccessFetchedAt = 0;
+let billingCycleView = 'monthly';
+const PAID_PLAN_ORDER = ['starter', 'pro', 'business', 'auto_seo'];
+const PLAN_RANK = { free: 0, starter: 1, pro: 2, business: 3, auto_seo: 3, expired: -1 };
 
 const planLimits = {
-  starter:  { consultations:3, dirs:5 },
-  pro:      { consultations:10, dirs:29 },
-  business: { consultations:-1, dirs:29 },
-  expired:  { consultations:0, dirs:0 }
+  free:     { consultations: 3,  dirs: 5 },
+  starter:  { consultations: 3,  dirs: 5 },
+  pro:      { consultations: 10, dirs: 29 },
+  business: { consultations: -1, dirs: 29 },
+  auto_seo: { consultations: 0,  dirs: 0 },
+  expired:  { consultations: 0,  dirs: 0 }
 };
+
+// Used only if /api/plans/pricing can't be reached, so the billing screen still renders.
+function buildFallbackPricing() {
+  const usd = { starter: 35, pro: 120, business: 300, auto_seo: 100 }, rate = 575, disc = 15, f = 1 - disc / 100;
+  const site = { free: { sites: 1, posts: 2 }, starter: { sites: 1, posts: 5 }, pro: { sites: 2, posts: 10 }, business: { sites: 3, posts: 25 }, auto_seo: { sites: 1, posts: 20 } };
+  const plans = { free: { trialDays: 7, website: site.free } };
+  for (const k of Object.keys(usd)) {
+    const cm = Math.round(usd[k] * rate), ct = Math.round(cm * 12 * f);
+    plans[k] = { monthly: { usd: usd[k], cfa: cm }, annual: { usdPerMonth: Math.round(usd[k] * f * 100) / 100, cfaPerMonth: Math.round(ct / 12), usdTotal: Math.round(usd[k] * 12 * f * 100) / 100, cfaTotal: ct }, website: site[k] };
+  }
+  return { rate, discountPercent: disc, plans };
+}
+async function loadPlanPricing() {
+  try { const r = await fetch('/api/plans/pricing'); if (r.ok) planPricing = await r.json(); } catch (e) { /* fall back below */ }
+  if (!planPricing || !planPricing.plans) planPricing = buildFallbackPricing();
+}
+function planName(plan) { return t('plan.' + plan + '_name'); }
+function fmtUsd(n) { n = Number(n); return '$' + (Number.isInteger(n) ? n.toLocaleString('en-US') : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); }
+function fmtCfa(n) { return Math.round(Number(n)).toLocaleString('en-US') + ' FCFA'; }
+function webHas(feature) { return !!(planAccess && planAccess.website && Array.isArray(planAccess.website.features) && planAccess.website.features.includes(feature)); }
+
+async function refreshPlanAccess() {
+  // Called after a post is generated so the "posts used" meter is current. Skipped if it was just fetched.
+  if (Date.now() - planAccessFetchedAt < 2500) return;
+  try {
+    const r = await fetch('/api/auth/me');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d && d.access) { planAccess = d.access; window.planAccess = planAccess; planAccessFetchedAt = Date.now(); renderWebsiteUsageBar(); renderBilling(); }
+  } catch (e) { /* the meter just stays as it was */ }
+}
+
+// ── Which sections each kind of account can open ─────────────────────────────
+const LOCKED_SECTIONS = ['billing', 'profile'];
+const WEBSITE_ONLY_SECTIONS = ['website', 'alerts', 'integrations', 'profile', 'billing'];
+function scopeSection(name) {
+  if (planAccess && planAccess.locked && !LOCKED_SECTIONS.includes(name)) return 'billing';
+  if (planAccess && planAccess.websiteOnly && !WEBSITE_ONLY_SECTIONS.includes(name)) return 'website';
+  return name;
+}
+function applyNavScope(allowed) {
+  document.querySelectorAll('.nav-item[id^="nav-"]').forEach(n => { n.style.display = allowed.includes(n.id.slice(4)) ? '' : 'none'; });
+}
+function applyLockedNav() { applyNavScope(LOCKED_SECTIONS); }
+function applyWebsiteOnlyNav() { applyNavScope(WEBSITE_ONLY_SECTIONS); }
+function activeSectionName() { const a = document.querySelector('.section-view.active'); return a ? a.id.replace('section-', '') : ''; }
+
+// ── Expired accounts: the lockout says "renew" (paid plan) or "upgrade" (free trial) ──
+function renderLockoutText() {
+  const prev = planAccess && planAccess.previousPlan;
+  const renew = !!(planAccess && planAccess.lockReason === 'renew');
+  const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  set('lockoutTitle', renew ? tf('billing.lockout_title_renew', { plan: prev ? planName(prev) : '' }) : t('billing.lockout_title_upgrade'));
+  set('lockoutDesc', renew ? t('billing.lockout_desc_renew') : t('billing.lockout_desc_upgrade'));
+  set('lockoutCta', renew ? t('billing.lockout_cta_renew') : t('billing.lockout_cta_upgrade'));
+}
+function renderTrialBanner() {
+  const el = document.getElementById('trialBanner');
+  if (!el) return;
+  if (!user || user.plan !== 'free' || !user.plan_expires_at) { el.style.display = 'none'; return; }
+  const days = Math.max(0, Math.ceil((new Date(user.plan_expires_at) - Date.now()) / 86400000));
+  el.innerHTML = `<span>${days <= 1 ? t('billing.trial_banner_last') : tf('billing.trial_banner', { n: days })}</span><button class="btn-primary" style="padding:6px 14px;font-size:12px" onclick="showSection('billing')">${t('billing.trial_banner_cta')}</button>`;
+  el.style.display = 'flex';
+}
+
+// ── Billing screen ───────────────────────────────────────────────────────────
+function setBillingView(cycle) { billingCycleView = cycle; renderBilling(); }
+function planFeatureLines(plan) {
+  const w = (planPricing && planPricing.plans[plan] && planPricing.plans[plan].website) || { sites: 1, posts: 0 };
+  const P = { sites: w.sites, posts: w.posts };
+  const lines = {
+    free:     [['plan.f_free_consult'], ['plan.f_free_basic'], ['plan.f_dirs5'], ['plan.f_secretary'], ['plan.f_basic_report'], ['plan.f_calc3'], ['plan.f_analyzer_trial'], ['plan.f_entrepreneur'], ['plan.f_team1'], ['plan.f_web_free', P]],
+    starter:  [['plan.f_starter_consult'], ['plan.f_free_basic'], ['plan.f_dirs5'], ['plan.f_secretary'], ['plan.f_basic_report'], ['plan.f_calc3'], ['plan.f_analyzer_month1'], ['plan.f_entrepreneur'], ['plan.f_team1'], ['plan.f_web_starter', P]],
+    pro:      [['plan.f_pro_consult'], ['plan.f_all_dirs'], ['plan.f_pdf'], ['plan.f_history'], ['plan.f_calc10'], ['plan.f_pro_research'], ['plan.f_research_entrepreneur'], ['plan.f_team2'], ['plan.f_email_support'], ['plan.f_secretary_deep'], ['plan.f_web_pro', P]],
+    business: [['plan.f_biz_consult'], ['plan.f_all_dirs'], ['plan.f_download_both'], ['plan.f_video'], ['plan.f_calc10'], ['plan.f_biz_research'], ['plan.f_research_entrepreneur'], ['plan.f_team5'], ['plan.f_whatsapp_support'], ['plan.f_history'], ['plan.f_web_business', P]],
+    auto_seo: [['plan.f_auto_web', P], ['plan.f_auto_agent'], ['plan.f_auto_all'], ['plan.f_auto_alerts'], ['plan.f_auto_only']]
+  };
+  return (lines[plan] || []).map(([key, params]) => params ? tf(key, params) : t(key));
+}
+function renderBilling() {
+  if (!user) return;
+  if (!planPricing) planPricing = buildFallbackPricing();
+  const plan = user.plan || 'free';
+  const locked = plan === 'expired';
+  const prevPlan = (planAccess && planAccess.previousPlan) || user.previous_plan || null;
+
+  // Consultations used (not applicable to the website-only plan)
+  const used = user.consultations_used || 0;
+  const limit = planLimits[plan] ? planLimits[plan].consultations : 0;
+  const consultWrap = document.getElementById('billingConsultUsage');
+  if (consultWrap) consultWrap.style.display = plan === 'auto_seo' ? 'none' : '';
+  const pct = limit === -1 ? 20 : Math.min((used / (limit || 1)) * 100, 100);
+  const fill = document.getElementById('usageFill');
+  if (fill) { fill.style.width = pct + '%'; fill.classList.toggle('danger', pct > 80); }
+  const utxt = document.getElementById('usageText');
+  if (utxt) utxt.textContent = used + ' ' + t('billing.used_of') + ' ' + (limit === -1 ? t('billing.unlimited') : (limit || 0)) + ' ' + t('billing.used_suffix');
+
+  // Website tool usage: connected sites and blog posts
+  const wUse = document.getElementById('billingWebsiteUsage');
+  if (wUse) {
+    const w = planAccess && planAccess.website;
+    if (w && w.sites > 0) {
+      wUse.style.display = '';
+      const bar = (fillId, textId, usedN, lim, label) => {
+        const f = document.getElementById(fillId), tx = document.getElementById(textId);
+        const p = Math.min((usedN / (lim || 1)) * 100, 100);
+        if (f) { f.style.width = p + '%'; f.classList.toggle('danger', p >= 100); }
+        if (tx) tx.textContent = label;
+      };
+      bar('usageSitesFill', 'usageSitesText', w.sitesUsed, w.sites, tf('web.usage_sites', { used: w.sitesUsed, limit: w.sites }));
+      bar('usagePostsFill', 'usagePostsText', w.postsUsed, w.posts, tf(w.postsPeriod === 'trial' ? 'web.usage_posts_trial' : 'web.usage_posts_month', { used: w.postsUsed, limit: w.posts }));
+    } else wUse.style.display = 'none';
+  }
+
+  // Subscription period card — a free trial "ends", a paid plan "renews"
+  const periodCard = document.getElementById('subscriptionPeriodCard');
+  if (periodCard) {
+    if (user.plan_started_at || user.plan_expires_at) {
+      periodCard.style.display = 'block';
+      const fmt = d => new Date(d).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      document.getElementById('subscriptionStartedText').textContent = user.plan_started_at ? fmt(user.plan_started_at) : '—';
+      const endsEl = document.getElementById('subscriptionEndsText');
+      const endLabelEl = document.getElementById('subscriptionEndLabel');
+      if (locked) {
+        endLabelEl.textContent = t('billing.plan_expired_label');
+        endsEl.textContent = user.plan_expires_at ? fmt(user.plan_expires_at) : '—';
+        endsEl.style.color = '#ef4444';
+      } else {
+        endLabelEl.textContent = plan === 'free' ? t('billing.trial_ends') : t('billing.plan_renews');
+        endsEl.textContent = user.plan_expires_at ? fmt(user.plan_expires_at) : '—';
+        endsEl.style.color = 'var(--text)';
+      }
+    } else periodCard.style.display = 'none';
+  }
+
+  // Monthly / annual switch
+  const sw = document.getElementById('billingCycleSwitch');
+  if (sw) {
+    sw.innerHTML = ['monthly', 'annual'].map(c => `<button type="button" class="billing-cycle-btn ${billingCycleView === c ? 'active' : ''}" onclick="setBillingView('${c}')">${t('billing.cycle_' + c)}${c === 'annual' ? ` <span style="font-size:10px;background:var(--green);color:#fff;padding:2px 6px;border-radius:4px;margin-left:4px">-${planPricing.discountPercent}%</span>` : ''}</button>`).join('');
+  }
+
+  const cards = document.getElementById('planCards');
+  if (!cards) return;
+  const renew = !!(planAccess && planAccess.lockReason === 'renew');
+  const banner = locked ? `
+    <div style="grid-column:1/-1;background:rgba(239,68,68,.1);border:1px solid #ef4444;border-radius:10px;padding:14px 16px">
+      <div style="font-size:13.5px;font-weight:700;color:#ef4444;margin-bottom:4px">${renew ? tf('billing.lockout_title_renew', { plan: prevPlan ? planName(prevPlan) : '' }) : t('billing.lockout_title_upgrade')}</div>
+      <div style="font-size:12.5px;color:var(--text2)">${renew ? t('billing.lockout_desc_renew') : t('billing.lockout_desc_upgrade')}</div>
+    </div>` : '';
+
+  cards.innerHTML = banner + ['free', ...PAID_PLAN_ORDER].map(id => {
+    const isCurrent = !locked && id === plan;
+    const isPrev = locked && id === prevPlan;
+    const name = planName(id);
+    let price = '';
+    if (id === 'free') {
+      price = `<div class="plan-card-price">${t('plan.free')}</div><div style="font-size:12px;color:var(--muted);margin-bottom:10px">${t('billing.free_trial_period')}</div>`;
+    } else {
+      const pr = planPricing.plans[id];
+      const annual = billingCycleView === 'annual';
+      price = `<div class="plan-card-price">${fmtUsd(annual ? pr.annual.usdPerMonth : pr.monthly.usd)} <span>${t('billing.per_month')}</span></div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">${annual ? tf('billing.billed_annually', { usd: fmtUsd(pr.annual.usdTotal), cfa: fmtCfa(pr.annual.cfaTotal) }) : fmtCfa(pr.monthly.cfa) + t('billing.per_month')}</div>`;
+    }
+    let cta;
+    if (id === 'free') cta = isCurrent ? `<div style="font-size:13px;color:var(--green);font-weight:600">${t('billing.active_plan')}</div>` : '';
+    else if (isCurrent) cta = `<div style="font-size:13px;color:var(--green);font-weight:600;margin-bottom:8px">${t('billing.active_plan')}</div><button class="btn-ghost" style="width:100%" onclick="openPayment('${id}')">${t('billing.renew_plan')}</button>`;
+    else if (isPrev) cta = `<button class="btn-primary" style="width:100%" onclick="openPayment('${id}')">${t('billing.renew_plan')} ${name}</button>`;
+    else {
+      const up = !locked && plan !== 'auto_seo' && id !== 'auto_seo' && PLAN_RANK[id] > PLAN_RANK[plan];
+      cta = `<button class="btn-primary" style="width:100%" onclick="openPayment('${id}')">${up ? t('billing.upgrade_to') : t('billing.choose')} ${name}</button>`;
+    }
+    return `
+    <div class="plan-card ${isCurrent || isPrev ? 'current' : ''}">
+      ${isCurrent ? `<div class="plan-current-badge">${t('billing.current')}</div>` : isPrev ? `<div class="plan-current-badge">${t('billing.previous_plan')}</div>` : ''}
+      <div class="plan-card-name">${name}</div>
+      ${price}
+      <div style="font-size:13px;color:var(--text2);margin-bottom:12px;line-height:1.5">${t('plan.' + id + '_desc')}</div>
+      <ul class="plan-card-features">${planFeatureLines(id).map(l => `<li>${l}</li>`).join('')}</ul>
+      ${cta}
+    </div>`;
+  }).join('');
+}
+
+// ── Website tool: show only what this plan includes ─────────────────────────
+const WEBSITE_FEATURE_ELEMENTS = {
+  agent: ['websiteAgentCard', 'shopifyAgentCard'], calendar: ['websiteCalendarCard', 'shopifyCalendarCard'],
+  agent_activity: ['websiteActivityCard', 'shopifyActivityCard'], automation: ['websiteAutomationCard', 'shopifyAutomationCard'],
+  intelligence: ['websiteIntelligenceSection', 'shopifyIntelligenceSection'], audit: ['websiteAuditRunSection', 'shopifyAuditSection'],
+  ai_visibility: ['websiteAiVisibilitySection', 'shopifyAiVisibilitySection'], keyword_rankings: ['websiteKeywordRankingsSection', 'shopifyKeywordRankingsSection'],
+  sitemap: ['websiteSitemapSection', 'shopifySitemapSection'], competitor: ['websiteCompetitorSection', 'shopifyCompetitorSection'],
+  technical_seo: ['websiteTechnicalSeoSection', 'shopifyTechnicalSeoSection'], broken_links: ['websiteBrokenLinksSection', 'shopifyBrokenLinksSection'],
+  schema: ['websiteSchemaSection', 'shopifySchemaSection'], media: ['websiteMediaSection'], activity_log: ['websiteActivityLogSection'],
+  proposed_changes: ['websiteActionsSection', 'shopifyActionsSection'],
+  backlinks: ['platformTabBacklinks', 'platformTabPartnerNetwork', 'backlinksSection', 'partnerNetworkSection']
+};
+function applyWebsitePlanLocks() {
+  if (!planAccess || !planAccess.website) return;
+  const lockedFeatures = [];
+  for (const [feature, ids] of Object.entries(WEBSITE_FEATURE_ELEMENTS)) {
+    const has = webHas(feature);
+    ids.forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('plan-locked', !has); });
+    if (!has) lockedFeatures.push(feature);
+  }
+  // "Find & Improve SEO" lives inside Proposed Changes, which Pro can open — so only its buttons hide.
+  const hasFind = webHas('find_improve_seo');
+  document.querySelectorAll('[onclick*="generateSeoProposals"],[onclick*="generateDuplicateTitleProposals"],[onclick*="generateTaxonomyProposals"],[onclick*="generateFeaturedImageProposals"]')
+    .forEach(b => b.classList.toggle('plan-locked', !hasFind));
+  if (!hasFind) lockedFeatures.push('find_improve_seo');
+  renderLockedPanel(lockedFeatures);
+}
+function renderLockedPanel(features) {
+  const wrap = document.getElementById('websiteMainWrap');
+  if (!wrap) return;
+  let panel = document.getElementById('websiteLockedPanel');
+  if (!features.length) { if (panel) panel.style.display = 'none'; return; }
+  if (!panel) { panel = document.createElement('div'); panel.id = 'websiteLockedPanel'; panel.className = 'web-locked-panel'; wrap.appendChild(panel); }
+  const minPlan = (planAccess && planAccess.website && planAccess.website.featureMinPlan) || (planAccess && planAccess.featureMinPlan) || {};
+  panel.innerHTML = `<h4>${t('web.locked_title')}</h4><div style="font-size:12px;color:var(--muted)">${t('web.locked_desc')}</div>
+    <ul>${features.map(f => `<li>${t('web.feat_' + f)}${minPlan[f] ? ' — ' + planName(minPlan[f]) : ''}</li>`).join('')}</ul>
+    <button class="btn-primary" style="padding:8px 18px;font-size:12.5px" onclick="showSection('billing')">${t('web.usage_upgrade')}</button>`;
+  panel.style.display = '';
+}
+function renderWebsiteUsageBar() {
+  const el = document.getElementById('websiteUsageBar');
+  if (!el) return;
+  const w = planAccess && planAccess.website;
+  if (!w || !w.sites) { el.style.display = 'none'; return; }
+  const top = planAccess.plan === 'business' || planAccess.plan === 'auto_seo';
+  el.innerHTML = `<span>${tf('web.usage_sites', { used: w.sitesUsed, limit: w.sites })}</span><span>${tf(w.postsPeriod === 'trial' ? 'web.usage_posts_trial' : 'web.usage_posts_month', { used: w.postsUsed, limit: w.posts })}</span>${top ? '' : `<a onclick="showSection('billing')">${t('web.usage_upgrade')}</a>`}`;
+  el.style.display = 'flex';
+}
+
+// Website-only (Auto SEO) accounts add competitors right inside the Competitor Analysis card,
+// because the Competitors section of Arreyon Consult is not part of their plan.
+function competitorAddHtml(prefix) {
+  if (!(planAccess && planAccess.websiteOnly)) return '';
+  return `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+    <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:8px">${t('web.competitor_add_title')}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input class="form-input" id="${prefix}NewCompetitorName" placeholder="${t('web.competitor_name_ph')}" style="flex:1;min-width:140px">
+      <input class="form-input" id="${prefix}NewCompetitorSite" placeholder="${t('web.competitor_site_ph')}" style="flex:1;min-width:160px">
+      <button class="btn-primary" style="padding:8px 16px;font-size:12.5px" onclick="addCompetitorFromWebsite('${prefix}')">${t('web.competitor_add_btn')}</button>
+    </div></div>`;
+}
+async function addCompetitorFromWebsite(prefix) {
+  const bizId = prefix === 'shopify' ? (typeof currentShopifyBusinessId !== 'undefined' ? currentShopifyBusinessId : currentWebsiteBusinessId) : currentWebsiteBusinessId;
+  const name = (document.getElementById(prefix + 'NewCompetitorName') || {}).value || '';
+  const website = (document.getElementById(prefix + 'NewCompetitorSite') || {}).value || '';
+  if (!name.trim() || !bizId) return;
+  try {
+    const res = await fetch(`/api/business/${bizId}/competitors`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), website: website.trim() || undefined }) });
+    if (res.ok) { showToast(t('web.competitor_added_toast'), 'success'); loadCompetitorAnalysis(prefix); }
+    else { const d = await res.json().catch(() => ({})); showToast(d.error || t('board.connection_error'), 'error'); }
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+}
+
+// Website-only accounts see only Google Search Console under Integrations (Keyword Rankings and Sitemap need it).
+function integrationFetch(url) {
+  if (planAccess && planAccess.websiteOnly && !url.includes('google-search-console')) return Promise.resolve({ ok: false, json: async () => ({ connected: false }) });
+  return fetch(url);
+}
+function hideNonGscIntegrations() {
+  ['gaNotConnected', 'gaSelectProperty', 'gaMetricsView', 'hubspotNotConnected', 'hubspotMetricsView', 'zohoNotConnected', 'zohoSelectOrg', 'zohoMetricsView']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.classList.add('plan-locked'); });
+}
 
 async function init() {
   try {
@@ -2751,21 +3052,30 @@ async function init() {
     if (!res.ok) { window.location.href = '/auth'; return; }
     const data = await res.json();
     user = data.user;
-    if (user.plan === 'expired') {
+    planAccess = data.access || null; window.planAccess = planAccess; planAccessFetchedAt = Date.now();
+    await loadPlanPricing();
+    const isLocked = !!(planAccess && planAccess.locked) || user.plan === 'expired';
+    const isWebsiteOnly = !!(planAccess && planAccess.websiteOnly);
+    if (isLocked) {
+      renderLockoutText();
       const overlay = document.getElementById('expiredLockoutOverlay');
       if (overlay) overlay.style.display = 'flex';
     }
     renderUser();
-    loadHistory();
     renderBilling();
     loadProfile();
-    loadFinancialAccess();
+    renderTrialBanner();
+    // An expired account keeps only Billing and Profile; the server refuses everything else,
+    // so nothing else is requested (no wall of errors behind the lockout).
+    if (isLocked) { applyLockedNav(); showSection('billing'); return; }
+    if (isWebsiteOnly) applyWebsiteOnlyNav();
+    else { loadHistory(); loadFinancialAccess(); }
 
     if (data.isTeamMember) {
       // Team members never manage a team themselves — nav-team stays hidden.
       // Instead, restrict their own nav to whatever the owner granted them.
       applyTeamPermissionsToNav(data.permissions);
-    } else {
+    } else if (!isWebsiteOnly) {
       // Account owner — show the Team nav item and load the team panel data
       const teamNav = document.getElementById('nav-team');
       if (teamNav) teamNav.style.display = '';
@@ -2774,10 +3084,12 @@ async function init() {
     }
 
     loadUnreadAlertsBadge();
-    loadDashboardBusinessHealth();
-    loadDashboardVerdict();
-    loadDashboardPriorities();
-    loadDashboardActivity();
+    if (!isWebsiteOnly) {
+      loadDashboardBusinessHealth();
+      loadDashboardVerdict();
+      loadDashboardPriorities();
+      loadDashboardActivity();
+    }
 
     // The Google Analytics OAuth flow redirects back here with query params
     // indicating success/failure — jump to the Integrations section and show
@@ -2831,6 +3143,8 @@ async function init() {
         showSection(hashSection);
       }
     }
+    // A website-only account lands on the Website tool, not the (locked) Dashboard home.
+    if (isWebsiteOnly && !WEBSITE_ONLY_SECTIONS.includes(activeSectionName())) showSection('website');
   } catch(e) { window.location.href = '/auth'; }
 }
 
@@ -2844,16 +3158,16 @@ function renderUser() {
   document.getElementById('welcomeMsg').textContent = getGreeting() + ', ' + user.first_name + '!';
   document.getElementById('topbarSub').textContent = getDateStr();
 
-  const plan = user.plan || 'starter';
+  const plan = user.plan || 'free';
   window.currentUserPlan = plan; // needed to correctly re-apply this label if the user switches language later
   const badge = document.getElementById('sidebarPlanBadge');
-  badge.textContent = plan.charAt(0).toUpperCase() + plan.slice(1);
+  badge.textContent = planName(plan);
   badge.className = 'plan-badge ' + plan;
-  document.getElementById('upgradeBtn').textContent = plan !== 'starter' ? t('dash.manage_plan') : t('dash.upgrade_plan');
+  document.getElementById('upgradeBtn').textContent = plan !== 'free' ? t('dash.manage_plan') : t('dash.upgrade_plan');
 
-  document.getElementById('statPlan').textContent = plan.charAt(0).toUpperCase() + plan.slice(1);
+  document.getElementById('statPlan').textContent = planName(plan);
   document.getElementById('statUsed').textContent = user.consultations_used || 0;
-  document.getElementById('statLimit').textContent = 'of ' + (planLimits[plan]?.consultations === -1 ? '∞' : planLimits[plan]?.consultations) + ' this month';
+  document.getElementById('statLimit').textContent = planLimits[plan]?.consultations === -1 ? tf('dash.stat_limit_month', { n: '∞' }) : tf(plan === 'free' ? 'dash.stat_limit_trial' : 'dash.stat_limit_month', { n: planLimits[plan]?.consultations ?? 0 });
   document.getElementById('statDirs').textContent = planLimits[plan]?.dirs || 5;
   document.getElementById('statSince').textContent = new Date(user.created_at).toLocaleDateString('en-GB', {month:'short',year:'numeric'});
 }
@@ -3243,8 +3557,9 @@ function connectZohoBooks() {
 }
 
 async function loadIntegrationsSection() {
+  if (planAccess && planAccess.websiteOnly) hideNonGscIntegrations();
   try {
-    const res = await fetch('/api/integrations/google-analytics/status');
+    const res = await integrationFetch('/api/integrations/google-analytics/status');
     const data = await res.json();
 
     document.getElementById('gaNotConnected').style.display = 'none';
@@ -3288,7 +3603,7 @@ async function loadIntegrationsSection() {
   }
 
   try {
-    const res = await fetch('/api/integrations/hubspot/status');
+    const res = await integrationFetch('/api/integrations/hubspot/status');
     const data = await res.json();
 
     document.getElementById('hubspotNotConnected').style.display = 'none';
@@ -3305,7 +3620,7 @@ async function loadIntegrationsSection() {
   }
 
   try {
-    const res = await fetch('/api/integrations/zoho-books/status');
+    const res = await integrationFetch('/api/integrations/zoho-books/status');
     const data = await res.json();
 
     document.getElementById('zohoNotConnected').style.display = 'none';
@@ -3897,74 +4212,10 @@ async function saveAlertPreferences() {
   }
 }
 
-function renderBilling() {
-  if (!user) return;
-  const plan = user.plan || 'starter';
-  const used = user.consultations_used || 0;
-  const limit = planLimits[plan]?.consultations;
-
-  const pct = limit === -1 ? 20 : Math.min((used/(limit || 1))*100, 100);
-  const fill = document.getElementById('usageFill');
-  if (fill) { fill.style.width = pct + '%'; if (pct > 80) fill.classList.add('danger'); }
-  const utxt = document.getElementById('usageText');
-  if (utxt) utxt.textContent = used + ' ' + t('billing.used_of') + ' ' + (limit === -1 ? t('billing.unlimited') : (limit || 0)) + ' ' + t('billing.used_suffix');
-
-  // Subscription period card — previously nothing on screen showed when a
-  // plan started or when it would end, even though the dates existed.
-  const periodCard = document.getElementById('subscriptionPeriodCard');
-  if (periodCard) {
-    if (user.plan_started_at || user.plan_expires_at) {
-      periodCard.style.display = 'block';
-      const fmt = d => new Date(d).toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-      document.getElementById('subscriptionStartedText').textContent = user.plan_started_at ? fmt(user.plan_started_at) : '—';
-      const endsEl = document.getElementById('subscriptionEndsText');
-      const endLabelEl = document.getElementById('subscriptionEndLabel');
-      if (plan === 'expired') {
-        endLabelEl.textContent = t('billing.plan_expired_label');
-        endsEl.textContent = user.plan_expires_at ? fmt(user.plan_expires_at) : '—';
-        endsEl.style.color = '#ef4444';
-      } else {
-        endLabelEl.textContent = plan === 'starter' ? t('billing.trial_ends') : t('billing.plan_renews');
-        endsEl.textContent = user.plan_expires_at ? fmt(user.plan_expires_at) : '—';
-        endsEl.style.color = 'var(--text)';
-      }
-    } else {
-      periodCard.style.display = 'none';
-    }
-  }
-
-  const cards = document.getElementById('planCards');
-  if (!cards) return;
-
-  // An expired account isn't currently "on" any of the 3 displayed tiers —
-  // show an explicit banner rather than leaving all 3 cards looking
-  // equally available with no indication why nothing works right now.
-  const expiredBanner = plan === 'expired' ? `
-    <div style="background:rgba(239,68,68,.1);border:1px solid #ef4444;border-radius:10px;padding:14px 16px;margin-bottom:16px;max-width:600px">
-      <div style="font-size:13.5px;font-weight:700;color:#ef4444;margin-bottom:4px" data-i18n="billing.expired_title">Your access has expired</div>
-      <div style="font-size:12.5px;color:var(--text2)" data-i18n="billing.expired_desc">Subscribe to a plan below to restore full access to your account.</div>
-    </div>` : '';
-
-  cards.innerHTML = expiredBanner + [
-    { id:'starter', name:t('plan.starter_name'), price:t('plan.free'), cfa:t('plan.free'), desc:t('plan.starter_desc') },
-    { id:'pro', name:t('plan.pro_name'), price:'$35/mo', cfa:'20,125 FCFA/mo', desc:t('plan.pro_desc') },
-    { id:'business', name:t('plan.business_name'), price:'$150/mo', cfa:'86,250 FCFA/mo', desc:t('plan.business_desc') }
-  ].map(p => `
-    <div class="plan-card ${p.id === plan ? 'current' : ''}">
-      ${p.id === plan ? `<div class="plan-current-badge">${t('billing.current')}</div>` : ''}
-      <div class="plan-card-name">${p.name}</div>
-      <div class="plan-card-price">${p.price} <span></span></div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">${p.cfa}</div>
-      <div style="font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.5">${p.desc}</div>
-      ${p.id === plan ? `<div style="font-size:13px;color:var(--green);font-weight:600">${t('billing.active_plan')}</div>` :
-        p.id === 'starter' ? `<div style="font-size:13px;color:var(--muted)">${t('billing.free_trial_period')}</div>` :
-        `<button class="btn-primary" style="width:100%" onclick="openPayment('${p.id}')">${t('billing.upgrade_to')} ${p.name}</button>`}
-    </div>`).join('');
-}
-
 const SECTION_TITLE_KEYS = {home:'dash.nav_dashboard',history:'hist.title',profile:'profile.title',billing:'billing.title',boardroom:'dash.nav_boardroom',analyzer:'analyzer.title',entrepreneur:'ent.title',financial:'fin.title',scenario:'scen.title',team:'team.title',integrations:'int.title',alerts:'alerts.title',growth:'growth.title',action:'action.title',market:'market.title',marketingsales:'mkt.title',funding:'fund.title',reportscenter:'reports.title',website:'web.title'};
 
 function showSection(name) {
+  name = scopeSection(name);
   document.querySelectorAll('.section-view').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('section-' + name).classList.add('active');
@@ -4002,7 +4253,7 @@ function showSection(name) {
 
 function openPayment(plan) {
   selectedPlan = plan;
-  selectedCycle = 'monthly';
+  selectedCycle = billingCycleView;
   discountPct = 0;
   document.getElementById('couponInput').value = '';
   document.getElementById('couponMsg').style.display = 'none';
@@ -4011,7 +4262,9 @@ function openPayment(plan) {
   document.getElementById('payerDetails').style.display = 'none';
   document.getElementById('paymentMethod').value = '';
   document.getElementById('paymentMsg').style.display = 'none';
-  document.querySelectorAll('.billing-cycle-btn').forEach((b,i) => b.classList.toggle('active', i===0));
+  document.querySelectorAll('#paymentModal .billing-cycle-btn').forEach(b => b.classList.toggle('active', b.dataset.cycle === selectedCycle));
+  const badge = document.getElementById('annualDiscountBadge'); if (badge && planPricing) badge.textContent = '-' + planPricing.discountPercent + '%';
+  const ptitle = document.getElementById('paymentTitle'); if (ptitle) ptitle.textContent = t((user && user.plan === 'expired' && planAccess && planAccess.lockReason === 'renew') || (user && user.plan === plan) ? 'billing.payment_title_renew' : 'billing.payment_title_upgrade');
   updatePaymentUI();
   document.getElementById('paymentModal').style.display = 'flex';
 }
@@ -4019,12 +4272,18 @@ function openPayment(plan) {
 function closePayment() { document.getElementById('paymentModal').style.display = 'none'; }
 
 function updatePaymentUI() {
-  const p = planPrices[selectedPlan]?.[selectedCycle] || {usd:0,cfa:0};
-  const usd = (p.usd * (1 - discountPct/100)).toFixed(2);
-  const cfa = Math.round(p.cfa * (1 - discountPct/100));
-  document.getElementById('paymentPlanName').textContent = (selectedPlan === 'pro' ? 'Arreyon Pro' : 'Arreyon Business') + ' — ' + selectedCycle;
-  document.getElementById('paymentAmount').textContent = '$' + usd + '/month';
-  document.getElementById('paymentAmountCFA').textContent = cfa.toLocaleString() + ' FCFA/month' + (selectedCycle === 'annual' ? ' (billed annually)' : '');
+  if (!planPricing) planPricing = buildFallbackPricing();
+  const pr = planPricing.plans[selectedPlan];
+  if (!pr || !pr.monthly) return;
+  const monthly = selectedCycle === 'monthly';
+  // An annual payment is the FULL yearly amount, exactly what the server will charge.
+  const baseUsd = monthly ? pr.monthly.usd : pr.annual.usdTotal;
+  const baseCfa = monthly ? pr.monthly.cfa : pr.annual.cfaTotal;
+  const usd = Math.round(baseUsd * (1 - discountPct / 100) * 100) / 100;
+  const cfa = Math.round(baseCfa * (1 - discountPct / 100));
+  document.getElementById('paymentPlanName').textContent = planName(selectedPlan) + ' — ' + t('billing.cycle_' + selectedCycle);
+  document.getElementById('paymentAmount').textContent = fmtUsd(usd) + (monthly ? t('billing.per_month') : t('billing.per_year'));
+  document.getElementById('paymentAmountCFA').textContent = fmtCfa(cfa) + (monthly ? t('billing.per_month') : t('billing.per_year') + ' · ' + tf('billing.annual_equiv', { amount: fmtUsd(pr.annual.usdPerMonth) }));
 }
 
 function setCycle(cycle) {
@@ -7791,7 +8050,11 @@ function renderScenarioResults(optionsWithFinancials, analysis) {
 // plan state, not language alone.
 document.addEventListener('arreyon:langchange', () => {
   if (window.currentUserPlan) {
-    document.getElementById('upgradeBtn').textContent = window.currentUserPlan !== 'starter' ? t('dash.manage_plan') : t('dash.upgrade_plan');
+    document.getElementById('upgradeBtn').textContent = window.currentUserPlan !== 'free' ? t('dash.manage_plan') : t('dash.upgrade_plan');
+    const sb = document.getElementById('sidebarPlanBadge'); if (sb) sb.textContent = planName(window.currentUserPlan);
+    if (planAccess && planAccess.locked) renderLockoutText();
+    renderTrialBanner(); renderBilling(); renderWebsiteUsageBar();
+    if (planAccess && planAccess.website) applyWebsitePlanLocks();
   }
   if (window.currentUserFirstName) {
     document.getElementById('welcomeMsg').textContent = getGreeting() + ', ' + window.currentUserFirstName + '!';
@@ -8260,18 +8523,20 @@ async function loadShopifyStatus() {
     overviewState.shopify = { intelligence: data.connection.website_intelligence || null };
     document.getElementById('shopifyAgentCycleFrequency').value = data.connection.agent_cycle_frequency || 'daily';
     renderAgentModeStatus('shopify', data.connection);
-    loadActiveRules('shopify');
-    loadContentCalendar('shopify');
-    loadAgentActivity('shopify');
+    if (webHas('automation')) loadActiveRules('shopify');
+    if (webHas('calendar')) loadContentCalendar('shopify');
+    if (webHas('agent_activity')) loadAgentActivity('shopify');
     renderWebsiteIntelligenceContent(data.connection.website_intelligence, data.connection.website_intelligence_generated_at, 'shopifyIntelligenceContent');
-    loadShopifyActions();
-    loadShopifyGeneratedPosts();
-    loadAiVisibilityHistory('shopify');
-    loadKeywordRankings('shopify');
-    loadShopifySchema();
-    loadShopifySitemapStatus();
-    loadCompetitorAnalysis('shopify');
-    loadTechnicalSeoHistory('shopify');
+    if (webHas('proposed_changes')) loadShopifyActions();
+    if (webHas('posts_list')) loadShopifyGeneratedPosts();
+    if (webHas('ai_visibility')) loadAiVisibilityHistory('shopify');
+    if (webHas('keyword_rankings')) loadKeywordRankings('shopify');
+    if (webHas('schema')) loadShopifySchema();
+    if (webHas('sitemap')) loadShopifySitemapStatus();
+    if (webHas('competitor')) loadCompetitorAnalysis('shopify');
+    if (webHas('technical_seo')) loadTechnicalSeoHistory('shopify');
+    applyWebsitePlanLocks();
+    renderWebsiteUsageBar();
     renderJumpNav('shopify');
   } catch (e) {
     showShopifyConnectState();
@@ -8389,6 +8654,7 @@ async function loadShopifySitemapStatus() {
 }
 
 async function loadShopifyGeneratedPosts() {
+  refreshPlanAccess();   // keeps the posts-used meter current after a post is generated
   const contentEl = document.getElementById('shopifyGeneratedPostsContent');
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/generated-posts`);
@@ -8596,19 +8862,23 @@ async function loadWebsiteSection() {
     renderWebsiteStatusCard(connection);
     renderWebsiteIntelligenceContent(connection.website_intelligence, connection.website_intelligence_generated_at);
     setOverview('website', { intelligence: connection.website_intelligence || null });
-    loadWebsiteSchema();
-    loadWebsiteActivityLog();
-    loadWebsiteGeneratedPosts();
-    loadWebsiteAuditRuns();
-    loadAiVisibilityHistory('website');
-    loadKeywordRankings('website');
-    loadWebsiteSitemapStatus();
-    loadCompetitorAnalysis('website');
-    loadTechnicalSeoHistory('website');
-    loadActiveRules('website');
-    loadContentCalendar('website');
-    loadAgentActivity('website');
-    loadWebsiteActions();
+    // Only what this plan includes is requested (the server refuses the rest); locked cards are hidden below.
+    if (webHas('schema')) loadWebsiteSchema();
+    if (webHas('activity_log')) loadWebsiteActivityLog();
+    if (webHas('posts_list')) loadWebsiteGeneratedPosts();
+    if (webHas('audit')) loadWebsiteAuditRuns();
+    if (webHas('ai_visibility')) loadAiVisibilityHistory('website');
+    if (webHas('keyword_rankings')) loadKeywordRankings('website');
+    if (webHas('sitemap')) loadWebsiteSitemapStatus();
+    if (webHas('competitor')) loadCompetitorAnalysis('website');
+    if (webHas('technical_seo')) loadTechnicalSeoHistory('website');
+    if (webHas('automation')) loadActiveRules('website');
+    if (webHas('calendar')) loadContentCalendar('website');
+    if (webHas('agent_activity')) loadAgentActivity('website');
+    if (webHas('proposed_changes')) loadWebsiteActions();
+    applyWebsitePlanLocks();
+    renderWebsiteUsageBar();
+    renderJumpNav('website');
     return true;
   } catch (e) {
     showToast(t('board.connection_error'), 'error');
@@ -9557,6 +9827,7 @@ function useTopicSuggestion(index) {
 let currentGeneratedPosts = [];
 
 async function loadWebsiteGeneratedPosts() {
+  refreshPlanAccess();   // keeps the posts-used meter current after a post is generated
   const contentEl = document.getElementById('websiteGeneratedPostsContent');
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/generated-posts`);
@@ -10043,13 +10314,13 @@ function renderCompetitorAnalysis(el, data, prefix = 'website') {
   if (data.running) html += `<div style="font-size:12px;color:var(--gold);margin-bottom:10px">${t('web.competitor_running')}</div>`;
   if (!data.competitorsWithWebsite) {
     state.gaps = [];
-    el.innerHTML = html + `<div style="font-size:12px;color:var(--muted)">${t(data.trackedCompetitors ? 'web.competitor_none_website' : 'web.competitor_none_tracked')}</div>`;
+    el.innerHTML = html + `<div style="font-size:12px;color:var(--muted)">${t(data.trackedCompetitors ? 'web.competitor_none_website' : (planAccess && planAccess.websiteOnly ? 'web.competitor_none_add_below' : 'web.competitor_none_tracked'))}</div>` + competitorAddHtml(prefix);
     return;
   }
   const latest = data.latest;
-  if (!latest) { state.gaps = []; el.innerHTML = html + (data.running ? '' : `<div style="font-size:12px;color:var(--muted)">${t('web.competitor_not_run')}</div>`); return; }
+  if (!latest) { state.gaps = []; el.innerHTML = html + (data.running ? '' : `<div style="font-size:12px;color:var(--muted)">${t('web.competitor_not_run')}</div>`) + competitorAddHtml(prefix); return; }
   if (latest.status === 'failed') html += `<div style="font-size:12px;color:#ff8080;margin-bottom:10px">${escapeHtml(tf('web.competitor_failed', { error: latest.error_message || '' }))}</div>`;
-  if (latest.status !== 'completed') { state.gaps = []; el.innerHTML = html; return; }
+  if (latest.status !== 'completed') { state.gaps = []; el.innerHTML = html + competitorAddHtml(prefix); return; }
 
   const own = latest.own || {}, ins = latest.insights || {}, comps = latest.competitors || [];
   html += `<div style="font-size:11px;color:var(--muted);margin-bottom:8px">${escapeHtml(tf('web.competitor_analyzed_at', { time: formatTimestamp(latest.completed_at || latest.created_at) }))}</div>`;
@@ -10076,7 +10347,7 @@ function renderCompetitorAnalysis(el, data, prefix = 'website') {
   }).join('');
   if (ins.ungrounded_gaps_dropped > 0) html += `<div style="font-size:10.5px;color:var(--muted);margin-top:8px">${escapeHtml(tf('web.competitor_dropped_note', { n: ins.ungrounded_gaps_dropped }))}</div>`;
   html += list('web.competitor_ahead_title', ins.where_you_are_ahead) + list('web.competitor_quickwins_title', ins.quick_wins) + list('web.competitor_limits_title', ins.data_limits);
-  el.innerHTML = html;
+  el.innerHTML = html + competitorAddHtml(prefix);
 }
 
 // Returns whether an analysis is running (and picks up watching one started earlier or elsewhere).
