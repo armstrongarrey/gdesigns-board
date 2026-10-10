@@ -47,6 +47,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .user-email{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px}
 .logout-btn{background:none;border:none;color:var(--muted);cursor:pointer;padding:4px;margin-left:auto;flex-shrink:0}
 .logout-btn:hover{color:var(--red)}
+.logout-all-link{display:block;margin-top:8px;font-size:11px;color:var(--muted);text-decoration:none;text-align:center}
+.logout-all-link:hover{color:var(--red);text-decoration:underline}
 
 .main{margin-left:240px;flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh}
 .topbar{padding:16px 28px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg2);position:sticky;top:0;z-index:40}
@@ -354,6 +356,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
       </button>
     </div>
+    <a href="#" class="logout-all-link" onclick="doLogoutEverywhere();return false" data-i18n="dash.logout_all">Sign out of all devices</a>
   </div>
 </aside>
 
@@ -4340,6 +4343,16 @@ async function submitPayment() {
     if (data.success) { msg.style.color = 'var(--green)'; msg.textContent = 'Payment details submitted! Our team will activate your plan within 24 hours.'; }
     else { msg.style.color = 'var(--red)'; msg.textContent = data.error || 'Submission failed.'; }
   } catch(e) { msg.style.display='block'; msg.style.color='var(--red)'; msg.textContent='Submission failed.'; }
+}
+
+// Ends every sign-in this account has (this device and any other, including one that was copied), then leaves.
+async function doLogoutEverywhere() {
+  if (!confirm(t('dash.logout_all_confirm'))) return;
+  try {
+    const res = await fetch('/api/auth/logout-all', { method: 'POST' });
+    if (!res.ok) { alert(t('dash.logout_all_failed')); return; }
+  } catch (e) { alert(t('dash.logout_all_failed')); return; }
+  window.location.href = '/';
 }
 
 async function doLogout() {
