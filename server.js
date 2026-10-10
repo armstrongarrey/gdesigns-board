@@ -528,8 +528,10 @@ const WEBSITE_ROUTES = [
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/organization-schema'), 'schema'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/ai-visibility/(check|history)'), 'ai_visibility'],
   // proposed changes: reviewing/approving is Pro+, generating new proposals is Business+
-  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/actions(/[^/]+/(approve|execute|re-verify|confirm-manually|reject|undo))?'), 'proposed_changes'],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/actions(/[^/]+/(approve|execute|re-verify|confirm-manually|reject|undo|featured-image-preview))?'), 'proposed_changes'],
   ['POST', routeRx(BIZ_PATH + '/website/(seo-proposals|duplicate-title-proposals|taxonomy-proposals|featured-image-proposals)'), 'find_improve_seo'],
+  ['POST', routeRx(BIZ_PATH + '/shopify/featured-image-proposals'), 'find_improve_seo'],
+  ['GET',  routeRx(BIZ_PATH + '/(website|shopify)/featured-images'), 'find_improve_seo'],
   // partner network / backlinks
   ['*',    routeRx(BIZ_PATH + '/(backlinks|reciprocal-network)(/.*)?'), 'backlinks'],
 ];
@@ -5728,6 +5730,223 @@ async function generateAIImage(prompt) {
   return Buffer.from(b64, 'base64');
 }
 
+// ── Featured images for EXISTING pages and posts ────────────────────
+// 1. A COMPLETE scan (not just the newest 20) for items with no featured image. 2. A plan for each (picture idea, title, alt text with the focus keyword, file name):
+// cheap, no image is made. 3. Optionally a PREVIEW: the picture is made now, so the person sees it before deciding, and approving uses that very picture.
+// 4. Approving attaches it; Undo takes it off again. Limits: plans per run, previews per day and per image; FEATURED_IMAGES_OFF=1 stops all image making.
+const FEATURED_PLANS_PER_RUN = 15, FEATURED_SCAN_PAGE_SIZE = 100, FEATURED_SCAN_MAX_PAGES = 10, FEATURED_REGENERATIONS_MAX = 2;
+const featuredPreviewsPerDay = () => (Number(process.env.FEATURED_PREVIEWS_PER_DAY) > 0 ? Number(process.env.FEATURED_PREVIEWS_PER_DAY) : 20);
+const FEATURED_SPECS = {
+  wordpress: { platform: 'wordpress', table: 'website_actions', fk: 'website_connection_id', connTable: 'website_connections', idCol: 'target_wp_id' },
+  shopify: { platform: 'shopify', table: 'shopify_actions', fk: 'shopify_connection_id', connTable: 'shopify_connections', idCol: 'target_shopify_id' },
+};
+const featuredImagesAvailability = () => (process.env.FEATURED_IMAGES_OFF === '1' ? { ok: false, reason: 'turned_off' } : !process.env.OPENAI_API_KEY ? { ok: false, reason: 'not_configured' } : { ok: true });
+
+async function logFeaturedGeneration(businessId, platform, kind) {
+  try { await pool.query('INSERT INTO featured_image_generations (business_id, platform, kind) VALUES ($1, $2, $3)', [businessId, platform, kind]); } catch (e) { console.error('Could not log the image generation:', e.message); }
+}
+async function featuredPreviewsToday(businessId) {
+  return +(await pool.query(`SELECT count(*) FROM featured_image_generations WHERE business_id = $1 AND kind = 'preview' AND created_at > NOW() - INTERVAL '24 hours'`, [businessId])).rows[0].count;
+}
+async function saveFeaturedPreview(platform, actionId, businessId, png) {
+  await pool.query(`DELETE FROM featured_image_previews WHERE created_at < NOW() - INTERVAL '30 days'`);
+  await pool.query(`INSERT INTO featured_image_previews (platform, action_id, business_id, png) VALUES ($1, $2, $3, $4)
+                    ON CONFLICT (platform, action_id) DO UPDATE SET png = EXCLUDED.png, regenerations = featured_image_previews.regenerations + 1, created_at = NOW()`, [platform, actionId, businessId, png]);
+}
+async function loadFeaturedPreview(platform, actionId) {
+  return (await pool.query('SELECT png, regenerations, created_at FROM featured_image_previews WHERE platform = $1 AND action_id = $2', [platform, actionId])).rows[0] || null;
+}
+async function dropFeaturedPreview(platform, actionId) {
+  try { await pool.query('DELETE FROM featured_image_previews WHERE platform = $1 AND action_id = $2', [platform, actionId]); } catch (e) { /* it is deleted after 30 days anyway */ }
+}
+// Remembers what was attached, so it can be taken off again (WordPress: the media id; Shopify: the image address).
+async function recordFeaturedApplied(spec, actionId, info) {
+  try { await pool.query(`UPDATE ${spec.table} SET previous_state = COALESCE(previous_state, '{}'::jsonb) || $1::jsonb WHERE id = $2`, [JSON.stringify(info), actionId]); } catch (e) { console.error('Could not keep the undo details:', e.message); }
+}
+
+// The action a preview or undo is about, only if it belongs to this business (and the business to this account).
+async function loadFeaturedAction(platform, businessId, accountId, actionId) {
+  const spec = FEATURED_SPECS[platform];
+  if (!(await pool.query('SELECT 1 FROM businesses WHERE id = $1 AND user_id = $2', [businessId, accountId])).rows.length) return { status: 404, body: { error: 'Business not found' } };
+  if (!/^[0-9a-f-]{36}$/i.test(String(actionId))) return { status: 404, body: { error: 'Proposed change not found' } };
+  const a = (await pool.query(`SELECT a.* FROM ${spec.table} a JOIN ${spec.connTable} c ON c.id = a.${spec.fk} WHERE a.id = $1 AND c.business_id = $2`, [actionId, businessId])).rows[0];
+  if (!a) return { status: 404, body: { error: 'Proposed change not found' } };
+  return { action: a };
+}
+
+// Makes the picture now (one billed generation) so the person can see it before approving. A new preview replaces the old one, at most 2 times per plan.
+async function createFeaturedPreview(platform, businessId, accountId, actionId) {
+  const found = await loadFeaturedAction(platform, businessId, accountId, actionId); if (!found.action) return found;
+  const a = found.action;
+  if (a.action_type !== 'generate_featured_image') return { status: 400, body: { error: 'Only a featured image plan can be previewed.' } };
+  if (a.execution_status === 'executed' || a.approval_status === 'rejected') return { status: 400, body: { error: 'This plan has already been decided.' } };
+  const avail = featuredImagesAvailability();
+  if (!avail.ok) return { status: 503, body: { error: avail.reason === 'turned_off' ? 'Featured images are turned off on this server right now.' : 'Image generation is not set up on this server yet. Please contact support.' } };
+  const change = a.edited_change || a.proposed_change || {}; if (!change.imagePrompt) return { status: 400, body: { error: 'This plan has no picture idea to preview.' } };
+  const existing = await loadFeaturedPreview(platform, actionId);
+  if (existing && existing.regenerations >= FEATURED_REGENERATIONS_MAX) return { status: 400, body: { error: 'You have reached the limit of previews for this image. Approve it, or reject it and ask for a new plan.', code: 'preview_limit' } };
+  if ((await featuredPreviewsToday(businessId)) >= featuredPreviewsPerDay()) return { status: 429, body: { error: `You can preview up to ${featuredPreviewsPerDay()} images a day. Please try again tomorrow, or approve plans without previewing them.` } };
+  let png; try { png = await generateAIImage(change.imagePrompt); } catch (e) { console.error('Featured image preview failed:', e.message); return { status: 502, body: { error: 'The image service could not create the picture right now. Please try again in a moment.' } }; }
+  await saveFeaturedPreview(platform, actionId, businessId, png); await logFeaturedGeneration(businessId, platform, 'preview');
+  const row = await loadFeaturedPreview(platform, actionId);
+  return { status: 200, body: { success: true, createdAt: row.created_at, regenerationsLeft: FEATURED_REGENERATIONS_MAX - row.regenerations } };
+}
+async function readFeaturedPreviewImage(platform, businessId, accountId, actionId) {
+  const found = await loadFeaturedAction(platform, businessId, accountId, actionId); if (!found.action) return found;
+  const p = await loadFeaturedPreview(platform, actionId);
+  return p ? { status: 200, png: p.png } : { status: 404, body: { error: 'There is no preview for this plan yet.' } };
+}
+
+// What is missing, over ALL published pages and posts (100 per request, up to 1000 of each; "complete" says whether everything was seen). Light fields only.
+async function scanMissingFeaturedImagesWP(connection, password) {
+  const out = { items: [], posts: { total: 0, missing: 0, scanned: 0 }, pages: { total: 0, missing: 0, scanned: 0 }, complete: true, sampleOnly: false };
+  if (connection.connection_mode === 'poll') {   // the site cannot be read directly: the sample the existing reader gives (it may answer "pending", which the caller passes on)
+    const { pages, posts } = await getWordPressContentForAnalysis(connection, password);
+    for (const [kind, list, isPost] of [['posts', posts || [], true], ['pages', pages || [], false]]) {
+      out[kind].scanned = list.length; out[kind].total = list.length;
+      for (const it of list) if (!it.hasFeaturedImage) { out[kind].missing++; out.items.push({ id: it.id, title: it.title, url: it.url, isPost, date: it.date || null, bodyExcerpt: it.bodyExcerpt || '' }); }
+    }
+    out.complete = false; out.sampleOnly = true; return out;
+  }
+  for (const type of ['posts', 'pages']) {
+    const bucket = out[type], isPost = type === 'posts'; let totalPages = 1;
+    for (let page = 1; page <= FEATURED_SCAN_MAX_PAGES; page++) {
+      const res = await wpApiRequest(connection.site_url, connection.wp_username, password, `/wp/v2/${type}?per_page=${FEATURED_SCAN_PAGE_SIZE}&page=${page}&status=publish&orderby=date&order=desc&_fields=id,title,link,featured_media,date`, { timeoutMs: 20000 });
+      if (!res.ok) { if (page > 1 && res.status === 400) break; throw new Error(`Could not read ${type} from WordPress (status ${res.status})`); }
+      const items = await res.json();
+      if (page === 1) { bucket.total = parseInt(res.headers.get('X-WP-Total'), 10) || items.length; totalPages = parseInt(res.headers.get('X-WP-TotalPages'), 10) || 1; }
+      for (const it of items) { bucket.scanned++; if (!it.featured_media) { bucket.missing++; out.items.push({ id: it.id, title: decodeHtmlEntities(wpStripHtml((it.title && it.title.rendered) || '')), url: it.link, isPost, date: it.date || null }); } }
+      if (page >= totalPages || items.length < FEATURED_SCAN_PAGE_SIZE) break;
+      if (page === FEATURED_SCAN_MAX_PAGES) out.complete = false;
+    }
+  }
+  return out;
+}
+// Shopify: blog articles only (a Shopify page has no featured image). Articles are read 250 at a time, oldest first, then ordered newest first.
+async function scanMissingFeaturedImagesShopify(connection, accessToken) {
+  const out = { items: [], posts: { total: 0, missing: 0, scanned: 0 }, pages: { total: 0, missing: 0, scanned: 0 }, complete: true, sampleOnly: false, noBlog: false };
+  if (!connection.blog_id) { out.noBlog = true; return out; }
+  const storeUrl = await getShopifyStoreUrl(connection, accessToken); let handle = 'news';
+  try { const b = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}.json`); if (b.ok) handle = ((await b.json()).blog || {}).handle || handle; } catch (e) { /* the default handle: only the link shown for an article depends on it */ }
+  let total = 0; try { const c = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles/count.json?published_status=published`); if (c.ok) total = (await c.json()).count || 0; } catch (e) { /* counted from what was read instead */ }
+  let since = 0; const found = [];
+  for (let n = 0; n < FEATURED_SCAN_MAX_PAGES; n++) {
+    const res = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles.json?limit=250&since_id=${since}&published_status=published&fields=id,title,handle,image,published_at`);
+    if (!res.ok) throw new Error(`Could not read the blog's articles from Shopify (status ${res.status})`);
+    const arts = (await res.json()).articles || []; if (!arts.length) break;
+    for (const a of arts) { out.posts.scanned++; since = Math.max(since, Number(a.id)); if (!a.image) { out.posts.missing++; found.push({ id: a.id, title: a.title || '', url: `${storeUrl}/blogs/${handle}/${a.handle}`, isPost: true, date: a.published_at || null }); } }
+    if (arts.length < 250) break;
+    if (n === FEATURED_SCAN_MAX_PAGES - 1) out.complete = false;
+  }
+  out.posts.total = Math.max(total, out.posts.scanned);
+  found.sort((x, y) => String(y.date || '').localeCompare(String(x.date || ''))); out.items = found; return out;
+}
+const featuredScanSummary = (scan, planned) => ({ postsMissing: scan.posts.missing, pagesMissing: scan.pages.missing, postsTotal: scan.posts.total, pagesTotal: scan.pages.total, complete: scan.complete, sampleOnly: !!scan.sampleOnly,
+  planned: planned ? planned.proposals.length : 0, remaining: planned ? Math.max(0, planned.eligibleCount - planned.proposals.length) : 0 });
+
+// The AI plans each picture. (Moved out of the route unchanged, plus a focus keyword.)
+async function planFeaturedImagesWithAI(context, cappedCandidates, userId) {
+  const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+  const candidatesSummary = cappedCandidates.map((c, i) => `[${i}] ${c.isPost ? 'POST' : 'PAGE'}: "${c.title}" (${c.url})\n  Content excerpt: ${c.bodyExcerpt}`).join('\n\n');
+
+  const prompt = `You are an SEO Agent planning a featured image for each real page/post below, which currently has none. A missing featured image hurts how a page looks when shared on social media and in some search results.
+${contextSummary}
+
+PAGES/POSTS WITH NO FEATURED IMAGE:
+${candidatesSummary}
+
+For EACH numbered item above, based on its actual content, write:
+- A detailed, specific, photorealistic image-generation prompt (describe a real, concrete scene/composition, shot like a genuine editorial or stock photograph — never an illustration, cartoon, drawing, clipart, or 3D render; never generic stock-photo phrasing like "business people shaking hands"; ground it in what this specific piece is actually about). Never request any real, identifiable person, brand logo, or copyrighted character.
+- A short, descriptive image title (a few words).
+- Accessible alt text (one concise sentence describing what the image shows, for real screen-reader users, not for SEO keyword stuffing).
+- A focus keyword: the 2-4 word main topic, using words that really appear in the title or content excerpt above.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{
+  "proposals": [
+  { "index": 0, "image_prompt": "...", "image_title": "...", "alt_text": "...", "focus_keyword": "...", "reasoning": "1 sentence on why this concept fits this specific content" }
+  ]
+}`;
+
+  const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the featured image plans now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_featured_image_proposals', userId }, maxTokens: 4000 });
+
+  let result;
+  try {
+    result = extractJSON(raw);
+  } catch (e) {
+    const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```');
+    console.error('Featured image proposals JSON parse failed:', e.message, '| Response length:', raw.length, '| Looks truncated:', looksTruncated);
+    throw new Error(`Could not generate featured image plans — the AI's response could not be read as valid data${looksTruncated ? ' (it appears to have been cut off before finishing — please try again)' : ' (please try again)'}.`);
+  }
+  if (!Array.isArray(result.proposals)) throw new Error(`Could not generate featured image plans — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
+  return result;
+}
+// The texts the plan will use. A focus keyword counts only if it really appears in the item's title or text: then it goes into the image title, the alt text
+// and the file name (the same rule as for generated posts). Without one, the AI's own accessibility-first title and alt text are kept, as before.
+function featuredPlanFor(candidate, p) {
+  const raw = String(p.focus_keyword || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  const focus = raw && `${candidate.title || ''} ${candidate.bodyExcerpt || ''}`.toLowerCase().includes(raw.toLowerCase()) ? raw : '';
+  const texts = buildFeaturedImageTexts(focus, candidate.title);
+  return { imagePrompt: String(p.image_prompt), focusKeyword: focus || null, imageTitle: focus ? texts.imageTitle : (p.image_title || candidate.title), altText: focus ? texts.altText : (p.alt_text || candidate.title), fileBase: texts.fileBase };
+}
+// Not planned again: one waiting for a decision, turned down in the last 90 days, or refused by the site in the last 7.
+async function featuredPlanExclusions(spec, connectionId) {
+  const r = await pool.query(`SELECT target_type, ${spec.idCol} AS tid FROM ${spec.table} WHERE ${spec.fk} = $1 AND action_type = 'generate_featured_image'
+      AND (approval_status = 'pending' OR (approval_status = 'approved' AND execution_status = 'not_executed') OR (approval_status = 'rejected' AND reviewed_at > NOW() - INTERVAL '90 days') OR (execution_status = 'execution_failed' AND reviewed_at > NOW() - INTERVAL '7 days'))`, [connectionId]);
+  return new Set(r.rows.map(x => `${x.target_type}:${x.tid}`));
+}
+async function planFeaturedImages(platform, connection, context, candidates, getExcerpt, userId) {
+  const spec = FEATURED_SPECS[platform], linkSpec = platform === 'shopify' ? SHOPIFY_LINK_SPEC : WORDPRESS_LINK_SPEC;
+  const excluded = await featuredPlanExclusions(spec, connection.id);
+  const eligible = candidates.filter(c => !excluded.has(`${c.isPost ? 'post' : 'page'}:${c.id}`));
+  const chosen = eligible.slice(0, FEATURED_PLANS_PER_RUN).map(c => ({ ...c }));
+  if (!chosen.length) return { proposals: [], eligibleCount: eligible.length, excludedCount: candidates.length - eligible.length };
+  for (let i = 0; i < chosen.length; i += 4) await Promise.all(chosen.slice(i, i + 4).map(async c => { if (c.bodyExcerpt === undefined) { try { c.bodyExcerpt = (await getExcerpt(c)) || ''; } catch (e) { c.bodyExcerpt = ''; } } }));
+  const result = await planFeaturedImagesWithAI(context, chosen, userId);
+  const proposals = [];
+  for (const p of result.proposals) {
+    const candidate = chosen[p.index]; if (!candidate || !p.image_prompt) continue;
+    proposals.push(await linkSpec.insert(connection, candidate, candidate.isPost ? 'post' : 'page', 'generate_featured_image', featuredPlanFor(candidate, p), p.reasoning || null));
+  }
+  return { proposals, eligibleCount: eligible.length, excludedCount: candidates.length - eligible.length };
+}
+
+// Taking a featured image off again. Only if it is still the one that was added (otherwise the person has changed it since): nothing else is touched.
+async function undoFeaturedImageAction(connection, action, userId) {
+  if (action.action_type !== 'generate_featured_image' || action.execution_status !== 'executed') return { ok: false, status: 400, error: 'Only a featured image that was added can be undone.' };
+  const mediaId = Number((action.previous_state || {}).appliedMediaId);
+  if (!mediaId) return { ok: false, status: 410, error: "This image was added by your site's own plugin, or too long ago, so it cannot be undone here. Remove it from the post's editor in WordPress.", code: 'undo_unavailable' };
+  const pw = decryptSecret(connection.wp_app_password_encrypted), wpType = action.target_type === 'post' ? 'posts' : 'pages', path = `/wp/v2/${wpType}/${action.target_wp_id}`;
+  const readRes = await wpApiRequest(connection.site_url, connection.wp_username, pw, `${path}?_fields=featured_media`, { timeoutMs: 15000 });
+  if (!readRes.ok) return { ok: false, status: 502, error: `Could not read the page's current featured image (status ${readRes.status}).` };
+  if (Number((await readRes.json()).featured_media) !== mediaId) return { ok: false, status: 409, error: "The featured image was changed after it was added, so it cannot be undone automatically. Change it in the post's editor in WordPress.", code: 'page_changed' };
+  const writeRes = await wpApiRequest(connection.site_url, connection.wp_username, pw, path, { method: 'POST', body: { featured_media: 0 }, timeoutMs: 15000 });
+  if (!writeRes.ok) return { ok: false, status: 502, error: `WordPress rejected removing the featured image (status ${writeRes.status}).` };
+  let mediaDeleted = false; try { const del = await wpApiRequest(connection.site_url, connection.wp_username, pw, `/wp/v2/media/${mediaId}?force=true`, { method: 'DELETE', timeoutMs: 15000 }); mediaDeleted = !!del.ok; } catch (e) { /* the picture stays in the media library: harmless */ }
+  if (connection.connection_mode !== 'poll') await invalidatePushModeCache(connection);
+  await pool.query(`UPDATE website_actions SET execution_status = 'undone', verification_status = NULL, approval_status = 'rejected', reviewed_at = NOW() WHERE id = $1`, [action.id]);   // a "no": not planned again for 90 days
+  await logWebsiteAudit(connection.id, 'user', userId, 'proposal_undone', `Removed the featured image added to "${action.target_title || 'a page'}"`, { actionId: action.id, mediaDeleted }, 'featured_images');
+  return { ok: true, mediaDeleted };
+}
+async function undoShopifyFeaturedImageAction(connection, action, accessToken) {
+  if (action.action_type !== 'generate_featured_image' || action.execution_status !== 'executed') return { ok: false, status: 400, error: 'Only a featured image that was added can be undone.' };
+  const src = (action.previous_state || {}).appliedImageSrc;
+  if (!src) return { ok: false, status: 410, error: 'This image cannot be undone here. Remove it from the article in Shopify.', code: 'undo_unavailable' };
+  const path = `/blogs/${connection.blog_id}/articles/${action.target_shopify_id}.json`;
+  const readRes = await shopifyApiRequest(connection.shop_domain, accessToken, `${path}?fields=id,image`);
+  if (!readRes.ok) return { ok: false, status: 502, error: `Could not read the article's current image (status ${readRes.status}).` };
+  const img = ((await readRes.json()).article || {}).image;
+  if (img && img.src !== src) return { ok: false, status: 409, error: "The article's image was changed after it was added, so it cannot be undone automatically. Change it in the article editor in Shopify.", code: 'page_changed' };
+  if (img) {
+    const putRes = await shopifyApiRequest(connection.shop_domain, accessToken, path, { method: 'PUT', body: { article: { id: action.target_shopify_id, image: null } }, timeoutMs: 30000 });
+    if (!putRes.ok) return { ok: false, status: 502, error: `Shopify rejected removing the image (status ${putRes.status}).` };
+    const after = await shopifyApiRequest(connection.shop_domain, accessToken, `${path}?fields=id,image`);
+    if (after.ok && ((await after.json()).article || {}).image) return { ok: false, status: 502, error: 'Shopify did not remove the image. Remove it from the article in Shopify.', code: 'not_removed' };
+  }
+  await pool.query(`UPDATE shopify_actions SET execution_status = 'undone', approval_status = 'rejected', reviewed_at = NOW() WHERE id = $1`, [action.id]);
+  return { ok: true };
+}
+
 async function checkInternalLinkResolves(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
@@ -6513,9 +6732,10 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
       // approved this specific proposal (see the exclusion from
       // auto-execute in the proposal-generation route above).
       try {
-        const imageBuffer = await generateAIImage(change.imagePrompt);
+        let imageBuffer; const storedPreview = await loadFeaturedPreview('wordpress', action.id);   // approving uses exactly the picture the person saw: no second charge
+        if (storedPreview) imageBuffer = storedPreview.png; else { imageBuffer = await generateAIImage(change.imagePrompt); await logFeaturedGeneration(connection.business_id, 'wordpress', 'apply'); }
         const uploadRes = await wpApiRequestBinary(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/media', {
-          buffer: imageBuffer, contentType: 'image/png', filename: `${(change.imageTitle || 'featured-image').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60)}.png`,
+          buffer: imageBuffer, contentType: 'image/png', filename: `${change.fileBase || imageSlug(change.imageTitle) || 'featured-image'}.png`,
         });
         if (!uploadRes.ok) return { executed: false, verified: false, error: `WordPress rejected the image upload (status ${uploadRes.status}).` };
         const media = await uploadRes.json();
@@ -6533,6 +6753,7 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
           method: 'POST', body: { featured_media: media.id }, timeoutMs: 15000,
         });
         if (!setRes.ok) return { executed: false, verified: false, error: `The image uploaded, but WordPress rejected setting it as the featured image (status ${setRes.status}).` };
+        await recordFeaturedApplied(FEATURED_SPECS.wordpress, action.id, { appliedMediaId: media.id }); await dropFeaturedPreview('wordpress', action.id);
 
         // Real, deliberate immediate verification — read the post back
         // and confirm its real, saved featured_media actually matches
@@ -7218,9 +7439,9 @@ app.post('/api/business/:id/website/featured-image-proposals', authRequired, asy
     if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This website is disconnected. Please reconnect it first.' });
 
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
-    let pages, posts;
+    let scan;
     try {
-      ({ pages, posts } = await getWordPressContentForAnalysis(connection, decryptedPassword));
+      scan = await scanMissingFeaturedImagesWP(connection, decryptedPassword);
     } catch (e) {
       if (e.pendingPoll) return res.status(202).json({ pendingPoll: true, message: e.message, proposals: [] });
       if (e.message.includes('401')) {
@@ -7229,81 +7450,91 @@ app.post('/api/business/:id/website/featured-image-proposals', authRequired, asy
       }
       throw e;
     }
+    if (!scan.items.length) return res.json({ proposals: [], scan: featuredScanSummary(scan), message: 'Every page and post already has a featured image \u2014 nothing to propose right now.' });
 
-    const allItems = [...(pages || []).map(p => ({ ...p, isPost: false })), ...(posts || []).map(p => ({ ...p, isPost: true }))];
-    const candidates = allItems.filter(item => !item.hasFeaturedImage);
-
-    if (!candidates.length) {
-      return res.json({ proposals: [], message: 'Every page and post already has a featured image — nothing to propose right now.' });
-    }
-
-    // Real, deliberate cheap step — this only drafts the plan (an
-    // image prompt, a title, alt text), a real Claude text call, not
-    // the actual, real-cost image generation itself. The real OpenAI
-    // cost is only ever incurred once a specific proposal is actually
-    // approved and executed, the same real, deferred-cost discipline
-    // as every other proposal in this app.
-    const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
-    const cappedCandidates = candidates.slice(0, 15);
-    const candidatesSummary = cappedCandidates.map((c, i) => `[${i}] ${c.isPost ? 'POST' : 'PAGE'}: "${c.title}" (${c.url})\n  Content excerpt: ${c.bodyExcerpt}`).join('\n\n');
-
-    const prompt = `You are an SEO Agent planning a featured image for each real page/post below, which currently has none. A missing featured image hurts how a page looks when shared on social media and in some search results.
-${contextSummary}
-
-PAGES/POSTS WITH NO FEATURED IMAGE:
-${candidatesSummary}
-
-For EACH numbered item above, based on its actual content, write:
-- A detailed, specific, photorealistic image-generation prompt (describe a real, concrete scene/composition, shot like a genuine editorial or stock photograph — never an illustration, cartoon, drawing, clipart, or 3D render; never generic stock-photo phrasing like "business people shaking hands"; ground it in what this specific piece is actually about). Never request any real, identifiable person, brand logo, or copyrighted character.
-- A short, descriptive image title (a few words).
-- Accessible alt text (one concise sentence describing what the image shows, for real screen-reader users, not for SEO keyword stuffing).
-
-Return ONLY valid JSON, no markdown, in exactly this structure:
-{
-  "proposals": [
-    { "index": 0, "image_prompt": "...", "image_title": "...", "alt_text": "...", "reasoning": "1 sentence on why this concept fits this specific content" }
-  ]
-}`;
-
-    const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the featured image plans now, as JSON only.' }], complexity: 'complex', context: { feature: 'website_featured_image_proposals', userId: req.userId }, maxTokens: 4000 });
-
-    let result;
-    try {
-      result = extractJSON(raw);
-    } catch (e) {
-      const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```');
-      console.error('Featured image proposals JSON parse failed:', e.message, '| Response length:', raw.length, '| Looks truncated:', looksTruncated);
-      throw new Error(`Could not generate featured image plans — the AI's response could not be read as valid data${looksTruncated ? ' (it appears to have been cut off before finishing — please try again)' : ' (please try again)'}.`);
-    }
-    if (!Array.isArray(result.proposals)) throw new Error(`Could not generate featured image plans — the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
-
-    // Real, deliberate exclusion from auto-execute, even under Managed
-    // + Automatic — unlike a title/description/taxonomy change, this
-    // one has a real, per-image cost and an unpredictable real visual
-    // result; a person should see the plan and decide, at least until
-    // this has been used and trusted for a while.
-    const insertedProposals = [];
-    for (const p of result.proposals) {
-      const candidate = cappedCandidates[p.index];
-      if (!candidate || !p.image_prompt) continue;
-
-      const proposedChange = { imagePrompt: p.image_prompt, imageTitle: p.image_title || candidate.title, altText: p.alt_text || candidate.title };
-
-      const inserted = await pool.query(
-        `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
-         VALUES ($1, 'seo_agent', 'generate_featured_image', $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [connection.id, candidate.isPost ? 'post' : 'page', candidate.id, candidate.url, candidate.title, JSON.stringify({}), JSON.stringify(proposedChange), p.reasoning || null]
-      );
-      insertedProposals.push(inserted.rows[0]);
-    }
-
+    // Planning is the cheap step (a text call): no image is made until the person previews or approves, so the real cost is only ever incurred on purpose.
+    // It is never auto-executed, even under Managed + Automatic: a picture has a real cost and an unpredictable result.
+    const planned = await planFeaturedImages('wordpress', connection, context, scan.items, async c => {
+      const r = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${c.isPost ? 'posts' : 'pages'}/${c.id}?_fields=content`, { timeoutMs: 15000 });
+      return r.ok ? wpStripHtml(((await r.json()).content || {}).rendered || '').slice(0, 500) : '';
+    }, req.userId);
+    if (!planned.proposals.length) return res.json({ proposals: [], scan: featuredScanSummary(scan, planned), message: 'The pages and posts without a featured image already have a plan waiting, or were turned down recently.' });
     await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated',
-      `SEO Agent generated ${insertedProposals.length} featured image plan(s) awaiting approval`,
-      { count: insertedProposals.length }, 'featured_images');
+      `SEO Agent generated ${planned.proposals.length} featured image plan(s) awaiting approval`,
+      { count: planned.proposals.length }, 'featured_images');
 
-    res.json({ proposals: insertedProposals });
+    res.json({ proposals: planned.proposals, scan: featuredScanSummary(scan, planned) });
   } catch (err) {
     console.error('Featured image proposals error:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate featured image plans. Please try again.') });
+  }
+});
+
+// What is missing (a free scan): the counts, and the first few titles. For the Featured Images block on each card.
+async function featuredStatusFor(platform, req, res) {
+  const account = await resolveAccount(req.userId);
+  if (!(await pool.query('SELECT 1 FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id])).rows.length) return res.status(404).json({ error: 'Business not found' });
+  const spec = FEATURED_SPECS[platform], connection = (await pool.query(`SELECT * FROM ${spec.connTable} WHERE business_id = $1`, [req.params.id])).rows[0];
+  if (!connection) return res.status(404).json({ error: platform === 'shopify' ? 'No Shopify store connected' : 'No website connected' });
+  if (connection.connection_status === 'disconnected') return res.status(400).json({ error: platform === 'shopify' ? 'This store is disconnected. Please reconnect it first.' : 'This website is disconnected. Please reconnect it first.' });
+  let scan;
+  try { scan = platform === 'shopify' ? await scanMissingFeaturedImagesShopify(connection, decryptSecret(connection.access_token_encrypted)) : await scanMissingFeaturedImagesWP(connection, decryptSecret(connection.wp_app_password_encrypted)); }
+  catch (e) {
+    if (e.pendingPoll) return res.status(202).json({ pendingPoll: true, message: e.message });
+    if (platform === 'wordpress' && String(e.message).includes('401')) { await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]); return res.status(400).json({ error: 'This Application Password is no longer valid. Please reconnect your website.' }); }
+    throw e;
+  }
+  const excluded = await featuredPlanExclusions(spec, connection.id), avail = featuredImagesAvailability();
+  const pending = +(await pool.query(`SELECT count(*) FROM ${spec.table} WHERE ${spec.fk} = $1 AND action_type = 'generate_featured_image' AND approval_status = 'pending'`, [connection.id])).rows[0].count;
+  res.json({ ...featuredScanSummary(scan), noBlog: !!scan.noBlog, pagesSupported: platform === 'wordpress', waitingForPlan: scan.items.filter(c => !excluded.has(`${c.isPost ? 'post' : 'page'}:${c.id}`)).length, pendingPlans: pending,
+    items: scan.items.slice(0, 20).map(c => ({ id: c.id, title: c.title, url: c.url, type: c.isPost ? 'post' : 'page' })), imagesAvailable: avail.ok, imagesUnavailableReason: avail.ok ? null : avail.reason, previewsToday: await featuredPreviewsToday(req.params.id), previewsPerDay: featuredPreviewsPerDay() });
+}
+app.get('/api/business/:id/website/featured-images', authRequired, async (req, res) => {
+  try { await featuredStatusFor('wordpress', req, res); } catch (e) { console.error('Featured images status error:', e.message); res.status(500).json({ error: safeErrorMessage(e, 'Could not check for missing featured images. Please try again.') }); }
+});
+app.get('/api/business/:id/shopify/featured-images', authRequired, async (req, res) => {
+  try { await featuredStatusFor('shopify', req, res); } catch (e) { console.error('Featured images status error:', e.message); res.status(500).json({ error: safeErrorMessage(e, 'Could not check for missing featured images. Please try again.') }); }
+});
+for (const platform of ['wordpress', 'shopify']) {
+  const api = platform === 'shopify' ? 'shopify' : 'website';
+  app.post(`/api/business/:id/${api}/actions/:actionId/featured-image-preview`, authRequired, async (req, res) => {
+    try {
+      const account = await resolveAccount(req.userId);
+      if ((await pool.query('SELECT 1 FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id])).rows.length) recordRunFrom(res, req.params.id, platform, 'featured_image_previewed', () => ({}));
+      const out = await createFeaturedPreview(platform, req.params.id, account.id, req.params.actionId);
+      res.status(out.status).json(out.body);
+    } catch (e) { console.error('Featured image preview error:', e.message); res.status(500).json({ error: 'Could not make the preview. Please try again.' }); }
+  });
+  app.get(`/api/business/:id/${api}/actions/:actionId/featured-image-preview`, authRequired, async (req, res) => {
+    try {
+      const account = await resolveAccount(req.userId);
+      const out = await readFeaturedPreviewImage(platform, req.params.id, account.id, req.params.actionId);
+      if (out.status !== 200) return res.status(out.status).json(out.body);
+      res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline; filename="preview.png"' }).send(out.png);
+    } catch (e) { console.error('Featured image preview read error:', e.message); res.status(500).json({ error: 'Could not load the preview.' }); }
+  });
+}
+app.post('/api/business/:id/shopify/featured-image-proposals', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    const account = await resolveAccount(req.userId);
+    const context = await getBusinessContext(req.params.id, account.id);
+    if (!context) return res.status(404).json({ error: 'Business not found' });
+    recordRunFrom(res, req.params.id, 'shopify', 'proposals_generated', b => ({ detail: { kind: 'featured_images', count: proposalCount(b) } }));
+    const connection = (await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id])).rows[0];
+    if (!connection) return res.status(404).json({ error: 'No Shopify store connected' });
+    if (connection.connection_status === 'disconnected') return res.status(400).json({ error: 'This store is disconnected. Please reconnect it first.' });
+    const token = decryptSecret(connection.access_token_encrypted), scan = await scanMissingFeaturedImagesShopify(connection, token);
+    if (scan.noBlog) return res.json({ proposals: [], scan: featuredScanSummary(scan), message: 'No blog was found on this Shopify store. Only blog articles can have a featured image.' });
+    if (!scan.items.length) return res.json({ proposals: [], scan: featuredScanSummary(scan), message: 'Every blog article already has a featured image \u2014 nothing to propose right now.' });
+    const planned = await planFeaturedImages('shopify', connection, context, scan.items, async c => {
+      const r = await shopifyApiRequest(connection.shop_domain, token, `/blogs/${connection.blog_id}/articles/${c.id}.json?fields=id,body_html`);
+      return r.ok ? wpStripHtml(((await r.json()).article || {}).body_html || '').slice(0, 500) : '';
+    }, req.userId);
+    if (!planned.proposals.length) return res.json({ proposals: [], scan: featuredScanSummary(scan, planned), message: 'The articles without a featured image already have a plan waiting, or were turned down recently.' });
+    res.json({ proposals: planned.proposals, scan: featuredScanSummary(scan, planned) });
+  } catch (err) {
+    console.error('Shopify featured image proposals error:', err.message);
     res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate featured image plans. Please try again.') });
   }
 });
@@ -8825,7 +9056,7 @@ app.post('/api/business/:id/website/actions/:actionId/undo', authRequired, async
     const found = await pool.query('SELECT * FROM website_actions WHERE id = $1 AND website_connection_id = $2', [req.params.actionId, connection.id]);
     if (!found.rows.length) return res.status(404).json({ error: 'Proposed change not found' });
     const action = found.rows[0];
-    const out = await undoLinkFixAction(connection, action, req.userId);
+    const out = action.action_type === 'generate_featured_image' ? await undoFeaturedImageAction(connection, action, req.userId) : await undoLinkFixAction(connection, action, req.userId);
     if (!out.ok) return res.status(out.status).json({ error: out.error, code: out.code });
     res.json({ success: true });
   } catch (err) {
@@ -9153,7 +9384,10 @@ app.get('/api/business/:id/website/actions', authRequired, async (req, res) => {
     if (!connResult.rows.length) return res.json({ actions: [] });
 
     const actions = await pool.query(
-      'SELECT a.*, (b.action_id IS NOT NULL) AS can_undo FROM website_actions a LEFT JOIN website_action_backups b ON b.action_id = a.id WHERE a.website_connection_id = $1 ORDER BY a.created_at DESC LIMIT 50',
+      `SELECT a.*, (b.action_id IS NOT NULL OR (a.action_type = 'generate_featured_image' AND a.execution_status = 'executed' AND a.previous_state->>'appliedMediaId' IS NOT NULL)) AS can_undo,
+              (p.action_id IS NOT NULL) AS has_preview, p.regenerations AS preview_regenerations, p.created_at AS preview_created_at
+         FROM website_actions a LEFT JOIN website_action_backups b ON b.action_id = a.id LEFT JOIN featured_image_previews p ON p.platform = 'wordpress' AND p.action_id = a.id
+        WHERE a.website_connection_id = $1 ORDER BY a.created_at DESC LIMIT 50`,
       [connResult.rows[0].id]
     );
     res.json({ actions: actions.rows });
@@ -9258,7 +9492,8 @@ app.post('/api/business/:id/website/actions/:actionId/execute', authRequired, as
       if (action.action_type === 'generate_featured_image') {
         const change = action.edited_change || action.proposed_change;
         try {
-          const imageBuffer = await generateAIImage(change.imagePrompt);
+          let imageBuffer; const storedPreview = await loadFeaturedPreview('wordpress', action.id);
+          if (storedPreview) imageBuffer = storedPreview.png; else { imageBuffer = await generateAIImage(change.imagePrompt); await logFeaturedGeneration(connection.business_id, 'wordpress', 'apply'); }
           const augmentedChange = { ...change, imageBase64: imageBuffer.toString('base64') };
           await pool.query(`UPDATE website_actions SET edited_change = $1 WHERE id = $2`, [JSON.stringify(augmentedChange), action.id]);
         } catch (e) {
@@ -9418,6 +9653,7 @@ app.post('/api/business/:id/website/actions/:actionId/reject', authRequired, asy
     if (actionResult.rows[0].approval_status !== 'pending') return res.status(400).json({ error: 'This proposal has already been reviewed.' });
 
     await pool.query(`UPDATE website_actions SET approval_status = 'rejected', reviewed_by = $1, reviewed_at = NOW() WHERE id = $2`, [req.userId, req.params.actionId]);
+    await dropFeaturedPreview('wordpress', req.params.actionId);
     await logWebsiteAudit(connResult.rows[0].id, 'user', req.userId, 'proposal_rejected', `Rejected proposed change: ${actionResult.rows[0].action_type} for "${actionResult.rows[0].target_title}"`, { actionId: req.params.actionId }, featureForActionType(actionResult.rows[0].action_type));
 
     res.json({ success: true });
@@ -9643,7 +9879,7 @@ app.post('/api/business/:id/shopify/actions/:actionId/undo', authRequired, async
     if (!connection) return res.status(404).json({ error: 'No Shopify store connected' });
     const action = (await pool.query('SELECT * FROM shopify_actions WHERE id = $1 AND shopify_connection_id = $2', [req.params.actionId, connection.id])).rows[0];
     if (!action) return res.status(404).json({ error: 'Proposed change not found' });
-    const out = await undoShopifyLinkFixAction(connection, action, decryptSecret(connection.access_token_encrypted));
+    const out = action.action_type === 'generate_featured_image' ? await undoShopifyFeaturedImageAction(connection, action, decryptSecret(connection.access_token_encrypted)) : await undoShopifyLinkFixAction(connection, action, decryptSecret(connection.access_token_encrypted));
     if (!out.ok) return res.status(out.status).json({ error: out.error, code: out.code });
     res.json({ success: true });
   } catch (err) {
@@ -9657,7 +9893,10 @@ app.get('/api/business/:id/shopify/actions', authRequired, async (req, res) => {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
     const connResult = await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.json({ actions: [] });
-    const result = await pool.query('SELECT a.*, (b.action_id IS NOT NULL) AS can_undo FROM shopify_actions a LEFT JOIN shopify_action_backups b ON b.action_id = a.id WHERE a.shopify_connection_id = $1 ORDER BY a.created_at DESC LIMIT 100', [connResult.rows[0].id]);
+    const result = await pool.query(`SELECT a.*, (b.action_id IS NOT NULL OR (a.action_type = 'generate_featured_image' AND a.execution_status = 'executed' AND a.previous_state->>'appliedImageSrc' IS NOT NULL)) AS can_undo,
+        (p.action_id IS NOT NULL) AS has_preview, p.regenerations AS preview_regenerations, p.created_at AS preview_created_at
+      FROM shopify_actions a LEFT JOIN shopify_action_backups b ON b.action_id = a.id LEFT JOIN featured_image_previews p ON p.platform = 'shopify' AND p.action_id = a.id
+      WHERE a.shopify_connection_id = $1 ORDER BY a.created_at DESC LIMIT 100`, [connResult.rows[0].id]);
     res.json({ actions: result.rows });
   } catch (e) {
     console.error('Get Shopify actions error:', e.message);
@@ -9704,6 +9943,7 @@ app.post('/api/business/:id/shopify/actions/:actionId/reject', authRequired, asy
       `UPDATE shopify_actions SET approval_status = 'rejected', reviewed_at = NOW() WHERE id = $1 AND shopify_connection_id = $2 AND approval_status = 'pending' RETURNING id`,
       [req.params.actionId, connResult.rows[0].id]
     );
+    if (result.rows.length) await dropFeaturedPreview('shopify', req.params.actionId);
     if (!result.rows.length) return res.status(404).json({ error: 'Proposed change not found or already reviewed.' });
     res.json({ success: true });
   } catch (e) {
@@ -10223,6 +10463,28 @@ async function executeShopifyAction(action, connection, accessToken) {
       await refreshLinkBackupHash(action.id, verifyHtml, SHOPIFY_LINK_SPEC);
       if (!verifyHtml.includes(change.brokenUrl)) return { executed: true, verified: true };
       return { executed: true, verified: false, error: 'The change was saved, but the broken link still appears to be present.' };
+    }
+
+    if (change.imagePrompt) {
+      // A featured image for a blog article (a Shopify page has none). The picture is the preview if there is one, otherwise it is made now.
+      if (action.target_type !== 'post') return { executed: false, error: 'Shopify pages do not have a featured image: only blog articles do.' };
+      if (!connection.blog_id) return { executed: false, error: 'No blog was found on this Shopify store.' };
+      const stored = await loadFeaturedPreview('shopify', action.id); let buffer;
+      if (stored) buffer = stored.png;
+      else {
+        try { buffer = await generateAIImage(change.imagePrompt); }
+        catch (e) { console.error('Featured image generation failed:', e.message); return { executed: false, error: 'The image service could not create the picture right now. Please try again in a moment.' }; }
+        await logFeaturedGeneration(connection.business_id, 'shopify', 'apply');
+      }
+      const articlePath = `/blogs/${connection.blog_id}/articles/${action.target_shopify_id}.json`;
+      const putRes = await shopifyApiRequest(connection.shop_domain, accessToken, articlePath, { method: 'PUT', body: { article: { id: action.target_shopify_id, image: { attachment: buffer.toString('base64'), alt: change.altText || '' } } }, timeoutMs: 60000 });
+      if (!putRes.ok) return { executed: false, error: `Shopify rejected saving the image (status ${putRes.status}).` };
+      const check = await shopifyApiRequest(connection.shop_domain, accessToken, `${articlePath}?fields=id,image`);
+      if (!check.ok) return { executed: true, verified: false, error: 'The image was saved, but verification could not confirm it.' };
+      const img = ((await check.json()).article || {}).image;
+      if (!img || !img.src) return { executed: true, verified: false, error: 'The image was saved, but Shopify does not show it on the article yet.' };
+      await recordFeaturedApplied(FEATURED_SPECS.shopify, action.id, { appliedImageSrc: img.src }); await dropFeaturedPreview('shopify', action.id);
+      return { executed: true, verified: true };
     }
 
     // Real, deliberate single metafields write for the meta-tag action
@@ -19369,7 +19631,7 @@ const ACTIVITY_FEATURES = {
   intelligence: ['intelligence_refreshed'], audit: ['audit_completed'], ai_visibility: ['ai_visibility_checked'], keyword_rankings: ['keyword_snapshot'],
   sitemap: ['sitemap_submitted', 'sitemap_missing'], competitor: ['competitor_analysis', 'competitor_discovery'], technical_seo: ['technical_check'], broken_links: ['broken_links_checked'],
   schema: ['schema_installed', 'schema_removed'], content: ['content_generated', 'content_failed', 'content_missed'],
-  improvements: ['proposals_generated', 'change_applied', 'change_verified', 'change_rejected', 'change_undone'],
+  improvements: ['proposals_generated', 'change_applied', 'change_verified', 'change_rejected', 'change_undone', 'featured_image_previewed'],
 };
 const isActivityFeature = f => typeof f === 'string' && Object.prototype.hasOwnProperty.call(ACTIVITY_FEATURES, f);
 const ACTIVITY_FEATURE_SQL = 'CASE ' + Object.entries(ACTIVITY_FEATURES).map(([f, types]) => `WHEN task_type IN (${types.map(t => `'${t}'`).join(',')}) THEN '${f}'`).join(' ') + ' END';   // built from the constants above only
