@@ -266,6 +266,13 @@ document.addEventListener('arreyon:langchange', () => {
   }
 });
 
+// The server answers with a readable message AND a code. Known cases are shown in the language the person is using.
+function serverMsg(data, fallbackKey) {
+  const known = { rate_limited: 'auth.err_rate_limited', password_too_short: 'auth.err_password_length', password_too_long: 'auth.err_password_long', password_too_common: 'auth.err_password_common' };
+  if (data && known[data.code]) return t(known[data.code]);
+  return (data && data.error) || t(fallbackKey);
+}
+
 async function doLogin() {
   hideErr('loginError');
   const email = document.getElementById('loginEmail').value.trim();
@@ -279,7 +286,7 @@ async function doLogin() {
     if (data.success) { window.location.href = '/dashboard'; }
     else if (data.needsVerification) {
       showVerifyNotice(email);
-    } else { showErr('loginError', data.error || t('auth.err_login_failed')); }
+    } else { showErr('loginError', serverMsg(data, 'auth.err_login_failed')); }
   } catch(e) { showErr('loginError', t('auth.err_connection')); }
   btn.disabled = false; btn.textContent = t('auth.sign_in');
 }
@@ -301,7 +308,7 @@ async function doSignup() {
     const data = await res.json();
     if (data.success) {
       showVerifyNotice(email);
-    } else { showErr('signupError', data.error || t('auth.err_registration_failed')); }
+    } else { showErr('signupError', serverMsg(data, 'auth.err_registration_failed')); }
   } catch(e) { showErr('signupError', t('auth.err_connection')); }
   btn.disabled = false; btn.textContent = t('auth.tab_create');
 }
@@ -326,7 +333,7 @@ async function doReset() {
     const res = await fetch('/api/auth/reset-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: resetToken, password}) });
     const data = await res.json();
     if (data.success) { showSucc('resetSuccess', t('auth.password_reset_success')); setTimeout(() => switchTab('login'), 2000); }
-    else showErr('resetError', data.error || t('auth.err_reset_failed'));
+    else showErr('resetError', serverMsg(data, 'auth.err_reset_failed'));
   } catch(e) { showErr('resetError', t('auth.err_failed_retry')); }
 }
 
