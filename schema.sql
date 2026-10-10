@@ -1993,3 +1993,25 @@ CREATE TABLE IF NOT EXISTS competitor_discovery_runs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_competitor_discovery_runs_business ON competitor_discovery_runs (business_id, created_at DESC);
+
+
+-- Featured images for existing pages and posts. A preview is the picture made BEFORE the person approves it, kept so approving uses exactly that picture (no second charge);
+-- it is removed once the plan is decided, and after 30 days. Every billed generation is logged: it limits previews per day, and is what plan limits will count.
+CREATE TABLE IF NOT EXISTS featured_image_previews (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  platform VARCHAR(20) NOT NULL,
+  action_id UUID NOT NULL,
+  business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  png BYTEA NOT NULL,
+  regenerations INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (platform, action_id)
+);
+CREATE TABLE IF NOT EXISTS featured_image_generations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  platform VARCHAR(20) NOT NULL,
+  kind VARCHAR(20) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_featured_image_generations_business ON featured_image_generations (business_id, created_at DESC);
