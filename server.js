@@ -514,7 +514,7 @@ const WEBSITE_ROUTES = [
   // automation
   ['*',    routeRx(BIZ_PATH + '/content-schedule(/[^/]+(/dismiss)?)?'), 'calendar'],
   ['*',    routeRx(BIZ_PATH + '/content-automation-rule(/[^/]+)?'), 'automation'],
-  ['*',    routeRx(BIZ_PATH + '/agent-activity(/post/[^/]+/[^/]+)?'), 'agent_activity'],
+  ['*',    routeRx(BIZ_PATH + '/agent-activity(/features|/post/[^/]+/[^/]+)?'), 'agent_activity'],
   // analysis
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/intelligence'), 'intelligence'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/run-audit'), 'audit'],
@@ -7084,6 +7084,7 @@ app.post('/api/business/:id/website/taxonomy-proposals', authRequired, async (re
     const account = await resolveAccount(req.userId);
     const context = await getBusinessContext(req.params.id, account.id);
     if (!context) return res.status(404).json({ error: 'Business not found' });
+    recordRunFrom(res, req.params.id, 'wordpress', 'proposals_generated', b => ({ detail: { kind: 'taxonomy', count: proposalCount(b) } }));
 
     const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
@@ -7105,6 +7106,7 @@ app.post('/api/business/:id/website/featured-image-proposals', authRequired, asy
     const account = await resolveAccount(req.userId);
     const context = await getBusinessContext(req.params.id, account.id);
     if (!context) return res.status(404).json({ error: 'Business not found' });
+    recordRunFrom(res, req.params.id, 'wordpress', 'proposals_generated', b => ({ detail: { kind: 'featured_images', count: proposalCount(b) } }));
 
     const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
@@ -7787,6 +7789,7 @@ app.post('/api/business/:id/website/organization-schema', authRequired, async (r
     const account = await resolveAccount(req.userId);
     const context = await getBusinessContext(req.params.id, account.id);
     if (!context) return res.status(404).json({ error: 'Business not found' });
+    recordRunFrom(res, req.params.id, 'wordpress', 'schema_installed', () => ({}));
 
     const { connection, error, status } = await getConnectionForBusiness(req);
     if (error) return res.status(status).json({ error });
@@ -7802,6 +7805,7 @@ app.post('/api/business/:id/website/organization-schema', authRequired, async (r
       method: 'POST', body: { arreyon_organization_schema: JSON.stringify(schema) }, timeoutMs: 15000,
     });
     if (!writeRes.ok) {
+      await logManual(req.params.id, 'wordpress', 'schema_installed', 'failed', { error: `WordPress rejected saving this (status ${writeRes.status})` });
       return res.status(400).json({ error: `WordPress rejected saving this (status ${writeRes.status}) — this site's plugin may need updating to the latest version, which adds schema support.` });
     }
 
@@ -8519,6 +8523,7 @@ app.post('/api/business/:id/website/duplicate-title-proposals', authRequired, as
     const account = await resolveAccount(req.userId);
     const context = await getBusinessContext(req.params.id, account.id);
     if (!context) return res.status(404).json({ error: 'Business not found' });
+    recordRunFrom(res, req.params.id, 'wordpress', 'proposals_generated', b => ({ detail: { kind: 'duplicate_titles', count: proposalCount(b) } }));
 
     const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
@@ -8667,6 +8672,7 @@ app.post('/api/business/:id/website/seo-proposals', authRequired, async (req, re
     const account = await resolveAccount(req.userId);
     const context = await getBusinessContext(req.params.id, account.id);
     if (!context) return res.status(404).json({ error: 'Business not found' });
+    recordRunFrom(res, req.params.id, 'wordpress', 'proposals_generated', b => ({ detail: { kind: 'seo', count: proposalCount(b) } }));
 
     const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
@@ -8752,6 +8758,7 @@ app.post('/api/business/:id/website/actions/:actionId/execute', authRequired, as
     const account = await resolveAccount(req.userId);
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    recordRunFrom(res, req.params.id, 'wordpress', 'change_applied', b => ({ outcome: b && (b.queuedForPoll || b.success) ? 'success' : 'failed', detail: { queued: !!(b && b.queuedForPoll), error: b && !b.success && !b.queuedForPoll && b.error ? String(b.error).slice(0, 300) : undefined } }));
 
     const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
@@ -8847,6 +8854,7 @@ app.post('/api/business/:id/website/actions/:actionId/re-verify', authRequired, 
     const account = await resolveAccount(req.userId);
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    recordRunFrom(res, req.params.id, 'wordpress', 'change_verified', b => ({ detail: { verified: !!(b && b.success) } }));
 
     const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
@@ -8946,6 +8954,7 @@ app.post('/api/business/:id/website/actions/:actionId/reject', authRequired, asy
     const account = await resolveAccount(req.userId);
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    recordRunFrom(res, req.params.id, 'wordpress', 'change_rejected', () => ({}));
 
     const connResult = await pool.query('SELECT id FROM website_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
@@ -9171,6 +9180,7 @@ app.get('/api/business/:id/shopify/actions', authRequired, async (req, res) => {
 app.post('/api/business/:id/shopify/actions/:actionId/approve', authRequired, async (req, res) => {
   try {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    recordRunFrom(res, req.params.id, 'shopify', 'change_applied', () => ({}));
     const connResult = await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
     const connection = connResult.rows[0];
@@ -9188,7 +9198,7 @@ app.post('/api/business/:id/shopify/actions/:actionId/approve', authRequired, as
       [execResult.executed ? 'executed' : 'execution_failed', action.id]
     );
 
-    if (!execResult.executed) return res.status(400).json({ error: execResult.error || 'Shopify rejected this change.' });
+    if (!execResult.executed) { await logManual(req.params.id, 'shopify', 'change_applied', 'failed', { error: String(execResult.error || 'Shopify rejected this change.').slice(0, 300) }); return res.status(400).json({ error: execResult.error || 'Shopify rejected this change.' }); }
     res.json({ success: true });
   } catch (err) {
     console.error('Approve Shopify action error:', err.message);
@@ -9199,6 +9209,7 @@ app.post('/api/business/:id/shopify/actions/:actionId/approve', authRequired, as
 app.post('/api/business/:id/shopify/actions/:actionId/reject', authRequired, async (req, res) => {
   try {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    recordRunFrom(res, req.params.id, 'shopify', 'change_rejected', () => ({}));
     const connResult = await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
     const result = await pool.query(
@@ -18667,6 +18678,36 @@ const logManual = (businessId, platform, taskType, outcome, detail) =>
   logAgentActivity({ businessId, platform, taskType, outcome, triggeredBy: 'manual', detail });
 const errDetail = e => ({ error: safeErrorMessage(e && e.message ? e : { message: String(e) }, 'Something went wrong. Please try again.').slice(0, 300) });
 
+// Which entries of the activity log belong to which feature card. A card's History shows these, and its "Clear activity" removes only these.
+// Only the LOG is ever cleared: saved results (ranking snapshots and trends, audit runs, technical checks, proposals, posts) are never touched.
+const ACTIVITY_FEATURES = {
+  intelligence: ['intelligence_refreshed'], audit: ['audit_completed'], ai_visibility: ['ai_visibility_checked'], keyword_rankings: ['keyword_snapshot'],
+  sitemap: ['sitemap_submitted', 'sitemap_missing'], competitor: ['competitor_analysis'], technical_seo: ['technical_check'], broken_links: ['broken_links_checked'],
+  schema: ['schema_installed', 'schema_removed'], content: ['content_generated', 'content_failed', 'content_missed'],
+  improvements: ['proposals_generated', 'change_applied', 'change_verified', 'change_rejected'],
+};
+const isActivityFeature = f => typeof f === 'string' && Object.prototype.hasOwnProperty.call(ACTIVITY_FEATURES, f);
+const ACTIVITY_FEATURE_SQL = 'CASE ' + Object.entries(ACTIVITY_FEATURES).map(([f, types]) => `WHEN task_type IN (${types.map(t => `'${t}'`).join(',')}) THEN '${f}'`).join(' ') + ' END';   // built from the constants above only
+
+// A manual run of a website feature is recorded in that feature's history from the answer the route finally gives. Install it only AFTER the
+// business has been confirmed as the caller's, so nobody can write into someone else's history.
+//   2xx = a run that finished (success unless describe() says otherwise)   5xx = a run that failed   other 4xx = a refusal, not a run: not recorded
+//   202 / pendingPoll = not finished yet (the site collects it later): not recorded now
+function recordRunFrom(res, businessId, platform, taskType, describe) {
+  const send = res.json.bind(res);
+  res.json = body => {
+    try {
+      const code = res.statusCode, waiting = code === 202 || !!(body && body.pendingPoll);
+      if (code >= 200 && code < 300 && !waiting) {
+        const d = (describe && describe(body, code)) || {};
+        logManual(businessId, platform, taskType, d.outcome || 'success', d.detail || {});
+      } else if (code >= 500) logManual(businessId, platform, taskType, 'failed', { error: String((body && body.error) || '').slice(0, 300) });
+    } catch (e) { /* recording a run must never get in the way of the answer */ }
+    return send(body);
+  };
+}
+const proposalCount = b => (Array.isArray(b && b.proposals) ? b.proposals.length : 0);
+
 // Asks a run in progress to stop. Returns whether there was one.
 function stopAgentRun(platform, businessId) {
   const run = agentRunsInFlight.get(agentRunKey(platform, businessId));
@@ -18959,18 +19000,44 @@ app.get('/api/business/:id/agent-activity', authRequired, async (req, res) => {
   try {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
     if (req.query.platform !== undefined && !isWebsitePlatform(req.query.platform)) return res.status(400).json({ error: 'Unknown platform.' });
-    const platform = req.query.platform || null;
+    if (req.query.feature !== undefined && !isActivityFeature(req.query.feature)) return res.status(400).json({ error: 'Unknown feature.' });
+    const platform = req.query.platform || null, types = req.query.feature !== undefined ? ACTIVITY_FEATURES[req.query.feature] : null;
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 200);
     const result = await pool.query(
       `SELECT id, platform, task_type, outcome, triggered_by, detail, created_at
-       FROM website_agent_activity WHERE business_id = $1 AND ($2::text IS NULL OR platform = $2::text)
-       ORDER BY created_at DESC LIMIT 100`,
-      [req.params.id, platform]
+       FROM website_agent_activity WHERE business_id = $1 AND ($2::text IS NULL OR platform = $2::text) AND ($3::text[] IS NULL OR task_type = ANY($3::text[]))
+       ORDER BY created_at DESC, id LIMIT $4`,
+      [req.params.id, platform, types, limit]
     );
     const runs = (platform ? [platform] : Object.keys(WEBSITE_AGENTS)).map(p => agentRunsInFlight.get(agentRunKey(p, req.params.id))).filter(Boolean);
     res.json({ entries: result.rows, running: runs.length > 0, stopping: runs.some(r => r.cancelled) });
   } catch (e) {
     console.error('Get agent activity error:', e.message);
-    res.status(500).json({ error: 'Could not load activity.' });
+    res.status(500).json({ error: 'Could not load the activity history.' });
+  }
+});
+
+// The latest few entries of EVERY feature in one request (what each card's History shows), with how many there are in all.
+app.get('/api/business/:id/agent-activity/features', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    if (!isWebsitePlatform(req.query.platform)) return res.status(400).json({ error: 'Unknown platform.' });
+    const per = Math.min(Math.max(parseInt(req.query.per, 10) || 5, 1), 20);
+    const result = await pool.query(
+      `SELECT * FROM (
+         SELECT id, task_type, outcome, triggered_by, detail, created_at, ${ACTIVITY_FEATURE_SQL} AS feature,
+                ROW_NUMBER() OVER (PARTITION BY ${ACTIVITY_FEATURE_SQL} ORDER BY created_at DESC, id) AS rn,
+                COUNT(*) OVER (PARTITION BY ${ACTIVITY_FEATURE_SQL}) AS total
+         FROM website_agent_activity WHERE business_id = $1 AND platform = $2
+       ) x WHERE feature IS NOT NULL AND rn <= $3 ORDER BY feature, created_at DESC, id`,
+      [req.params.id, req.query.platform, per]
+    );
+    const features = Object.fromEntries(Object.keys(ACTIVITY_FEATURES).map(f => [f, { total: 0, entries: [] }]));
+    for (const r of result.rows) { const f = features[r.feature]; f.total = Number(r.total); f.entries.push({ id: r.id, task_type: r.task_type, outcome: r.outcome, triggered_by: r.triggered_by, detail: r.detail, created_at: r.created_at }); }
+    res.json({ features });
+  } catch (e) {
+    console.error('Get feature activity error:', e.message);
+    res.status(500).json({ error: 'Could not load the activity history.' });
   }
 });
 
@@ -18979,7 +19046,11 @@ app.delete('/api/business/:id/agent-activity', authRequired, async (req, res) =>
   try {
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
     if (!isWebsitePlatform(req.query.platform)) return res.status(400).json({ error: 'Say which platform to clear.' });
-    const result = await pool.query('DELETE FROM website_agent_activity WHERE business_id = $1 AND platform = $2', [req.params.id, req.query.platform]);
+    if (req.query.feature !== undefined && !isActivityFeature(req.query.feature)) return res.status(400).json({ error: 'Unknown feature.' });
+    // With a feature: only that feature's entries. Without: everything for the platform (as before). Only this log is touched, never any saved result.
+    const result = req.query.feature !== undefined
+      ? await pool.query('DELETE FROM website_agent_activity WHERE business_id = $1 AND platform = $2 AND task_type = ANY($3::text[])', [req.params.id, req.query.platform, ACTIVITY_FEATURES[req.query.feature]])
+      : await pool.query('DELETE FROM website_agent_activity WHERE business_id = $1 AND platform = $2', [req.params.id, req.query.platform]);
     res.json({ success: true, removed: result.rowCount });
   } catch (e) {
     console.error('Clear agent activity error:', e.message);
