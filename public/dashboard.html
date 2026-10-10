@@ -9552,7 +9552,7 @@ function agentActivityText(e) {
     case 'ai_visibility_checked': return failed ? t('web.activity_ai_visibility_failed') : tf('web.activity_ai_visibility', { mentioned: d.mentionedCount || 0, total: d.checkedCount || 0 });
     case 'keyword_snapshot': return failed ? t('web.activity_keyword_snapshot_failed') : tf('web.activity_keyword_snapshot', { queries: d.queries || 0, opportunities: d.opportunities || 0 });
     case 'content_missed': return t('web.activity_content_missed');
-    case 'schema_installed': return failed ? t('web.activity_schema_installed_failed') : tf('web.activity_schema_installed', { theme: d.theme || '' });
+    case 'schema_installed': return failed ? t('web.activity_schema_installed_failed') : d.theme ? tf('web.activity_schema_installed', { theme: d.theme }) : t('web.activity_schema_added');
     case 'schema_removed': return failed ? t('web.activity_schema_removed_failed') : t('web.activity_schema_removed');
     case 'broken_links_checked': return failed ? t('web.activity_broken_links_failed') : tf('web.activity_broken_links', { broken: d.brokenCount || 0, checked: d.checkedCount || 0 });
     case 'intelligence_refreshed': return t(failed ? 'web.activity_intelligence_failed' : 'web.activity_intelligence_refreshed');
@@ -9569,6 +9569,15 @@ function agentActivityText(e) {
       return t('web.activity_sitemap_submitted');
     case 'sitemap_missing': return t('web.activity_sitemap_missing');
     case 'competitor_analysis': return failed ? t('web.activity_competitor_failed') : tf('web.activity_competitor_success', { competitors: d.competitorsAnalyzed || 0, gaps: d.gaps || 0 });
+    case 'proposals_generated': {
+      if (failed) return t('web.activity_proposals_failed');
+      if (!d.count) return t('web.activity_proposals_none');
+      const key = { seo: 'web.activity_proposals_seo', taxonomy: 'web.activity_proposals_taxonomy', duplicate_titles: 'web.activity_proposals_duplicates', featured_images: 'web.activity_proposals_images' }[d.kind] || 'web.activity_proposals_generic';
+      return tf(key, { count: d.count });
+    }
+    case 'change_applied': return failed ? t('web.activity_change_failed') : t(d.queued ? 'web.activity_change_queued' : 'web.activity_change_applied');
+    case 'change_verified': return t(d.verified ? 'web.activity_change_verified' : 'web.activity_change_not_verified');
+    case 'change_rejected': return t('web.activity_change_rejected');
     case 'cycle_failed': return t('web.activity_cycle_failed');
     case 'cycle_stopped': return t('web.activity_cycle_stopped');
     default: return e.task_type;
@@ -9587,10 +9596,119 @@ const WEBSITE_PLATFORM_UI = {
 };
 const platformUi = key => WEBSITE_PLATFORM_UI[key] || WEBSITE_PLATFORM_UI.website;
 
+// ── Activity history on every feature card ──────────────────────────────────
+// Each card gets a small "Activity" panel: its latest runs (by you or automatic, successful or not), and a button that clears ONLY that feature's
+// activity log. Saved results (rankings and trends, audit runs, checks, proposals, posts) are never touched by it.
+const FEATURE_HISTORY_CARDS = {
+  website: { intelligence: 'websiteIntelligenceSection', audit: 'websiteAuditRunSection', ai_visibility: 'websiteAiVisibilitySection', keyword_rankings: 'websiteKeywordRankingsSection', sitemap: 'websiteSitemapSection', competitor: 'websiteCompetitorSection', technical_seo: 'websiteTechnicalSeoSection', broken_links: 'websiteBrokenLinksSection', schema: 'websiteSchemaSection', content: 'websiteGeneratedPostsSection', improvements: 'websiteActionsSection' },
+  shopify: { intelligence: 'shopifyIntelligenceSection', audit: 'shopifyAuditSection', ai_visibility: 'shopifyAiVisibilitySection', keyword_rankings: 'shopifyKeywordRankingsSection', sitemap: 'shopifySitemapSection', competitor: 'shopifyCompetitorSection', technical_seo: 'shopifyTechnicalSeoSection', broken_links: 'shopifyBrokenLinksSection', schema: 'shopifySchemaSection', content: 'shopifyGeneratedPostsSection', improvements: 'shopifyActionsSection' },
+};
+const FEATURE_TITLE_KEYS = { intelligence: 'web.intelligence_title', audit: 'web.audit_run_title', ai_visibility: 'web.ai_visibility_title', keyword_rankings: 'web.keyword_rankings_title', sitemap: 'web.sitemap_title', competitor: 'web.competitor_title', technical_seo: 'web.technical_seo_title', broken_links: 'web.broken_links_title', schema: 'web.schema_title', content: 'web.generated_posts_title', improvements: 'web.proposed_changes_title' };
+const featureHistory = { website: { data: null, open: {}, full: {}, loading: null }, shopify: { data: null, open: {}, full: {}, loading: null } };
+const historyBox = (prefix, feature) => document.getElementById(`${prefix}History_${feature}`);
+
+function mountFeatureHistories() {
+  for (const [prefix, cards] of Object.entries(FEATURE_HISTORY_CARDS)) {
+    for (const [feature, cardId] of Object.entries(cards)) {
+      const card = document.getElementById(cardId); if (!card || historyBox(prefix, feature)) continue;
+      const box = document.createElement('div');
+      box.id = `${prefix}History_${feature}`; box.className = 'feature-history';
+      box.style.cssText = 'display:none;margin-top:14px;padding-top:10px;border-top:1px solid var(--border)';
+      card.appendChild(box);
+    }
+  }
+}
+function hideFeatureHistories(prefix) { for (const feature of Object.keys(FEATURE_HISTORY_CARDS[prefix])) { const b = historyBox(prefix, feature); if (b) { b.style.display = 'none'; b.textContent = ''; } } }
+
+function historyTime(e) {
+  const at = new Date(e.created_at); if (isNaN(at.getTime())) return '';
+  const when = at.toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return `${when} · ${t(e.triggered_by === 'automatic' ? 'web.history_automatic' : 'web.history_manual')}`;
+}
+function historyButton(text, onClick, extraStyle = '') {
+  const b = document.createElement('button'); b.type = 'button'; b.textContent = text; b.addEventListener('click', onClick);
+  b.style.cssText = 'background:none;border:none;cursor:pointer;font-family:inherit;padding:0;' + extraStyle; return b;
+}
+function renderFeatureHistory(prefix, feature) {
+  const box = historyBox(prefix, feature), st = featureHistory[prefix]; if (!box || !st.data) return;
+  const info = st.data[feature] || { total: 0, entries: [] }, open = !!st.open[feature], entries = st.full[feature] || info.entries;
+  box.textContent = ''; box.style.display = '';
+  const head = document.createElement('div'); head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap';
+  head.appendChild(historyButton((open ? '▾ ' : '▸ ') + tf('web.history_count', { n: info.total }), () => { st.open[feature] = !st.open[feature]; renderFeatureHistory(prefix, feature); }, 'font-size:12px;font-weight:600;color:var(--text2)'));
+  if (open && info.total > 0) head.appendChild(historyButton(t('web.history_clear'), () => clearFeatureHistory(prefix, feature), 'font-size:11.5px;color:var(--muted);text-decoration:underline'));
+  box.appendChild(head);
+  if (!open) return;
+  if (!entries.length) {
+    const empty = document.createElement('div'); empty.style.cssText = 'font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5'; empty.textContent = t('web.history_empty'); box.appendChild(empty); return;
+  }
+  const list = document.createElement('div'); list.style.cssText = 'margin-top:8px;display:flex;flex-direction:column;gap:6px';
+  for (const e of entries) {
+    const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;font-size:12px;line-height:1.45';
+    const dot = document.createElement('span'); dot.style.cssText = `flex:none;width:7px;height:7px;border-radius:50%;margin-top:5px;background:${e.outcome === 'failed' ? '#ef4444' : e.outcome === 'attention' ? '#f59e0b' : '#22c55e'}`;
+    const text = document.createElement('div'); text.style.cssText = 'min-width:0;flex:1';
+    const main = document.createElement('div'); main.style.color = 'var(--text2)'; main.textContent = agentActivityText(e);
+    const meta = document.createElement('div'); meta.style.cssText = 'font-size:11px;color:var(--muted)'; meta.textContent = historyTime(e);
+    text.appendChild(main); text.appendChild(meta); row.appendChild(dot); row.appendChild(text); list.appendChild(row);
+  }
+  box.appendChild(list);
+  if (info.total > entries.length) box.appendChild(historyButton(tf('web.history_show_all', { n: Math.min(info.total, 50) }), () => showAllFeatureHistory(prefix, feature), 'font-size:11.5px;color:var(--purple-light);margin-top:8px;display:block'));
+}
+
+// The latest few entries of every feature, in one request. A plan without activity history gets none (the panels stay hidden).
+function loadFeatureHistories(prefix) {
+  const st = featureHistory[prefix]; if (!st || !currentWebsiteBusinessId) return Promise.resolve();
+  if (st.loading) return st.loading;
+  st.loading = (async () => {
+    try {
+      const res = await fetch(`/api/business/${currentWebsiteBusinessId}/agent-activity/features?platform=${platformUi(prefix).platform}`);
+      if (!res.ok) { st.data = null; hideFeatureHistories(prefix); return; }
+      const data = await res.json(); st.data = data.features || {}; st.full = {};
+      for (const feature of Object.keys(FEATURE_HISTORY_CARDS[prefix])) renderFeatureHistory(prefix, feature);
+    } catch (e) { /* the panels keep what they had */ }
+  })().finally(() => { st.loading = null; });
+  return st.loading;
+}
+async function showAllFeatureHistory(prefix, feature) {
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/agent-activity?platform=${platformUi(prefix).platform}&feature=${encodeURIComponent(feature)}&limit=50`);
+    const data = await res.json(); if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
+    featureHistory[prefix].full[feature] = data.entries || []; renderFeatureHistory(prefix, feature);
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+}
+async function clearFeatureHistory(prefix, feature) {
+  if (!confirm(tf('web.history_clear_confirm', { feature: t(FEATURE_TITLE_KEYS[feature]) }))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/agent-activity?platform=${platformUi(prefix).platform}&feature=${encodeURIComponent(feature)}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
+    showToast(data.removed ? tf('web.cleared_toast', { n: data.removed }) : t('web.nothing_to_clear'), 'success');
+    await loadFeatureHistories(prefix); loadAgentActivity(prefix);
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+}
+// After ANY action on a site or store (a check, an audit, a fix...) the histories are refreshed, so no button needs to remember to do it.
+(function keepHistoriesCurrent() {
+  const original = window.fetch.bind(window), timers = {};
+  window.fetch = function (input, init) {
+    const result = original(input, init);
+    try {
+      const method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase(), url = String(typeof input === 'string' ? input : (input && input.url) || '');
+      const m = /\/api\/business\/[^/]+\/(website|shopify)\//.exec(url);
+      if (method !== 'GET' && m && !/\/agent-activity/.test(url)) {
+        const prefix = m[1], later = () => { clearTimeout(timers[prefix]); timers[prefix] = setTimeout(() => loadFeatureHistories(prefix), 700); };
+        result.then(later, later);
+      }
+    } catch (e) { /* never in the way of the request */ }
+    return result;
+  };
+})();
+document.addEventListener('arreyon:langchange', () => { for (const prefix of Object.keys(featureHistory)) if (featureHistory[prefix].data) for (const f of Object.keys(FEATURE_HISTORY_CARDS[prefix])) renderFeatureHistory(prefix, f); });
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountFeatureHistories); else mountFeatureHistories();
+
 const agentRunPollers = {};
 
 // Returns whether a run is in progress. If one is (started earlier, or from another tab), pick up watching it.
 async function loadAgentActivity(prefix) {
+  loadFeatureHistories(prefix);   // the History on each feature card is kept in step with this list
   const el = document.getElementById(`${prefix}ActivityContent`);
   if (!el) return false;
   try {
