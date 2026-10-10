@@ -57,6 +57,174 @@ app.use(passport.initialize());
 app.use(passport.session());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ═════════════════════════════════════════════════════════════════════════════
+// SECURITY — rate limiting, sign-in sessions that can be cancelled, input checks
+// (kept in one place; nothing here needs a new package)
+// ═════════════════════════════════════════════════════════════════════════════
+const RL_MIN = 60 * 1000, RL_HOUR = 60 * RL_MIN, RL_DAY = 24 * RL_HOUR;
+// Emergency switch: set RATE_LIMITS_OFF=1 in Render (then restart) to switch off every limit below.
+const RATE_LIMITS_OFF = process.env.RATE_LIMITS_OFF === '1';
+
+// Who is calling. Behind Render's proxy the caller's address arrives in a header. A visitor could fake that header, so nothing below
+// depends on it alone: sign-ins are also limited per ACCOUNT, and the costly public endpoints have a ceiling for everyone combined.
+function clientIp(req) {
+  const h = (req && req.headers) || {};
+  const fromHeaders = [h['cf-connecting-ip'], h['true-client-ip'], String(h['x-forwarded-for'] || '').split(',')[0]];
+  for (const c of fromHeaders) {
+    const v = String(c || '').trim();
+    if (v && v.length <= 64 && /^[0-9a-fA-F:.]+$/.test(v)) return v.replace(/^::ffff:/, '');
+  }
+  // No header: use the connection itself, unless it is the hosting proxy's own internal address (that would be every visitor at once)
+  const direct = String((req && req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
+  if (!direct || /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|f[cd][0-9a-f]{2}:)/i.test(direct)) return 'unknown';
+  return direct;
+}
+
+const rateStore = new Map();   // key -> times (ms) of recent hits, oldest first
+function rateHits(key, windowMs, now = Date.now()) {
+  const arr = rateStore.get(key);
+  if (!arr) return [];
+  const fresh = arr.filter(t => now - t < windowMs);
+  if (fresh.length !== arr.length) { if (fresh.length) rateStore.set(key, fresh); else rateStore.delete(key); }
+  return fresh;
+}
+function rateCount(key, windowMs, now = Date.now()) { return rateHits(key, windowMs, now).length; }
+function rateAdd(key, windowMs, now = Date.now()) { const fresh = rateHits(key, windowMs, now); fresh.push(now); rateStore.set(key, fresh); return fresh.length; }
+function rateClear(key) { rateStore.delete(key); }
+// Seconds until the oldest hit leaves the window (so one more request is allowed again)
+function rateRetryAfter(key, windowMs, now = Date.now()) { const h = rateHits(key, windowMs, now); return h.length ? Math.max(1, Math.ceil((h[0] + windowMs - now) / 1000)) : 1; }
+setInterval(() => {   // forget old keys, and never grow without bound
+  const now = Date.now();
+  for (const [k, arr] of rateStore) if (!arr.length || now - arr[arr.length - 1] > 26 * RL_HOUR) rateStore.delete(k);
+  if (rateStore.size > 50000) { let n = rateStore.size - 40000; for (const k of rateStore.keys()) { rateStore.delete(k); if (--n <= 0) break; } }
+  for (const [k, v] of tokenVersionCache) if (v.exp < now) tokenVersionCache.delete(k);
+}, 10 * RL_MIN).unref();
+
+function tooManyRequests(res, retryAfterSec, message) {
+  res.set('Retry-After', String(retryAfterSec));
+  return res.status(429).json({ error: message || 'Too many requests. Please try again later.', code: 'rate_limited', retryAfter: retryAfterSec });
+}
+// A request that is turned away is NOT counted, so a person is never kept out longer than the window itself
+function limitIp(name, max, windowMs, message) {
+  return (req, res, next) => {
+    if (RATE_LIMITS_OFF) return next();
+    const ip = clientIp(req);
+    if (ip === 'unknown') return next();   // cannot tell visitors apart: rely on the combined ceilings instead of blocking everyone
+    const key = `ip:${name}:${ip}`;
+    if (rateCount(key, windowMs) >= max) return tooManyRequests(res, rateRetryAfter(key, windowMs), message);
+    rateAdd(key, windowMs); next();
+  };
+}
+function limitAll(name, max, windowMs, message) {   // one ceiling for every visitor combined (a backstop against a faked address)
+  return (req, res, next) => {
+    if (RATE_LIMITS_OFF) return next();
+    const key = `all:${name}`;
+    if (rateCount(key, windowMs) >= max) return tooManyRequests(res, rateRetryAfter(key, windowMs), message || 'This service is very busy right now. Please try again later.');
+    rateAdd(key, windowMs); next();
+  };
+}
+function capBody(maxBytes) {
+  return (req, res, next) => {
+    const declared = Number(req.headers['content-length']);
+    const size = Number.isFinite(declared) ? declared : Buffer.byteLength(JSON.stringify(req.body || {}));
+    if (size > maxBytes) return res.status(413).json({ error: 'That request is too large.', code: 'too_large' });
+    next();
+  };
+}
+
+// Sign-in lockouts: repeated wrong passwords lock the ACCOUNT for a while whichever address they come from, and each address too.
+const LOGIN_WINDOW = 15 * RL_MIN, LOGIN_MAX_PER_EMAIL = 8, LOGIN_MAX_PER_IP = 30;
+const ADMIN_LOGIN_MAX_PER_EMAIL = 8, ADMIN_LOGIN_MAX_PER_IP = 5;
+const BOARD_FAIL_MAX_PER_IP = 5, BOARD_FAIL_MAX_ALL = 40;
+
+// ── Sign-in sessions that can be cancelled ──
+// Every account has a counter (token_version). A login token carries the counter it was issued under and is only good while it still
+// matches. Resetting a password or choosing "sign out of all devices" raises the counter, which ends every older session at once.
+// Tokens issued before this existed carry no counter and count as 0, so nobody is signed out when this is first deployed.
+const tokenVersionCache = new Map();   // "users:<id>" -> { v, exp } (kept for a few seconds so a busy page is not one extra query per click)
+const TOKEN_VERSION_TTL_MS = 20 * 1000;
+function assertSessionTable(table) { if (table !== 'users' && table !== 'admin_users') throw new Error('bad session table'); }
+async function currentTokenVersion(table, id) {
+  assertSessionTable(table);
+  const key = `${table}:${id}`, hit = tokenVersionCache.get(key);
+  if (hit && hit.exp > Date.now()) return hit.v;
+  const r = await pool.query(`SELECT token_version FROM ${table} WHERE id = $1`, [id]);
+  if (!r.rows.length) { tokenVersionCache.delete(key); return null; }   // the account no longer exists
+  const v = Number(r.rows[0].token_version) || 0;
+  tokenVersionCache.set(key, { v, exp: Date.now() + TOKEN_VERSION_TTL_MS });
+  return v;
+}
+async function bumpTokenVersion(table, id) {
+  assertSessionTable(table);
+  const r = await pool.query(`UPDATE ${table} SET token_version = token_version + 1 WHERE id = $1 RETURNING token_version`, [id]);
+  if (!r.rows.length) return null;
+  const v = Number(r.rows[0].token_version) || 0;
+  tokenVersionCache.set(`${table}:${id}`, { v, exp: Date.now() + TOKEN_VERSION_TTL_MS });
+  return v;
+}
+async function sessionIsCurrent(table, id, tv) { const v = await currentTokenVersion(table, id); return v !== null && (Number(tv) || 0) === v; }
+// The short-lived "state" tokens used while connecting Shopify / Google / HubSpot / Zoho are signed with the same key but are not sign-ins
+function isStateToken(d) { return !!(d && (d.ownerId || d.shop || d.businessName || d.role)); }
+async function issueSession(res, user) { const v = await currentTokenVersion('users', user.id); setCookie(res, generateToken(user.id, user.plan, v || 0)); }
+
+// ── The private board (password-gated page) ──
+// The board password used to guard only the screen. Now a correct password also sets a signed cookie, and the board's endpoints require
+// it (a signed-in user also qualifies). BOARD_API_OPEN=1 in Render turns this requirement off in an emergency.
+const BOARD_COOKIE = 'arreyon_board', BOARD_SESSION_MS = 12 * RL_HOUR;
+function boardPasswordMatches(given) {
+  const a = crypto.createHash('sha256').update(String(given === undefined || given === null ? '' : given)).digest();
+  const b = crypto.createHash('sha256').update(String(BOARD_PASSWORD)).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+async function requireBoardOrUser(req, res, next) {
+  if (process.env.BOARD_API_OPEN === '1') return next();
+  try {
+    const bc = req.cookies && req.cookies[BOARD_COOKIE];
+    if (bc) { try { const d = jwt.verify(bc, JWT_SECRET); if (d && d.role === 'board') return next(); } catch (e) { /* not a board session */ } }
+    const tok = (req.cookies && req.cookies.arreyon_token) || (req.headers.authorization || '').replace('Bearer ', '');
+    if (tok) { try { const d = jwt.verify(tok, JWT_SECRET); if (d && d.userId && !isStateToken(d) && await sessionIsCurrent('users', d.userId, d.tv)) return next(); } catch (e) { /* not a user session */ } }
+    return res.status(401).json({ error: 'Please sign in to the board first.', code: 'board_auth_required' });
+  } catch (e) { return res.status(500).json({ error: 'Could not check access. Please try again.' }); }
+}
+
+// ── Checking what people type ──
+function escapeHtmlText(v) { return String(v === null || v === undefined ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+// Plain text with no markup characters or control characters. '' is allowed; null means "not acceptable".
+function cleanPlainText(v, max) {
+  if (v === undefined || v === null || v === '') return '';
+  if (typeof v !== 'string') return null;
+  const t = v.replace(/\s+/g, ' ').trim();
+  if (t.length > max || /[<>\u0000-\u001f\u007f]/.test(t)) return null;
+  return t;
+}
+function cleanPersonName(v, max = 60) { const t = cleanPlainText(v, max); return t ? t : null; }
+function cleanEmailAddress(v) {
+  if (typeof v !== 'string') return null;
+  const t = v.trim().toLowerCase();
+  if (!t || t.length > 254 || /[\s<>"(),;:\\\[\]]/.test(t)) return null;
+  return /^[^@]+@[^@]+\.[^@.]{2,}$/.test(t) ? t : null;
+}
+
+// ── Defaults that must not be used for real ──
+for (const [name, fallbackNote] of [['JWT_SECRET', 'login tokens'], ['ADMIN_PASSWORD', 'the admin account'], ['CREDENTIAL_ENCRYPTION_KEY', 'stored site credentials'], ['BOARD_PASSWORD', 'the private board'], ['CRON_SECRET', 'the scheduler trigger']]) {
+  if (!process.env[name] && process.env.NODE_ENV === 'production') console.warn(`SECURITY WARNING: ${name} is not set, so the built-in default is in use for ${fallbackNote}. Set it in Render.`);
+}
+
+// ── Limits on the public routes (registered before the routes themselves, so they run first) ──
+app.post('/api/auth/register', limitIp('register', 5, RL_HOUR, 'Too many sign-ups from this connection. Please try again later.'), limitAll('register', 600, RL_HOUR, 'Sign-ups are very busy right now. Please try again in a little while.'));
+app.post('/api/auth/forgot-password', limitIp('forgot', 5, RL_HOUR, 'Too many reset requests. Please try again later.'));
+app.post('/api/auth/resend-verification', limitIp('resend', 5, RL_HOUR, 'Too many requests. Please try again later.'));
+app.post('/api/auth/reset-password', limitIp('reset', 10, RL_HOUR, 'Too many attempts. Please try again later.'));
+app.post('/api/coupons/validate', limitIp('coupon', 30, RL_HOUR));
+app.post('/api/payments/submit', limitIp('payment', 10, RL_HOUR, 'Too many payment submissions from this connection. Please try again later.'));
+app.post('/api/translate-messages', limitIp('translate', 60, RL_HOUR), capBody(120 * 1024));
+app.post('/api/consult/qualify', limitIp('consult-q', 40, RL_HOUR), limitAll('consult-q', 1500, RL_DAY), capBody(300 * 1024));
+app.post('/api/consult/run', limitIp('consult-run', 8, RL_HOUR), limitAll('consult-run', 400, RL_DAY), capBody(300 * 1024));
+app.post('/api/heygen/welcome', limitIp('heygen-w', 5, RL_HOUR), limitAll('heygen-w', 100, RL_DAY), capBody(50 * 1024));
+app.post('/api/heygen/report', limitIp('heygen-r', 5, RL_HOUR), limitAll('heygen-r', 100, RL_DAY), capBody(150 * 1024));
+app.post(['/api/chat', '/api/board-match', '/api/board-analyze', '/api/board-research', '/api/board-verify', '/api/board-synthesize'],
+  requireBoardOrUser, limitIp('board', 300, RL_HOUR), capBody(800 * 1024));
+
 // ── DATABASE ───────────────────────────────────────────────────────────────
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -507,9 +675,16 @@ function escapeHtmlEmail(str) {
   return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// Values go into the email HTML escaped, so a name can never add links or formatting to an email that comes from us.
+// (A subject line is plain text, not HTML, so it keeps the raw value.) alertsHtml is built here on the server from escaped pieces.
+const RAW_HTML_EMAIL_PARAMS = new Set(['alertsHtml']);
+const SELF_ESCAPING_EMAIL_TEMPLATES = new Set(['taskAssigned']);   // these already escape their own values (escaping twice would show &amp;lt;)
 function buildEmail(type, lang, params) {
   const langKey = lang === 'fr' ? 'fr' : 'en';
-  return EMAIL_TEMPLATES[type][langKey](params);
+  const template = EMAIL_TEMPLATES[type][langKey];
+  const safe = {};
+  for (const [k, v] of Object.entries(params || {})) safe[k] = (typeof v === 'string' && !RAW_HTML_EMAIL_PARAMS.has(k) && !SELF_ESCAPING_EMAIL_TEMPLATES.has(type)) ? escapeHtmlText(v) : v;
+  return { subject: String(template(params || {}).subject || '').replace(/[\r\n]+/g, ' '), html: template(safe).html };
 }
 
 // ── GOOGLE OAUTH ───────────────────────────────────────────────────────────
@@ -552,15 +727,21 @@ passport.deserializeUser(async (id, done) => {
 });
 
 // ── AUTH MIDDLEWARE ────────────────────────────────────────────────────────
-function authRequired(req, res, next) {
+async function authRequired(req, res, next) {
   const token = req.cookies.arreyon_token || req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Authentication required' });
+  let decoded;
+  try { decoded = jwt.verify(token, JWT_SECRET); } catch (e) { return res.status(401).json({ error: 'Invalid or expired token' }); }
+  // Only a real sign-in counts: not an admin/board token, and not a short-lived connection "state" token
+  if (!decoded || !decoded.userId || isStateToken(decoded)) return res.status(401).json({ error: 'Invalid or expired token' });
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.userId = decoded.userId;
-    req.userPlan = decoded.plan;
-    next();
-  } catch(e) { res.status(401).json({ error: 'Invalid or expired token' }); }
+    const v = await currentTokenVersion('users', decoded.userId);
+    if (v === null) return res.status(401).json({ error: 'Invalid or expired token' });   // the account no longer exists
+    if ((Number(decoded.tv) || 0) !== v) return res.status(401).json({ error: 'Your session has ended. Please sign in again.', code: 'session_ended' });
+  } catch (e) { return res.status(500).json({ error: 'Could not check your session. Please try again.' }); }
+  req.userId = decoded.userId;
+  req.userPlan = decoded.plan;
+  next();
 }
 
 // ── Team accounts: resolve the EFFECTIVE account for plan/limits purposes ──
@@ -11105,15 +11286,17 @@ app.get('/api/integrations/zoho-books/metrics', authRequired, async (req, res) =
   }
 });
 
-function adminRequired(req, res, next) {
+async function adminRequired(req, res, next) {
   const token = req.cookies.arreyon_admin_token || req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Admin authentication required' });
+  let decoded;
+  try { decoded = jwt.verify(token, JWT_SECRET); } catch (e) { return res.status(401).json({ error: 'Invalid admin token' }); }
+  if (decoded.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    if (decoded.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
-    req.adminId = decoded.adminId;
-    next();
-  } catch(e) { res.status(401).json({ error: 'Invalid admin token' }); }
+    if (!decoded.adminId || !(await sessionIsCurrent('admin_users', decoded.adminId, decoded.tv))) return res.status(401).json({ error: 'Your admin session has ended. Please sign in again.', code: 'session_ended' });
+  } catch (e) { return res.status(500).json({ error: 'Could not check your session. Please try again.' }); }
+  req.adminId = decoded.adminId;
+  next();
 }
 
 // ── DATABASE INIT ──────────────────────────────────────────────────────────
@@ -11123,19 +11306,21 @@ async function initDB() {
     const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
     await pool.query(schema);
     // Create default admin
-    const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
-    await pool.query(
-      `INSERT INTO admin_users (email, password_hash, name) VALUES ($1, $2, 'Admin')
-       ON CONFLICT (email) DO UPDATE SET password_hash = $2`,
-      [ADMIN_EMAIL, hash]
-    );
+    // The admin password is whatever ADMIN_PASSWORD is set to. It is only rewritten when it actually changed, and a change
+    // ends every admin session that was signed in under the old password.
+    const existingAdmin = await pool.query('SELECT id, password_hash FROM admin_users WHERE LOWER(email) = LOWER($1)', [ADMIN_EMAIL]);
+    if (!existingAdmin.rows.length) {
+      await pool.query(`INSERT INTO admin_users (email, password_hash, name) VALUES ($1, $2, 'Admin') ON CONFLICT (email) DO NOTHING`, [ADMIN_EMAIL, await bcrypt.hash(ADMIN_PASSWORD, 10)]);
+    } else if (!(await bcrypt.compare(ADMIN_PASSWORD, existingAdmin.rows[0].password_hash))) {
+      await pool.query('UPDATE admin_users SET password_hash = $1, token_version = token_version + 1 WHERE id = $2', [await bcrypt.hash(ADMIN_PASSWORD, 10), existingAdmin.rows[0].id]);
+    }
     console.log('Database initialized');
   } catch(e) { console.error('DB init error:', e.message); }
 }
 
 // ── HELPERS ────────────────────────────────────────────────────────────────
-function generateToken(userId, plan) {
-  return jwt.sign({ userId, plan }, JWT_SECRET, { expiresIn: '30d' });
+function generateToken(userId, plan, tokenVersion = 0) {
+  return jwt.sign({ userId, plan, tv: Number(tokenVersion) || 0 }, JWT_SECRET, { expiresIn: '30d' });
 }
 
 function setCookie(res, token, name = 'arreyon_token') {
@@ -11153,11 +11338,17 @@ function setCookie(res, token, name = 'arreyon_token') {
 
 // Register
 app.post('/api/auth/register', async (req, res) => {
-  const { firstName, lastName, password, phone, country, language } = req.body;
-  const email = req.body.email?.trim().toLowerCase();
-  if (!firstName || !lastName || !email || !password) {
+  const { password, language } = req.body;
+  if (!req.body.firstName || !req.body.lastName || !req.body.email || !password) {
     return res.status(400).json({ error: 'All required fields must be filled' });
   }
+  // What people type is checked here and shown escaped everywhere, so a "name" can never carry markup
+  const firstName = cleanPersonName(req.body.firstName), lastName = cleanPersonName(req.body.lastName);
+  const email = cleanEmailAddress(req.body.email), phone = cleanPlainText(req.body.phone, 30), country = cleanPlainText(req.body.country, 60);
+  if (!firstName || !lastName) return res.status(400).json({ error: 'Please enter a valid first and last name (letters, no symbols like < or >).' });
+  if (!email) return res.status(400).json({ error: 'Please enter a valid email address.' });
+  if (phone === null || country === null) return res.status(400).json({ error: 'Please check your phone number and country.' });
+  if (typeof password !== 'string') return res.status(400).json({ error: 'All required fields must be filled' });
   try {
     const existing = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     if (existing.rows.length) return res.status(400).json({ error: 'Email already registered' });
@@ -11200,8 +11391,7 @@ app.get('/auth/verify', async (req, res) => {
     );
     if (!result.rows.length) return res.redirect('/auth?error=invalid_token');
     const user = result.rows[0];
-    const authToken = generateToken(user.id, user.plan);
-    setCookie(res, authToken);
+    await issueSession(res, user);
     res.redirect('/dashboard');
   } catch(e) { res.redirect('/auth?error=verify_failed'); }
 });
@@ -11210,18 +11400,27 @@ app.get('/auth/verify', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   const email = req.body.email?.trim().toLowerCase();
   const { password } = req.body;
+  // Repeated wrong passwords lock the ACCOUNT for a while (whichever address they come from), and each address is limited too.
+  // Unknown emails are counted exactly like real ones, so the lockout never reveals whether an account exists.
+  const emailKey = `login-fail:email:${String(email || '')}`, ip = clientIp(req), ipKey = `login-fail:ip:${ip}`;
+  if (!RATE_LIMITS_OFF) {
+    const emailLocked = rateCount(emailKey, LOGIN_WINDOW) >= LOGIN_MAX_PER_EMAIL;
+    const ipLocked = ip !== 'unknown' && rateCount(ipKey, LOGIN_WINDOW) >= LOGIN_MAX_PER_IP;
+    if (emailLocked || ipLocked) return tooManyRequests(res, rateRetryAfter(emailLocked ? emailKey : ipKey, LOGIN_WINDOW), 'Too many sign-in attempts. Please wait a few minutes and try again, or reset your password.');
+  }
+  const wrong = () => { rateAdd(emailKey, LOGIN_WINDOW); if (ip !== 'unknown') rateAdd(ipKey, LOGIN_WINDOW); return res.status(401).json({ error: 'Invalid email or password' }); };
   try {
     const result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     const user = result.rows[0];
-    if (!user) return res.status(401).json({ error: 'Invalid email or password' });
+    if (!user) return wrong();
     if (!user.password_hash) return res.status(401).json({ error: 'Please sign in with Google' });
     if (!user.email_verified) return res.status(401).json({ error: 'Please verify your email first', needsVerification: true });
 
-    const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
+    const valid = typeof password === 'string' && await bcrypt.compare(password, user.password_hash);
+    if (!valid) return wrong();
 
-    const token = generateToken(user.id, user.plan);
-    setCookie(res, token);
+    rateClear(emailKey);
+    await issueSession(res, user);
     res.json({ success: true, user: { id: user.id, firstName: user.first_name, email: user.email, plan: user.plan } });
   } catch(e) { res.status(500).json({ error: 'Login failed' }); }
 });
@@ -11233,6 +11432,7 @@ app.post('/api/auth/resend-verification', async (req, res) => {
     const result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     const user = result.rows[0];
     if (!user || user.email_verified) return res.json({ success: true });
+    if (!RATE_LIMITS_OFF) { const k = `resend:email:${email}`; if (rateCount(k, RL_HOUR) >= 3) return res.json({ success: true }); rateAdd(k, RL_HOUR); }   // quietly: never reveals anything
 
     const token = uuidv4();
     const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -11253,6 +11453,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     const user = result.rows[0];
     if (!user) return res.json({ success: true }); // Don't reveal if email exists
+    if (!RATE_LIMITS_OFF) { const k = `forgot:email:${email}`; if (rateCount(k, RL_HOUR) >= 3) return res.json({ success: true }); rateAdd(k, RL_HOUR); }   // quietly: no more than 3 emails an hour to one person
 
     const token = uuidv4();
     const expires = new Date(Date.now() + 60 * 60 * 1000);
@@ -11277,6 +11478,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
       [hash, token]
     );
     if (!result.rows.length) return res.status(400).json({ error: 'Invalid or expired reset link' });
+    await bumpTokenVersion('users', result.rows[0].id);   // every sign-in made before the reset ends now
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: 'Reset failed' }); }
 });
@@ -11287,14 +11489,21 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ success: true });
 });
 
+// "Sign out of all devices": ends every session this account has, including any that were stolen
+app.post('/api/auth/logout-all', authRequired, async (req, res) => {
+  try { await bumpTokenVersion('users', req.userId); }
+  catch (e) { return res.status(500).json({ error: 'Could not sign you out everywhere. Please try again.' }); }
+  res.clearCookie('arreyon_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
+  res.json({ success: true });
+});
+
 // Google OAuth routes
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/auth?error=google_failed' }),
-  (req, res) => {
-    const token = generateToken(req.user.id, req.user.plan);
-    setCookie(res, token);
-    res.redirect('/dashboard');
+  async (req, res) => {
+    try { await issueSession(res, req.user); res.redirect('/dashboard'); }
+    catch (e) { res.redirect('/auth?error=google_failed'); }
   }
 );
 
@@ -11335,13 +11544,22 @@ app.get('/api/auth/me', authRequired, async (req, res) => {
 app.post('/api/admin/login', async (req, res) => {
   const email = req.body.email?.trim().toLowerCase();
   const { password } = req.body;
+  // The admin account is the most valuable target, so its limits are the strictest
+  const emailKey = `admin-fail:email:${String(email || '')}`, ip = clientIp(req), ipKey = `admin-fail:ip:${ip}`;
+  if (!RATE_LIMITS_OFF) {
+    const emailLocked = rateCount(emailKey, LOGIN_WINDOW) >= ADMIN_LOGIN_MAX_PER_EMAIL;
+    const ipLocked = ip !== 'unknown' && rateCount(ipKey, LOGIN_WINDOW) >= ADMIN_LOGIN_MAX_PER_IP;
+    if (emailLocked || ipLocked) return tooManyRequests(res, rateRetryAfter(emailLocked ? emailKey : ipKey, LOGIN_WINDOW), 'Too many sign-in attempts. Please wait a few minutes and try again.');
+  }
+  const wrong = () => { rateAdd(emailKey, LOGIN_WINDOW); if (ip !== 'unknown') rateAdd(ipKey, LOGIN_WINDOW); return res.status(401).json({ error: 'Invalid credentials' }); };
   try {
     const result = await pool.query('SELECT * FROM admin_users WHERE LOWER(email) = LOWER($1)', [email]);
     const admin = result.rows[0];
-    if (!admin) return res.status(401).json({ error: 'Invalid credentials' });
-    const valid = await bcrypt.compare(password, admin.password_hash);
-    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-    const token = jwt.sign({ adminId: admin.id, role: 'admin', name: admin.name }, JWT_SECRET, { expiresIn: '24h' });
+    if (!admin) return wrong();
+    const valid = typeof password === 'string' && await bcrypt.compare(password, admin.password_hash);
+    if (!valid) return wrong();
+    rateClear(emailKey);
+    const token = jwt.sign({ adminId: admin.id, role: 'admin', name: admin.name, tv: Number(admin.token_version) || 0 }, JWT_SECRET, { expiresIn: '24h' });
     setCookie(res, token, 'arreyon_admin_token');
     res.json({ success: true, admin: { id: admin.id, name: admin.name, email: admin.email } });
   } catch(e) { res.status(500).json({ error: 'Login failed' }); }
@@ -11360,7 +11578,12 @@ app.get('/api/admin/me', adminRequired, async (req, res) => {
   }
 });
 
-app.post('/api/admin/logout', (req, res) => {
+app.post('/api/admin/logout', async (req, res) => {
+  // Signing out ends this admin session for good (the token cannot be reused if it was copied)
+  try {
+    const t = req.cookies && req.cookies.arreyon_admin_token;
+    if (t) { const d = jwt.verify(t, JWT_SECRET); if (d && d.role === 'admin' && d.adminId) await bumpTokenVersion('admin_users', d.adminId); }
+  } catch (e) { /* nothing valid to end */ }
   res.clearCookie('arreyon_admin_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
   res.json({ success: true });
 });
@@ -11811,7 +12034,14 @@ app.put('/api/admin/plan-pricing', adminRequired, async (req, res) => {
 });
 
 app.post('/api/payments/submit', async (req, res) => {
-  const { plan, billingCycle, paymentMethod, payerName, payerEmail, payerPhone, payerCountry, couponCode, transactionRef } = req.body;
+  const { plan, billingCycle } = req.body;
+  // This form needs no account, so every field is checked before it is stored (and shown escaped wherever it is displayed)
+  const paymentMethod = cleanPlainText(req.body.paymentMethod, 40), payerName = cleanPlainText(req.body.payerName, 100);
+  const payerEmail = req.body.payerEmail ? cleanEmailAddress(req.body.payerEmail) : '', payerPhone = cleanPlainText(req.body.payerPhone, 30);
+  const payerCountry = cleanPlainText(req.body.payerCountry, 60), couponCode = cleanPlainText(req.body.couponCode, 40), transactionRef = cleanPlainText(req.body.transactionRef, 100);
+  if ([paymentMethod, payerName, payerEmail, payerPhone, payerCountry, couponCode, transactionRef].some(v => v === null)) {
+    return res.status(400).json({ error: 'Please check the payment details you entered (no symbols like < or >, and a valid email address).' });
+  }
   try {
     // Who is paying: the signed-in person wherever there is a session, so a payment can't be filed
     // against someone else's account by editing the request.
@@ -11853,12 +12083,12 @@ app.post('/api/payments/submit', async (req, res) => {
 
     // Notify admin
     await sendEmail(ADMIN_EMAIL, `New Payment Submission — ${PLAN_NAMES[plan] || plan}`,
-      `<p><strong>Name:</strong> ${payerName}<br>
-       <strong>Email:</strong> ${payerEmail}<br>
+      `<p><strong>Name:</strong> ${escapeHtmlText(payerName)}<br>
+       <strong>Email:</strong> ${escapeHtmlText(payerEmail)}<br>
        <strong>Plan:</strong> ${PLAN_NAMES[plan] || plan} (${billingCycle})<br>
        <strong>Amount:</strong> $${finalUsd} / ${finalCfa.toLocaleString()} FCFA${billingCycle === 'annual' ? ' (full year)' : ''}<br>
-       <strong>Method:</strong> ${paymentMethod}<br>
-       <strong>Ref:</strong> ${transactionRef || 'N/A'}</p>
+       <strong>Method:</strong> ${escapeHtmlText(paymentMethod)}<br>
+       <strong>Ref:</strong> ${escapeHtmlText(transactionRef) || 'N/A'}</p>
        <p><a href="${BASE_URL}/admin">Review in Admin Panel</a></p>`
     );
 
@@ -12150,7 +12380,10 @@ app.get('/api/user/profile', authRequired, async (req, res) => {
 });
 
 app.put('/api/user/profile', authRequired, async (req, res) => {
-  const { firstName, lastName, phone, country } = req.body;
+  const firstName = cleanPersonName(req.body.firstName), lastName = cleanPersonName(req.body.lastName);
+  const phone = cleanPlainText(req.body.phone, 30), country = cleanPlainText(req.body.country, 60);
+  if (!firstName || !lastName) return res.status(400).json({ error: 'Please enter a valid first and last name (letters, no symbols like < or >).' });
+  if (phone === null || country === null) return res.status(400).json({ error: 'Please check your phone number and country.' });
   try {
     await pool.query(
       'UPDATE users SET first_name=$1, last_name=$2, phone=$3, country=$4, updated_at=NOW() WHERE id=$5',
@@ -14444,8 +14677,20 @@ SCRIPT RULES:
 const BOARD_PASSWORD = process.env.BOARD_PASSWORD || 'gdesigns2026';
 app.post('/api/board-auth', (req, res) => {
   const { password } = req.body;
-  if (password === BOARD_PASSWORD) res.json({ success: true });
-  else res.status(401).json({ success: false });
+  const ip = clientIp(req), ipKey = `board-fail:ip:${ip}`, allKey = 'board-fail:all';
+  if (!RATE_LIMITS_OFF && ((ip !== 'unknown' && rateCount(ipKey, LOGIN_WINDOW) >= BOARD_FAIL_MAX_PER_IP) || rateCount(allKey, LOGIN_WINDOW) >= BOARD_FAIL_MAX_ALL)) {
+    return tooManyRequests(res, rateRetryAfter(rateCount(ipKey, LOGIN_WINDOW) >= BOARD_FAIL_MAX_PER_IP ? ipKey : allKey, LOGIN_WINDOW), 'Too many attempts. Please wait a few minutes and try again.');
+  }
+  if (boardPasswordMatches(password)) {
+    rateClear(ipKey);
+    // The screen is not the only thing that is locked: the board's endpoints now require this signed cookie
+    res.cookie(BOARD_COOKIE, jwt.sign({ role: 'board' }, JWT_SECRET, { expiresIn: '12h' }), { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: BOARD_SESSION_MS });
+    res.json({ success: true });
+  } else {
+    if (ip !== 'unknown') rateAdd(ipKey, LOGIN_WINDOW);
+    rateAdd(allKey, LOGIN_WINDOW);
+    res.status(401).json({ success: false });
+  }
 });
 
 // ── Internal board single-director chat (no auth/plan limits — password-gated) ──
@@ -17378,7 +17623,7 @@ async function runMonitoringSweep() {
             if (user) {
               const alertsHtml = unsent.rows.map(a =>
                 `<div style="background:#f5f5f5;border-radius:8px;padding:12px 14px;margin-bottom:10px">
-                  <strong>${a.title}</strong><p style="margin:4px 0 0;font-size:13px;color:#555">${a.message}</p>
+                  <strong>${escapeHtmlText(a.title)}</strong><p style="margin:4px 0 0;font-size:13px;color:#555">${escapeHtmlText(a.message)}</p>
                 </div>`
               ).join('');
               const { subject, html } = buildEmail('monitoringDigest', owner.preferred_language, {
