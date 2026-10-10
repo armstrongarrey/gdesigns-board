@@ -1922,3 +1922,11 @@ UPDATE cms_content SET value = $c$During your 7-day free trial you have 3 consul
 -- Logins made before this existed carry no number and count as 0, so nobody is signed out when it is first added.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
+
+-- Admin two-factor sign-in: an authenticator app code after the password, plus one-time recovery codes.
+-- The secret is encrypted (same key as the website credentials); recovery codes are stored only as hashes.
+-- totp_last_step makes every code usable once. totp_enabled stays false until the first code from the app has been checked.
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS totp_secret_encrypted TEXT;
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS totp_last_step BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS recovery_code_hashes JSONB NOT NULL DEFAULT '[]'::jsonb;
