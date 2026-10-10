@@ -1918,3 +1918,7 @@ UPDATE cms_content SET value = $c$Start your 7-day free trial. No credit card re
 UPDATE cms_content SET value = $c$During your 7-day free trial you have 3 consultations. On paid plans your limit resets every month. You can upgrade your plan at any time for more consultations immediately.$c$, value_fr = $c$Pendant votre essai gratuit de 7 jours, vous disposez de 3 consultations. Avec un forfait payant, votre limite se réinitialise chaque mois. Vous pouvez passer à un forfait supérieur à tout moment pour obtenir immédiatement plus de consultations.$c$, updated_at = NOW()
  WHERE section = 'faq' AND key = 'q5_answer' AND value = $c$Your limit resets at the start of each calendar month. You can upgrade your plan at any time for more consultations immediately.$c$;
 
+-- Sign-in sessions that can be cancelled: raising this number ends every login the account has made (password reset, "sign out of all devices").
+-- Logins made before this existed carry no number and count as 0, so nobody is signed out when it is first added.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
