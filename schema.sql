@@ -1930,3 +1930,15 @@ ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS totp_secret_encrypted TEXT;
 ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS totp_last_step BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS recovery_code_hashes JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+
+-- Broken-link confirmation: a link is only removed automatically once it was still broken on a check made at least 20 hours after it was first seen broken.
+CREATE TABLE IF NOT EXISTS broken_link_observations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID REFERENCES businesses(id) ON DELETE CASCADE,
+  platform VARCHAR(20) NOT NULL,
+  url TEXT NOT NULL,
+  first_broken_at TIMESTAMPTZ DEFAULT NOW(),
+  last_broken_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (business_id, platform, url)
+);
