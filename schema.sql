@@ -1953,3 +1953,12 @@ CREATE TABLE IF NOT EXISTS website_action_backups (
   content_after_hash VARCHAR(64) NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+
+-- Shopify link fixes: a copy of the page's content from just before a fix, so it can be undone (kept 30 days; same rules as WordPress).
+CREATE TABLE IF NOT EXISTS shopify_action_backups (
+  action_id UUID PRIMARY KEY REFERENCES shopify_actions(id) ON DELETE CASCADE,
+  content_before TEXT NOT NULL,
+  content_after_hash VARCHAR(64) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
