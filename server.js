@@ -3341,7 +3341,7 @@ function featureForActionType(actionType) {
   if (actionType === 'update_meta_title' || actionType === 'update_meta_description') return 'seo_proposals';
   if (actionType === 'assign_taxonomy' || actionType === 'create_category' || actionType === 'create_tag') return 'taxonomy';
   if (actionType === 'generate_featured_image') return 'featured_images';
-  if (actionType === 'remove_broken_link') return 'broken_links';
+  if (actionType === 'remove_broken_link' || actionType === 'update_link_url') return 'broken_links';
   return 'general';
 }
 
@@ -5568,6 +5568,18 @@ function wpCountHeadings(html) {
 // mixed in here. Relative hrefs (the most common real case in
 // WordPress-generated content) are resolved against the real site
 // URL rather than skipped.
+// Every link to ANOTHER website in a page's content, exactly as written (a fix has to match the page's own text), without repeats.
+function wpExtractExternalLinks(html, siteUrl) {
+  if (!html) return [];
+  let siteHost = ''; try { siteHost = new URL(siteUrl).hostname.replace(/^www\./, '').toLowerCase(); } catch { return []; }
+  const out = new Set();
+  for (const m of String(html).matchAll(/<a\s[^>]*href=["']([^"']+)["']/gi)) {
+    const href = m[1];
+    if (!/^https?:\/\//i.test(href)) continue;
+    try { if (new URL(href.replace(/&amp;/g, '&')).hostname.replace(/^www\./, '').toLowerCase() !== siteHost) out.add(href); } catch { /* not a real address: not checkable */ }
+  }
+  return [...out];
+}
 function wpExtractInternalLinks(html, siteUrl) {
   if (!html) return [];
   const siteHost = new URL(siteUrl).host;
@@ -5598,6 +5610,63 @@ function wpExtractInternalLinks(html, siteUrl) {
 // Returns a real, ready-to-upload PNG buffer, not a URL — gpt-image-1
 // returns base64-encoded image data directly, so there's no separate
 // download step needed before this can be handed to WordPress.
+// ── Featured images for generated posts ──
+// The focus keyword goes into the image's title, alt text and file name (once, naturally), whatever the post's own title is.
+const imageSlug = v => String(v || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+function cutAtWord(text, max) {
+  const t = String(text || '').trim(); if (t.length <= max) return t;
+  const cut = t.slice(0, max), i = cut.lastIndexOf(' ');
+  return (i > max * 0.6 ? cut.slice(0, i) : cut).replace(/[\s,;:–—-]+$/, '');
+}
+function buildFeaturedImageTexts(focusKeyword, title) {
+  const kw = String(focusKeyword || '').replace(/\s+/g, ' ').trim(), t = String(title || '').replace(/\s+/g, ' ').trim();
+  const fit = (joiner, max) => {
+    if (!kw) return cutAtWord(t, max);
+    if (kw.length >= max - 4) return cutAtWord(kw, max);
+    const has = t.toLowerCase().includes(kw.toLowerCase()), whole = has ? t : `${kw}${joiner}${t}`, cut = cutAtWord(whole, max);
+    return cut.toLowerCase().includes(kw.toLowerCase()) ? cut : `${kw}${joiner}${cutAtWord(t, max - kw.length - joiner.length)}`;   // never let shortening drop the keyword
+  };
+  return { imageTitle: fit(' – ', 100), altText: fit(': ', 125), fileBase: imageSlug(kw) || imageSlug(t) || 'featured-image' };
+}
+
+// Makes the picture, uploads it to the site's media library, gives it its title and alt text, and sets it as the post's featured image.
+// Never throws, and never fails the post. It says plainly what happened: status 'added' | 'skipped' | 'failed', and why (a short code; the real
+// detail goes to the server log). A missing image is never silent.
+async function addFeaturedImageToWordPressPost(connection, decryptedPassword, postId, { imagePrompt, focusKeyword, title }) {
+  if (process.env.FEATURED_IMAGES_OFF === '1') return { status: 'skipped', reason: 'turned_off' };
+  if (!process.env.OPENAI_API_KEY) { console.warn('Featured image skipped: OPENAI_API_KEY is not set.'); return { status: 'skipped', reason: 'not_configured' }; }
+  const texts = buildFeaturedImageTexts(focusKeyword, title);
+  let buffer;
+  try { buffer = await generateAIImage(imagePrompt); }
+  catch (e) { console.error('Featured image generation failed:', e.message); return { status: 'failed', reason: 'generation_failed' }; }
+  try {
+    const uploadRes = await wpApiRequestBinary(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/media', { buffer, contentType: 'image/png', filename: `${texts.fileBase}.png` });
+    if (!uploadRes.ok) { console.error(`Featured image upload was refused (status ${uploadRes.status}).`); return { status: 'failed', reason: 'upload_failed' }; }
+    const media = await uploadRes.json();
+    const metaRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/media/${media.id}`, { method: 'POST', body: { title: texts.imageTitle, alt_text: texts.altText }, timeoutMs: 15000 });
+    const setRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/posts/${postId}`, { method: 'POST', body: { featured_media: media.id }, timeoutMs: 15000 });
+    if (!setRes.ok) { console.error(`Setting the featured image was refused (status ${setRes.status}).`); return { status: 'failed', reason: 'attach_failed' }; }
+    return { status: 'added', mediaId: media.id, altText: texts.altText, imageTitle: texts.imageTitle, textsSaved: !!metaRes.ok };
+  } catch (e) { console.error('Featured image upload failed:', e.message); return { status: 'failed', reason: 'upload_failed' }; }
+}
+
+// The same, for a Shopify article. The article is created first and the image is added in a second step, so a problem with the picture can never
+// fail the article. Shopify gives an article image an alt text but no separate title, so the focus keyword goes into the alt text.
+const featuredImagePromptFor = (title, focusKeyword) => `A professional, photorealistic photograph representing the concept of: ${title}${focusKeyword ? ` (focus topic: ${focusKeyword})` : ''}. Real-world setting, natural lighting, shot like a genuine editorial or stock photograph — not an illustration, cartoon, drawing, clipart, or 3D render. Suitable for a business blog. Do not include any real, identifiable people, logos, or text.`;
+async function addFeaturedImageToShopifyArticle(connection, accessToken, articleId, { imagePrompt, focusKeyword, title }) {
+  if (process.env.FEATURED_IMAGES_OFF === '1') return { status: 'skipped', reason: 'turned_off' };
+  if (!process.env.OPENAI_API_KEY) { console.warn('Featured image skipped: OPENAI_API_KEY is not set.'); return { status: 'skipped', reason: 'not_configured' }; }
+  const texts = buildFeaturedImageTexts(focusKeyword, title);
+  let buffer;
+  try { buffer = await generateAIImage(imagePrompt); }
+  catch (e) { console.error('Featured image generation failed:', e.message); return { status: 'failed', reason: 'generation_failed' }; }
+  try {
+    const res = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles/${articleId}.json`, { method: 'PUT', body: { article: { id: articleId, image: { attachment: buffer.toString('base64'), alt: texts.altText } } }, timeoutMs: 60000 });
+    if (!res.ok) { console.error(`Shopify refused the article image (status ${res.status}).`); return { status: 'failed', reason: 'attach_failed' }; }
+    return { status: 'added', altText: texts.altText };
+  } catch (e) { console.error('Featured image upload to Shopify failed:', e.message); return { status: 'failed', reason: 'upload_failed' }; }
+}
+
 async function generateAIImage(prompt) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -5692,7 +5761,7 @@ async function fetchWordPressContent(connection, decryptedPassword) {
         metaDescription: item.yoast_head_json?.description || null,
         metaTitle: item.yoast_head_json?.title || null,
         bodyExcerpt: bodyText.slice(0, 500),
-        internalLinks: wpExtractInternalLinks(rawContent, connection.site_url),
+        internalLinks: wpExtractInternalLinks(rawContent, connection.site_url), externalLinks: wpExtractExternalLinks(rawContent, connection.site_url),
         hasFeaturedImage: !!item.featured_media,
         // Real, deliberate presence only for posts (see taxonomyFields
         // above) — undefined for pages, which don't have these at all.
@@ -6090,32 +6159,9 @@ async function createWordPressBlogPost(connection, decryptedPassword, postData) 
   // ever made when explicitly requested for this post; a failure here
   // never fails the whole post creation, since the post's real text
   // content is already safely created either way.
-  let featuredImageGenerated = false;
-  if (generateFeaturedImage && imagePrompt) {
-    try {
-      const imageBuffer = await generateAIImage(imagePrompt);
-      const uploadRes = await wpApiRequestBinary(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/media', {
-        buffer: imageBuffer, contentType: 'image/png', filename: `${slug}.png`,
-      });
-      if (uploadRes.ok) {
-        const media = await uploadRes.json();
-        await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/media/${media.id}`, {
-          method: 'POST', body: { title, alt_text: title }, timeoutMs: 15000,
-        });
-        const setRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/posts/${created.id}`, {
-          method: 'POST', body: { featured_media: media.id }, timeoutMs: 15000,
-        });
-        featuredImageGenerated = setRes.ok;
-      }
-    } catch (e) {
-      // Real, deliberate no-op beyond the flag staying false — the
-      // post itself is already real and created; a missing featured
-      // image is visible and fixable afterward, not a reason to have
-      // failed the whole real thing.
-    }
-  }
-
-  return { success: true, id: created.id, url: created.link, slug: created.slug, status: created.status, featuredImageGenerated };
+  let featuredImage = { status: 'skipped', reason: 'not_requested' };
+  if (generateFeaturedImage && imagePrompt) featuredImage = await addFeaturedImageToWordPressPost(connection, decryptedPassword, created.id, { imagePrompt, focusKeyword, title });
+  return { success: true, id: created.id, url: created.link, slug: created.slug, status: created.status, featuredImageGenerated: featuredImage.status === 'added', featuredImage };
 }
 
 // Real, deliberate, two-stage link discipline — every internal link the
@@ -6367,6 +6413,20 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
   }
 
   try {
+    if (change.oldUrl && change.newUrl) {
+      // Changes only the address of the one link, keeping its text and the rest of the tag. Reads the page's current content right before editing.
+      const readRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?context=edit&_fields=content`, { timeoutMs: 15000 });
+      if (!readRes.ok) return { executed: false, verified: false, error: `Could not read this post's current content (status ${readRes.status}).` };
+      const current = await readRes.json(), currentHtml = current.content?.raw ?? current.content?.rendered ?? '';
+      const updatedHtml = replaceHrefInHtml(currentHtml, change.oldUrl, change.newUrl);
+      if (updatedHtml === null) return { executed: false, verified: false, error: 'This link is no longer present in the current content: it may have already been fixed or the content has changed.' };
+      const updateRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}`, { method: 'POST', body: { content: updatedHtml }, timeoutMs: 20000 });
+      if (!updateRes.ok) return { executed: false, verified: false, error: `WordPress rejected saving this change (status ${updateRes.status}).` };
+      const verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?context=edit&_fields=content`, { timeoutMs: 15000 });
+      if (!verifyRes.ok) return { executed: true, verified: false, error: 'The change was saved, but verification could not confirm it. Please check the post manually.' };
+      const verifyData = await verifyRes.json(), verifyHtml = verifyData.content?.raw ?? verifyData.content?.rendered ?? '';
+      return verifyHtml.includes(`href="${change.newUrl}"`) || verifyHtml.includes(`href='${change.newUrl}'`) || verifyHtml.includes(change.newUrl.replace(/&/g, '&amp;')) ? { executed: true, verified: true } : { executed: true, verified: false, error: 'The change was saved, but the new address could not be confirmed in the post.' };
+    }
     if (change.brokenUrl) {
       // Real, deliberate conservative fix — never guesses a replacement
       // URL (which risks linking to something factually wrong), never
@@ -7333,6 +7393,7 @@ function describeActionChange(action) {
   }
   if (change.imagePrompt) return 'Featured image generated';
   if (change.brokenUrl) return `Broken link removed: ${change.brokenUrl}`;
+  if (change.oldUrl && change.newUrl) return `Link updated: ${change.oldUrl} → ${change.newUrl}`;
   return action.action_type;
 }
 
@@ -7412,12 +7473,14 @@ async function runFullWebsiteAudit(connection, decryptedPassword, context, trigg
     try {
       const linksResult = await runBrokenLinksCheck(connection, decryptedPassword, preloadedContent);
       const found = linksResult.brokenLinks.length;
+      const extraFound = linksResult.external ? linksResult.external.broken.length + linksResult.external.redirected.length : 0;
       const pending = linksResult.pendingCount || 0;
-      issuesFound += found;
+      issuesFound += found + extraFound;
+      autoFixed += linksResult.autoExecutedCount || 0;
       pendingApproval += pending;
-      findings.brokenLinks = { label: 'Broken internal links', found, fixed: 0, pending, note: (pending + (linksResult.alreadyPendingCount || 0)) < found ? 'Some occurrences exceeded this run\'s proposal cap — run the audit again to propose the rest.' : null };
+      findings.brokenLinks = { label: 'Broken and moved links', found: found + extraFound, fixed: linksResult.autoExecutedCount || 0, pending, note: (pending + (linksResult.alreadyPendingCount || 0)) < found ? 'Some occurrences exceeded this run\'s proposal cap — run the audit again to propose the rest.' : null };
       for (const action of (linksResult.proposals || [])) {
-        addToPageView(action, 'pending');
+        addToPageView(action, action.execution_status === 'executed' ? 'fixed' : 'pending');
       }
     } catch (e) {
       findings.brokenLinks = { label: 'Broken internal links', error: safeErrorMessage(e) };
@@ -7530,7 +7593,7 @@ async function _runBlogPostGenerationCore(connection, decryptedPassword, context
   // Real, deliberate photographic framing — "illustration" as a prompt
   // word reliably produces cartoon/drawn-style output from image models;
   // a real business blog needs a real-looking photo, not stylized art.
-  const imagePrompt = `A professional, photorealistic photograph representing the concept of: ${generated.title}. Real-world setting, natural lighting, shot like a genuine editorial or stock photograph — not an illustration, cartoon, drawing, clipart, or 3D render. Suitable for a business blog. Do not include any real, identifiable people, logos, or text.`;
+  const imagePrompt = `A professional, photorealistic photograph representing the concept of: ${generated.title}${generated.focusKeyword ? ` (focus topic: ${generated.focusKeyword})` : ''}. Real-world setting, natural lighting, shot like a genuine editorial or stock photograph — not an illustration, cartoon, drawing, clipart, or 3D render. Suitable for a business blog. Do not include any real, identifiable people, logos, or text.`;
 
   const result = await createWordPressBlogPost(connection, decryptedPassword, {
     title: generated.title, bodyHtml: generated.bodyHtml, slug: generated.slug,
@@ -8311,7 +8374,7 @@ app.post('/api/business/:id/website/generate-blog-post', authRequired, async (re
 
     const topic = (req.body?.topic || '').trim();
     if (!topic) return res.status(400).json({ error: 'A topic is required.' });
-    const generateFeaturedImage = !!req.body?.generateFeaturedImage;
+    const generateFeaturedImage = req.body?.generateFeaturedImage !== false;   // on unless the person turned it off
     const publishStatusOverride = req.body?.publishStatus === 'publish' ? 'publish' : (req.body?.publishStatus === 'draft' ? 'draft' : null);
 
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
@@ -8321,7 +8384,7 @@ app.post('/api/business/:id/website/generate-blog-post', authRequired, async (re
       await logManual(req.params.id, 'wordpress', 'content_failed', 'failed', { title: topic, error: String(result.error || 'WordPress did not accept this post.').slice(0, 500) });
       return res.status(400).json({ error: result.error });
     }
-    await logManual(req.params.id, 'wordpress', 'content_generated', 'success', { title: result.title || topic, status: result.publishStatus, url: result.url || null, postId: result.generatedPostId || null });
+    await logManual(req.params.id, 'wordpress', 'content_generated', 'success', { title: result.title || topic, status: result.publishStatus, url: result.url || null, image: result.featuredImage ? result.featuredImage.status : undefined, imageReason: result.featuredImage ? result.featuredImage.reason : undefined, postId: result.generatedPostId || null });
     res.json(result);
   } catch (err) {
     console.error('Generate blog post error:', err.message);
@@ -8330,7 +8393,7 @@ app.post('/api/business/:id/website/generate-blog-post', authRequired, async (re
   }
 });
 
-async function runBrokenLinksCheck(connection, decryptedPassword, preloadedContent = null) {
+async function runInternalBrokenLinksPass(connection, decryptedPassword, preloadedContent = null) {
   let pages, posts;
   try {
     ({ pages, posts } = preloadedContent || await getWordPressContentForAnalysis(connection, decryptedPassword));
@@ -8380,6 +8443,203 @@ async function runBrokenLinksCheck(connection, decryptedPassword, preloadedConte
   return { brokenLinks, checkedCount: checkedCount, totalUniqueLinks: totalUniqueLinks, proposals: insertedProposals, pendingCount: insertedProposals.length, alreadyPendingCount, autoExecutedCount: 0 };
 }
 
+// ── Broken links: other websites, and fixing what is found ──────────────────────────────────────────────────────────
+// A link is checked only when its address is a PUBLIC one (assertPublicHost), every redirect hop included. Each link ends up as exactly one of:
+//   ok · redirected (it moved for good) · broken (the page is gone, or the website no longer exists) · uncertain (the site refused, was down or too slow:
+//   many sites block automated checks, so that is never called "broken").
+const LINK_CHECK_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+const LINK_CONFIRM_HOURS = 20, LINK_HOST_DELAY_MS = Number.isFinite(Number(process.env.LINK_HOST_DELAY_MS)) && process.env.LINK_HOST_DELAY_MS !== undefined && process.env.LINK_HOST_DELAY_MS !== '' ? Number(process.env.LINK_HOST_DELAY_MS) : 150;
+const linkHostFamily = h => String(h || '').toLowerCase().replace(/^www\./, '');
+function normalizeLinkForCompare(u) { try { const x = new URL(u); x.hash = ''; return x.href.replace(/\/$/, ''); } catch { return String(u); } }
+async function linkRequest(url, method, timeoutMs) {
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { method, redirect: 'manual', signal: controller.signal, headers: { 'User-Agent': LINK_CHECK_UA, Accept: 'text/html,*/*' } });
+    try { if (res.body && res.body.cancel) res.body.cancel(); } catch (e) { /* the answer is not needed, only its status */ }
+    return { status: res.status, location: res.headers.get('location') };
+  } finally { clearTimeout(timer); }
+}
+function linkErrorKind(e) {
+  const code = String((e && e.cause && e.cause.code) || (e && e.code) || '');
+  if (e && e.name === 'AbortError') return 'timeout';
+  if (code === 'ENOTFOUND') return 'dns';
+  if (code === 'EAI_AGAIN') return 'dns_temporary';
+  if (/CERT|TLS|SSL|UNABLE_TO/.test(code)) return 'tls';
+  if (/TIMEOUT/.test(code)) return 'timeout';
+  return 'unreachable';
+}
+async function probeLink(url, { timeoutMs = 10000, maxHops = 5 } = {}) {
+  const hops = []; let current = url;
+  for (let i = 0; i <= maxHops; i++) {
+    let parsed; try { parsed = new URL(current); } catch { return { hops, error: { kind: 'invalid' } }; }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return { hops, error: { kind: 'unsupported' } };
+    try { await assertPublicHost(parsed.hostname); } catch (e) { return { hops, error: { kind: 'blocked' } }; }   // never fetched: not a public address
+    let res;
+    try { res = await linkRequest(current, 'HEAD', timeoutMs); if ([400, 403, 405, 501].includes(res.status)) res = await linkRequest(current, 'GET', timeoutMs); }
+    catch (e) {
+      if (linkErrorKind(e) === 'dns') return { hops, error: { kind: 'dns' } };
+      try { res = await linkRequest(current, 'GET', timeoutMs); } catch (e2) { return { hops, error: { kind: linkErrorKind(e2) } }; }
+    }
+    hops.push({ url: current, status: res.status, location: res.location });
+    if ([301, 302, 303, 307, 308].includes(res.status)) {
+      if (!res.location) return { hops, error: { kind: 'bad_redirect' } };
+      try { current = new URL(res.location, current).href; } catch { return { hops, error: { kind: 'bad_redirect' } }; }
+      continue;
+    }
+    return { hops };
+  }
+  return { hops, error: { kind: 'too_many_redirects' } };
+}
+function classifyLinkProbe(url, probe) {
+  if (probe.error) return probe.error.kind === 'dns' ? { state: 'broken', reason: 'dns', status: null } : { state: 'uncertain', reason: probe.error.kind, status: null };
+  const last = probe.hops[probe.hops.length - 1], status = last.status;
+  if (status >= 200 && status < 300) {
+    const movedForGood = probe.hops.slice(0, -1).some(h => h.status === 301 || h.status === 308);
+    if (!movedForGood || normalizeLinkForCompare(last.url) === normalizeLinkForCompare(url)) return { state: 'ok', status };
+    let a, b; try { a = new URL(url); b = new URL(last.url); } catch { return { state: 'ok', status }; }
+    if (b.pathname === '/' && !b.search && a.pathname !== '/') return { state: 'uncertain', reason: 'redirects_to_homepage', status, finalUrl: last.url };   // usually "removed", not "moved"
+    return { state: 'redirected', status, finalUrl: last.url, crossDomain: linkHostFamily(a.hostname) !== linkHostFamily(b.hostname) };
+  }
+  if (status === 404) return { state: 'broken', reason: 'not_found', status };
+  if (status === 410) return { state: 'broken', reason: 'gone', status };
+  return { state: 'uncertain', reason: status >= 500 && status < 600 ? 'server_error' : 'refused', status };
+}
+async function checkExternalLink(url) { return classifyLinkProbe(url, await probeLink(url)); }
+
+// items: [{ id, title, url, isPost, externalLinks: [href as written] }]. Checks at most `cap` different addresses (the most used first), five websites
+// at a time and one address at a time per website, so no one else's site is hammered.
+async function scanForBrokenExternalLinks(items, cap = 60) {
+  const byHref = new Map();
+  for (const item of items) for (const href of item.externalLinks || []) { if (!byHref.has(href)) byHref.set(href, []); byHref.get(href).push({ id: item.id, title: item.title, url: item.url, isPost: item.isPost, href }); }
+  const all = [...byHref.keys()], toCheck = [...all].sort((a, b) => byHref.get(b).length - byHref.get(a).length).slice(0, cap);
+  const byHost = new Map();
+  for (const href of toCheck) { let h = ''; try { h = new URL(href.replace(/&amp;/g, '&')).hostname; } catch (e) { /* grouped under "" */ } if (!byHost.has(h)) byHost.set(h, []); byHost.get(h).push(href); }
+  const results = new Map(), queue = [...byHost.values()];
+  const worker = async () => { while (queue.length) { for (const href of queue.shift()) { results.set(href, await checkExternalLink(href.replace(/&amp;/g, '&')).catch(() => ({ state: 'uncertain', reason: 'error', status: null }))); if (LINK_HOST_DELAY_MS) await new Promise(r => setTimeout(r, LINK_HOST_DELAY_MS)); } } };
+  await Promise.all(Array.from({ length: 5 }, worker));
+  const out = { checkedCount: toCheck.length, totalUniqueLinks: all.length, ok: 0, okUrls: [], broken: [], redirected: [], uncertain: [] };
+  for (const href of toCheck) {
+    const r = results.get(href), foundOn = byHref.get(href);
+    if (r.state === 'ok') { out.ok++; out.okUrls.push(href); }
+    else if (r.state === 'broken') out.broken.push({ url: href, reason: r.reason, status: r.status, foundOn });
+    else if (r.state === 'redirected') { out.redirected.push({ url: href, finalUrl: r.finalUrl, crossDomain: r.crossDomain, status: r.status, foundOn }); out.okUrls.push(href); }
+    else out.uncertain.push({ url: href, reason: r.reason, status: r.status, foundOn });
+  }
+  return out;
+}
+
+// Changes the address of one link in a page's HTML, keeping everything else in the tag. Returns null when that link is not there.
+function replaceHrefInHtml(html, oldUrl, newUrl) {
+  const esc = oldUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), re = new RegExp(`(<a\\s[^>]*href=["'])${esc}(["'][^>]*>)`, 'gi');
+  if (!re.test(html)) return null; re.lastIndex = 0;
+  const value = oldUrl.includes('&amp;') ? newUrl.replace(/&(?!amp;)/g, '&amp;') : newUrl;
+  return html.replace(re, (m, a, b) => a + value + b);
+}
+
+// How long each address has been seen broken. A removal is only automatic once the link was STILL broken when checked again at least 20 hours later.
+async function updateLinkObservations(businessId, platform, brokenUrls, healthyUrls) {
+  for (const url of brokenUrls) {
+    await pool.query(
+      `INSERT INTO broken_link_observations (business_id, platform, url) VALUES ($1, $2, $3)
+       ON CONFLICT (business_id, platform, url) DO UPDATE SET
+         first_broken_at = CASE WHEN broken_link_observations.last_broken_at < NOW() - INTERVAL '14 days' THEN NOW() ELSE broken_link_observations.first_broken_at END, last_broken_at = NOW()`, [businessId, platform, url]);
+  }
+  if (healthyUrls.length) await pool.query('DELETE FROM broken_link_observations WHERE business_id = $1 AND platform = $2 AND url = ANY($3::text[])', [businessId, platform, healthyUrls]);
+  if (!brokenUrls.length) return new Set();
+  const r = await pool.query(`SELECT url FROM broken_link_observations WHERE business_id = $1 AND platform = $2 AND url = ANY($3::text[]) AND first_broken_at <= NOW() - ($4 || ' hours')::interval`, [businessId, platform, brokenUrls, String(LINK_CONFIRM_HOURS)]);
+  return new Set(r.rows.map(x => x.url));
+}
+
+// One fix proposal per (page, link). Not queued again while one is waiting, nor for 90 days after the person rejected it.
+async function queueLinkFix(connection, referrer, actionType, change, reasoning, keyField) {
+  const type = referrer.isPost ? 'post' : 'page', same = `website_connection_id = $1 AND target_wp_id = $2 AND target_type = $3 AND action_type = $4 AND proposed_change->>$5 = $6`, args = [connection.id, referrer.id, type, actionType, keyField, change[keyField]];
+  const waiting = await pool.query(`SELECT * FROM website_actions WHERE ${same} AND approval_status = 'pending' LIMIT 1`, args);
+  if (waiting.rows.length) return { alreadyKnown: true, existing: waiting.rows[0] };     // the caller may still apply it, once the link is confirmed
+  const declined = await pool.query(`SELECT 1 FROM website_actions WHERE ${same} AND ((approval_status = 'rejected' AND reviewed_at > NOW() - INTERVAL '90 days') OR (execution_status = 'execution_failed' AND reviewed_at > NOW() - INTERVAL '7 days')) LIMIT 1`, args);
+  if (declined.rows.length) return { alreadyKnown: true };   // the person said no (not asked again for 90 days), or the site refused it (not retried for 7 days)
+  const ins = await pool.query(
+    `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
+     VALUES ($1, 'seo_agent', $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`, [connection.id, actionType, type, referrer.id, referrer.url, referrer.title, JSON.stringify({}), JSON.stringify(change), reasoning]);
+  return { row: ins.rows[0] };
+}
+async function autoApplyLinkFix(connection, decryptedPassword, action, label) {
+  await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
+  await logWebsiteAudit(connection.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: ${label}`, { actionId: action.id }, 'broken_links');
+  const exec = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
+  const updated = await pool.query(`UPDATE website_actions SET approval_status = 'approved', execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
+    [exec.executed ? 'executed' : 'execution_failed', exec.executed ? (exec.verified ? 'verified' : 'verification_failed') : null, exec.error || null, action.id]);
+  return updated.rows[0];
+}
+const LINK_REASON_TEXT = { dns: 'the website no longer exists', not_found: 'the page was not found (404)', gone: 'the page was removed (410)' };
+
+// The whole check: this site's own links, then links to other websites. Proposes a fix for each problem, and (on a site set to Managed + Automatic) applies the
+// safe ones. Returns the report: what was found, what was fixed, what is waiting, and what could not be verified.
+async function runBrokenLinksCheck(connection, decryptedPassword, preloadedContent = null) {
+  let content = preloadedContent;
+  if (!content) {
+    try { content = await getWordPressContentForAnalysis(connection, decryptedPassword); }
+    catch (e) {
+      if (e.message.includes('401')) { await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]); throw new Error('This Application Password is no longer valid. Please reconnect your website.'); }
+      throw e;
+    }
+  }
+  const internal = await runInternalBrokenLinksPass(connection, decryptedPassword, content);
+  const allItems = [...content.pages.map(p => ({ ...p, isPost: false })), ...content.posts.map(p => ({ ...p, isPost: true }))];
+  let external = { checkedCount: 0, totalUniqueLinks: 0, ok: 0, okUrls: [], broken: [], redirected: [], uncertain: [], failed: false };
+  try { external = await scanForBrokenExternalLinks(allItems); } catch (e) { console.error('External link scan failed:', e.message); external.failed = true; }
+  const autoOk = await wordpressAutoExecuteAllowed(connection);
+  const confirmed = await updateLinkObservations(connection.business_id, 'wordpress', [...internal.brokenLinks.map(b => b.url), ...external.broken.map(b => b.url)], external.okUrls);
+  const proposals = [...(internal.proposals || [])];
+  let autoApplied = 0, alreadyKnown = 0, newPending = 0;
+  const MAX_EXTERNAL_PROPOSALS = 30; let external_made = 0;
+
+  // this site's own broken links that are now CONFIRMED broken: the waiting fix (new, or from an earlier check) is applied where the site allows it
+  if (autoOk) {
+    for (const b of internal.brokenLinks) {
+      if (!confirmed.has(b.url)) continue;
+      for (const ref of b.foundOn || []) {
+        const waiting = (await pool.query(`SELECT * FROM website_actions WHERE website_connection_id = $1 AND target_wp_id = $2 AND target_type = $3 AND action_type = 'remove_broken_link' AND proposed_change->>'brokenUrl' = $4 AND approval_status = 'pending'`, [connection.id, ref.id, ref.isPost ? 'post' : 'page', ref.href])).rows;
+        for (const row of waiting) {
+          const done = await autoApplyLinkFix(connection, decryptedPassword, row, `removed a dead link on "${ref.title}"`);
+          const at = proposals.findIndex(p => p.id === row.id); if (at >= 0) proposals[at] = done; else proposals.push(done);
+          if (done.execution_status === 'executed') autoApplied++;
+        }
+      }
+    }
+  }
+  for (const b of external.broken) {
+    const isConfirmed = confirmed.has(b.url);
+    for (const ref of b.foundOn) {
+      if (external_made >= MAX_EXTERNAL_PROPOSALS) break;
+      const why = LINK_REASON_TEXT[b.reason] || 'it does not work';
+      const q = await queueLinkFix(connection, ref, 'remove_broken_link', { brokenUrl: ref.href, external: true, confirmed: isConfirmed },
+        `This link to another website no longer works (${why}). ${isConfirmed ? 'It was still broken when checked again.' : 'It will be confirmed on the next check.'} The link is removed and its text kept.`, 'brokenUrl');
+      if (q.alreadyKnown) { alreadyKnown++; if (q.existing && autoOk && isConfirmed) { const done = await autoApplyLinkFix(connection, decryptedPassword, q.existing, `removed a dead link on "${ref.title}"`); proposals.push(done); if (done.execution_status === 'executed') autoApplied++; } continue; }
+      external_made++; let row = q.row;
+      if (autoOk && isConfirmed) { row = await autoApplyLinkFix(connection, decryptedPassword, row, `removed a dead link on "${ref.title}"`); if (row.execution_status === 'executed') autoApplied++; }
+      proposals.push(row);
+    }
+  }
+  for (const r of external.redirected) {
+    for (const ref of r.foundOn) {
+      if (external_made >= MAX_EXTERNAL_PROPOSALS) break;
+      const q = await queueLinkFix(connection, ref, 'update_link_url', { oldUrl: ref.href, newUrl: r.finalUrl, crossDomain: !!r.crossDomain },
+        `This link has moved permanently${r.crossDomain ? ' to a different website' : ''}. Updating it to the new address saves visitors an extra step.`, 'oldUrl');
+      if (q.alreadyKnown) { alreadyKnown++; if (q.existing && autoOk && !r.crossDomain) { const done = await autoApplyLinkFix(connection, decryptedPassword, q.existing, `updated a moved link on "${ref.title}"`); proposals.push(done); if (done.execution_status === 'executed') autoApplied++; } continue; }
+      external_made++; let row = q.row;
+      if (autoOk && !r.crossDomain) { row = await autoApplyLinkFix(connection, decryptedPassword, row, `updated a moved link on "${ref.title}"`); if (row.execution_status === 'executed') autoApplied++; }
+      proposals.push(row);
+    }
+  }
+  const pending = proposals.filter(p => p.approval_status === 'pending').length;
+  return {
+    ...internal, proposals, pendingCount: pending, alreadyPendingCount: (internal.alreadyPendingCount || 0) + alreadyKnown, autoExecutedCount: autoApplied,
+    external: { checkedCount: external.checkedCount, totalUniqueLinks: external.totalUniqueLinks, ok: external.ok, broken: external.broken, redirected: external.redirected, uncertain: external.uncertain, failed: !!external.failed },
+    report: { internalChecked: internal.checkedCount, externalChecked: external.checkedCount, brokenInternal: internal.brokenLinks.length, brokenExternal: external.broken.length, redirected: external.redirected.length, uncertain: external.uncertain.length, fixed: autoApplied, waitingForApproval: pending },
+  };
+}
+
+
 app.post('/api/business/:id/website/broken-links', authRequired, async (req, res) => {
   let ran = false;
   try {
@@ -8399,8 +8659,8 @@ app.post('/api/business/:id/website/broken-links', authRequired, async (req, res
     const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
     ran = true;
     const result = await runBrokenLinksCheck(connection, decryptedPassword);
-    await logManual(req.params.id, 'wordpress', 'broken_links_checked', 'success', { checkedCount: result.checkedCount, totalUniqueLinks: result.totalUniqueLinks, brokenCount: result.brokenLinks.length, proposedCount: result.proposals.length });
-    res.json({ ...result, message: result.brokenLinks.length ? null : 'No broken internal links were found among the ones checked.' });
+    await logManual(req.params.id, 'wordpress', 'broken_links_checked', 'success', { checkedCount: result.checkedCount, totalUniqueLinks: result.totalUniqueLinks, brokenCount: result.brokenLinks.length, externalChecked: result.report.externalChecked, externalBroken: result.report.brokenExternal, redirected: result.report.redirected, uncertain: result.report.uncertain, fixed: result.report.fixed, proposedCount: result.proposals.length });
+    res.json({ ...result, message: (result.brokenLinks.length || result.report.brokenExternal || result.report.redirected || result.report.uncertain) ? null : 'No broken links were found among the ones checked.' });
   } catch (err) {
     console.error('Broken links check error:', err.message);
     if (ran) await logManual(req.params.id, 'wordpress', 'broken_links_checked', 'failed', errDetail(err));
@@ -10324,8 +10584,9 @@ app.post('/api/business/:id/shopify/generate-post', authRequired, async (req, re
       } catch (e) { console.error('Failed to record reciprocal link placement:', e.message); }
     }
 
-    await logManual(req.params.id, 'shopify', 'content_generated', 'success', { title: generated.title, status: result.status, url: result.url || null, postId: savedPost.rows[0].id });
-    res.json({ success: true, title: generated.title, publishStatus: result.status, url: result.url });
+    const featuredImage = req.body?.generateFeaturedImage === false ? { status: 'skipped', reason: 'not_requested' } : await addFeaturedImageToShopifyArticle(connection, accessToken, result.id, { imagePrompt: featuredImagePromptFor(generated.title, generated.focusKeyword), focusKeyword: generated.focusKeyword, title: generated.title });
+    await logManual(req.params.id, 'shopify', 'content_generated', 'success', { title: generated.title, status: result.status, url: result.url || null, postId: savedPost.rows[0].id, image: featuredImage.status, imageReason: featuredImage.reason });
+    res.json({ success: true, title: generated.title, publishStatus: result.status, url: result.url, featuredImage });
   } catch (err) {
     console.error('Shopify generate post error:', err.message);
     if (owned) await logManual(req.params.id, 'shopify', 'content_failed', 'failed', errDetail(err));
@@ -18853,7 +19114,7 @@ async function runContentCalendarSweep() {
     if (!claimed.rows.length) continue;
 
     const scheduledFor = `${entry.scheduled_date_str} ${String(entry.scheduled_time_str).slice(0, 5)} ${entry.timezone || 'UTC'}`;
-    const finish = async ({ success, title, url, error, publishStatus, postId }) => {
+    const finish = async ({ success, title, url, error, publishStatus, postId, featuredImage }) => {
       await pool.query(
         `UPDATE content_calendar_entries SET status = $1, generated_title = $2, generated_url = $3, error_message = $4, processed_at = NOW() WHERE id = $5`,
         [success ? 'generated' : 'failed', title || null, url || null, success ? null : String(error || 'Unknown error').slice(0, 500), entry.id]
@@ -18861,7 +19122,7 @@ async function runContentCalendarSweep() {
       await logAgentActivity({
         businessId: entry.business_id, platform: entry.platform,
         taskType: success ? 'content_generated' : 'content_failed', outcome: success ? 'success' : 'failed',
-        detail: { title: title || entry.topic || null, status: publishStatus || entry.publish_mode, url: url || null, postId: postId || null, entryId: entry.id, scheduledFor, error: success ? undefined : String(error || '').slice(0, 500) },
+        detail: { title: title || entry.topic || null, status: publishStatus || entry.publish_mode, url: url || null, postId: postId || null, image: featuredImage ? featuredImage.status : undefined, imageReason: featuredImage ? featuredImage.reason : undefined, entryId: entry.id, scheduledFor, error: success ? undefined : String(error || '').slice(0, 500) },
       });
     };
 
@@ -19169,8 +19430,8 @@ async function generateWordPressScheduledPost(entry, context, connection) {
   const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted);
   const { posts } = await getWordPressContentForAnalysis(connection, decryptedPassword);
   const topic = entry.topic || await generateAutomaticBlogPostTopic(context, posts || []);
-  const result = await runBlogPostGeneration(connection, decryptedPassword, context, topic, false, entry.publish_mode);
-  return { success: !!(result && result.success), title: result && result.title || topic, url: result && result.url, error: (result && result.error) || 'WordPress did not accept this post.', publishStatus: result && result.publishStatus, postId: result && result.generatedPostId };
+  const result = await runBlogPostGeneration(connection, decryptedPassword, context, topic, true, entry.publish_mode);
+  return { success: !!(result && result.success), title: result && result.title || topic, url: result && result.url, error: (result && result.error) || 'WordPress did not accept this post.', publishStatus: result && result.publishStatus, postId: result && result.generatedPostId, featuredImage: result && result.featuredImage };
 }
 
 // ── Competitor analysis (WordPress) ──────────────────────────────────────────
@@ -19684,6 +19945,7 @@ async function generateShopifyScheduledPost(entry, context, connection) {
 
   const generated = await generateShopifyBlogPostContent(context, topic, existingTitles, internalCandidates);
   const result = await createShopifyBlogPost(connection, accessToken, { ...generated, status: entry.publish_mode });
+  const featuredImage = result.success ? await addFeaturedImageToShopifyArticle(connection, accessToken, result.id, { imagePrompt: featuredImagePromptFor(generated.title, generated.focusKeyword), focusKeyword: generated.focusKeyword, title: generated.title }) : undefined;
 
   let postId = null;
   if (result.success) {
@@ -19707,7 +19969,7 @@ async function generateShopifyScheduledPost(entry, context, connection) {
       } catch (e) { console.error('Failed to record reciprocal link placement (Shopify calendar):', e.message); }
     }
   }
-  return { success: !!result.success, title: generated.title || topic, url: result.url, error: result.error || 'Shopify did not accept this post.', publishStatus: result.status, postId };
+  return { success: !!result.success, title: generated.title || topic, url: result.url, error: result.error || 'Shopify did not accept this post.', publishStatus: result.status, postId, featuredImage };
 }
 
 // A post this app generated for Shopify, only if it belongs to this business.
