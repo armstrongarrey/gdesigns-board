@@ -121,9 +121,18 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     <div class="login-title">Admin Panel</div>
     <div class="login-sub">Arreyon Consult — G-DESIGNS LTD</div>
     <div class="login-err" id="loginErr"></div>
+    <div id="loginPasswordStep">
     <div class="form-group"><label>Email</label><input class="form-input" type="email" id="adminEmail" placeholder="admin@example.com"></div>
     <div class="form-group"><label data-i18n="admin.password">Password</label><input class="form-input" type="password" id="adminPassword" data-i18n-placeholder="admin.password_placeholder" placeholder="Admin password"></div>
     <button class="btn-primary" style="width:100%;padding:11px;font-size:14px" onclick="adminLogin()" id="loginBtn" data-i18n="admin.sign_in">Sign In to Admin</button>
+    </div>
+    <div id="twoFactorStep" style="display:none">
+      <div style="font-size:13px;color:var(--text2);line-height:1.55;margin-bottom:14px" data-i18n="admin.2fa_login_intro">Enter the 6-digit code from your authenticator app.</div>
+      <div class="form-group"><label data-i18n="admin.2fa_code">Code</label><input class="form-input" id="twoFactorCode" inputmode="text" autocomplete="one-time-code" maxlength="30" autocapitalize="off" spellcheck="false" style="letter-spacing:.12em" data-i18n-placeholder="admin.2fa_code_placeholder" placeholder="6-digit code"></div>
+      <button class="btn-primary" style="width:100%;padding:11px;font-size:14px" onclick="adminLoginTwoFactor()" id="twoFactorBtn" data-i18n="admin.2fa_verify">Verify</button>
+      <div style="font-size:11.5px;color:var(--muted);line-height:1.5;margin-top:12px" data-i18n="admin.2fa_recovery_hint">Lost your phone? Type one of your recovery codes here instead.</div>
+      <button class="btn-ghost" style="margin-top:12px" onclick="twoFactorBack()" data-i18n="admin.2fa_back">Back</button>
+    </div>
   </div>
 </div>
 
@@ -165,6 +174,9 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     <button class="nav-item" onclick="showSection('coupons')" id="nav-coupons">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span data-i18n="admin.nav_coupons">Coupon Codes</span>
     </button>
+    <button class="nav-item" onclick="showSection('security')" id="nav-security">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span data-i18n="admin.nav_security">Security</span>
+    </button>
   </nav>
   <div class="sidebar-foot">
     <div class="admin-badge">Admin</div>
@@ -186,6 +198,8 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
   </div>
 
   <div class="content">
+
+    <div id="twoFactorBanner" role="button" tabindex="0" onclick="showSection('security')" style="display:none;cursor:pointer;margin-bottom:16px;padding:10px 14px;border-radius:8px;font-size:13px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);color:#fbbf24" data-i18n="admin.2fa_banner">Protect the admin account: turn on two-factor sign-in. Open Security</div>
 
     <!-- OVERVIEW -->
     <div class="section-view active" id="section-overview">
@@ -383,6 +397,61 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     </div>
 
     <!-- COUPONS -->
+    <div class="section-view" id="section-security">
+      <div class="msg-box" id="securityMsg"></div>
+
+      <div class="form-card">
+        <div class="form-card-title" data-i18n="admin.2fa_title">Two-factor sign-in</div>
+        <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:14px" data-i18n="admin.2fa_explain">After your password, sign-in also asks for a 6-digit code from an authenticator app on your phone (Google Authenticator, Microsoft Authenticator, Authy, 1Password and others). Even if someone learns your password, they cannot get in without your phone.</div>
+        <div style="margin-bottom:6px"><span class="badge" id="twoFactorBadge">&nbsp;</span> <span id="twoFactorRecoveryLeft" style="font-size:12px;color:var(--muted);margin-left:8px"></span></div>
+
+        <div id="tfOff" style="display:none;margin-top:14px">
+          <button class="btn-primary" id="tfStartBtn" onclick="startTwoFactorSetup()" data-i18n="admin.2fa_start">Set up two-factor sign-in</button>
+          <div id="tfSetup" style="display:none;margin-top:18px">
+            <div style="font-size:13px;color:var(--text);margin-bottom:10px" data-i18n="admin.2fa_step1">1. Open your authenticator app and scan this code.</div>
+            <img id="tfQr" alt="" width="200" height="200" style="width:200px;height:200px;background:#fff;border-radius:8px;padding:6px;display:block;margin-bottom:12px">
+            <div style="font-size:12px;color:var(--muted);margin-bottom:6px" data-i18n="admin.2fa_cant_scan">Can't scan it? Type this key into the app instead:</div>
+            <code id="tfSecret" style="display:block;font-size:14px;letter-spacing:.08em;color:var(--text2);user-select:all;margin-bottom:16px;word-break:break-all"></code>
+            <div style="font-size:13px;color:var(--text);margin-bottom:8px" data-i18n="admin.2fa_step2">2. Enter the 6-digit code the app now shows, to finish.</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <input class="form-input" id="tfEnableCode" inputmode="numeric" autocomplete="one-time-code" maxlength="8" style="max-width:170px;letter-spacing:.15em" data-i18n-placeholder="admin.2fa_code_placeholder" placeholder="6-digit code">
+              <button class="btn-primary" onclick="finishTwoFactorSetup()" data-i18n="admin.2fa_turn_on">Turn on</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="tfCodes" style="display:none;margin-top:18px">
+          <div style="font-size:14px;font-weight:700;margin-bottom:6px" data-i18n="admin.2fa_codes_title">Save your recovery codes</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:12px" data-i18n="admin.2fa_codes_text">If you lose your phone, each of these codes lets you sign in once. They are shown only now, so keep them somewhere safe (a password manager, or printed).</div>
+          <div id="tfCodeList" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px;max-width:420px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13.5px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:12px"></div>
+          <div style="display:flex;gap:8px;margin-bottom:14px"><button class="btn-ghost" onclick="copyRecoveryCodes()" data-i18n="admin.2fa_copy">Copy</button><button class="btn-ghost" onclick="downloadRecoveryCodes()" data-i18n="admin.2fa_download">Download</button></div>
+          <label style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text2);margin-bottom:12px;cursor:pointer"><input type="checkbox" id="tfSavedCheck" onchange="document.getElementById('tfCodesDone').disabled = !this.checked"><span data-i18n="admin.2fa_saved_check">I have saved these codes somewhere safe</span></label>
+          <button class="btn-primary" id="tfCodesDone" disabled onclick="closeRecoveryCodes()" data-i18n="admin.2fa_done">Done</button>
+        </div>
+      </div>
+
+      <div id="tfOn" style="display:none">
+        <div class="form-card">
+          <div class="form-card-title" data-i18n="admin.2fa_regen_title">New recovery codes</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:12px" data-i18n="admin.2fa_regen_text">Makes a fresh set of 10 and cancels the old ones. Needs your password and a current code.</div>
+          <div class="form-row">
+            <div class="form-group"><label data-i18n="admin.password">Password</label><input class="form-input" type="password" id="tfRegenPw" autocomplete="current-password"></div>
+            <div class="form-group"><label data-i18n="admin.2fa_code">Code</label><input class="form-input" id="tfRegenCode" autocomplete="one-time-code" maxlength="30" autocapitalize="off" spellcheck="false"></div>
+          </div>
+          <button class="btn-ghost" onclick="regenRecoveryCodes()" data-i18n="admin.2fa_regen_btn">Make new codes</button>
+        </div>
+        <div class="form-card">
+          <div class="form-card-title" data-i18n="admin.2fa_off_title">Turn off two-factor sign-in</div>
+          <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:12px" data-i18n="admin.2fa_off_text">Needs your password and a current code.</div>
+          <div class="form-row">
+            <div class="form-group"><label data-i18n="admin.password">Password</label><input class="form-input" type="password" id="tfOffPw" autocomplete="current-password"></div>
+            <div class="form-group"><label data-i18n="admin.2fa_code">Code</label><input class="form-input" id="tfOffCode" autocomplete="one-time-code" maxlength="30" autocapitalize="off" spellcheck="false"></div>
+          </div>
+          <button class="btn-danger" onclick="disableTwoFactor()" data-i18n="admin.2fa_off_btn">Turn off</button>
+        </div>
+      </div>
+    </div>
+
     <div class="section-view" id="section-coupons">
       <div class="msg-box" id="couponMsg"></div>
 
@@ -436,7 +505,7 @@ function showAdminDashboard() {
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appSidebar').style.display = 'flex';
   document.getElementById('appMain').style.display = 'flex';
-  loadOverview(); loadPayments(); loadUsers(); loadCMS(); loadAnnouncements(); loadCoupons();
+  loadOverview(); loadPayments(); loadUsers(); loadCMS(); loadAnnouncements(); loadCoupons(); refreshSecurityStatus();
 }
 
 async function adminLogin() {
@@ -451,6 +520,8 @@ async function adminLogin() {
     const data = await res.json();
     if (data.success) {
       showAdminDashboard();
+    } else if (data.needsTwoFactor && data.challenge) {
+      adminChallenge = data.challenge; document.getElementById('adminPassword').value = ''; showLoginStep('code');
     } else { err.textContent = data.error || t('admin.invalid_credentials'); err.classList.add('show'); }
   } catch(e) { err.textContent = t('admin.connection_error_short'); err.classList.add('show'); }
   btn.disabled = false; btn.textContent = t('admin.sign_in');
@@ -478,6 +549,124 @@ async function checkExistingAdminSession() {
 checkExistingAdminSession();
 
 document.getElementById('adminPassword').addEventListener('keydown', e => { if(e.key==='Enter') adminLogin(); });
+document.getElementById('twoFactorCode').addEventListener('keydown', e => { if(e.key==='Enter') adminLoginTwoFactor(); });
+
+// ── TWO-FACTOR SIGN-IN ─────────────────────────────────────────────────────
+let adminChallenge = null, securityStatus = null, tfCodes = [];
+async function adminPost(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  let data = {}; try { data = await res.json(); } catch (e) {}
+  return { ok: res.ok, status: res.status, data };
+}
+function showLoginStep(step) {
+  document.getElementById('loginPasswordStep').style.display = step === 'password' ? '' : 'none';
+  document.getElementById('twoFactorStep').style.display = step === 'code' ? '' : 'none';
+  if (step === 'code') { const c = document.getElementById('twoFactorCode'); c.value = ''; c.focus(); }
+}
+async function adminLoginTwoFactor() {
+  const code = document.getElementById('twoFactorCode').value.trim(), btn = document.getElementById('twoFactorBtn'), err = document.getElementById('loginErr');
+  err.classList.remove('show');
+  if (!code) { err.textContent = t('admin.2fa_enter_code'); err.classList.add('show'); return; }
+  btn.disabled = true; btn.textContent = t('admin.signing_in');
+  try {
+    const { ok, data } = await adminPost('/api/admin/login/2fa', { challenge: adminChallenge, code });
+    if (ok && data.success) {
+      adminChallenge = null; document.getElementById('twoFactorCode').value = ''; showAdminDashboard();
+      if (data.recoveryCodeUsed) { showSection('security'); showMsg('securityMsg', tf('admin.2fa_recovery_used', { n: data.recoveryCodesLeft }), 'success'); }
+    } else {
+      if (data.code === 'challenge_expired') { adminChallenge = null; showLoginStep('password'); }
+      err.textContent = data.error || t('admin.invalid_credentials'); err.classList.add('show');
+    }
+  } catch (e) { err.textContent = t('admin.connection_error_short'); err.classList.add('show'); }
+  btn.disabled = false; btn.textContent = t('admin.2fa_verify');
+}
+function twoFactorBack() {
+  adminChallenge = null; document.getElementById('loginErr').classList.remove('show'); document.getElementById('adminPassword').value = ''; showLoginStep('password');
+}
+async function refreshSecurityStatus() {
+  try {
+    const res = await fetch('/api/admin/2fa/status'); if (!res.ok) return;
+    const d = await res.json(); securityStatus = { enabled: !!d.enabled, left: d.recoveryCodesLeft || 0 }; renderSecurityStatus();
+  } catch (e) { /* the status simply stays as it was */ }
+}
+function renderSecurityStatus() {
+  const s = securityStatus; if (!s) return;
+  const badge = document.getElementById('twoFactorBadge');
+  badge.textContent = s.enabled ? t('admin.2fa_status_on') : t('admin.2fa_status_off');
+  badge.style.background = s.enabled ? 'rgba(16,185,129,.15)' : 'rgba(245,158,11,.15)'; badge.style.color = s.enabled ? 'var(--green)' : '#fbbf24';
+  document.getElementById('twoFactorRecoveryLeft').textContent = s.enabled ? tf('admin.2fa_recovery_left', { n: s.left }) : '';
+  const codesOpen = document.getElementById('tfCodes').style.display !== 'none';
+  document.getElementById('tfOff').style.display = (!s.enabled && !codesOpen) ? '' : 'none';
+  document.getElementById('tfOn').style.display = (s.enabled && !codesOpen) ? '' : 'none';
+  document.getElementById('twoFactorBanner').style.display = s.enabled ? 'none' : '';
+}
+document.addEventListener('arreyon:langchange', () => { renderSecurityStatus(); });
+async function startTwoFactorSetup() {
+  try {
+    const { ok, data } = await adminPost('/api/admin/2fa/setup', {});
+    if (!ok || !data.success) { showMsg('securityMsg', data.error || t('admin.connection_error_short'), 'error'); return; }
+    document.getElementById('tfQr').src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(data.qrSvg);
+    document.getElementById('tfSecret').textContent = data.secret;
+    document.getElementById('tfEnableCode').value = '';
+    document.getElementById('tfSetup').style.display = '';
+    document.getElementById('tfEnableCode').focus();
+  } catch (e) { showMsg('securityMsg', t('admin.connection_error_short'), 'error'); }
+}
+async function finishTwoFactorSetup() {
+  const code = document.getElementById('tfEnableCode').value.trim();
+  if (!code) { showMsg('securityMsg', t('admin.2fa_enter_code'), 'error'); return; }
+  try {
+    const { ok, data } = await adminPost('/api/admin/2fa/enable', { code });
+    if (!ok || !data.success) { showMsg('securityMsg', data.error || t('admin.connection_error_short'), 'error'); return; }
+    document.getElementById('tfSecret').textContent = ''; document.getElementById('tfQr').removeAttribute('src');
+    securityStatus = { enabled: true, left: (data.recoveryCodes || []).length };
+    showRecoveryCodes(data.recoveryCodes || []);
+    showMsg('securityMsg', t('admin.2fa_enabled_msg'), 'success');
+  } catch (e) { showMsg('securityMsg', t('admin.connection_error_short'), 'error'); }
+}
+function showRecoveryCodes(codes) {
+  tfCodes = codes.slice(); const list = document.getElementById('tfCodeList'); list.textContent = '';
+  tfCodes.forEach(c => { const d = document.createElement('div'); d.textContent = c; list.appendChild(d); });
+  document.getElementById('tfSavedCheck').checked = false; document.getElementById('tfCodesDone').disabled = true;
+  document.getElementById('tfSetup').style.display = 'none'; document.getElementById('tfCodes').style.display = '';
+  renderSecurityStatus();
+}
+async function copyRecoveryCodes() {
+  const text = tfCodes.join('\n');
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch (e2) {} ta.remove(); }
+  showMsg('securityMsg', t('admin.2fa_copied'), 'success');
+}
+function downloadRecoveryCodes() {
+  const text = t('admin.2fa_file_header') + '\n\n' + tfCodes.join('\n') + '\n';
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' })), a = document.createElement('a');
+  a.href = url; a.download = 'arreyon-admin-recovery-codes.txt'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function closeRecoveryCodes() {
+  tfCodes = []; document.getElementById('tfCodeList').textContent = ''; document.getElementById('tfCodes').style.display = 'none';
+  renderSecurityStatus(); refreshSecurityStatus();
+}
+async function regenRecoveryCodes() {
+  const password = document.getElementById('tfRegenPw').value, code = document.getElementById('tfRegenCode').value.trim();
+  if (!password || !code) { showMsg('securityMsg', t('admin.2fa_enter_both'), 'error'); return; }
+  try {
+    const { ok, data } = await adminPost('/api/admin/2fa/recovery-codes', { password, code });
+    if (!ok || !data.success) { showMsg('securityMsg', data.error || t('admin.connection_error_short'), 'error'); return; }
+    document.getElementById('tfRegenPw').value = ''; document.getElementById('tfRegenCode').value = '';
+    showRecoveryCodes(data.recoveryCodes || []);
+  } catch (e) { showMsg('securityMsg', t('admin.connection_error_short'), 'error'); }
+}
+async function disableTwoFactor() {
+  const password = document.getElementById('tfOffPw').value, code = document.getElementById('tfOffCode').value.trim();
+  if (!password || !code) { showMsg('securityMsg', t('admin.2fa_enter_both'), 'error'); return; }
+  if (!confirm(t('admin.2fa_off_confirm'))) return;
+  try {
+    const { ok, data } = await adminPost('/api/admin/2fa/disable', { password, code });
+    if (!ok || !data.success) { showMsg('securityMsg', data.error || t('admin.connection_error_short'), 'error'); return; }
+    document.getElementById('tfOffPw').value = ''; document.getElementById('tfOffCode').value = '';
+    securityStatus = { enabled: false, left: 0 }; renderSecurityStatus(); showMsg('securityMsg', t('admin.2fa_disabled_msg'), 'success');
+  } catch (e) { showMsg('securityMsg', t('admin.connection_error_short'), 'error'); }
+}
 
 // ── NAVIGATION ─────────────────────────────────────────────────────────────
 function showSection(name) {
@@ -486,9 +675,10 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const nav = document.getElementById('nav-' + name);
   if (nav) nav.classList.add('active');
-  const titleKeys = {pricing:'admin.nav_pricing',overview:'admin.nav_overview',payments:'admin.nav_payments',users:'admin.nav_users','team-members':'admin.nav_team_members','partner-network':'admin.nav_partner_network',usage:'admin.nav_usage',cms:'admin.nav_cms',announcements:'admin.nav_announcements',coupons:'admin.nav_coupons'};
+  const titleKeys = {pricing:'admin.nav_pricing',overview:'admin.nav_overview',payments:'admin.nav_payments',users:'admin.nav_users','team-members':'admin.nav_team_members','partner-network':'admin.nav_partner_network',usage:'admin.nav_usage',cms:'admin.nav_cms',announcements:'admin.nav_announcements',coupons:'admin.nav_coupons',security:'admin.nav_security'};
   document.getElementById('topbarTitle').textContent = titleKeys[name] ? t(titleKeys[name]) : name;
   if (name === 'usage') loadUsageStats();
+  if (name === 'security') refreshSecurityStatus();
   if (name === 'pricing') loadPlanPricingAdmin();
   if (name === 'team-members') loadAdminTeamMembers();
   if (name === 'partner-network') { loadPartnerNetworkOverview(); loadPartnerNetworkPlacements(); }
