@@ -3210,8 +3210,8 @@ async function loadHistory() {
     const renderItems = (items) => items.map(c => `
       <a href="/boardroom?consultation=${c.id}" class="history-item">
         <div class="history-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
-        <div style="flex:1"><div class="history-title">${c.title || c.business_type || t('hist.consultation_fallback')}</div>
-        <div class="history-meta"><span>${c.business_type || t('hist.general_fallback')}</span>${c.directors_used ? `<span>${JSON.parse(c.directors_used||'[]').length} ${t('hist.directors_suffix')}</span>` : ''}</div></div>
+        <div style="flex:1"><div class="history-title">${escapeHtml(c.title || c.business_type || t('hist.consultation_fallback'))}</div>
+        <div class="history-meta"><span>${escapeHtml(c.business_type || t('hist.general_fallback'))}</span>${c.directors_used ? `<span>${JSON.parse(c.directors_used||'[]').length} ${t('hist.directors_suffix')}</span>` : ''}</div></div>
         <div class="history-time">${timeAgo(c.created_at)}</div>
       </a>`).join('');
 
@@ -3433,7 +3433,7 @@ function renderTeamMemberCard(m) {
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px" id="teamMember_${m.id}">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
         <div>
-          <div style="font-size:13.5px;font-weight:600;color:var(--text)">${m.member_email}</div>
+          <div style="font-size:13.5px;font-weight:600;color:var(--text)">${escapeHtml(m.member_email)}</div>
           <div style="font-size:11px;font-weight:700;color:${statusColor};text-transform:uppercase;letter-spacing:.04em;margin-top:2px">${statusLabel}</div>
         </div>
         <button onclick="removeTeamMember('${m.id}')" style="background:none;border:1px solid var(--border);border-radius:7px;color:#ef4444;font-size:11.5px;padding:5px 12px;cursor:pointer;font-family:inherit">${t('team.remove')}</button>
@@ -3661,7 +3661,7 @@ async function loadGAProperties() {
       return;
     }
     select.innerHTML = data.properties.map(p =>
-      `<option value="${p.propertyId}" data-name="${p.propertyName}" data-account="${p.accountName}">${p.accountName} — ${p.propertyName}</option>`
+      `<option value="${escapeHtml(p.propertyId)}" data-name="${escapeHtml(p.propertyName)}" data-account="${escapeHtml(p.accountName)}">${escapeHtml(p.accountName)} — ${escapeHtml(p.propertyName)}</option>`
     ).join('');
   } catch (e) {
     select.innerHTML = `<option value="">${t('int.failed_load_properties')}</option>`;
@@ -3740,7 +3740,7 @@ async function loadGSCSites() {
       select.innerHTML = `<option value="">${t('int.no_sites_found')}</option>`;
       return;
     }
-    select.innerHTML = data.sites.map(s => `<option value="${s.siteUrl}">${s.siteUrl}</option>`).join('');
+    select.innerHTML = data.sites.map(s => `<option value="${escapeHtml(s.siteUrl)}">${escapeHtml(s.siteUrl)}</option>`).join('');
   } catch (e) {
     select.innerHTML = `<option value="">${t('int.failed_load_sites')}</option>`;
   }
@@ -3850,7 +3850,7 @@ async function loadZohoOrganizations() {
       select.innerHTML = `<option value="">${t('int.no_orgs_found')}</option>`;
       return;
     }
-    select.innerHTML = data.organizations.map(o => `<option value="${o.organizationId}" data-name="${escapeHtml(o.name)}">${escapeHtml(o.name)}</option>`).join('');
+    select.innerHTML = data.organizations.map(o => `<option value="${escapeHtml(o.organizationId)}" data-name="${escapeHtml(o.name)}">${escapeHtml(o.name)}</option>`).join('');
   } catch (e) {
     select.innerHTML = `<option value="">${t('int.failed_load_orgs')}</option>`;
   }
@@ -4652,7 +4652,7 @@ function renderAnalysisResults(data) {
 
   const socialNotice = document.getElementById('socialLimitNotice');
   if (data.socialInfo) {
-    socialNotice.innerHTML = `⚠ <strong>${data.socialInfo.platform} profile detected.</strong> ${data.socialInfo.limitationNote}`;
+    socialNotice.innerHTML = `⚠ <strong>${escapeHtml(data.socialInfo.platform)} profile detected.</strong> ${escapeHtml(data.socialInfo.limitationNote)}`;
     socialNotice.style.display = 'block';
   } else {
     socialNotice.style.display = 'none';
@@ -4668,10 +4668,10 @@ function renderAnalysisResults(data) {
     const label = t('fact.' + key) !== 'fact.' + key ? t('fact.' + key) : (FACT_LABELS[key] || key);
     const badgeInfo = { observed: ['var(--green)', t('analyzer.observed')], inferred: ['var(--gold)', t('analyzer.ai_inferred')], user_provided: ['var(--purple-light)', t('analyzer.you_edited')] };
     const [badgeColor, badgeText] = badgeInfo[fact.source_type] || badgeInfo.inferred;
-    const safeValue = fact.value.replace(/"/g, '&quot;');
+    const safeValue = escapeHtml(fact.value);   // between <textarea> tags quotes are not the danger: a closing tag is
     return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px" id="factCard_${key}">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">${label}</div>
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">${escapeHtml(label)}</div>
         <div style="display:flex;align-items:center;gap:6px">
           <div style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:5px;background:${badgeColor}22;color:${badgeColor}">${badgeText}</div>
           <button onclick="startEditFact('${key}', '${data.businessId}')" title="Edit" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:2px;display:flex" id="editIcon_${key}">
@@ -4680,7 +4680,7 @@ function renderAnalysisResults(data) {
         </div>
       </div>
       <div id="factView_${key}">
-        <div style="font-size:13px;color:var(--text2);line-height:1.6">${fact.value}</div>
+        <div style="font-size:13px;color:var(--text2);line-height:1.6">${escapeHtml(fact.value)}</div>
       </div>
       <div id="factEdit_${key}" style="display:none">
         <textarea id="factInput_${key}" class="form-input" style="font-size:13px;margin-bottom:8px" rows="2">${safeValue}</textarea>
@@ -4737,7 +4737,7 @@ async function generateBusinessIntelligence(businessId) {
     });
     const data = await res.json();
     if (!res.ok) {
-      document.getElementById('biContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('bi.generate_failed')}</div>`;
+      document.getElementById('biContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${escapeHtml(data.error || t('bi.generate_failed'))}</div>`;
       return;
     }
     renderBusinessIntelligenceContent(businessId, data.intelligence, data.generatedAt);
@@ -4853,7 +4853,7 @@ async function generateBusinessXray(businessId) {
     });
     const data = await res.json();
     if (!res.ok) {
-      document.getElementById('xrayContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('xray.generate_failed')}</div>`;
+      document.getElementById('xrayContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${escapeHtml(data.error || t('xray.generate_failed'))}</div>`;
       return;
     }
     renderBusinessXrayContent(businessId, data.businessXray, data.generatedAt);
@@ -4938,7 +4938,7 @@ async function saveFact(key, businessId) {
     if (currentAnalysisData?.facts?.[key]) {
       currentAnalysisData.facts[key] = { value: newValue, source_type: 'user_provided' };
     }
-    document.getElementById('factView_' + key).innerHTML = `<div style="font-size:13px;color:var(--text2);line-height:1.6">${newValue}</div>`;
+    document.getElementById('factView_' + key).innerHTML = `<div style="font-size:13px;color:var(--text2);line-height:1.6">${escapeHtml(newValue)}</div>`;
     cancelEditFact(key);
 
     // Refresh the badge to reflect the new source_type without a full re-render
@@ -4966,10 +4966,10 @@ async function loadAnalyzedBusinesses() {
     list.innerHTML = data.businesses.map(b => `
       <div class="history-item" style="cursor:pointer" onclick="loadBusinessIntoView('${b.id}')">
         <div class="history-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
-        <div style="flex:1"><div class="history-title">${b.name || b.website || 'My Business'}</div>
-        <div class="history-meta"><span>${b.website || 'No website'}</span></div></div>
+        <div style="flex:1"><div class="history-title">${escapeHtml(b.name || b.website || 'My Business')}</div>
+        <div class="history-meta"><span>${escapeHtml(b.website || 'No website')}</span></div></div>
         <div class="history-time">${timeAgo(b.updated_at)}</div>
-        <button type="button" class="business-delete-btn" title="${t('analyzer.delete_business')}" onclick="event.stopPropagation();deleteAnalyzedBusiness('${b.id}', ${JSON.stringify(b.name || b.website || 'My Business')})" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:6px;margin-left:8px;display:flex;align-items:center;border-radius:6px">
+        <button type="button" class="business-delete-btn" title="${t('analyzer.delete_business')}" data-name="${escapeHtml(b.name || b.website || 'My Business')}" onclick="event.stopPropagation();deleteAnalyzedBusiness('${b.id}', this.dataset.name)" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:6px;margin-left:8px;display:flex;align-items:center;border-radius:6px">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
         </button>
       </div>`).join('');
@@ -5072,7 +5072,7 @@ function buildBarChartSVG(data, { width = 480, barHeight = 26, gap = 12 } = {}) 
     const y = gap + i * (barHeight + gap);
     const barW = Math.max((d.value / maxVal) * chartW, 2);
     return `
-      <text x="0" y="${y + barHeight / 2 + 4}" font-size="12" fill="#c4c0e8" font-family="Inter,sans-serif">${d.label}</text>
+      <text x="0" y="${y + barHeight / 2 + 4}" font-size="12" fill="#c4c0e8" font-family="Inter,sans-serif">${escapeHtml(d.label)}</text>
       <rect x="${labelW}" y="${y}" width="${chartW}" height="${barHeight}" fill="#1e1b4b" rx="4"></rect>
       <rect x="${labelW}" y="${y}" width="${barW}" height="${barHeight}" fill="${d.color}" rx="4"></rect>
       <text x="${labelW + barW + 8}" y="${y + barHeight / 2 + 4}" font-size="12" font-weight="700" fill="${d.color}" font-family="Inter,sans-serif">${d.value}</text>
@@ -5183,11 +5183,11 @@ function renderVerificationResults(v) {
     const style = verdictStyle[c.verdict] || { color: 'var(--muted)', label: c.verdict || 'Unknown' };
     return `<div style="background:var(--bg2);border-left:3px solid ${style.color};border-radius:6px;padding:10px 12px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-        <div style="font-size:12.5px;font-weight:700;color:var(--text)">${c.recommendation_title || ''}</div>
+        <div style="font-size:12.5px;font-weight:700;color:var(--text)">${escapeHtml(c.recommendation_title || '')}</div>
         <div style="font-size:9px;font-weight:700;padding:1px 7px;border-radius:5px;background:${style.color}22;color:${style.color};text-transform:uppercase">${style.label}</div>
       </div>
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:3px"><em>${t('analyzer.strongest_objection')} ${c.strongest_objection || ''}</em></div>
-      <div style="font-size:12px;color:var(--text2)">${c.note || ''}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:3px"><em>${t('analyzer.strongest_objection')} ${escapeHtml(c.strongest_objection || '')}</em></div>
+      <div style="font-size:12px;color:var(--text2)">${escapeHtml(c.note || '')}</div>
     </div>`;
   }).join('') : '<div style="font-size:12.5px;color:var(--muted)">No recommendations to verify.</div>';
 
@@ -5221,9 +5221,9 @@ function renderResearchResults(structured, sources) {
       };
       return `
       <tr style="border-bottom:1px solid var(--border2)">
-        <td style="padding:9px 10px;color:var(--text);font-weight:600">${c.name || '—'}${c.source_ref ? ` <span style="color:var(--green);font-weight:700;font-size:9.5px;background:rgba(16,163,127,.15);padding:1px 6px;border-radius:4px;white-space:nowrap" title="${t('market.source_cited_title')}">${t('market.source_cited')} [${escapeHtml(String(c.source_ref))}]</span>` : ` <span style="color:var(--gold);font-weight:700;font-size:9.5px;background:rgba(230,170,0,.15);padding:1px 6px;border-radius:4px;white-space:nowrap" title="${t('market.not_sourced_title')}">${t('market.not_sourced')}</span>`}</td>
-        <td style="padding:9px 10px;color:var(--text2)">${c.description || '—'}</td>
-        <td style="padding:9px 10px;color:var(--text2)">${c.differentiator || '—'}</td>
+        <td style="padding:9px 10px;color:var(--text);font-weight:600">${escapeHtml(c.name || '—')}${c.source_ref ? ` <span style="color:var(--green);font-weight:700;font-size:9.5px;background:rgba(16,163,127,.15);padding:1px 6px;border-radius:4px;white-space:nowrap" title="${t('market.source_cited_title')}">${t('market.source_cited')} [${escapeHtml(String(c.source_ref))}]</span>` : ` <span style="color:var(--gold);font-weight:700;font-size:9.5px;background:rgba(230,170,0,.15);padding:1px 6px;border-radius:4px;white-space:nowrap" title="${t('market.not_sourced_title')}">${t('market.not_sourced')}</span>`}</td>
+        <td style="padding:9px 10px;color:var(--text2)">${escapeHtml(c.description || '—')}</td>
+        <td style="padding:9px 10px;color:var(--text2)">${escapeHtml(c.differentiator || '—')}</td>
         <td style="padding:9px 10px">${scopeMap[c.scope] || scopeMap.unknown}</td>
       </tr>`;
     }).join('');
@@ -5291,8 +5291,8 @@ function renderResearchResults(structured, sources) {
   if (gaps.length) {
     document.getElementById('competitiveGapsList').innerHTML = gaps.map(g => `
       <div style="background:#2a1f0022;border-left:3px solid var(--gold);border-radius:6px;padding:10px 12px;margin-bottom:8px">
-        <div style="font-size:13px;color:var(--text);font-weight:600">${g.gap}</div>
-        ${g.competitor_names?.length ? `<div style="font-size:11.5px;color:var(--muted);margin-top:3px">${t('analyzer.seen_at')} ${g.competitor_names.join(', ')}</div>` : ''}
+        <div style="font-size:13px;color:var(--text);font-weight:600">${escapeHtml(g.gap)}</div>
+        ${g.competitor_names?.length ? `<div style="font-size:11.5px;color:var(--muted);margin-top:3px">${t('analyzer.seen_at')} ${escapeHtml(g.competitor_names.join(', '))}</div>` : ''}
       </div>`).join('');
     gapsWrap.style.display = 'block';
   } else {
@@ -5305,8 +5305,8 @@ function renderResearchResults(structured, sources) {
   const statusColor = { covered: 'var(--green)', partial: 'var(--gold)', 'not covered': 'var(--muted)' };
   document.getElementById('auditCoverageTable').innerHTML = coverage.length ? coverage.map(c => `
     <div style="display:flex;align-items:center;gap:10px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 12px">
-      <div style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:5px;background:${(statusColor[c.status]||'var(--muted)')}22;color:${statusColor[c.status]||'var(--muted)'};text-transform:uppercase;white-space:nowrap">${c.status || 'unknown'}</div>
-      <div style="flex:1"><div style="font-size:12.5px;color:var(--text);font-weight:600">${c.area}</div>${c.note ? `<div style="font-size:11.5px;color:var(--muted)">${c.note}</div>` : ''}</div>
+      <div style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:5px;background:${(statusColor[c.status]||'var(--muted)')}22;color:${statusColor[c.status]||'var(--muted)'};text-transform:uppercase;white-space:nowrap">${escapeHtml(c.status || 'unknown')}</div>
+      <div style="flex:1"><div style="font-size:12.5px;color:var(--text);font-weight:600">${escapeHtml(c.area)}</div>${c.note ? `<div style="font-size:11.5px;color:var(--muted)">${escapeHtml(c.note)}</div>` : ''}</div>
     </div>`).join('') : '';
 
   // Strategic recommendations — sectioned cards with title, problem, solution, bulleted action steps
@@ -5316,18 +5316,18 @@ function renderResearchResults(structured, sources) {
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
         <div style="width:24px;height:24px;border-radius:50%;background:var(--purple);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0">${i+1}</div>
-        <div style="font-size:14.5px;font-weight:700;color:var(--text);flex:1">${r.title || r.action || ''}</div>
-        ${r.priority ? `<div style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:5px;background:${(priorityColor[r.priority]||'var(--muted)')}22;color:${priorityColor[r.priority]||'var(--muted)'};text-transform:uppercase;white-space:nowrap">${r.priority} ${t('analyzer.priority_word')}</div>` : ''}
+        <div style="font-size:14.5px;font-weight:700;color:var(--text);flex:1">${escapeHtml(r.title || r.action || '')}</div>
+        ${r.priority ? `<div style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:5px;background:${(priorityColor[r.priority]||'var(--muted)')}22;color:${priorityColor[r.priority]||'var(--muted)'};text-transform:uppercase;white-space:nowrap">${escapeHtml(r.priority)} ${t('analyzer.priority_word')}</div>` : ''}
       </div>
-      ${r.problem_addressed ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-bottom:8px;padding-left:34px">${t('analyzer.addresses')} ${r.problem_addressed}</div>` : ''}
-      <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:10px;padding-left:34px">${r.solution || r.reason || ''}</div>
-      ${r.action_steps?.length ? `<ul style="margin:0;padding-left:50px;font-size:12.5px;color:var(--text2);line-height:1.8">${r.action_steps.map(step => `<li>${step}</li>`).join('')}</ul>` : ''}
+      ${r.problem_addressed ? `<div style="font-size:12px;color:var(--muted);font-style:italic;margin-bottom:8px;padding-left:34px">${t('analyzer.addresses')} ${escapeHtml(r.problem_addressed)}</div>` : ''}
+      <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:10px;padding-left:34px">${escapeHtml(r.solution || r.reason || '')}</div>
+      ${r.action_steps?.length ? `<ul style="margin:0;padding-left:50px;font-size:12.5px;color:var(--text2);line-height:1.8">${r.action_steps.map(step => `<li>${escapeHtml(step)}</li>`).join('')}</ul>` : ''}
     </div>`).join('') : `<div style="font-size:13px;color:var(--muted)">${t('analyzer.no_recommendations')}</div>`;
 
   // Sources
   document.getElementById('researchSources').innerHTML = sources.map((s, i) => `
-    <a href="${s.url}" target="_blank" style="display:block;font-size:12px;color:var(--text2);text-decoration:none;padding:8px 10px;background:var(--bg3);border-radius:7px;border:1px solid var(--border)">
-      <span style="color:var(--purple-light);font-weight:700">[${i+1}]</span> ${s.title || s.url}
+    <a href="${escapeHtml(safeHttpUrl(s.url) || '#')}" target="_blank" rel="noopener noreferrer" style="display:block;font-size:12px;color:var(--text2);text-decoration:none;padding:8px 10px;background:var(--bg3);border-radius:7px;border:1px solid var(--border)">
+      <span style="color:var(--purple-light);font-weight:700">[${i+1}]</span> ${escapeHtml(s.title || s.url)}
     </a>`).join('');
 }
 
@@ -5433,7 +5433,7 @@ function renderDiscussionMessages(suffix, messages) {
   if (!el) return;
   el.innerHTML = (messages || []).map(m => `
     <div style="align-self:${m.from === 'you' ? 'flex-end' : 'flex-start'};max-width:85%;background:${m.from === 'you' ? 'var(--purple)' : 'var(--bg3)'};color:${m.from === 'you' ? '#fff' : 'var(--text2)'};border-radius:10px;padding:9px 12px;font-size:13px;line-height:1.5">
-      ${m.text}
+      ${escapeHtml(m.text)}
     </div>`).join('');
   el.scrollTop = el.scrollHeight;
 }
@@ -5450,7 +5450,7 @@ async function sendEntrepreneurDiscussion(suffix) {
 
   // Optimistically show the user's message immediately
   const el = document.getElementById('discussionMessages' + suffix);
-  el.innerHTML += `<div style="align-self:flex-end;max-width:85%;background:var(--purple);color:#fff;border-radius:10px;padding:9px 12px;font-size:13px">${message}</div>`;
+  el.innerHTML += `<div style="align-self:flex-end;max-width:85%;background:var(--purple);color:#fff;border-radius:10px;padding:9px 12px;font-size:13px">${escapeHtml(message)}</div>`;
   el.scrollTop = el.scrollHeight;
 
   try {
@@ -5460,7 +5460,7 @@ async function sendEntrepreneurDiscussion(suffix) {
     const data = await res.json();
     btn.disabled = false;
     if (!res.ok) {
-      el.innerHTML += `<div style="align-self:flex-start;max-width:85%;color:#ff8080;font-size:12.5px">${data.error || t('discuss.failed')}</div>`;
+      el.innerHTML += `<div style="align-self:flex-start;max-width:85%;color:#ff8080;font-size:12.5px">${escapeHtml(data.error || t('discuss.failed'))}</div>`;
       return;
     }
     renderDiscussionMessages(suffix, data.discussionMessages);
@@ -5506,7 +5506,7 @@ async function generateBusinessPlan() {
     btn.textContent = '📋 ' + t('ent.generate_plan');
 
     if (!res.ok) {
-      targetDiv.innerHTML = `<div style="color:#ff8080;font-size:13px;margin-top:12px">${data.error || t('ent.plan_generation_failed')}</div>`;
+      targetDiv.innerHTML = `<div style="color:#ff8080;font-size:13px;margin-top:12px">${escapeHtml(data.error || t('ent.plan_generation_failed'))}</div>`;
       return;
     }
     renderBusinessPlan(targetDiv, data.businessPlan);
@@ -5525,7 +5525,7 @@ function renderBusinessPlan(container, plan) {
   const fin = plan.financial_snapshot || {};
   container.id = container.id || ('planContainer_' + Math.random().toString(36).slice(2));
 
-  const listRow = (label, val) => val ? `<div style="margin-bottom:8px"><span style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</span><div style="font-size:12.5px;color:var(--text2);line-height:1.5">${Array.isArray(val) ? val.map(v=>`• ${v}`).join('<br>') : val}</div></div>` : '';
+  const listRow = (label, val) => val ? `<div style="margin-bottom:8px"><span style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</span><div style="font-size:12.5px;color:var(--text2);line-height:1.5">${Array.isArray(val) ? val.map(v=>`• ${escapeHtml(v)}`).join('<br>') : escapeHtml(val)}</div></div>` : '';
   const sectionHeading = (label, sectionKey) => `<div style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;display:flex;align-items:center;gap:8px"><span>${label}</span><button onclick="regenerateBusinessPlanSection('${sectionKey}', '${container.id}', event)" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;text-transform:none;letter-spacing:0" data-i18n="bi.regenerate">↻ Regenerate</button></div>`;
 
   container.innerHTML = `
@@ -5652,7 +5652,7 @@ async function loadBusinessesForLinking() {
     const businesses = data.businesses || [];
     if (!businesses.length) return;
 
-    const optionsHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+    const optionsHTML = businesses.map(b => `<option value="${b.id}">${escapeHtml(b.name || b.website || 'Untitled business')}</option>`).join('');
     ['oppBusinessSelect', 'ideaBusinessSelect'].forEach(id => {
       const select = document.getElementById(id);
       select.innerHTML = select.options[0].outerHTML + optionsHTML;
@@ -5686,7 +5686,7 @@ async function loadGrowthBusinesses() {
 
     document.getElementById('growthNoBizPrompt').style.display = 'none';
     select.parentElement.style.display = 'block';
-    select.innerHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+    select.innerHTML = businesses.map(b => `<option value="${b.id}">${escapeHtml(b.name || b.website || 'Untitled business')}</option>`).join('');
 
     // Restore whichever business was last selected here, rather than always
     // defaulting to the first in the list — otherwise, returning to this
@@ -6020,7 +6020,7 @@ async function generateGrowthPlan() {
     });
     const data = await res.json();
     if (!res.ok) {
-      document.getElementById('growthPlanContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('growth.generate_failed')}</div>`;
+      document.getElementById('growthPlanContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${escapeHtml(data.error || t('growth.generate_failed'))}</div>`;
       return;
     }
     renderGrowthPlan(data.plan, data.generatedAt);
@@ -6100,7 +6100,7 @@ async function loadActionBusinesses() {
     document.getElementById('actionNoBizPrompt').style.display = 'none';
     select.parentElement.style.display = 'block';
     document.getElementById('actionMainWrap').style.display = 'block';
-    select.innerHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+    select.innerHTML = businesses.map(b => `<option value="${b.id}">${escapeHtml(b.name || b.website || 'Untitled business')}</option>`).join('');
 
     // Same "remember the last selection" fix already applied to Growth
     // Center — without it, returning to this page would silently switch
@@ -6288,7 +6288,7 @@ async function loadCompetitorBusinesses() {
     document.getElementById('marketNoBizPrompt').style.display = 'none';
     select.parentElement.style.display = 'block';
     document.getElementById('marketMainWrap').style.display = 'block';
-    select.innerHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+    select.innerHTML = businesses.map(b => `<option value="${b.id}">${escapeHtml(b.name || b.website || 'Untitled business')}</option>`).join('');
 
     // Same "remember the last selection" fix already applied to Growth
     // Center and Action Center.
@@ -6392,7 +6392,7 @@ async function generateMarketContext() {
     });
     const data = await res.json();
     if (!res.ok) {
-      document.getElementById('marketContextContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('growth.generate_failed')}</div>`;
+      document.getElementById('marketContextContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${escapeHtml(data.error || t('growth.generate_failed'))}</div>`;
       return;
     }
     renderMarketContextContent(data.marketContext, data.generatedAt);
@@ -6522,7 +6522,7 @@ async function loadMarketingBusinesses() {
     document.getElementById('mktNoBizPrompt').style.display = 'none';
     select.parentElement.style.display = 'block';
     document.getElementById('mktMainWrap').style.display = 'block';
-    select.innerHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+    select.innerHTML = businesses.map(b => `<option value="${b.id}">${escapeHtml(b.name || b.website || 'Untitled business')}</option>`).join('');
 
     // Same "remember the last selection" fix already applied everywhere else.
     let savedId;
@@ -6618,7 +6618,7 @@ async function generateMarketingStrategy() {
     });
     const data = await res.json();
     if (!res.ok) {
-      document.getElementById('mktStrategyContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('growth.generate_failed')}</div>`;
+      document.getElementById('mktStrategyContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${escapeHtml(data.error || t('growth.generate_failed'))}</div>`;
       return;
     }
     renderMarketingStrategyContent(data.strategy, data.generatedAt);
@@ -6772,7 +6772,7 @@ async function generateContentCalendar() {
     });
     const data = await res.json();
     if (!res.ok) {
-      document.getElementById('mktCalendarContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('growth.generate_failed')}</div>`;
+      document.getElementById('mktCalendarContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${escapeHtml(data.error || t('growth.generate_failed'))}</div>`;
       return;
     }
     renderContentCalendarContent(data.calendar, data.generatedAt);
@@ -6914,7 +6914,7 @@ async function loadFundingBusinesses() {
     document.getElementById('fundNoBizPrompt').style.display = 'none';
     select.parentElement.style.display = 'block';
     document.getElementById('fundMainWrap').style.display = 'block';
-    select.innerHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+    select.innerHTML = businesses.map(b => `<option value="${b.id}">${escapeHtml(b.name || b.website || 'Untitled business')}</option>`).join('');
 
     // Same "remember the last selection" fix already applied everywhere else.
     let savedId;
@@ -7012,7 +7012,7 @@ async function generateFundingReadiness() {
     });
     const data = await res.json();
     if (!res.ok) {
-      document.getElementById('fundContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('growth.generate_failed')}</div>`;
+      document.getElementById('fundContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${escapeHtml(data.error || t('growth.generate_failed'))}</div>`;
       return;
     }
     renderFundingReadinessContent(data.fundingReadiness, data.generatedAt);
@@ -7061,7 +7061,7 @@ async function generatePitchDeck() {
     });
     const data = await res.json();
     if (!res.ok) {
-      document.getElementById('pitchDeckContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${data.error || t('growth.generate_failed')}</div>`;
+      document.getElementById('pitchDeckContent').innerHTML = `<div style="color:#ff8080;font-size:13px;padding:12px">${escapeHtml(data.error || t('growth.generate_failed'))}</div>`;
       return;
     }
     renderPitchDeckContent(data.pitchDeck, data.generatedAt);
@@ -7169,7 +7169,7 @@ async function loadReportsCenterBusinesses() {
     document.getElementById('reportsNoBizPrompt').style.display = 'none';
     select.parentElement.style.display = 'block';
     document.getElementById('reportsGrid').style.display = 'grid';
-    select.innerHTML = businesses.map(b => `<option value="${b.id}">${b.name || b.website || 'Untitled business'}</option>`).join('');
+    select.innerHTML = businesses.map(b => `<option value="${b.id}">${escapeHtml(b.name || b.website || 'Untitled business')}</option>`).join('');
 
     let savedId;
     try { savedId = localStorage.getItem('arreyon_reports_business_id'); } catch (e) {}
@@ -7289,22 +7289,22 @@ function renderOpportunities(structured, researchBacked, preserveState) {
   const opps = structured.opportunities || [];
   document.getElementById('opportunityCards').innerHTML = opps.map(o => `
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px">
-      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">${o.name || ''}</div>
-      <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:8px">${o.description || ''}</div>
-      <div style="font-size:12.5px;color:var(--purple-light);font-style:italic;margin-bottom:12px">${t('ent.why_it_fits')} ${o.why_it_fits || ''}</div>
+      <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">${escapeHtml(o.name || '')}</div>
+      <div style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:8px">${escapeHtml(o.description || '')}</div>
+      <div style="font-size:12.5px;color:var(--purple-light);font-style:italic;margin-bottom:12px">${t('ent.why_it_fits')} ${escapeHtml(o.why_it_fits || '')}</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px">
         ${['demand','competition','potential_margin','customer_acquisition_difficulty','scalability','risk'].map(key => {
           const label = t(metricLabels[key]);
           const val = o[key] || 'unknown';
           return `<div style="background:var(--bg3);border-radius:6px;padding:6px 8px">
             <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</div>
-            <div style="font-size:11.5px;font-weight:700;color:${levelColor[val]||'var(--muted)'}">${val}</div>
+            <div style="font-size:11.5px;font-weight:700;color:${levelColor[val]||'var(--muted)'}">${escapeHtml(val)}</div>
           </div>`;
         }).join('')}
       </div>
       <div style="font-size:12px;color:var(--text2);display:flex;gap:16px;flex-wrap:wrap">
-        <span><strong style="color:var(--text)">${t('ent.startup_cost')}</strong> ${o.startup_cost_estimate || '—'}</span>
-        <span><strong style="color:var(--text)">${t('ent.time_to_revenue')}</strong> ${o.time_to_first_revenue || '—'}</span>
+        <span><strong style="color:var(--text)">${t('ent.startup_cost')}</strong> ${escapeHtml(o.startup_cost_estimate || '—')}</span>
+        <span><strong style="color:var(--text)">${t('ent.time_to_revenue')}</strong> ${escapeHtml(o.time_to_first_revenue || '—')}</span>
       </div>
     </div>`).join('');
 
@@ -7312,7 +7312,7 @@ function renderOpportunities(structured, researchBacked, preserveState) {
   document.getElementById('learnFirstText').textContent = structured.what_to_learn_first ? `${t('ent.first_learn')} ${structured.what_to_learn_first}` : '';
 
   const select = document.getElementById('opportunityPlanSelect');
-  select.innerHTML = `<option value="">${t('ent.choose_opportunity')}</option>` + opps.map(o => `<option value="${o.name}">${o.name}</option>`).join('');
+  select.innerHTML = `<option value="">${t('ent.choose_opportunity')}</option>` + opps.map(o => `<option value="${escapeHtml(o.name)}">${escapeHtml(o.name)}</option>`).join('');
 
   if (!preserveState) {
     document.getElementById('businessPlanSectionOpp').innerHTML = '';
@@ -7478,7 +7478,7 @@ async function loadEntrepreneurHistory() {
       const title = isOpp ? t('ent.opportunity_search') : (s.input_data?.idea?.slice(0, 60) || t('ent.idea_validation_title'));
       return `<div class="history-item" style="cursor:pointer" onclick="loadEntrepreneurSession(${i})">
         <div class="history-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg></div>
-        <div style="flex:1"><div class="history-title">${title}</div>
+        <div style="flex:1"><div class="history-title">${escapeHtml(title)}</div>
         <div class="history-meta"><span>${isOpp ? t('ent.opportunity_finder_label') : t('ent.idea_validation_title')}${s.research_backed ? ' · ' + t('ent.research_backed_suffix') : ''}</span></div></div>
         <div class="history-time">${timeAgo(s.created_at)}</div>
       </div>`;
@@ -7822,7 +7822,7 @@ function renderCalculatorResult(type, r) {
     html += calcResultRow(t('fin.result_ltv'), formatMoney(r.ltv));
   } else if (type === 'ltv_cac_ratio') {
     html += calcResultRow(t('fin.result_ratio'), r.ratio + ' : 1');
-    html += `<div style="margin-top:12px;font-size:12.5px;color:var(--text2);background:var(--bg3);border-radius:8px;padding:10px 12px">${r.verdict}</div>`;
+    html += `<div style="margin-top:12px;font-size:12.5px;color:var(--text2);background:var(--bg3);border-radius:8px;padding:10px 12px">${escapeHtml(r.verdict)}</div>`;
   } else if (type === 'roas') {
     html += calcResultRow(t('fin.result_roas'), r.roas + 'x');
   } else if (type === 'growth_projection') {
@@ -7836,7 +7836,7 @@ function renderCalculatorResult(type, r) {
     const last = r.projection[r.projection.length - 1];
     html += calcResultRow(t('fin.result_final_balance'), formatMoney(last.runningBalance));
     if (r.warning) {
-      html += `<div style="margin-top:12px;font-size:12.5px;color:var(--gold);background:#2a1f0022;border:1px solid var(--gold);border-radius:8px;padding:10px 12px">⚠ ${r.warning}</div>`;
+      html += `<div style="margin-top:12px;font-size:12.5px;color:var(--gold);background:#2a1f0022;border:1px solid var(--gold);border-radius:8px;padding:10px 12px">⚠ ${escapeHtml(r.warning)}</div>`;
     } else {
       html += `<div style="margin-top:12px;font-size:12.5px;color:var(--green);background:#0a2a2022;border-radius:8px;padding:10px 12px">✓ ${t('fin.cash_positive')}</div>`;
     }
@@ -8016,8 +8016,8 @@ function renderScenarioResults(optionsWithFinancials, analysis) {
     return `<div style="background:var(--bg2);border:1px solid ${isRecommended ? 'var(--purple)' : 'var(--border)'};border-radius:12px;padding:18px;margin-bottom:14px;position:relative">
       ${isRecommended ? `<div style="position:absolute;top:-10px;right:14px;background:var(--purple);color:#fff;font-size:10px;font-weight:700;padding:3px 10px;border-radius:6px;text-transform:uppercase">${t('scen.recommended')}</div>` : ''}
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <div style="font-size:15px;font-weight:700;color:var(--text)">${a.option_name}</div>
-        <div style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:5px;background:${riskColor[a.risk_level]||'var(--muted)'}22;color:${riskColor[a.risk_level]||'var(--muted)'};text-transform:uppercase">${a.risk_level} ${t('scen.risk')}</div>
+        <div style="font-size:15px;font-weight:700;color:var(--text)">${escapeHtml(a.option_name)}</div>
+        <div style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:5px;background:${riskColor[a.risk_level]||'var(--muted)'}22;color:${riskColor[a.risk_level]||'var(--muted)'};text-transform:uppercase">${escapeHtml(a.risk_level)} ${t('scen.risk')}</div>
       </div>
       ${fin ? `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
         <span style="font-size:9px;font-weight:700;color:var(--green);background:rgba(16,185,129,.15);padding:2px 7px;border-radius:4px" data-i18n="plan.computed_badge">Computed</span>
@@ -8032,8 +8032,8 @@ function renderScenarioResults(optionsWithFinancials, analysis) {
         <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div><div style="font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase;margin-bottom:4px">${t('scen.pros')}</div>${a.pros.map(p=>`<div style="font-size:12px;color:var(--text2);margin-bottom:3px">• ${p}</div>`).join('')}</div>
-        <div><div style="font-size:10px;font-weight:700;color:#ef4444;text-transform:uppercase;margin-bottom:4px">${t('scen.cons')}</div>${a.cons.map(c=>`<div style="font-size:12px;color:var(--text2);margin-bottom:3px">• ${c}</div>`).join('')}</div>
+        <div><div style="font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase;margin-bottom:4px">${t('scen.pros')}</div>${a.pros.map(p=>`<div style="font-size:12px;color:var(--text2);margin-bottom:3px">• ${escapeHtml(p)}</div>`).join('')}</div>
+        <div><div style="font-size:10px;font-weight:700;color:#ef4444;text-transform:uppercase;margin-bottom:4px">${t('scen.cons')}</div>${a.cons.map(c=>`<div style="font-size:12px;color:var(--text2);margin-bottom:3px">• ${escapeHtml(c)}</div>`).join('')}</div>
       </div>
     </div>`;
   }).join('');
@@ -8045,14 +8045,14 @@ function renderScenarioResults(optionsWithFinancials, analysis) {
         <span style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase">${t('scen.comparison_summary')}</span>
         <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
       </div>
-      <div style="font-size:13px;color:var(--text2);line-height:1.6">${analysis.comparison_summary}</div>
+      <div style="font-size:13px;color:var(--text2);line-height:1.6">${escapeHtml(analysis.comparison_summary)}</div>
     </div>
     <div style="background:linear-gradient(135deg,var(--bg3),var(--bg2));border:1px solid var(--purple);border-radius:12px;padding:18px">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase">${t('scen.recommendation')}: ${analysis.recommended_option}</span>
+        <span style="font-size:11px;font-weight:700;color:var(--purple-light);text-transform:uppercase">${t('scen.recommendation')}: ${escapeHtml(analysis.recommended_option)}</span>
         <span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 7px;border-radius:4px" data-i18n="bi.ai_inferred_badge">AI-inferred analysis</span>
       </div>
-      <div style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:10px">${analysis.recommendation_reasoning}</div>
+      <div style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:10px">${escapeHtml(analysis.recommendation_reasoning)}</div>
       <div style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;display:inline-block;background:${confColor[analysis.confidence]||'var(--muted)'}22;color:${confColor[analysis.confidence]||'var(--muted)'}">${analysis.confidence.toUpperCase()} ${t('scen.confidence')}</div>
     </div>`;
   document.getElementById('scenarioResults').style.display = 'block';
@@ -8179,7 +8179,7 @@ function renderBacklinkOpportunities(opportunities) {
     <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
         <div style="min-width:0">
-          <span style="font-size:8.5px;font-weight:700;color:var(--purple-light);background:rgba(139,92,246,.15);padding:2px 6px;border-radius:8px;text-transform:uppercase">${t(BACKLINK_TYPE_LABELS[opp.opportunity_type] || opp.opportunity_type)}</span>
+          <span style="font-size:8.5px;font-weight:700;color:var(--purple-light);background:rgba(139,92,246,.15);padding:2px 6px;border-radius:8px;text-transform:uppercase">${escapeHtml(t(BACKLINK_TYPE_LABELS[opp.opportunity_type] || opp.opportunity_type))}</span>
           <div style="font-size:12.5px;font-weight:600;color:var(--text);margin-top:4px">${escapeHtml(opp.title)}</div>
           <a href="${escapeHtml(opp.url)}" target="_blank" style="font-size:11px;color:var(--purple-light);word-break:break-all">${escapeHtml(opp.url)}</a>
           ${opp.description ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">${escapeHtml(opp.description)}</div>` : ''}
