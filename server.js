@@ -308,6 +308,7 @@ app.post('/api/auth/register', limitIp('register', 5, RL_HOUR, 'Too many sign-up
 app.post('/api/auth/forgot-password', limitIp('forgot', 5, RL_HOUR, 'Too many reset requests. Please try again later.'));
 app.post('/api/auth/resend-verification', limitIp('resend', 5, RL_HOUR, 'Too many requests. Please try again later.'));
 app.post('/api/auth/reset-password', limitIp('reset', 10, RL_HOUR, 'Too many attempts. Please try again later.'));
+app.get('/api/auth/verify-info', limitIp('verifyinfo', 60, RL_HOUR));
 app.post('/api/coupons/validate', limitIp('coupon', 30, RL_HOUR));
 app.post('/api/payments/submit', limitIp('payment', 10, RL_HOUR, 'Too many payment submissions from this connection. Please try again later.'));
 app.post('/api/translate-messages', limitIp('translate', 60, RL_HOUR), capBody(120 * 1024));
@@ -689,7 +690,8 @@ const EMAIL_TEMPLATES = {
         <h2>Welcome to Arreyon Consult, ${p.firstName}!</h2>
         <p>Please verify your email address to activate your account.</p>
         <a href="${p.verifyUrl}" style="display:inline-block;background:#6C3Bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Verify Email</a>
-        <p style="color:#666;font-size:12px;margin-top:20px">This link expires in 24 hours. If you did not create this account, ignore this email.</p>
+        <p style="color:#444;font-size:13px;margin-top:16px">When you click the button, you will be asked for the password that was chosen when the account was created.</p>
+        <p style="color:#666;font-size:12px;margin-top:20px">This link expires in 24 hours. If you did not create this account, ignore this email: it stays inactive and nothing can be done with it.</p>
         <hr>
         <p style="color:#999;font-size:11px">Arreyon Consult by G-DESIGNS LTD · consult.gdesignsme.com</p>
       </div>`
@@ -700,6 +702,7 @@ const EMAIL_TEMPLATES = {
         <h2>Bienvenue sur Arreyon Consult, ${p.firstName} !</h2>
         <p>Veuillez vérifier votre adresse e-mail pour activer votre compte.</p>
         <a href="${p.verifyUrl}" style="display:inline-block;background:#6C3Bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Vérifier l'e-mail</a>
+        <p style="color:#444;font-size:13px;margin-top:16px">En cliquant sur le bouton, le mot de passe choisi lors de la création du compte vous sera demandé.</p>
         <p style="color:#666;font-size:12px;margin-top:20px">Ce lien expire dans 24 heures. Si vous n'êtes pas à l'origine de ce compte, ignorez cet e-mail.</p>
         <hr>
         <p style="color:#999;font-size:11px">Arreyon Consult par G-DESIGNS LTD · consult.gdesignsme.com</p>
@@ -709,11 +712,11 @@ const EMAIL_TEMPLATES = {
   resendVerify: {
     en: (p) => ({
       subject: 'Verify your Arreyon Consult account',
-      html: `<p>Click <a href="${p.verifyUrl}">here</a> to verify your email. Link expires in 24 hours.</p>`
+      html: `<p>Click <a href="${p.verifyUrl}">here</a> to verify your email. You will be asked for the password chosen when the account was created. Link expires in 24 hours.</p>`
     }),
     fr: (p) => ({
       subject: 'Vérifiez votre compte Arreyon Consult',
-      html: `<p>Cliquez <a href="${p.verifyUrl}">ici</a> pour vérifier votre e-mail. Le lien expire dans 24 heures.</p>`
+      html: `<p>Cliquez <a href="${p.verifyUrl}">ici</a> pour vérifier votre e-mail. Le mot de passe choisi lors de la création du compte vous sera demandé. Le lien expire dans 24 heures.</p>`
     })
   },
   resetPassword: {
@@ -11577,20 +11580,54 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// Verify email
+// Verify email, step 1: the link in the email only opens the confirmation page. NOTHING is verified or signed in by opening it
+// (so a mail scanner that opens links does nothing, and neither does a victim who clicks a link they did not ask for).
 app.get('/auth/verify', async (req, res) => {
-  const { token } = req.query;
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
   try {
-    const result = await pool.query(
-      `UPDATE users SET email_verified = true, verification_token = NULL
-       WHERE verification_token = $1 AND verification_expires > NOW() RETURNING *`,
-      [token]
-    );
-    if (!result.rows.length) return res.redirect('/auth?error=invalid_token');
-    const user = result.rows[0];
-    await issueSession(res, user);
-    res.redirect('/dashboard');
-  } catch(e) { res.redirect('/auth?error=verify_failed'); }
+    const r = token ? await pool.query('SELECT 1 FROM users WHERE verification_token = $1 AND verification_expires > NOW() AND email_verified = false', [token]) : { rows: [] };
+    if (!r.rows.length) return res.redirect('/auth?error=invalid_token');
+    res.sendFile(path.join(__dirname, 'public', 'auth.html'));
+  } catch (e) { res.redirect('/auth?error=verify_failed'); }
+});
+
+// Which address is this link for? (shown on the confirmation page). Only someone holding the emailed link can ask.
+app.get('/api/auth/verify-info', async (req, res) => {
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
+  try {
+    const r = token ? await pool.query('SELECT email FROM users WHERE verification_token = $1 AND verification_expires > NOW() AND email_verified = false', [token]) : { rows: [] };
+    if (!r.rows.length) return res.status(404).json({ error: 'This verification link is invalid or has expired.', code: 'invalid_token' });
+    res.json({ success: true, email: r.rows[0].email });
+  } catch (e) { res.status(500).json({ error: 'Could not check this link. Please try again.' }); }
+});
+
+// Verify email, step 2: the account is only verified (and signed in) when the password chosen at sign-up is entered.
+// This is what stops a stranger who registered someone else's address with a password of their own from getting that account when the
+// real owner clicks the link: the owner does not know that password, so the account stays unverified and unusable.
+const VERIFY_MAX_WRONG_PER_LINK = 5;
+app.post('/api/auth/verify-email', async (req, res) => {
+  const token = req.body && typeof req.body.token === 'string' ? req.body.token : '';
+  const password = req.body ? req.body.password : undefined;
+  if (!token) return res.status(400).json({ error: 'This verification link is invalid or has expired.', code: 'invalid_token' });
+  if (typeof password !== 'string' || !password) return res.status(400).json({ error: 'Please enter your password.', code: 'password_required' });
+  const linkKey = `verify-fail:link:${token}`, ip = clientIp(req), ipKey = `verify-fail:ip:${ip}`;
+  if (!RATE_LIMITS_OFF) {
+    const linkLocked = rateCount(linkKey, LOGIN_WINDOW) >= VERIFY_MAX_WRONG_PER_LINK, ipLocked = ip !== 'unknown' && rateCount(ipKey, LOGIN_WINDOW) >= LOGIN_MAX_PER_IP;
+    if (linkLocked || ipLocked) return tooManyRequests(res, rateRetryAfter(linkLocked ? linkKey : ipKey, LOGIN_WINDOW), 'Too many attempts. Please wait a few minutes and try again, or use "Forgot password?".');
+  }
+  const failed = () => { rateAdd(linkKey, LOGIN_WINDOW); if (ip !== 'unknown') rateAdd(ipKey, LOGIN_WINDOW); };
+  try {
+    const found = await pool.query('SELECT * FROM users WHERE verification_token = $1 AND verification_expires > NOW() AND email_verified = false', [token]);
+    const user = found.rows[0];
+    if (!user) { if (ip !== 'unknown') rateAdd(ipKey, LOGIN_WINDOW); return res.status(400).json({ error: 'This verification link is invalid or has expired.', code: 'invalid_token' }); }
+    const ok = !!user.password_hash && await bcrypt.compare(password, user.password_hash);
+    if (!ok) { failed(); return res.status(401).json({ error: 'That is not the password chosen when this account was created. If you have forgotten it, use "Forgot password?".', code: 'wrong_password' }); }
+    const up = await pool.query('UPDATE users SET email_verified = true, verification_token = NULL, verification_expires = NULL WHERE id = $1 AND verification_token = $2 AND email_verified = false RETURNING *', [user.id, token]);
+    if (!up.rows.length) return res.status(400).json({ error: 'This verification link is invalid or has expired.', code: 'invalid_token' });
+    rateClear(linkKey);
+    await issueSession(res, up.rows[0]);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Verification failed. Please try again.' }); }
 });
 
 // Login
@@ -11676,7 +11713,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
     if (passwordProblem) return res.status(400).json({ error: passwordProblem.message, code: passwordProblem.code });
     const hash = await bcrypt.hash(password, 10);
     const result = await pool.query(
-      `UPDATE users SET password_hash = $1, reset_token = NULL
+      `UPDATE users SET password_hash = $1, reset_token = NULL, email_verified = true, verification_token = NULL, verification_expires = NULL
        WHERE reset_token = $2 AND reset_expires > NOW() RETURNING *`,
       [hash, token]
     );
