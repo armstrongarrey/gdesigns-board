@@ -346,14 +346,66 @@ function encryptSecret(plaintext) {
   const authTag = cipher.getAuthTag();
   return Buffer.concat([iv, authTag, encrypted]).toString('base64');
 }
-function decryptSecret(encoded) {
+const USING_DEV_KEY = !process.env.CREDENTIAL_ENCRYPTION_KEY;
+let legacyDevKey = null;   // only built if a real key is set, to read anything that was written while the built-in key was in use
+function decryptWithKey(encoded, key) {
   const data = Buffer.from(encoded, 'base64');
   const iv = data.subarray(0, 12);
   const authTag = data.subarray(12, 28);
   const encrypted = data.subarray(28);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', CREDENTIAL_ENCRYPTION_KEY, iv);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
   decipher.setAuthTag(authTag);
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+}
+function decryptSecret(encoded) {
+  try { return decryptWithKey(encoded, CREDENTIAL_ENCRYPTION_KEY); }
+  catch (e) {
+    if (USING_DEV_KEY) throw e;
+    try {
+      if (!legacyDevKey) legacyDevKey = crypto.scryptSync('dev-only-fallback-key-set-CREDENTIAL_ENCRYPTION_KEY-in-production', 'arreyon-credential-salt', 32);
+      return decryptWithKey(encoded, legacyDevKey);
+    } catch (e2) { throw e; }
+  }
+}
+
+// ── Stored sign-in tokens for Google Analytics, Search Console, HubSpot and Zoho Books ──
+// Encrypted at rest with the same key as the website credentials. The "enc1:" marker tells an encrypted value from an older plain one,
+// so both work side by side while the startup pass below protects what is already stored.
+const TOKEN_PREFIX = 'enc1:';
+function protectToken(plain) {
+  if (typeof plain !== 'string' || !plain) return plain;
+  return plain.startsWith(TOKEN_PREFIX) ? plain : TOKEN_PREFIX + encryptSecret(plain);
+}
+function revealToken(stored) {
+  if (typeof stored !== 'string' || !stored.startsWith(TOKEN_PREFIX)) return stored;
+  return decryptSecret(stored.slice(TOKEN_PREFIX.length));
+}
+const TOKEN_TABLES = ['google_analytics_connections', 'google_search_console_connections', 'hubspot_connections', 'zoho_books_connections'];
+function tokenNeedsWork(stored) {
+  if (typeof stored !== 'string' || !stored) return false;
+  if (!stored.startsWith(TOKEN_PREFIX)) return true;                       // still plain text
+  if (USING_DEV_KEY) return false;
+  try { decryptWithKey(stored.slice(TOKEN_PREFIX.length), CREDENTIAL_ENCRYPTION_KEY); return false; }
+  catch (e) { return true; }                                               // written under the built-in key: move it to the real one
+}
+async function encryptStoredTokens() {
+  if (process.env.TOKEN_MIGRATION_OFF === '1') return { skipped: true, done: 0, failed: 0 };
+  const out = { done: 0, failed: 0 };
+  for (const table of TOKEN_TABLES) {
+    try {
+      const rows = (await pool.query(`SELECT id, access_token, refresh_token FROM ${table}`)).rows;
+      for (const r of rows) {
+        if (!tokenNeedsWork(r.access_token) && !tokenNeedsWork(r.refresh_token)) continue;
+        try {
+          const a = protectToken(revealToken(r.access_token)), f = protectToken(revealToken(r.refresh_token));
+          const up = await pool.query(`UPDATE ${table} SET access_token = $1, refresh_token = $2 WHERE id = $3 AND access_token = $4 AND refresh_token = $5`, [a, f, r.id, r.access_token, r.refresh_token]);
+          if (up.rowCount) out.done++;
+        } catch (e) { out.failed++; console.error(`Token protection skipped one row in ${table}:`, e.message); }
+      }
+    } catch (e) { out.failed++; console.error(`Token protection could not read ${table}:`, e.message); }
+  }
+  if (out.done || out.failed) console.log(`Stored connection tokens protected: ${out.done}${out.failed ? `, ${out.failed} could not be (they keep working as before)` : ''}`);
+  return out;
 }
 const GMAIL_USER = 'gdesignsme@gmail.com';
 const GMAIL_PASS = process.env.GMAIL_APP_PASSWORD;
@@ -10358,7 +10410,7 @@ app.get('/api/integrations/google-analytics/callback', async (req, res) => {
       `INSERT INTO google_analytics_connections (owner_id, access_token, refresh_token, token_expires_at)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (owner_id) DO UPDATE SET access_token = $2, refresh_token = $3, token_expires_at = $4, connected_at = NOW()`,
-      [ownerId, tokenData.access_token, tokenData.refresh_token, expiresAt]
+      [ownerId, protectToken(tokenData.access_token), protectToken(tokenData.refresh_token), expiresAt]
     );
 
     res.redirect('/dashboard?section=integrations&connected=google-analytics');
@@ -10374,13 +10426,13 @@ app.get('/api/integrations/google-analytics/callback', async (req, res) => {
 async function getValidGAAccessToken(connection) {
   const expiresAt = new Date(connection.token_expires_at);
   const now = new Date();
-  if (expiresAt.getTime() - now.getTime() > 5 * 60 * 1000) return connection.access_token; // still valid for 5+ more minutes
+  if (expiresAt.getTime() - now.getTime() > 5 * 60 * 1000) return revealToken(connection.access_token); // still valid for 5+ more minutes
 
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      refresh_token: connection.refresh_token,
+      refresh_token: revealToken(connection.refresh_token),
       client_id: process.env.GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
       grant_type: 'refresh_token'
@@ -10391,7 +10443,7 @@ async function getValidGAAccessToken(connection) {
 
   const newExpiresAt = new Date(Date.now() + (tokenData.expires_in || 3600) * 1000);
   await pool.query('UPDATE google_analytics_connections SET access_token = $1, token_expires_at = $2 WHERE id = $3',
-    [tokenData.access_token, newExpiresAt, connection.id]);
+    [protectToken(tokenData.access_token), newExpiresAt, connection.id]);
 
   return tokenData.access_token;
 }
@@ -10586,7 +10638,7 @@ app.get('/api/integrations/google-search-console/callback', async (req, res) => 
       `INSERT INTO google_search_console_connections (owner_id, access_token, refresh_token, token_expires_at)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (owner_id) DO UPDATE SET access_token = $2, refresh_token = $3, token_expires_at = $4, connected_at = NOW()`,
-      [ownerId, tokenData.access_token, tokenData.refresh_token, expiresAt]
+      [ownerId, protectToken(tokenData.access_token), protectToken(tokenData.refresh_token), expiresAt]
     );
 
     res.redirect('/dashboard?section=integrations&connected=google-search-console');
@@ -10599,13 +10651,13 @@ app.get('/api/integrations/google-search-console/callback', async (req, res) => 
 async function getValidGSCAccessToken(connection) {
   const expiresAt = new Date(connection.token_expires_at);
   const now = new Date();
-  if (expiresAt.getTime() - now.getTime() > 5 * 60 * 1000) return connection.access_token;
+  if (expiresAt.getTime() - now.getTime() > 5 * 60 * 1000) return revealToken(connection.access_token);
 
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      refresh_token: connection.refresh_token,
+      refresh_token: revealToken(connection.refresh_token),
       client_id: process.env.GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
       grant_type: 'refresh_token'
@@ -10616,7 +10668,7 @@ async function getValidGSCAccessToken(connection) {
 
   const newExpiresAt = new Date(Date.now() + (tokenData.expires_in || 3600) * 1000);
   await pool.query('UPDATE google_search_console_connections SET access_token = $1, token_expires_at = $2 WHERE id = $3',
-    [tokenData.access_token, newExpiresAt, connection.id]);
+    [protectToken(tokenData.access_token), newExpiresAt, connection.id]);
 
   return tokenData.access_token;
 }
@@ -11066,7 +11118,7 @@ app.get('/api/integrations/hubspot/callback', async (req, res) => {
       `INSERT INTO hubspot_connections (owner_id, access_token, refresh_token, token_expires_at, hub_id)
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (owner_id) DO UPDATE SET access_token = $2, refresh_token = $3, token_expires_at = $4, hub_id = $5, connected_at = NOW()`,
-      [ownerId, tokenData.access_token, tokenData.refresh_token, expiresAt, tokenData.hub_id ? String(tokenData.hub_id) : null]
+      [ownerId, protectToken(tokenData.access_token), protectToken(tokenData.refresh_token), expiresAt, tokenData.hub_id ? String(tokenData.hub_id) : null]
     );
 
     res.redirect('/dashboard?section=integrations&connected=hubspot');
@@ -11079,7 +11131,7 @@ app.get('/api/integrations/hubspot/callback', async (req, res) => {
 async function getValidHubSpotAccessToken(connection) {
   const expiresAt = new Date(connection.token_expires_at);
   const now = new Date();
-  if (expiresAt.getTime() - now.getTime() > 5 * 60 * 1000) return connection.access_token;
+  if (expiresAt.getTime() - now.getTime() > 5 * 60 * 1000) return revealToken(connection.access_token);
 
   const tokenRes = await fetch(HUBSPOT_TOKEN_URL, {
     method: 'POST',
@@ -11088,7 +11140,7 @@ async function getValidHubSpotAccessToken(connection) {
       grant_type: 'refresh_token',
       client_id: process.env.HUBSPOT_CLIENT_ID,
       client_secret: process.env.HUBSPOT_CLIENT_SECRET,
-      refresh_token: connection.refresh_token
+      refresh_token: revealToken(connection.refresh_token)
     })
   });
   const tokenData = await tokenRes.json();
@@ -11096,7 +11148,7 @@ async function getValidHubSpotAccessToken(connection) {
 
   const newExpiresAt = new Date(Date.now() + (tokenData.expires_in || 1800) * 1000);
   await pool.query('UPDATE hubspot_connections SET access_token = $1, token_expires_at = $2 WHERE id = $3',
-    [tokenData.access_token, newExpiresAt, connection.id]);
+    [protectToken(tokenData.access_token), newExpiresAt, connection.id]);
 
   return tokenData.access_token;
 }
@@ -11282,7 +11334,7 @@ app.get('/api/integrations/zoho-books/callback', async (req, res) => {
       `INSERT INTO zoho_books_connections (owner_id, access_token, refresh_token, token_expires_at, accounts_server, api_domain)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (owner_id) DO UPDATE SET access_token = $2, refresh_token = $3, token_expires_at = $4, accounts_server = $5, api_domain = $6, organization_id = NULL, organization_name = NULL, connected_at = NOW()`,
-      [ownerId, tokenData.access_token, tokenData.refresh_token, expiresAt, accountsServer, apiDomain]
+      [ownerId, protectToken(tokenData.access_token), protectToken(tokenData.refresh_token), expiresAt, accountsServer, apiDomain]
     );
 
     res.redirect('/dashboard?section=integrations&connected=zoho-books');
@@ -11295,7 +11347,7 @@ app.get('/api/integrations/zoho-books/callback', async (req, res) => {
 async function getValidZohoAccessToken(connection) {
   const expiresAt = new Date(connection.token_expires_at);
   const now = new Date();
-  if (expiresAt.getTime() - now.getTime() > 5 * 60 * 1000) return connection.access_token;
+  if (expiresAt.getTime() - now.getTime() > 5 * 60 * 1000) return revealToken(connection.access_token);
 
   // Token refresh must go to the SAME regional accounts-server the
   // connection was originally issued from — Zoho's other data centers
@@ -11307,7 +11359,7 @@ async function getValidZohoAccessToken(connection) {
       grant_type: 'refresh_token',
       client_id: process.env.ZOHO_CLIENT_ID,
       client_secret: process.env.ZOHO_CLIENT_SECRET,
-      refresh_token: connection.refresh_token
+      refresh_token: revealToken(connection.refresh_token)
     })
   });
   const tokenData = await tokenRes.json();
@@ -11315,7 +11367,7 @@ async function getValidZohoAccessToken(connection) {
 
   const newExpiresAt = new Date(Date.now() + (tokenData.expires_in || 3600) * 1000);
   await pool.query('UPDATE zoho_books_connections SET access_token = $1, token_expires_at = $2 WHERE id = $3',
-    [tokenData.access_token, newExpiresAt, connection.id]);
+    [protectToken(tokenData.access_token), newExpiresAt, connection.id]);
 
   return tokenData.access_token;
 }
@@ -11452,6 +11504,11 @@ async function initDB() {
     } else if (!(await bcrypt.compare(ADMIN_PASSWORD, existingAdmin.rows[0].password_hash))) {
       await pool.query('UPDATE admin_users SET password_hash = $1, token_version = token_version + 1 WHERE id = $2', [await bcrypt.hash(ADMIN_PASSWORD, 10), existingAdmin.rows[0].id]);
     }
+    if (process.env.ADMIN_2FA_RESET === '1') {
+      await pool.query(`UPDATE admin_users SET totp_enabled = false, totp_secret_encrypted = NULL, totp_last_step = 0, recovery_code_hashes = '[]'::jsonb, token_version = token_version + 1 WHERE LOWER(email) = LOWER($1)`, [ADMIN_EMAIL]);
+      console.warn('SECURITY NOTICE: ADMIN_2FA_RESET=1 turned off two-factor sign-in for the admin account. Remove ADMIN_2FA_RESET from Render now, then set two-factor up again.');
+    }
+    await encryptStoredTokens();
     console.log('Database initialized');
   } catch(e) { console.error('DB init error:', e.message); }
 }
@@ -11683,6 +11740,150 @@ app.get('/api/auth/me', authRequired, async (req, res) => {
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
 
+// ── Admin two-factor sign-in: building blocks ──
+// Time-based one-time codes (RFC 6238: the 6-digit codes an authenticator app shows), one-time recovery codes, and a QR code for the setup screen.
+const B32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function base32Encode(buf) {
+  let bits = 0, val = 0, out = '';
+  for (const b of buf) { val = (val << 8) | b; bits += 8; while (bits >= 5) { out += B32_ALPHABET[(val >>> (bits - 5)) & 31]; bits -= 5; } }
+  if (bits > 0) out += B32_ALPHABET[(val << (5 - bits)) & 31];
+  return out;
+}
+function base32Decode(str) {
+  const clean = String(str === undefined || str === null ? '' : str).toUpperCase().replace(/[\s=-]/g, '');
+  let bits = 0, val = 0; const out = [];
+  for (const ch of clean) { const i = B32_ALPHABET.indexOf(ch); if (i < 0) return null; val = (val << 5) | i; bits += 5; if (bits >= 8) { out.push((val >>> (bits - 8)) & 255); bits -= 8; } }
+  return Buffer.from(out);
+}
+function totpAt(secret, step) {
+  const counter = Buffer.alloc(8); counter.writeBigUInt64BE(BigInt(step));
+  const h = crypto.createHmac('sha1', secret).update(counter).digest(), o = h[19] & 15;
+  const n = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(n % 1000000).padStart(6, '0');
+}
+// Returns the 30-second step the code belongs to, or null. One step either side is allowed (clock drift), and a step at or before the
+// last one used is refused, so a code that was already accepted can never be used a second time.
+function checkTotp(secretBase32, code, lastStep = 0, nowMs = Date.now()) {
+  const secret = base32Decode(secretBase32), c = String(code === undefined || code === null ? '' : code).replace(/\s/g, '');
+  if (!secret || !secret.length || !/^\d{6}$/.test(c)) return null;
+  const cur = Math.floor(nowMs / 30000); let hit = null;
+  for (const step of [cur - 1, cur, cur + 1]) {
+    const same = crypto.timingSafeEqual(Buffer.from(totpAt(secret, step)), Buffer.from(c));
+    if (same && step > Number(lastStep) && (hit === null || step > hit)) hit = step;
+  }
+  return hit;
+}
+const RECOVERY_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // no I, O, 0 or 1: nothing to mistake when writing it down
+function newRecoveryCodes(n = 10) {
+  return Array.from({ length: n }, () => { const b = crypto.randomBytes(16); let s = ''; for (let i = 0; i < 16; i++) s += RECOVERY_ALPHABET[b[i] % 32]; return s.match(/.{4}/g).join('-'); });
+}
+function normalizeRecoveryCode(c) { return String(c === undefined || c === null ? '' : c).toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+function looksLikeRecoveryCode(c) { const n = normalizeRecoveryCode(c); return n.length === 16 && /^[A-HJ-NP-Z2-9]+$/.test(n); }
+function hashRecoveryCode(c) { return crypto.createHash('sha256').update('arreyon-recovery:' + normalizeRecoveryCode(c)).digest('hex'); }
+
+// A QR code made here, so the secret never goes to an outside service. Byte mode, error correction M, versions 1-10 (up to 213 characters).
+const QR_ECC_PER_BLOCK_M = [0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26];
+const QR_BLOCKS_M = [0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5];
+function qrRawCodewords(ver) { let r = (16 * ver + 128) * ver + 64; if (ver >= 2) { const a = Math.floor(ver / 7) + 2; r -= (25 * a - 10) * a - 55; if (ver >= 7) r -= 36; } return Math.floor(r / 8); }
+function qrGfMul(x, y) { let z = 0; for (let i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11D); z ^= ((y >>> i) & 1) * x; } return z; }
+function qrRsDivisor(degree) { const r = new Array(degree).fill(0); r[degree - 1] = 1; let root = 1; for (let i = 0; i < degree; i++) { for (let j = 0; j < degree; j++) { r[j] = qrGfMul(r[j], root); if (j + 1 < degree) r[j] ^= r[j + 1]; } root = qrGfMul(root, 0x02); } return r; }
+function qrRsRemainder(data, divisor) { const r = divisor.map(() => 0); for (const b of data) { const f = b ^ r.shift(); r.push(0); divisor.forEach((c, i) => { r[i] ^= qrGfMul(c, f); }); } return r; }
+function qrMatrix(text) {
+  const bytes = Buffer.from(String(text), 'utf8'); let ver = 1;
+  for (; ver <= 10; ver++) { const cap = qrRawCodewords(ver) - QR_ECC_PER_BLOCK_M[ver] * QR_BLOCKS_M[ver]; if (Math.ceil((4 + (ver >= 10 ? 16 : 8) + bytes.length * 8) / 8) <= cap) break; }
+  if (ver > 10) throw new Error('QR text too long');
+  const dataCap = qrRawCodewords(ver) - QR_ECC_PER_BLOCK_M[ver] * QR_BLOCKS_M[ver];
+  const bits = [], put = (v, n) => { for (let i = n - 1; i >= 0; i--) bits.push((v >>> i) & 1); };
+  put(4, 4); put(bytes.length, ver >= 10 ? 16 : 8); for (const b of bytes) put(b, 8);
+  put(0, Math.min(4, dataCap * 8 - bits.length)); while (bits.length % 8) bits.push(0);
+  const data = []; for (let i = 0; i < bits.length; i += 8) data.push(parseInt(bits.slice(i, i + 8).join(''), 2));
+  for (let pad = 0xEC; data.length < dataCap; pad ^= 0xEC ^ 0x11) data.push(pad);
+  const nb = QR_BLOCKS_M[ver], eccLen = QR_ECC_PER_BLOCK_M[ver], raw = qrRawCodewords(ver), nShort = nb - raw % nb, shortLen = Math.floor(raw / nb);
+  const div = qrRsDivisor(eccLen), blocks = []; let k = 0;
+  for (let i = 0; i < nb; i++) { const dat = data.slice(k, k + shortLen - eccLen + (i < nShort ? 0 : 1)); k += dat.length; const ecc = qrRsRemainder(dat, div); if (i < nShort) dat.push(0); blocks.push(dat.concat(ecc)); }
+  const all = []; for (let i = 0; i < blocks[0].length; i++) blocks.forEach((b, j) => { if (i !== shortLen - eccLen || j >= nShort) all.push(b[i]); });
+  const size = ver * 4 + 17, mod = Array.from({ length: size }, () => new Array(size).fill(false)), fn = Array.from({ length: size }, () => new Array(size).fill(false));
+  const setF = (x, y, dark) => { mod[y][x] = dark; fn[y][x] = true; };
+  for (let i = 0; i < size; i++) { setF(6, i, i % 2 === 0); setF(i, 6, i % 2 === 0); }
+  for (const [cx, cy] of [[3, 3], [size - 4, 3], [3, size - 4]]) for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const d = Math.max(Math.abs(dx), Math.abs(dy)), x = cx + dx, y = cy + dy; if (x >= 0 && x < size && y >= 0 && y < size) setF(x, y, d !== 2 && d !== 4); }
+  const na = ver === 1 ? 0 : Math.floor(ver / 7) + 2; let pos = [];
+  if (na) { const step = Math.ceil((ver * 4 + 4) / (na * 2 - 2)) * 2; pos = [6]; for (let p = size - 7; pos.length < na; p -= step) pos.splice(1, 0, p); }
+  for (let i = 0; i < pos.length; i++) for (let j = 0; j < pos.length; j++) { if ((i === 0 && j === 0) || (i === 0 && j === pos.length - 1) || (i === pos.length - 1 && j === 0)) continue; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) setF(pos[i] + dx, pos[j] + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1); }
+  const drawFormat = mask => {
+    let rem = mask; for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+    const bits15 = ((mask << 10) | rem) ^ 0x5412, bit = i => ((bits15 >>> i) & 1) !== 0;
+    for (let i = 0; i <= 5; i++) setF(8, i, bit(i)); setF(8, 7, bit(6)); setF(8, 8, bit(7)); setF(7, 8, bit(8)); for (let i = 9; i < 15; i++) setF(14 - i, 8, bit(i));
+    for (let i = 0; i < 8; i++) setF(size - 1 - i, 8, bit(i)); for (let i = 8; i < 15; i++) setF(8, size - 15 + i, bit(i)); setF(8, size - 8, true);
+  };
+  drawFormat(0);
+  if (ver >= 7) { let rem = ver; for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1F25); const vb = (ver << 12) | rem; for (let i = 0; i < 18; i++) { const b = ((vb >>> i) & 1) !== 0, a = size - 11 + i % 3, c = Math.floor(i / 3); setF(a, c, b); setF(c, a, b); } }
+  let bi = 0;
+  for (let right = size - 1; right >= 1; right -= 2) { if (right === 6) right = 5; for (let vert = 0; vert < size; vert++) for (let j = 0; j < 2; j++) { const x = right - j, upward = ((right + 1) & 2) === 0, y = upward ? size - 1 - vert : vert; if (!fn[y][x] && bi < all.length * 8) { mod[y][x] = ((all[bi >>> 3] >>> (7 - (bi & 7))) & 1) !== 0; bi++; } } }
+  const maskFn = [(x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, (x, y) => x % 3 === 0, (x, y) => (x + y) % 3 === 0, (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0, (x, y) => x * y % 2 + x * y % 3 === 0, (x, y) => (x * y % 2 + x * y % 3) % 2 === 0, (x, y) => ((x + y) % 2 + x * y % 3) % 2 === 0];
+  const applyMask = m => { for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fn[y][x] && maskFn[m](x, y)) mod[y][x] = !mod[y][x]; };
+  const penalty = () => {
+    let res = 0; const gets = [(a, b) => mod[a][b], (a, b) => mod[b][a]];
+    for (const get of gets) for (let a = 0; a < size; a++) { let run = 1; for (let b = 1; b < size; b++) { if (get(a, b) === get(a, b - 1)) { run++; if (run === 5) res += 3; else if (run > 5) res++; } else run = 1; } }
+    for (let y = 0; y < size - 1; y++) for (let x = 0; x < size - 1; x++) { const c = mod[y][x]; if (c === mod[y][x + 1] && c === mod[y + 1][x] && c === mod[y + 1][x + 1]) res += 3; }
+    const pat = [true, false, true, true, true, false, true, false, false, false, false], rpat = pat.slice().reverse();
+    for (const get of gets) for (let a = 0; a < size; a++) for (let b = 0; b + 11 <= size; b++) { let m1 = true, m2 = true; for (let q = 0; q < 11; q++) { const v = get(a, b + q); if (v !== pat[q]) m1 = false; if (v !== rpat[q]) m2 = false; } if (m1 || m2) res += 40; }
+    let dark = 0; for (const row of mod) for (const v of row) if (v) dark++;
+    return res + (Math.ceil(Math.abs(dark * 20 - size * size * 10) / (size * size)) - 1) * 10;
+  };
+  let best = 0, bestScore = Infinity;
+  for (let m = 0; m < 8; m++) { applyMask(m); drawFormat(m); const sc = penalty(); if (sc < bestScore) { best = m; bestScore = sc; } applyMask(m); }
+  applyMask(best); drawFormat(best);
+  return mod;
+}
+function qrSvg(text) {
+  const m = qrMatrix(text), n = m.length, q = 4; let d = '';
+  for (let y = 0; y < n; y++) { let x = 0; while (x < n) { if (!m[y][x]) { x++; continue; } let e = x; while (e < n && m[y][e]) e++; d += `M${x + q} ${y + q}h${e - x}v1h-${e - x}z`; x = e; } }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n + 2 * q} ${n + 2 * q}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+
+const ADMIN_2FA_MAX_PER_ADMIN = 5, ADMIN_2FA_MAX_PER_IP = 10;
+function issueAdminSession(res, admin) {
+  const token = jwt.sign({ adminId: admin.id, role: 'admin', name: admin.name, tv: Number(admin.token_version) || 0 }, JWT_SECRET, { expiresIn: '24h' });
+  setCookie(res, token, 'arreyon_admin_token');
+}
+const adminPublic = a => ({ id: a.id, name: a.name, email: a.email });
+// Between the password and the code, the browser holds a short-lived "challenge". It is not a sign-in: adminRequired only accepts role "admin".
+function signAdminChallenge(admin) { return jwt.sign({ purpose: 'admin-2fa', adminId: admin.id, tv: Number(admin.token_version) || 0 }, JWT_SECRET, { expiresIn: '5m' }); }
+function readAdminChallenge(token) {
+  try { const d = jwt.verify(String(token === undefined || token === null ? '' : token), JWT_SECRET); return d && d.purpose === 'admin-2fa' && d.adminId ? d : null; } catch (e) { return null; }
+}
+// Wrong codes lock that admin account (and that address) for a while. Refused requests are not counted, so a lock never extends itself.
+function twoFactorBlocked(req, res, adminId) {
+  if (RATE_LIMITS_OFF) return false;
+  const ip = clientIp(req), kA = `admin-2fa-fail:admin:${adminId}`, kI = `admin-2fa-fail:ip:${ip}`;
+  const lockedA = rateCount(kA, LOGIN_WINDOW) >= ADMIN_2FA_MAX_PER_ADMIN, lockedI = ip !== 'unknown' && rateCount(kI, LOGIN_WINDOW) >= ADMIN_2FA_MAX_PER_IP;
+  if (!lockedA && !lockedI) return false;
+  tooManyRequests(res, rateRetryAfter(lockedA ? kA : kI, LOGIN_WINDOW), 'Too many incorrect codes. Please wait a few minutes and try again.');
+  return true;
+}
+function twoFactorFailed(req, adminId) { rateAdd(`admin-2fa-fail:admin:${adminId}`, LOGIN_WINDOW); const ip = clientIp(req); if (ip !== 'unknown') rateAdd(`admin-2fa-fail:ip:${ip}`, LOGIN_WINDOW); }
+async function loadAdmin(id) { return (await pool.query('SELECT * FROM admin_users WHERE id = $1', [id])).rows[0] || null; }
+// Checks an app code or a recovery code and USES it up in one atomic step, so the same code can never work twice, even from two places at once.
+async function consumeSecondFactor(admin, rawCode) {
+  const code = String(rawCode === undefined || rawCode === null ? '' : rawCode).trim();
+  if (/^[\d\s]+$/.test(code)) {
+    let secret; try { secret = decryptSecret(admin.totp_secret_encrypted); } catch (e) { return { ok: false }; }
+    const step = checkTotp(secret, code, admin.totp_last_step);
+    if (step === null) return { ok: false };
+    const up = await pool.query('UPDATE admin_users SET totp_last_step = $1 WHERE id = $2 AND totp_last_step < $1', [step, admin.id]);
+    return up.rowCount ? { ok: true, via: 'app' } : { ok: false };
+  }
+  if (looksLikeRecoveryCode(code)) {
+    const hash = hashRecoveryCode(code), list = Array.isArray(admin.recovery_code_hashes) ? admin.recovery_code_hashes : [];
+    const idx = list.findIndex(h => typeof h === 'string' && h.length === hash.length && crypto.timingSafeEqual(Buffer.from(h), Buffer.from(hash)));
+    if (idx < 0) return { ok: false };
+    const next = list.filter((_, i) => i !== idx);
+    const up = await pool.query('UPDATE admin_users SET recovery_code_hashes = $1::jsonb WHERE id = $2 AND recovery_code_hashes = $3::jsonb', [JSON.stringify(next), admin.id, JSON.stringify(list)]);
+    return up.rowCount ? { ok: true, via: 'recovery', left: next.length } : { ok: false };
+  }
+  return { ok: false };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ADMIN AUTH ROUTES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -11704,10 +11905,13 @@ app.post('/api/admin/login', async (req, res) => {
     if (!admin) return wrong();
     const valid = typeof password === 'string' && await bcrypt.compare(password, admin.password_hash);
     if (!valid) return wrong();
+    if (admin.totp_enabled && admin.totp_secret_encrypted) {
+      // Password correct, but the code from the authenticator app is still needed. No session yet, and the password-failure counter is not cleared.
+      return res.json({ success: false, needsTwoFactor: true, challenge: signAdminChallenge(admin) });
+    }
     rateClear(emailKey);
-    const token = jwt.sign({ adminId: admin.id, role: 'admin', name: admin.name, tv: Number(admin.token_version) || 0 }, JWT_SECRET, { expiresIn: '24h' });
-    setCookie(res, token, 'arreyon_admin_token');
-    res.json({ success: true, admin: { id: admin.id, name: admin.name, email: admin.email } });
+    issueAdminSession(res, admin);
+    res.json({ success: true, admin: adminPublic(admin) });
   } catch(e) { res.status(500).json({ error: 'Login failed' }); }
 });
 
@@ -11716,9 +11920,9 @@ app.post('/api/admin/login', async (req, res) => {
 // login; this is the one thing the admin page was missing to know that.
 app.get('/api/admin/me', adminRequired, async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, name, email FROM admin_users WHERE id = $1', [req.adminId]);
+    const result = await pool.query('SELECT id, name, email, totp_enabled FROM admin_users WHERE id = $1', [req.adminId]);
     if (!result.rows.length) return res.status(401).json({ error: 'Admin not found' });
-    res.json({ success: true, admin: result.rows[0] });
+    const a = result.rows[0]; res.json({ success: true, admin: { ...adminPublic(a), twoFactorEnabled: !!a.totp_enabled } });
   } catch (e) {
     res.status(500).json({ error: 'Failed to verify session' });
   }
@@ -11732,6 +11936,92 @@ app.post('/api/admin/logout', async (req, res) => {
   } catch (e) { /* nothing valid to end */ }
   res.clearCookie('arreyon_admin_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
   res.json({ success: true });
+});
+
+// ── Admin two-factor routes ──
+app.post('/api/admin/login/2fa', async (req, res) => {
+  const ch = readAdminChallenge(req.body && req.body.challenge);
+  if (!ch) return res.status(401).json({ error: 'That sign-in has expired. Please enter your password again.', code: 'challenge_expired' });
+  if (twoFactorBlocked(req, res, ch.adminId)) return;
+  try {
+    const admin = await loadAdmin(ch.adminId);
+    if (!admin || !admin.totp_enabled || (Number(admin.token_version) || 0) !== ch.tv) return res.status(401).json({ error: 'That sign-in has expired. Please enter your password again.', code: 'challenge_expired' });
+    const r = await consumeSecondFactor(admin, req.body.code);
+    if (!r.ok) { twoFactorFailed(req, admin.id); return res.status(401).json({ error: 'That code is not right. Please try again.' }); }
+    rateClear(`admin-2fa-fail:admin:${admin.id}`); rateClear(`admin-fail:email:${String(admin.email).toLowerCase()}`);
+    issueAdminSession(res, admin);
+    res.json({ success: true, admin: adminPublic(admin), recoveryCodeUsed: r.via === 'recovery', recoveryCodesLeft: r.via === 'recovery' ? r.left : undefined });
+  } catch (e) { res.status(500).json({ error: 'Login failed' }); }
+});
+
+app.get('/api/admin/2fa/status', adminRequired, async (req, res) => {
+  try {
+    const a = await loadAdmin(req.adminId); if (!a) return res.status(401).json({ error: 'Admin not found' });
+    res.json({ success: true, enabled: !!a.totp_enabled, recoveryCodesLeft: Array.isArray(a.recovery_code_hashes) ? a.recovery_code_hashes.length : 0 });
+  } catch (e) { res.status(500).json({ error: 'Could not load the security status.' }); }
+});
+
+// Step 1: make a secret and show it as a QR code (and as text, to type in by hand). Nothing is turned on until step 2 proves the app works.
+app.post('/api/admin/2fa/setup', adminRequired, async (req, res) => {
+  try {
+    const a = await loadAdmin(req.adminId); if (!a) return res.status(401).json({ error: 'Admin not found' });
+    if (a.totp_enabled) return res.status(400).json({ error: 'Two-factor sign-in is already on.' });
+    const secret = base32Encode(crypto.randomBytes(20));
+    await pool.query(`UPDATE admin_users SET totp_secret_encrypted = $1, totp_last_step = 0, recovery_code_hashes = '[]'::jsonb WHERE id = $2 AND totp_enabled = false`, [encryptSecret(secret), a.id]);
+    const issuer = encodeURIComponent('Arreyon Consult');
+    const uri = `otpauth://totp/${issuer}:${encodeURIComponent(a.email)}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30`;
+    res.json({ success: true, secret: secret.match(/.{1,4}/g).join(' '), otpauthUri: uri, qrSvg: qrSvg(uri) });
+  } catch (e) { console.error('2FA setup error:', e.message); res.status(500).json({ error: 'Could not start the setup. Please try again.' }); }
+});
+
+// Step 2: the first code from the app turns it on, and the one-time recovery codes are shown (this is the only time they are shown).
+app.post('/api/admin/2fa/enable', adminRequired, async (req, res) => {
+  if (twoFactorBlocked(req, res, req.adminId)) return;
+  try {
+    const a = await loadAdmin(req.adminId); if (!a) return res.status(401).json({ error: 'Admin not found' });
+    if (a.totp_enabled) return res.status(400).json({ error: 'Two-factor sign-in is already on.' });
+    if (!a.totp_secret_encrypted) return res.status(400).json({ error: 'Please start the setup first.' });
+    let secret; try { secret = decryptSecret(a.totp_secret_encrypted); } catch (e) { return res.status(400).json({ error: 'Please start the setup again.' }); }
+    const step = checkTotp(secret, req.body && req.body.code, 0);
+    if (step === null) { twoFactorFailed(req, a.id); return res.status(401).json({ error: 'That code is not right. Check the app and try again.' }); }
+    const codes = newRecoveryCodes(10);
+    const up = await pool.query('UPDATE admin_users SET totp_enabled = true, totp_last_step = $1, recovery_code_hashes = $2::jsonb WHERE id = $3 AND totp_enabled = false', [step, JSON.stringify(codes.map(hashRecoveryCode)), a.id]);
+    if (!up.rowCount) return res.status(400).json({ error: 'Two-factor sign-in is already on.' });
+    rateClear(`admin-2fa-fail:admin:${a.id}`);
+    await bumpTokenVersion('admin_users', a.id);                 // every other admin session ends; this one carries on with a fresh cookie
+    issueAdminSession(res, await loadAdmin(a.id));
+    res.json({ success: true, recoveryCodes: codes });
+  } catch (e) { console.error('2FA enable error:', e.message); res.status(500).json({ error: 'Could not turn on two-factor sign-in. Please try again.' }); }
+});
+
+// Turning it off, or making new recovery codes, needs the password AND a code, so a stolen session alone cannot weaken the account.
+async function adminPasswordAndCode(req, res) {
+  if (twoFactorBlocked(req, res, req.adminId)) return null;
+  const a = await loadAdmin(req.adminId); if (!a) { res.status(401).json({ error: 'Admin not found' }); return null; }
+  if (!a.totp_enabled) { res.status(400).json({ error: 'Two-factor sign-in is not on.' }); return null; }
+  const body = req.body || {};
+  const passwordOk = typeof body.password === 'string' && await bcrypt.compare(body.password, a.password_hash);
+  const second = passwordOk ? await consumeSecondFactor(a, body.code) : { ok: false };
+  if (!passwordOk || !second.ok) { twoFactorFailed(req, a.id); res.status(401).json({ error: 'Your password or code is not right.' }); return null; }
+  rateClear(`admin-2fa-fail:admin:${a.id}`);
+  return a;
+}
+app.post('/api/admin/2fa/disable', adminRequired, async (req, res) => {
+  try {
+    const a = await adminPasswordAndCode(req, res); if (!a) return;
+    await pool.query(`UPDATE admin_users SET totp_enabled = false, totp_secret_encrypted = NULL, totp_last_step = 0, recovery_code_hashes = '[]'::jsonb WHERE id = $1`, [a.id]);
+    await bumpTokenVersion('admin_users', a.id);
+    issueAdminSession(res, await loadAdmin(a.id));
+    res.json({ success: true });
+  } catch (e) { console.error('2FA disable error:', e.message); res.status(500).json({ error: 'Could not turn off two-factor sign-in. Please try again.' }); }
+});
+app.post('/api/admin/2fa/recovery-codes', adminRequired, async (req, res) => {
+  try {
+    const a = await adminPasswordAndCode(req, res); if (!a) return;
+    const codes = newRecoveryCodes(10);
+    await pool.query('UPDATE admin_users SET recovery_code_hashes = $1::jsonb WHERE id = $2', [JSON.stringify(codes.map(hashRecoveryCode)), a.id]);
+    res.json({ success: true, recoveryCodes: codes });
+  } catch (e) { console.error('2FA recovery codes error:', e.message); res.status(500).json({ error: 'Could not make new recovery codes. Please try again.' }); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
