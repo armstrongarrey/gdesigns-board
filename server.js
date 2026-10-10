@@ -781,35 +781,77 @@ function buildEmail(type, lang, params) {
 }
 
 // ── GOOGLE OAUTH ───────────────────────────────────────────────────────────
+// Google sign-in: who is this person, and is it safe to link them to an account?
+// 1. Only an email that GOOGLE has verified is trusted (it used to be taken on faith).
+// 2. An account made with a password whose email was never verified belongs to nobody yet: someone may have registered another person's
+//    address and chosen the password themselves. When the real owner signs in with Google, that unverified account is taken over cleanly:
+//    the password, the pending links and the details typed at sign-up are discarded. (Before, the account was handed to them with the
+//    stranger's password still working.) An account whose email WAS verified is simply linked, and keeps everything.
+// 3. An account already linked to a different Google account is never merged.
+// 4. A Google account with no photo, or no family name, can now sign in (it used to crash).
+function cleanGoogleName(v, fallback = '') {
+  const t = String(v === undefined || v === null ? '' : v).replace(/[<>\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  return t || fallback;
+}
+function googleEmailIsVerified(profile) {
+  const e = profile && profile.emails && profile.emails[0];
+  return !!e && (e.verified === true || e.verified === 'true');
+}
+async function resolveGoogleUser(profile, attempt = 0) {
+  const rawEmail = profile && profile.emails && profile.emails[0] && profile.emails[0].value;
+  const email = typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : '';
+  const googleId = profile && profile.id ? String(profile.id) : '';
+  if (!email || !googleId) return { rejected: 'no_email' };
+  if (!googleEmailIsVerified(profile)) return { rejected: 'email_not_verified' };
+
+  const display = cleanGoogleName(profile.displayName);
+  const given = cleanGoogleName(profile.name && profile.name.givenName), family = cleanGoogleName(profile.name && profile.name.familyName);
+  const firstName = given || display.split(' ')[0] || email.split('@')[0].slice(0, 60) || 'User';
+  const lastName = family || (given ? '' : display.split(' ').slice(1).join(' ').slice(0, 60));
+  const photo = profile.photos && profile.photos[0] && profile.photos[0].value;
+  const avatar = typeof photo === 'string' && /^https:\/\//i.test(photo) ? photo.slice(0, 1000) : null;
+
+  const found = (await pool.query(
+    'SELECT * FROM users WHERE google_id = $1 OR LOWER(email) = LOWER($2) ORDER BY COALESCE(google_id = $1, false) DESC LIMIT 2', [googleId, email])).rows;
+  const linked = found.find(u => u.google_id === googleId);
+  if (linked) return { user: linked };                                   // already this Google account (even if their Google email has since changed)
+  const byEmail = found.find(u => String(u.email).toLowerCase() === email);
+
+  if (!byEmail) {
+    const insert = await pool.query(
+      `INSERT INTO users (email, google_id, first_name, last_name, avatar_url, email_verified, plan, plan_started_at, plan_expires_at)
+       VALUES ($1, $2, $3, $4, $5, true, 'free', NOW(), NOW() + INTERVAL '${TRIAL_DAYS} days') RETURNING *`,
+      [email, googleId, firstName, lastName, avatar]);
+    return { user: insert.rows[0], created: true };
+  }
+  if (byEmail.google_id && byEmail.google_id !== googleId) return { rejected: 'account_conflict' };
+
+  if (byEmail.email_verified) {                                          // the owner already proved this address: link, change nothing else
+    const up = await pool.query('UPDATE users SET google_id = $1, avatar_url = COALESCE($2, avatar_url) WHERE id = $3 RETURNING *', [googleId, avatar, byEmail.id]);
+    return { user: up.rows[0], linked: true };
+  }
+  // Never verified: take it over cleanly. The guard on email_verified means this only ever touches an account nobody has proved they own.
+  const reclaimed = await pool.query(
+    `UPDATE users SET google_id = $1, avatar_url = $2, email_verified = true, password_hash = NULL,
+       verification_token = NULL, verification_expires = NULL, reset_token = NULL, reset_expires = NULL,
+       first_name = $3, last_name = $4, phone = NULL, country = NULL, token_version = token_version + 1, updated_at = NOW()
+     WHERE id = $5 AND email_verified = false RETURNING *`, [googleId, avatar, firstName, lastName, byEmail.id]);
+  if (reclaimed.rows.length) { console.warn('Google sign-in reclaimed an unverified account (its password was discarded):', byEmail.id); return { user: reclaimed.rows[0], reclaimed: true }; }
+  // It was verified a moment ago by someone else: look again (once) and link normally
+  return attempt < 1 ? resolveGoogleUser(profile, attempt + 1) : { rejected: 'try_again' };
+}
+async function googleStrategyVerify(accessToken, refreshToken, profile, done) {
+  try {
+    const out = await resolveGoogleUser(profile);
+    if (out.rejected) { console.warn('Google sign-in refused:', out.rejected); return done(null, false); }   // the sign-in page then shows its usual "Google sign-in failed"
+    return done(null, out.user);
+  } catch (e) { return done(e, null); }
+}
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET,
   callbackURL: `${BASE_URL}/auth/google/callback`
-}, async (accessToken, refreshToken, profile, done) => {
-  try {
-    const email = profile.emails[0].value.trim().toLowerCase();
-    const firstName = profile.name.givenName;
-    const lastName = profile.name.familyName;
-    const googleId = profile.id;
-    const avatar = profile.photos[0]?.value;
-
-    let result = await pool.query('SELECT * FROM users WHERE google_id = $1 OR LOWER(email) = LOWER($2)', [googleId, email]);
-    let user = result.rows[0];
-
-    if (!user) {
-      const insert = await pool.query(
-        `INSERT INTO users (email, google_id, first_name, last_name, avatar_url, email_verified, plan, plan_started_at, plan_expires_at)
-         VALUES ($1, $2, $3, $4, $5, true, 'free', NOW(), NOW() + INTERVAL '${TRIAL_DAYS} days') RETURNING *`,
-        [email, googleId, firstName, lastName, avatar]
-      );
-      user = insert.rows[0];
-    } else if (!user.google_id) {
-      await pool.query('UPDATE users SET google_id = $1, avatar_url = $2, email_verified = true WHERE id = $3',
-        [googleId, avatar, user.id]);
-    }
-    return done(null, user);
-  } catch(e) { return done(e, null); }
-}));
+}, googleStrategyVerify));
 
 passport.serializeUser((user, done) => done(null, user.id));
 passport.deserializeUser(async (id, done) => {
