@@ -424,6 +424,10 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
 let adminToken = null;
 let cmsData = {};
 
+// Everything that comes from users or from the database is escaped before it is written into the page, so a name or a message
+// that contains markup is shown as plain text and can never run as code.
+function esc(v) { return String(v === null || v === undefined ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
 // ── LOGIN ──────────────────────────────────────────────────────────────────
 // Real, deliberate single shared entry point into the dashboard — used by
 // both a fresh login and a restored session on page load, so the two
@@ -508,16 +512,16 @@ async function loadUsageStats() {
     document.getElementById('statEstCost').textContent = '$' + (data.estimatedCostUsd || '0.00');
 
     document.getElementById('usageByProvider').innerHTML = (data.byProvider || []).map(p => `
-      <tr><td style="text-transform:capitalize">${p.provider}</td><td>${p.calls}</td><td style="color:${parseInt(p.errors)>0?'var(--red)':'var(--muted)'}">${p.errors}</td></tr>
+      <tr><td style="text-transform:capitalize">${esc(p.provider)}</td><td>${p.calls}</td><td style="color:${parseInt(p.errors)>0?'var(--red)':'var(--muted)'}">${p.errors}</td></tr>
     `).join('') || `<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">${t('admin.no_data_yet')}</td></tr>`;
 
     document.getElementById('usageByFeature').innerHTML = (data.byFeature || []).map(f => `
-      <tr><td>${(f.feature||'unspecified').replace(/_/g,' ')}</td><td>${f.calls}</td><td>${f.avg_duration_ms ? Math.round(f.avg_duration_ms) + 'ms' : '—'}</td></tr>
+      <tr><td>${esc((f.feature||'unspecified').replace(/_/g,' '))}</td><td>${f.calls}</td><td>${f.avg_duration_ms ? Math.round(f.avg_duration_ms) + 'ms' : '—'}</td></tr>
     `).join('') || `<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">${t('admin.no_data_yet')}</td></tr>`;
 
     document.getElementById('usageByModel').innerHTML = (data.byModel || []).map(m => {
       const isComplexTier = (m.model||'').includes('sonnet');
-      return `<tr><td>${m.model} ${isComplexTier ? `<span style="font-size:9px;font-weight:700;color:var(--purple-light);background:rgba(108,59,255,.15);padding:1px 6px;border-radius:4px;margin-left:6px">${t('admin.complex_tier')}</span>` : ''}</td><td style="text-transform:capitalize">${m.provider}</td><td>${m.calls}</td></tr>`;
+      return `<tr><td>${esc(m.model)} ${isComplexTier ? `<span style="font-size:9px;font-weight:700;color:var(--purple-light);background:rgba(108,59,255,.15);padding:1px 6px;border-radius:4px;margin-left:6px">${t('admin.complex_tier')}</span>` : ''}</td><td style="text-transform:capitalize">${esc(m.provider)}</td><td>${m.calls}</td></tr>`;
     }).join('') || `<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--muted)">${t('admin.no_data_yet')}</td></tr>`;
 
     // Simple daily bar chart, no external library
@@ -539,7 +543,7 @@ async function loadUsageStats() {
     }
 
     document.getElementById('usageTopUsers').innerHTML = (data.topUsers || []).map(u => `
-      <tr><td>${[u.first_name,u.last_name].filter(Boolean).join(' ')||'—'}</td><td>${u.email}</td><td>${adminPlanLabel(u.plan)}</td><td>${u.calls}</td></tr>
+      <tr><td>${esc([u.first_name,u.last_name].filter(Boolean).join(' ')||'—')}</td><td>${esc(u.email)}</td><td>${esc(adminPlanLabel(u.plan))}</td><td>${u.calls}</td></tr>
     `).join('') || `<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--muted)">${t('admin.no_data_yet')}</td></tr>`;
   } catch(e) { console.log('Usage stats error:', e.message); }
 }
@@ -576,15 +580,15 @@ async function loadPayments() {
     const tbody = document.getElementById('allPayments');
     tbody.innerHTML = (payments||[]).length ? payments.map(p => `
       <tr>
-        <td>${p.payer_name||p.first_name||'—'}</td>
-        <td style="font-size:12px">${p.payer_email||p.user_email||'—'}</td>
-        <td><span class="badge badge-${p.plan}">${t('admin.plan_' + p.plan) !== 'admin.plan_' + p.plan ? t('admin.plan_' + p.plan) : p.plan}</span></td>
+        <td>${esc(p.payer_name||p.first_name||'—')}</td>
+        <td style="font-size:12px">${esc(p.payer_email||p.user_email||'—')}</td>
+        <td><span class="badge badge-${esc(p.plan)}">${esc(t('admin.plan_' + p.plan) !== 'admin.plan_' + p.plan ? t('admin.plan_' + p.plan) : p.plan)}</span></td>
         <td>$${parseFloat(p.amount_usd||0).toFixed(0)} / ${parseInt(p.amount_cfa||0).toLocaleString()} CFA</td>
-        <td style="font-size:12px">${p.payment_method||'—'}</td>
-        <td><span class="badge badge-${p.status}">${t('admin.status_' + p.status) !== 'admin.status_' + p.status ? t('admin.status_' + p.status) : p.status}</span></td>
+        <td style="font-size:12px">${esc(p.payment_method||'—')}</td>
+        <td><span class="badge badge-${esc(p.status)}">${esc(t('admin.status_' + p.status) !== 'admin.status_' + p.status ? t('admin.status_' + p.status) : p.status)}</span></td>
         <td style="font-size:11px">${new Date(p.created_at).toLocaleDateString('en-GB')}</td>
         <td class="td-actions">
-          ${p.status==='pending' ? `<button class="btn-success" onclick="approvePayment('${p.id}')">${t('admin.approve')}</button>` : `<span style="font-size:12px;color:var(--green)">${t('admin.approved')}</span>`}
+          ${p.status==='pending' ? `<button class="btn-success" onclick="approvePayment('${esc(p.id)}')">${t('admin.approve')}</button>` : `<span style="font-size:12px;color:var(--green)">${t('admin.approved')}</span>`}
         </td>
       </tr>`).join('') : `<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--muted)">${t('admin.no_payments')}</td></tr>`;
   } catch(e) {}
@@ -592,13 +596,13 @@ async function loadPayments() {
 
 function renderPaymentRow(p) {
   return `<tr>
-    <td>${p.payer_name||p.first_name||'—'}</td>
-    <td><span class="badge badge-${p.plan}">${t('admin.plan_' + p.plan) !== 'admin.plan_' + p.plan ? t('admin.plan_' + p.plan) : p.plan}</span></td>
+    <td>${esc(p.payer_name||p.first_name||'—')}</td>
+    <td><span class="badge badge-${esc(p.plan)}">${esc(t('admin.plan_' + p.plan) !== 'admin.plan_' + p.plan ? t('admin.plan_' + p.plan) : p.plan)}</span></td>
     <td>$${parseFloat(p.amount_usd||0).toFixed(0)}</td>
-    <td style="font-size:12px">${p.payment_method||'—'}</td>
-    <td><span class="badge badge-${p.status}">${t('admin.status_' + p.status) !== 'admin.status_' + p.status ? t('admin.status_' + p.status) : p.status}</span></td>
+    <td style="font-size:12px">${esc(p.payment_method||'—')}</td>
+    <td><span class="badge badge-${esc(p.status)}">${esc(t('admin.status_' + p.status) !== 'admin.status_' + p.status ? t('admin.status_' + p.status) : p.status)}</span></td>
     <td style="font-size:11px">${new Date(p.created_at).toLocaleDateString('en-GB')}</td>
-    <td>${p.status==='pending'?`<button class="btn-success" onclick="approvePayment('${p.id}')">${t('admin.approve')}</button>`:`<span style="color:var(--green);font-size:12px">${t('admin.done')}</span>`}</td>
+    <td>${p.status==='pending'?`<button class="btn-success" onclick="approvePayment('${esc(p.id)}')">${t('admin.approve')}</button>`:`<span style="color:var(--green);font-size:12px">${t('admin.done')}</span>`}</td>
   </tr>`;
 }
 
@@ -622,8 +626,8 @@ async function loadUsers() {
     const tbody = document.getElementById('allUsers');
     tbody.innerHTML = (users||[]).length ? users.map(u => `
       <tr>
-        <td>${u.first_name} ${u.last_name}</td>
-        <td style="font-size:12px">${u.email}</td>
+        <td>${esc(u.first_name)} ${esc(u.last_name)}</td>
+        <td style="font-size:12px">${esc(u.email)}</td>
         <td>
           <select style="background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text2);font-size:11px;padding:3px 6px;cursor:pointer" onchange="updateUserPlan('${u.id}',this.value)">
             ${['free','starter','pro','business','auto_seo','expired'].map(p => `<option value="${p}" ${u.plan===p?'selected':''}>${t('plan.' + p + '_name')}</option>`).join('')}
@@ -652,11 +656,11 @@ async function loadAdminTeamMembers() {
       const permsSummary = grantedList.length ? grantedList.join(', ') : 'none';
       return `
       <tr>
-        <td>${ownerName}<div style="font-size:11px;color:var(--muted)">${m.owner_email}</div></td>
-        <td>${adminPlanLabel(m.owner_plan)}</td>
-        <td style="font-size:12px">${m.member_email}</td>
-        <td style="color:${statusColors[m.status]||'var(--muted)'};text-transform:capitalize">${m.status}</td>
-        <td style="font-size:11px;color:var(--muted2);max-width:220px">${permsSummary}</td>
+        <td>${esc(ownerName)}<div style="font-size:11px;color:var(--muted)">${esc(m.owner_email)}</div></td>
+        <td>${esc(adminPlanLabel(m.owner_plan))}</td>
+        <td style="font-size:12px">${esc(m.member_email)}</td>
+        <td style="color:${statusColors[m.status]||'var(--muted)'};text-transform:capitalize">${esc(m.status)}</td>
+        <td style="font-size:11px;color:var(--muted2);max-width:220px">${esc(permsSummary)}</td>
         <td style="font-size:11px">${new Date(m.invited_at).toLocaleDateString('en-GB')}</td>
         <td style="font-size:11px">${m.joined_at ? new Date(m.joined_at).toLocaleDateString('en-GB') : '—'}</td>
       </tr>`;
@@ -695,7 +699,7 @@ async function loadPartnerNetworkPlacements() {
     const res = await fetch('/api/admin/partner-network/placements');
     if (!res.ok) {
       const errText = res.status === 404 ? `Route not found (${res.status}) — is the latest server.js actually deployed?` : `Request failed (${res.status})`;
-      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--red)">${errText}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--red)">${esc(errText)}</td></tr>`;
       return;
     }
     const { placements } = await res.json();
@@ -703,22 +707,22 @@ async function loadPartnerNetworkPlacements() {
       const isReported = p.open_report_count > 0;
       return `
       <tr style="${isReported ? 'background:rgba(239,68,68,.06)' : ''}">
-        <td>${p.from_business_name}<div style="font-size:11px;color:var(--muted)">${p.from_account_email}</div></td>
-        <td>${p.to_business_name}<div style="font-size:11px;color:var(--muted)">${p.to_account_email}</div></td>
-        <td style="font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.from_post_title || '—'}</td>
+        <td>${esc(p.from_business_name)}<div style="font-size:11px;color:var(--muted)">${esc(p.from_account_email)}</div></td>
+        <td>${esc(p.to_business_name)}<div style="font-size:11px;color:var(--muted)">${esc(p.to_account_email)}</div></td>
+        <td style="font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.from_post_title || '—')}</td>
         <td style="font-size:11px;color:var(--muted2);max-width:220px">
-          ${p.relevance_reason || '—'}
-          ${isReported ? `<div style="margin-top:4px"><span class="badge" style="background:rgba(239,68,68,.15);color:var(--red)">${t('admin.reported_badge')}</span><div style="font-size:11px;color:var(--red);margin-top:3px">${p.open_report_reasons}</div></div>` : ''}
+          ${esc(p.relevance_reason || '—')}
+          ${isReported ? `<div style="margin-top:4px"><span class="badge" style="background:rgba(239,68,68,.15);color:var(--red)">${t('admin.reported_badge')}</span><div style="font-size:11px;color:var(--red);margin-top:3px">${esc(p.open_report_reasons)}</div></div>` : ''}
         </td>
         <td style="font-size:11px">${new Date(p.placed_at).toLocaleDateString('en-GB')}</td>
         <td class="td-actions">
-          ${isReported ? `<button class="btn-success" onclick="resolveReport('${p.id}')">${t('admin.resolve_report')}</button>` : ''}
-          <button class="btn-danger" onclick="forceOptOutBusiness('${p.from_business_id}', '${(p.from_business_name||'').replace(/'/g,"\\'")}')">${t('admin.force_opt_out')}</button>
+          ${isReported ? `<button class="btn-success" onclick="resolveReport('${esc(p.id)}')">${t('admin.resolve_report')}</button>` : ''}
+          <button class="btn-danger" data-name="${esc(p.from_business_name || '')}" onclick="forceOptOutBusiness('${esc(p.from_business_id)}', this.dataset.name)">${t('admin.force_opt_out')}</button>
         </td>
       </tr>`;
     }).join('') : `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">${t('admin.no_placements')}</td></tr>`;
   } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--red)">${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--red)">${esc(e.message)}</td></tr>`;
     console.error('Partner Network placements load error:', e.message);
   }
 }
@@ -772,7 +776,7 @@ async function loadPlanPricingAdmin() {
     document.getElementById('pricingDiscount').value = d.discountPercent;
     document.getElementById('pricingRows').innerHTML = d.paidPlans.map(k => `
       <tr data-plan="${k}">
-        <td style="font-weight:600">${d.planNames[k] || k}</td>
+        <td style="font-weight:600">${esc(d.planNames[k] || k)}</td>
         <td><input class="form-input" style="width:110px" type="number" min="0.5" step="0.01" id="pp_usd_${k}" value="${d.plans[k].usd}" oninput="renderPricingPreview()"></td>
         <td><input class="form-input" style="width:130px" type="number" min="0" step="1" id="pp_cfa_${k}" value="${d.plans[k].cfa === null ? '' : d.plans[k].cfa}" placeholder="${Math.round(d.plans[k].usd * d.rate)}" oninput="renderPricingPreview()"></td>
         <td id="pp_annual_${k}" style="font-size:12px;color:var(--text2)"></td>
@@ -895,25 +899,25 @@ function renderAllCmsSections(content) {
       const valueFr = typeof fieldData === 'object' ? (fieldData.value_fr || '') : '';
       const isLong = (value || '').length > 80;
       const tag = isLong ? 'textarea' : 'input';
-      const valueAttr = isLong ? '' : `value="${(value||'').replace(/"/g,'&quot;')}"`;
-      const valueFrAttr = isLong ? '' : `value="${(valueFr||'').replace(/"/g,'&quot;')}"`;
-      const enInner = isLong ? (value||'').replace(/</g,'&lt;') : '';
-      const frInner = isLong ? (valueFr||'').replace(/</g,'&lt;') : '';
+      const valueAttr = isLong ? '' : `value="${esc(value||'')}"`;
+      const valueFrAttr = isLong ? '' : `value="${esc(valueFr||'')}"`;
+      const enInner = isLong ? esc(value||'') : '';
+      const frInner = isLong ? esc(valueFr||'') : '';
       return `<div class="cms-field">
-        <div class="cms-field-key">${key.replace(/_/g,' ')}</div>
+        <div class="cms-field-key">${esc(key.replace(/_/g,' '))}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           <div>
             <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:4px">🇬🇧 ${t('cms.lang_name_english')}</div>
-            <${tag} class="cms-field-input" data-lang="en" data-section="${section}" data-key="${key}" ${valueAttr} placeholder="${key}">${enInner}</${tag}>
+            <${tag} class="cms-field-input" data-lang="en" data-section="${esc(section)}" data-key="${esc(key)}" ${valueAttr} placeholder="${esc(key)}">${enInner}</${tag}>
           </div>
           <div>
             <div style="font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:4px">🇫🇷 ${t('cms.lang_name_french')} ${!valueFr ? `<span style="color:var(--gold)">${t('cms.not_translated_note')}</span>` : ''}</div>
-            <${tag} class="cms-field-input" data-lang="fr" data-section="${section}" data-key="${key}" ${valueFrAttr} placeholder="Traduction française...">${frInner}</${tag}>
+            <${tag} class="cms-field-input" data-lang="fr" data-section="${esc(section)}" data-key="${esc(key)}" ${valueFrAttr} placeholder="Traduction française...">${frInner}</${tag}>
           </div>
         </div>
       </div>`;
     }).join('');
-    return `<div class="cms-section"><div class="cms-section-title">${label}</div>${fields}</div>`;
+    return `<div class="cms-section"><div class="cms-section-title">${esc(label)}</div>${fields}</div>`;
   }).join('');
 }
 
@@ -959,9 +963,9 @@ async function loadAnnouncements() {
     const tbody = document.getElementById('annList');
     tbody.innerHTML = (announcements||[]).length ? announcements.map(a => `
       <tr>
-        <td style="font-weight:600">${a.title}</td>
-        <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.message}</td>
-        <td><span class="badge badge-${a.type||'info'}">${t('ann.type_' + (a.type||'info'))}</span></td>
+        <td style="font-weight:600">${esc(a.title)}</td>
+        <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.message)}</td>
+        <td><span class="badge badge-${esc(a.type||'info')}">${esc(t('ann.type_' + (a.type||'info')))}</span></td>
         <td>${a.show_as_banner?t('ann.yes'):t('ann.no')}</td>
         <td>${a.show_as_popup?t('ann.yes'):t('ann.no')}</td>
         <td style="color:${a.is_active?'var(--green)':'var(--muted)'}">${a.is_active?t('ann.active'):t('ann.off')}</td>
@@ -1013,9 +1017,9 @@ async function loadCoupons() {
     const tbody = document.getElementById('couponList');
     tbody.innerHTML = (coupons||[]).length ? coupons.map(c => `
       <tr>
-        <td style="font-weight:700;font-family:monospace;color:var(--purple-light)">${c.code}</td>
+        <td style="font-weight:700;font-family:monospace;color:var(--purple-light)">${esc(c.code)}</td>
         <td style="color:var(--green);font-weight:600">${c.discount_percent}%</td>
-        <td>${c.applies_to==='all' ? t('coup.all_plans') : (t('coup.' + c.applies_to + '_only') !== 'coup.' + c.applies_to + '_only' ? t('coup.' + c.applies_to + '_only') : (c.applies_to||'all'))}</td>
+        <td>${esc(c.applies_to==='all' ? t('coup.all_plans') : (t('coup.' + c.applies_to + '_only') !== 'coup.' + c.applies_to + '_only' ? t('coup.' + c.applies_to + '_only') : (c.applies_to||'all')))}</td>
         <td>${c.used_count||0} / ${c.max_uses||'∞'}</td>
         <td style="font-size:11px">${c.valid_until ? new Date(c.valid_until).toLocaleDateString('en-GB') : t('coup.no_expiry')}</td>
         <td style="color:${c.is_active?'var(--green)':'var(--muted)'}">${c.is_active?t('ann.active'):t('ann.off')}</td>
