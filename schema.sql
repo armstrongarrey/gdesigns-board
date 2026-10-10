@@ -1962,3 +1962,34 @@ CREATE TABLE IF NOT EXISTS shopify_action_backups (
   content_after_hash VARCHAR(64) NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+
+-- Competitor discovery: businesses a web search suggested, until the person confirms (they become tracked competitors) or dismisses them (never suggested again).
+CREATE TABLE IF NOT EXISTS competitor_suggestions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  name VARCHAR(150) NOT NULL,
+  website VARCHAR(300) NOT NULL,
+  domain VARCHAR(255) NOT NULL,
+  reason TEXT,
+  scope VARCHAR(20),
+  grounded BOOLEAN DEFAULT FALSE,
+  source_urls JSONB DEFAULT '[]',
+  page_title TEXT,
+  status VARCHAR(20) DEFAULT 'suggested',
+  tracked_competitor_id UUID,
+  discovered_at TIMESTAMPTZ DEFAULT NOW(),
+  decided_at TIMESTAMPTZ,
+  UNIQUE (business_id, domain)
+);
+CREATE INDEX IF NOT EXISTS idx_competitor_suggestions_business ON competitor_suggestions (business_id, status);
+-- Each search costs money, so every run is recorded: it limits how often a business can search, and shows when the last one was.
+CREATE TABLE IF NOT EXISTS competitor_discovery_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  outcome VARCHAR(20) NOT NULL DEFAULT 'running',
+  found INTEGER DEFAULT 0,
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_competitor_discovery_runs_business ON competitor_discovery_runs (business_id, created_at DESC);
