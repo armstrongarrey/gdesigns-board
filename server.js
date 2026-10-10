@@ -43,10 +43,42 @@ app.use((req, res, next) => {
 });
 
 // ── MIDDLEWARE ─────────────────────────────────────────────────────────────
+// ── Security headers ──────────────────────────────────────────────────────────
+// Light headers that cannot break a page: no sniffing of file types, a safer Referrer-Policy, no "X-Powered-By: Express", HSTS over
+// HTTPS, and a minimal Content-Security-Policy (no plug-in objects, no <base> tricks). A full script policy is not possible while pages
+// use inline scripts. Pages that hold a sign-in or private data also refuse to be shown inside another site's frame (clickjacking).
+// The public landing and consultation pages stay embeddable. API answers are never stored by browsers or proxies.
+app.disable('x-powered-by');
+const FRAME_PROTECTED = /^\/(dashboard|admin|auth|boardroom|board|team-invite)(\/|$)/;
+const NO_REFERRER = /^\/(auth\/reset-password|auth\/verify|team-invite)(\/|$)/;
+app.use((req, res, next) => {
+  const isApi = req.path.startsWith('/api/'), framed = isApi || FRAME_PROTECTED.test(req.path);
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Referrer-Policy', NO_REFERRER.test(req.path) ? 'no-referrer' : 'strict-origin-when-cross-origin');
+  res.set('Content-Security-Policy', `object-src 'none'; base-uri 'self'${framed ? "; frame-ancestors 'self'" : ''}`);
+  if (framed) res.set('X-Frame-Options', 'SAMEORIGIN');
+  if (isApi) res.set('Cache-Control', 'no-store');
+  if (process.env.NODE_ENV === 'production' && (req.secure || req.headers['x-forwarded-proto'] === 'https')) res.set('Strict-Transport-Security', 'max-age=31536000');
+  next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
-app.use(cors({ origin: true, credentials: true }));
+// Which other websites may call this API from a visitor's browser WITH their sign-in. Before, every website could. Your own addresses are
+// allowed; add more (comma-separated) in Render as CORS_ALLOWED_ORIGINS. CORS_ALLOW_ALL=1 restores the old open behavior in an emergency.
+app.use(cors({ origin: (origin, cb) => cb(null, !origin || corsOriginAllowed(origin)), credentials: true }));
+// A request that carries a sign-in cookie must come from this site or an allowed one. (Sign-in cookies are already SameSite=Lax; this is a
+// second lock.) Requests with no cookie, such as the public consultation form, are not affected, and neither are tools with no Origin header.
+app.use((req, res, next) => {
+  if (CORS_ALLOW_ALL || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+  const origin = req.headers.origin;
+  if (!origin) return next();
+  const c = req.cookies || {};
+  if (!(c.arreyon_token || c.arreyon_admin_token || c.arreyon_board)) return next();
+  if (corsOriginAllowed(origin) || sameHostOrigin(origin, req)) return next();
+  return res.status(403).json({ error: 'This request was blocked for your security.', code: 'origin_blocked' });
+});
 app.use(session({
   secret: process.env.JWT_SECRET || 'arreyon-session-secret',
   resave: false,
@@ -203,6 +235,67 @@ function cleanEmailAddress(v) {
   const t = v.trim().toLowerCase();
   if (!t || t.length > 254 || /[\s<>"(),;:\\\[\]]/.test(t)) return null;
   return /^[^@]+@[^@]+\.[^@.]{2,}$/.test(t) ? t : null;
+}
+
+// ── Which sites may call the API with a sign-in ──
+const CORS_ALLOW_ALL = process.env.CORS_ALLOW_ALL === '1';
+let corsOriginSet = null;
+function corsOrigins() {
+  if (corsOriginSet) return corsOriginSet;
+  const set = new Set(); const add = u => { try { set.add(new URL(u).origin); } catch (e) { /* not an address */ } };
+  add(BASE_URL);
+  for (const host of ['consult.gdesignsme.com', 'board.gdesignsme.com', 'gdesignsme.com', 'www.gdesignsme.com']) add('https://' + host);
+  String(process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(x => x.trim()).filter(Boolean).forEach(add);
+  if (process.env.NODE_ENV !== 'production') { add('http://localhost:3000'); add('http://127.0.0.1:3000'); }
+  return (corsOriginSet = set);
+}
+function corsOriginAllowed(origin) { return CORS_ALLOW_ALL || corsOrigins().has(origin); }
+function sameHostOrigin(origin, req) { try { return new URL(origin).host === req.headers.host; } catch (e) { return false; } }
+
+// ── Password rules (for choosing a password: signing in with an old one is never blocked) ──
+// At least 8 characters; no more than 72 bytes (what bcrypt can actually use); not a commonly guessed password; not the person's own email
+// or name; not a single repeated character or a plain run like 12345678 / abcdefgh.
+const PASSWORD_MIN = 8, PASSWORD_MAX_BYTES = 72;
+const COMMON_PASSWORDS = new Set(['password', 'password1', 'password12', 'password123', 'password1234', 'passw0rd', 'p@ssw0rd', 'p@ssword', 'p@ssword1', '12345678', '123456789', '1234567890', '12345678910', '11111111', '22222222', '00000000', '88888888', '987654321', '0987654321', 'qwertyui', 'qwerty123', 'qwertyuiop', 'qwerty12', '1qaz2wsx', '1q2w3e4r', '1q2w3e4r5t', 'zaq12wsx', 'asdfghjk', 'asdfghjkl', 'zxcvbnm1', 'azerty123', 'azertyui', 'azertyuiop', 'iloveyou', 'iloveyou1', 'letmein1', 'welcome1', 'welcome12', 'welcome123', 'admin123', 'administrator', 'adminadmin', 'abc12345', 'abcd1234', 'abcdefgh', 'football', 'baseball', 'basketball', 'sunshine', 'princess', 'superman', 'trustno1', 'dragon12', 'monkey123', 'master123', 'michael1', 'jessica1', 'charlie1', 'starwars', 'whatever', 'changeme', 'changeme1', 'motdepasse', 'motdepasse1', 'bonjour123', 'bonjour1', 'cameroun1', 'cameroon1', 'cameroon123', 'arreyon1', 'gdesigns1', 'gdesigns2026', 'consult123', '12341234', '1234abcd', '123456789a', '123123123', '111222333', '654321654', '12qwaszx', 'q1w2e3r4', '1234qwer', 'qwer1234', 'pass1234', 'test1234', 'user1234', 'guest123', 'login123', 'default1', 'hello123', 'hello1234', 'freedom1', 'shadow12', 'mustang1', 'qazwsxedc', '1qazxsw2', '1122334455', '1212121212', '5555555555', 'aaaaaaaa', 'aaaa1111', 'zzzzzzzz', '11223344', '12121212', '12345abc', '1234567a']);
+// A password made of one of these words plus a few digits or symbols ("Password2026!") is as guessable as the word
+const COMMON_PASSWORD_ROOTS = new Set(['password', 'passw0rd', 'qwerty', 'qwertyuiop', 'azerty', 'azertyuiop', 'welcome', 'letmein', 'iloveyou', 'admin', 'administrator', 'monkey', 'dragon', 'football', 'baseball', 'sunshine', 'princess', 'superman', 'master', 'login', 'motdepasse', 'bonjour', 'arreyon', 'gdesigns', 'consult', 'cameroun', 'cameroon', 'changeme', 'trustno', 'whatever', 'freedom', 'shadow', 'mustang', 'secret', 'hello', 'mypassword', 'newpassword', 'yourpassword', 'abcdefgh', 'azertyui', 'qwertyui']);
+function isPlainRun(s) {   // 12345678, 87654321, abcdefgh, hgfedcba
+  if (s.length < 6) return false;
+  let up = true, down = true;
+  for (let i = 1; i < s.length; i++) { const d = s.charCodeAt(i) - s.charCodeAt(i - 1); if (d !== 1) up = false; if (d !== -1) down = false; }
+  return up || down;
+}
+function checkPasswordPolicy(password, who = {}) {
+  if (typeof password !== 'string' || !password) return { code: 'password_invalid', message: 'Please enter a password.' };
+  if (password.length < PASSWORD_MIN) return { code: 'password_too_short', message: 'Password must be at least 8 characters.' };
+  if (Buffer.byteLength(password, 'utf8') > PASSWORD_MAX_BYTES) return { code: 'password_too_long', message: 'Password is too long. Please use 72 characters or fewer.' };
+  const lower = password.toLowerCase(), letters = lower.replace(/[^a-z]/g, '');
+  const personal = [who.email, who.email && String(who.email).split('@')[0], who.firstName, who.lastName].filter(Boolean).map(x => String(x).toLowerCase()).filter(x => x.length >= 3);
+  const tooEasy = COMMON_PASSWORDS.has(lower)
+    || (letters.length >= 4 && COMMON_PASSWORD_ROOTS.has(letters) && password.length <= letters.length + 6)
+    || /^(.)\1+$/.test(password) || isPlainRun(lower)
+    || personal.some(p => lower === p || (letters.length >= 4 && letters === p.replace(/[^a-z]/g, '')));
+  return tooEasy ? { code: 'password_too_common', message: 'That password is too easy to guess. Please choose a less common one.' } : null;
+}
+
+// ── Error text that is safe to show ──
+// Messages written for people ("WordPress rejected these credentials...", "Google PageSpeed quota exceeded") pass through unchanged. Text that
+// would reveal how the server works (database errors, file paths and stack traces, network internals, keys, AI-vendor error dumps) is replaced
+// by the friendly fallback. The full text is still in the server log.
+const INTERNAL_ERROR_PATTERNS = [
+  /\b(relation|column) "|violates (unique|foreign|check|not-null)|syntax error at or near|duplicate key value|invalid input syntax|null value in column|permission denied for (table|relation)|deadlock detected|could not serialize|current transaction is aborted/i,
+  /\bat\s+\S+\s+\([^)]*:\d+:\d+\)|node_modules|\/opt\/render\/|\/home\/[a-z]|\/usr\/(local\/)?(lib|bin)|[A-Za-z]:\\\\|\.js:\d+/i,
+  /\b(ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|EAI_AGAIN|ENOTFOUND|EHOSTUNREACH|ECONNABORTED)\b|socket hang up|fetch failed|UND_ERR_|self[- ]signed|unable to verify the first certificate|getaddrinfo/i,
+  /\bBearer\s+\S{8,}|\bsk-[A-Za-z0-9_-]{10,}|x-api-key|api[_ -]?key|_API_KEY|process\.env|DATABASE_URL|connection string/i,
+  /\b(OpenAI|Anthropic|Claude|Gemini|ChatGPT|Perplexity|HeyGen|Tavily|Resend)\b[^.]*\b(error|failed|status|returned|key|quota|limit|\d{3})\b|overloaded_error|invalid_request_error|authentication_error|rate_limit_error|insufficient_quota|credit balance|billing/i,
+  /^\s*[{\[]|"type"\s*:\s*"error"|"error"\s*:\s*\{/,
+];
+function safeErrorMessage(err, fallback = 'Something went wrong. Please try again.') {
+  const msg = String((err && err.message) || '').trim();
+  if (!msg) return fallback;
+  if (err && (err.name === 'DatabaseError' || (typeof err.code === 'string' && /^[0-9A-Z]{5}$/.test(err.code) && err.severity))) return fallback;   // a database error
+  if (msg.length > 400 || INTERNAL_ERROR_PATTERNS.some(re => re.test(msg))) return fallback;
+  return msg;
 }
 
 // ── Defaults that must not be used for real ──
@@ -1253,7 +1346,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ intelligence, completeness, generatedAt: new Date().toISOString() });
   } catch (err) {
     console.error('Business intelligence error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate business intelligence. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate business intelligence. Please try again.') });
   }
 });
 
@@ -1355,7 +1448,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ businessXray, completeness, generatedAt: new Date().toISOString() });
   } catch (err) {
     console.error('Business X-Ray error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate Business X-Ray. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate Business X-Ray. Please try again.') });
   }
 });
 
@@ -1771,7 +1864,7 @@ Each checkpoint's "actions" array should have 3-5 entries.`;
     res.json({ plan, generatedAt: new Date().toISOString(), planStartDate: planStartStr, planEndDate: planEndStr });
   } catch (err) {
     console.error('Growth plan generation error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate growth plan. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate growth plan. Please try again.') });
   }
 });
 
@@ -2202,7 +2295,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ analysis, generatedAt: new Date().toISOString() });
   } catch (err) {
     console.error('Competitor analysis error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate competitor analysis. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate competitor analysis. Please try again.') });
   }
 });
 
@@ -2303,7 +2396,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ marketContext, generatedAt: new Date().toISOString() });
   } catch (err) {
     console.error('Market context generation error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate market context. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate market context. Please try again.') });
   }
 });
 
@@ -2399,7 +2492,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ strategy, generatedAt: new Date().toISOString() });
   } catch (err) {
     console.error('Marketing strategy generation error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate marketing strategy. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate marketing strategy. Please try again.') });
   }
 });
 
@@ -2533,7 +2626,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ calendar, generatedAt: new Date().toISOString(), startDate: calStartStr, endDate: calEndStr });
   } catch (err) {
     console.error('Content calendar generation error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate content calendar. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate content calendar. Please try again.') });
   }
 });
 
@@ -2910,7 +3003,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ fundingReadiness, generatedAt: new Date().toISOString() });
   } catch (err) {
     console.error('Funding readiness generation error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate funding readiness assessment. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate funding readiness assessment. Please try again.') });
   }
 });
 
@@ -2994,7 +3087,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ pitchDeck, generatedAt: new Date().toISOString() });
   } catch (err) {
     console.error('Pitch deck generation error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate pitch deck outline. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate pitch deck outline. Please try again.') });
   }
 });
 
@@ -4495,7 +4588,7 @@ async function connectWordPressSite(businessId, siteUrl, username, appPassword, 
   try {
     verifyRes = await wpApiRequest(trimmedUrl, trimmedUser, trimmedPass, '/wp/v2/pages?per_page=1&status=any&context=edit', { timeoutMs: 10000 });
   } catch (e) {
-    return { ok: false, statusCode: 400, error: e.message || 'Could not connect to WordPress. Please check your website URL.' };
+    return { ok: false, statusCode: 400, error: safeErrorMessage(e, 'Could not connect to WordPress. Please check your website URL.') };
   }
 
   if (verifyRes.status === 401) {
@@ -4969,8 +5062,9 @@ app.post('/api/business/:id/website/verify', authRequired, async (req, res) => {
     try {
       verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/pages?per_page=1&status=any&context=edit', { timeoutMs: 10000 });
     } catch (e) {
-      await pool.query(`UPDATE website_connections SET connection_status = 'error', last_error = $1 WHERE id = $2`, [e.message, connection.id]);
-      return res.json({ connection_status: 'error', error: e.message });
+      console.error('Website connection check failed:', e.message);   // the full detail stays in the server log; what is stored and shown is the friendly version
+    await pool.query(`UPDATE website_connections SET connection_status = 'error', last_error = $1 WHERE id = $2`, [safeErrorMessage(e, 'The connection check failed. Please try again.'), connection.id]);
+      return res.json({ connection_status: 'error', error: safeErrorMessage(e) });
     }
 
     if (verifyRes.status === 401) {
@@ -5805,7 +5899,7 @@ async function reVerifyWebsiteAction(action, connection, decryptedPassword) {
 
     return { verified: false, error: 'This proposed change has no recognized field to verify.' };
   } catch (e) {
-    return { verified: false, error: e.message || 'Failed to re-check this change.' };
+    return { verified: false, error: safeErrorMessage(e, 'Failed to re-check this change.') };
   }
 }
 
@@ -6246,7 +6340,7 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
         if (verifyData.featured_media === media.id) return { executed: true, verified: true };
         return { executed: true, verified: false, error: 'The image was uploaded, but the post\'s real, saved featured image does not yet reflect it — it may need a moment to catch up.' };
       } catch (e) {
-        return { executed: false, verified: false, error: e.message };
+        return { executed: false, verified: false, error: safeErrorMessage(e) };
       }
     }
 
@@ -6291,7 +6385,7 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
         if (categoryOk && tagOk) return { executed: true, verified: true };
         return { executed: true, verified: false, error: 'The update was sent, but the post\'s real, saved categories/tags do not yet reflect it — it may need a moment to catch up.' };
       } catch (e) {
-        return { executed: false, verified: false, error: e.message };
+        return { executed: false, verified: false, error: safeErrorMessage(e) };
       }
     }
 
@@ -6394,7 +6488,7 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
     if (e.message.includes('401')) {
       return { executed: false, verified: false, error: 'This Application Password is no longer valid. Please reconnect your website.', authExpired: true };
     }
-    return { executed: false, verified: false, error: e.message || 'Failed to execute this change.' };
+    return { executed: false, verified: false, error: safeErrorMessage(e, 'Failed to execute this change.') };
   }
 }
 
@@ -6556,7 +6650,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   } catch (err) {
     console.error('Website Intelligence error:', err.message);
     if (owned) await logManual(req.params.id, 'wordpress', 'intelligence_refreshed', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to generate Website Intelligence. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate Website Intelligence. Please try again.') });
   }
 });
 
@@ -6903,7 +6997,7 @@ app.post('/api/business/:id/website/taxonomy-proposals', authRequired, async (re
     res.json(result);
   } catch (err) {
     console.error('Taxonomy proposals error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate category/tag proposals. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate category/tag proposals. Please try again.') });
   }
 });
 
@@ -7005,7 +7099,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ proposals: insertedProposals });
   } catch (err) {
     console.error('Featured image proposals error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate featured image plans. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate featured image plans. Please try again.') });
   }
 });
 
@@ -7173,7 +7267,8 @@ async function runFullWebsiteAudit(connection, decryptedPassword, context, trigg
     preloadedContent = await getWordPressContentForAnalysis(connection, decryptedPassword);
   } catch (e) {
     if (e.pendingPoll) {
-      await pool.query(`UPDATE website_audit_runs SET status = 'failed', error_message = $1, completed_at = NOW() WHERE id = $2`, [e.message, runId]);
+      console.error('Website audit failed:', e.message);
+      await pool.query(`UPDATE website_audit_runs SET status = 'failed', error_message = $1, completed_at = NOW() WHERE id = $2`, [safeErrorMessage(e, 'The audit could not be completed.'), runId]);
       return { runId, issuesFound: 0, autoFixed: 0, pendingApproval: 0, findings: {}, pendingPoll: true, message: e.message };
     }
     // Real, deliberate fall-through rather than aborting the whole run —
@@ -7205,7 +7300,7 @@ async function runFullWebsiteAudit(connection, decryptedPassword, context, trigg
         addToPageView(action, action.execution_status === 'executed' ? 'fixed' : 'pending');
       }
     } catch (e) {
-      findings[category.key] = { label: category.label, error: e.message };
+      findings[category.key] = { label: category.label, error: safeErrorMessage(e) };
     }
   }
 
@@ -7224,7 +7319,7 @@ async function runFullWebsiteAudit(connection, decryptedPassword, context, trigg
         addToPageView(action, 'pending');
       }
     } catch (e) {
-      findings.brokenLinks = { label: 'Broken internal links', error: e.message };
+      findings.brokenLinks = { label: 'Broken internal links', error: safeErrorMessage(e) };
     }
   }
 
@@ -7262,7 +7357,7 @@ app.post('/api/business/:id/website/run-audit', authRequired, async (req, res) =
   } catch (err) {
     console.error('Run audit error:', err.message);
     if (owned) await logManual(req.params.id, 'wordpress', 'audit_completed', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to run the audit. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to run the audit. Please try again.') });
   }
 });
 
@@ -7399,7 +7494,7 @@ app.get('/api/business/:id/website/keyword-rankings', authRequired, async (req, 
     res.json({ rankings: out.rankings, snapshotDate: out.snapshotDate, comparedWith: out.comparedWith, trendAvailable: out.trendAvailable });
   } catch (err) {
     console.error('Keyword rankings error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to load keyword rankings. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to load keyword rankings. Please try again.') });
   }
 });
 
@@ -7428,7 +7523,7 @@ app.post('/api/business/:id/website/technical-seo/check', authRequired, async (r
   } catch (err) {
     console.error('Technical SEO check error:', err.message);
     if (owned) await logManual(req.params.id, 'wordpress', 'technical_check', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to run the technical SEO check. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to run the technical SEO check. Please try again.') });
   }
 });
 
@@ -7503,7 +7598,7 @@ app.post('/api/business/:id/website/sitemap/submit', authRequired, async (req, r
   } catch (err) {
     console.error('Sitemap submit error:', err.message);
     if (owned) await logManual(req.params.id, 'wordpress', 'sitemap_submitted', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to submit the sitemap. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to submit the sitemap. Please try again.') });
   }
 });
 
@@ -7520,7 +7615,7 @@ app.get('/api/business/:id/website/sitemap/status', authRequired, async (req, re
     res.json({ sitemaps });
   } catch (err) {
     console.error('Sitemap status error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to load sitemap status.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to load sitemap status.') });
   }
 });
 
@@ -7542,7 +7637,7 @@ app.post('/api/business/:id/website/ai-visibility/check', authRequired, async (r
   } catch (err) {
     console.error('AI visibility check error:', err.message);
     if (ran) await logManual(req.params.id, 'wordpress', 'ai_visibility_checked', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to run the AI visibility check. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to run the AI visibility check. Please try again.') });
   }
 });
 
@@ -7601,7 +7696,7 @@ app.post('/api/business/:id/website/organization-schema', authRequired, async (r
     res.json({ success: true, schema });
   } catch (err) {
     console.error('Organization schema error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to add schema markup. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to add schema markup. Please try again.') });
   }
 });
 
@@ -7883,7 +7978,7 @@ app.post('/api/business/:id/website/topic-suggestions', authRequired, async (req
     res.json({ topics });
   } catch (err) {
     console.error('Topic suggestions error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate topic suggestions. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate topic suggestions. Please try again.') });
   }
 });
 
@@ -8113,7 +8208,7 @@ app.post('/api/business/:id/website/generate-blog-post', authRequired, async (re
   } catch (err) {
     console.error('Generate blog post error:', err.message);
     if (owned) await logManual(req.params.id, 'wordpress', 'content_failed', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to generate this blog post. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate this blog post. Please try again.') });
   }
 });
 
@@ -8191,7 +8286,7 @@ app.post('/api/business/:id/website/broken-links', authRequired, async (req, res
   } catch (err) {
     console.error('Broken links check error:', err.message);
     if (ran) await logManual(req.params.id, 'wordpress', 'broken_links_checked', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to check for broken links. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to check for broken links. Please try again.') });
   }
 });
 
@@ -8322,7 +8417,7 @@ app.post('/api/business/:id/website/duplicate-title-proposals', authRequired, as
     res.json(result);
   } catch (err) {
     console.error('Duplicate title proposals error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate duplicate-title fixes. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate duplicate-title fixes. Please try again.') });
   }
 });
 
@@ -8470,7 +8565,7 @@ app.post('/api/business/:id/website/seo-proposals', authRequired, async (req, re
     res.json(result);
   } catch (err) {
     console.error('SEO proposals error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate SEO proposals. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate SEO proposals. Please try again.') });
   }
 });
 
@@ -8592,8 +8687,9 @@ app.post('/api/business/:id/website/actions/:actionId/execute', authRequired, as
           const augmentedChange = { ...change, imageBase64: imageBuffer.toString('base64') };
           await pool.query(`UPDATE website_actions SET edited_change = $1 WHERE id = $2`, [JSON.stringify(augmentedChange), action.id]);
         } catch (e) {
-          await pool.query(`UPDATE website_actions SET execution_status = 'execution_failed', error_message = $1 WHERE id = $2`, [e.message, action.id]);
-          return res.status(500).json({ error: `Could not generate the real image: ${e.message}` });
+          console.error('Featured image generation failed:', e.message);
+    await pool.query(`UPDATE website_actions SET execution_status = 'execution_failed', error_message = $1 WHERE id = $2`, [safeErrorMessage(e, 'This change could not be applied.'), action.id]);
+          return res.status(500).json({ error: `Could not generate the real image: ${safeErrorMessage(e, 'the image service is unavailable right now')}` });
         }
       }
       return res.json({ success: true, queuedForPoll: true, message: 'This site executes approved changes on its own schedule (usually within a few minutes) rather than instantly, since a direct connection from Arreyon is blocked by this site\'s Cloudflare settings.' });
@@ -8775,7 +8871,7 @@ const SHOPIFY_CALLBACK_URL = `${BASE_URL}/api/shopify/callback`;
 app.get('/api/business/:id/shopify/connect', authRequired, async (req, res) => {
   try {
     if (!process.env.SHOPIFY_API_KEY) {
-      return res.status(400).json({ error: 'Shopify integration is not configured on this server yet — SHOPIFY_API_KEY is missing.' });
+      { console.error('Shopify integration is not configured on this server: SHOPIFY_API_KEY is missing.'); return res.status(400).json({ error: 'Connecting a Shopify store is not available right now. Please try again later.' }); }
     }
     const account = await resolveAccount(req.userId);
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
@@ -8809,7 +8905,7 @@ app.get('/api/business/:id/shopify/connect', authRequired, async (req, res) => {
 app.get('/api/shopify/connect-new', authRequired, async (req, res) => {
   try {
     if (!process.env.SHOPIFY_API_KEY) {
-      return res.status(400).json({ error: 'Shopify integration is not configured on this server yet — SHOPIFY_API_KEY is missing.' });
+      { console.error('Shopify integration is not configured on this server: SHOPIFY_API_KEY is missing.'); return res.status(400).json({ error: 'Connecting a Shopify store is not available right now. Please try again later.' }); }
     }
     const businessName = String(req.query.businessName || '').trim();
     if (!businessName) return res.status(400).json({ error: 'Please enter a business name.' });
@@ -8941,7 +9037,7 @@ app.post('/api/business/:id/shopify/run-audit', authRequired, async (req, res) =
   } catch (err) {
     console.error('Shopify audit error:', err.message);
     if (owned) await logManual(req.params.id, 'shopify', 'audit_completed', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to run the audit. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to run the audit. Please try again.') });
   }
 });
 
@@ -8982,7 +9078,7 @@ app.post('/api/business/:id/shopify/actions/:actionId/approve', authRequired, as
     res.json({ success: true });
   } catch (err) {
     console.error('Approve Shopify action error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to apply this change. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to apply this change. Please try again.') });
   }
 });
 
@@ -9024,7 +9120,7 @@ app.post('/api/business/:id/shopify/intelligence', authRequired, async (req, res
   } catch (err) {
     console.error('Shopify intelligence error:', err.message);
     if (owned) await logManual(req.params.id, 'shopify', 'intelligence_refreshed', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to generate Website Intelligence. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate Website Intelligence. Please try again.') });
   }
 });
 
@@ -9514,7 +9610,7 @@ async function executeShopifyAction(action, connection, accessToken) {
     }
     return { executed: true, verified: true };
   } catch (e) {
-    return { executed: false, error: e.message || 'An unexpected error occurred while applying this change.' };
+    return { executed: false, error: safeErrorMessage(e, 'An unexpected error occurred while applying this change.') };
   }
 }
 
@@ -9689,7 +9785,7 @@ app.post('/api/business/:id/backlinks/search', authRequired, async (req, res) =>
     res.json({ success: true, foundCount: opportunities.length, newCount: insertedCount });
   } catch (err) {
     console.error('Backlink search error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to search for backlink opportunities. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to search for backlink opportunities. Please try again.') });
   }
 });
 
@@ -9735,7 +9831,7 @@ app.post('/api/business/:id/backlinks/:opportunityId/draft-email', authRequired,
     res.json({ ...draft, contactEmail: oppResult.rows[0].contact_email });
   } catch (err) {
     console.error('Draft outreach email error:', err.message);
-    res.status(500).json({ error: err.message || 'Could not draft this email. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Could not draft this email. Please try again.') });
   }
 });
 
@@ -9771,7 +9867,7 @@ app.post('/api/business/:id/shopify/technical-seo/check', authRequired, async (r
   } catch (err) {
     console.error('Shopify technical SEO check error:', err.message);
     if (owned) await logManual(req.params.id, 'shopify', 'technical_check', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to run the technical SEO check. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to run the technical SEO check. Please try again.') });
   }
 });
 
@@ -9839,7 +9935,7 @@ app.post('/api/business/:id/shopify/ai-visibility/check', authRequired, async (r
   } catch (err) {
     console.error('Shopify AI visibility check error:', err.message);
     if (ran) await logManual(req.params.id, 'shopify', 'ai_visibility_checked', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to run the AI visibility check. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to run the AI visibility check. Please try again.') });
   }
 });
 
@@ -9881,7 +9977,7 @@ app.get('/api/business/:id/shopify/keyword-rankings', authRequired, async (req, 
     res.json({ rankings: out.rankings, snapshotDate: out.snapshotDate, comparedWith: out.comparedWith, trendAvailable: out.trendAvailable });
   } catch (err) {
     console.error('Shopify keyword rankings error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to load keyword rankings. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to load keyword rankings. Please try again.') });
   }
 });
 
@@ -9898,7 +9994,7 @@ app.post('/api/business/:id/shopify/broken-links', authRequired, async (req, res
   } catch (err) {
     console.error('Shopify broken links check error:', err.message);
     if (owned) await logManual(req.params.id, 'shopify', 'broken_links_checked', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to check for broken links. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to check for broken links. Please try again.') });
   }
 });
 
@@ -9921,7 +10017,7 @@ app.get('/api/business/:id/shopify/organization-schema', authRequired, async (re
     res.json({ schema, snippet: buildSchemaSnippet(schema), status: await checkStorefrontOrganizationSchema(connection, accessToken, schema), permissions: { canInstall }, install, shopDomain: connection.shop_domain });
   } catch (err) {
     console.error('Shopify organization schema error:', err.message);
-    res.status(500).json({ error: err.message || 'Could not check the schema markup. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Could not check the schema markup. Please try again.') });
   }
 });
 
@@ -9946,8 +10042,8 @@ app.post('/api/business/:id/shopify/organization-schema', authRequired, async (r
   } catch (err) {
     console.error('Shopify schema install error:', err.message);
     if (owned) await logManual(req.params.id, 'shopify', 'schema_installed', 'failed', errDetail(err));
-    if (err.code === 'ACCESS_DENIED') return res.status(409).json({ needsReauth: true, error: err.message });
-    res.status(['NO_THEME', 'NO_LAYOUT', 'NO_HEAD', 'THEME_REJECTED', 'VERIFY_FAILED'].includes(err.code) ? 400 : 500).json({ error: err.message || 'Could not install the schema markup. Please try again.' });
+    if (err.code === 'ACCESS_DENIED') return res.status(409).json({ needsReauth: true, error: safeErrorMessage(err) });
+    res.status(['NO_THEME', 'NO_LAYOUT', 'NO_HEAD', 'THEME_REJECTED', 'VERIFY_FAILED'].includes(err.code) ? 400 : 500).json({ error: safeErrorMessage(err, 'Could not install the schema markup. Please try again.') });
   }
 });
 
@@ -9965,8 +10061,8 @@ app.delete('/api/business/:id/shopify/organization-schema', authRequired, async 
   } catch (err) {
     console.error('Shopify schema removal error:', err.message);
     if (owned) await logManual(req.params.id, 'shopify', 'schema_removed', 'failed', errDetail(err));
-    if (err.code === 'ACCESS_DENIED') return res.status(409).json({ needsReauth: true, error: err.message });
-    res.status(['NO_THEME', 'THEME_REJECTED', 'VERIFY_FAILED'].includes(err.code) ? 400 : 500).json({ error: err.message || 'Could not remove the schema markup. Please try again.' });
+    if (err.code === 'ACCESS_DENIED') return res.status(409).json({ needsReauth: true, error: safeErrorMessage(err) });
+    res.status(['NO_THEME', 'THEME_REJECTED', 'VERIFY_FAILED'].includes(err.code) ? 400 : 500).json({ error: safeErrorMessage(err, 'Could not remove the schema markup. Please try again.') });
   }
 });
 
@@ -9993,7 +10089,7 @@ app.post('/api/business/:id/shopify/sitemap/submit', authRequired, async (req, r
   } catch (err) {
     console.error('Shopify sitemap submit error:', err.message);
     if (owned) await logManual(req.params.id, 'shopify', 'sitemap_submitted', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to submit the sitemap. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to submit the sitemap. Please try again.') });
   }
 });
 
@@ -10012,7 +10108,7 @@ app.get('/api/business/:id/shopify/sitemap/status', authRequired, async (req, re
     res.json({ sitemaps });
   } catch (err) {
     console.error('Shopify sitemap status error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to load sitemap status.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to load sitemap status.') });
   }
 });
 
@@ -10092,7 +10188,7 @@ app.post('/api/business/:id/shopify/generate-post', authRequired, async (req, re
   } catch (err) {
     console.error('Shopify generate post error:', err.message);
     if (owned) await logManual(req.params.id, 'shopify', 'content_failed', 'failed', errDetail(err));
-    res.status(500).json({ error: err.message || 'Failed to generate this post. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate this post. Please try again.') });
   }
 });
 
@@ -11349,6 +11445,8 @@ app.post('/api/auth/register', async (req, res) => {
   if (!email) return res.status(400).json({ error: 'Please enter a valid email address.' });
   if (phone === null || country === null) return res.status(400).json({ error: 'Please check your phone number and country.' });
   if (typeof password !== 'string') return res.status(400).json({ error: 'All required fields must be filled' });
+  const passwordProblem = checkPasswordPolicy(password, { email, firstName, lastName });
+  if (passwordProblem) return res.status(400).json({ error: passwordProblem.message, code: passwordProblem.code });
   try {
     const existing = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     if (existing.rows.length) return res.status(400).json({ error: 'Email already registered' });
@@ -11470,7 +11568,13 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 // Reset password
 app.post('/api/auth/reset-password', async (req, res) => {
   const { token, password } = req.body;
+  if (typeof token !== 'string' || !token) return res.status(400).json({ error: 'Invalid or expired reset link' });
   try {
+    // The new password is checked first, against who the link belongs to (so it cannot be their own email or name)
+    const who = await pool.query('SELECT email, first_name, last_name FROM users WHERE reset_token = $1 AND reset_expires > NOW()', [token]);
+    if (!who.rows.length) return res.status(400).json({ error: 'Invalid or expired reset link' });
+    const passwordProblem = checkPasswordPolicy(password, { email: who.rows[0].email, firstName: who.rows[0].first_name, lastName: who.rows[0].last_name });
+    if (passwordProblem) return res.status(400).json({ error: passwordProblem.message, code: passwordProblem.code });
     const hash = await bcrypt.hash(password, 10);
     const result = await pool.query(
       `UPDATE users SET password_hash = $1, reset_token = NULL
@@ -11738,7 +11842,7 @@ app.post('/api/translate-messages', async (req, res) => {
     res.json({ translated });
   } catch (err) {
     console.error('Chat translation error:', err.message);
-    res.status(500).json({ error: err.message || 'Translation failed. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Translation failed. Please try again.') });
   }
 });
 
@@ -11869,7 +11973,7 @@ app.post('/api/admin/cms-translate', adminRequired, async (req, res) => {
     });
   } catch (err) {
     console.error('CMS auto-translate error:', err.message);
-    res.status(500).json({ error: err.message || 'Translation failed. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Translation failed. Please try again.') });
   }
 });
 
@@ -11957,7 +12061,7 @@ app.post('/api/admin/coupons', adminRequired, async (req, res) => {
       [code, description, discount_percent, applies_to || 'all', max_uses, valid_until]
     );
     res.json({ success: true, coupon: result.rows[0] });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) { res.status(500).json({ error: safeErrorMessage(e) }); }
 });
 
 app.put('/api/admin/coupons/:id', adminRequired, async (req, res) => {
@@ -12679,7 +12783,7 @@ app.post('/api/board/chat', authRequired, async (req, res) => {
     res.json({ reply, ai: selectedAI });
   } catch(e) {
     console.error('Board chat error:', e.message);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: safeErrorMessage(e) });
   }
 });
 
@@ -12776,7 +12880,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ success: true, synthesis });
   } catch (err) {
     console.error('Chairman synthesis error:', err.message);
-    res.status(500).json({ error: err.message || 'Synthesis failed. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Synthesis failed. Please try again.') });
   }
 });
 
@@ -13000,7 +13104,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ success: true, sessionId: session.rows[0].id, structured, sources, researchBacked, linkedBusinessId });
   } catch (err) {
     console.error('Opportunity finder error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to find opportunities. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to find opportunities. Please try again.') });
   }
 });
 
@@ -13112,7 +13216,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ success: true, newOpportunities: additional.opportunities || [], allOpportunities: updatedOutput.opportunities, sources, researchBacked });
   } catch (err) {
     console.error('More opportunities error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to find more opportunities. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to find more opportunities. Please try again.') });
   }
 });
 
@@ -13208,7 +13312,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ success: true, sessionId: session.rows[0].id, structured, sources, researchBacked, linkedBusinessId });
   } catch (err) {
     console.error('Idea validation error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to validate idea. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to validate idea. Please try again.') });
   }
 });
 
@@ -13316,7 +13420,7 @@ Stay grounded in what was actually generated above — don't contradict it witho
     res.json({ reply, discussionMessages: updatedMessages });
   } catch (err) {
     console.error('Entrepreneur discuss error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to respond. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to respond. Please try again.') });
   }
 });
 
@@ -13451,7 +13555,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ success: true, businessPlan: plan });
   } catch (err) {
     console.error('Business plan error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to generate business plan. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate business plan. Please try again.') });
   }
 });
 
@@ -13594,7 +13698,7 @@ ${BUSINESS_PLAN_SECTION_SHAPES[section]}`;
     res.json({ success: true, businessPlan: updatedPlan });
   } catch (err) {
     console.error('Business plan section regeneration error:', err.message);
-    res.status(500).json({ error: err.message || 'Failed to regenerate this section. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to regenerate this section. Please try again.') });
   }
 });
 
@@ -14265,7 +14369,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ success: true, optionsWithFinancials, analysis });
   } catch (err) {
     console.error('Scenario analysis error:', err.message);
-    res.status(500).json({ error: err.message || 'Comparison failed. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Comparison failed. Please try again.') });
   }
 });
 
@@ -14318,7 +14422,7 @@ RULES: ONE question only. Under 60 words total. Warm and conversational. Return 
   try {
     const q = await askClaude(qualifyPrompt, [{ role: 'user', content: lastUserMsg || 'Continue.' }], { feature: 'consult_secretary' });
     res.json({ ready: false, question: q.trim().replace(/^["']|["']$/g, '') });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) { res.status(500).json({ error: safeErrorMessage(e) }); }
 });
 
 const DIRECTORS = {
@@ -14542,7 +14646,7 @@ Keep each section concise and actionable. Total: 400-500 words.${language === 'f
     });
   } catch (err) {
     console.error('Consult error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -14636,7 +14740,7 @@ Example length/style: "Welcome ${clientName}. Your board is ready. Let's underst
     res.json({ success: true, videoUrl, deviceType });
   } catch (err) {
     console.error('HeyGen welcome error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -14666,7 +14770,7 @@ SCRIPT RULES:
     res.json({ success: true, videoUrl, deviceType });
   } catch (err) {
     console.error('HeyGen report error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -14710,7 +14814,7 @@ app.post('/api/chat', async (req, res) => {
     res.json({ reply, ai: model });
   } catch (err) {
     console.error('Chat error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -14769,7 +14873,7 @@ app.post('/api/board-analyze', async (req, res) => {
     res.json({ success: true, analyzedUrl: normalizedUrl, pagesAnalyzed: pages.map(p => p.url), facts });
   } catch (err) {
     console.error('Board website analysis error:', err.message);
-    res.status(500).json({ error: err.message || 'Analysis failed. Please check the URL and try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Analysis failed. Please check the URL and try again.') });
   }
 });
 
@@ -14784,7 +14888,7 @@ app.post('/api/board-research', async (req, res) => {
     res.json({ success: true, structured, sources });
   } catch (err) {
     console.error('Board research error:', err.message);
-    res.status(500).json({ error: err.message || 'Research failed. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Research failed. Please try again.') });
   }
 });
 
@@ -14798,7 +14902,7 @@ app.post('/api/board-verify', async (req, res) => {
     res.json({ success: true, verification });
   } catch (err) {
     console.error('Board verification error:', err.message);
-    res.status(500).json({ error: err.message || 'Verification failed. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Verification failed. Please try again.') });
   }
 });
 
@@ -14849,7 +14953,7 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
     res.json({ success: true, synthesis });
   } catch (err) {
     console.error('Board synthesis error:', err.message);
-    res.status(500).json({ error: err.message || 'Synthesis failed. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Synthesis failed. Please try again.') });
   }
 });
 
@@ -15156,7 +15260,7 @@ app.post('/api/business/:id/research', authRequired, async (req, res) => {
     res.json({ success: true, sessionId, summary, structured, sources, verification, autoVerified: !!verification });
   } catch (err) {
     console.error('Research error:', err.message);
-    res.status(500).json({ error: err.message || 'Research failed. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Research failed. Please try again.') });
   }
 });
 
@@ -15288,7 +15392,7 @@ app.post('/api/business/:id/research/:sessionId/verify', authRequired, async (re
     res.json({ success: true, verification });
   } catch (err) {
     console.error('Verification error:', err.message);
-    res.status(500).json({ error: err.message || 'Verification failed. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Verification failed. Please try again.') });
   }
 });
 
@@ -15989,7 +16093,7 @@ app.post('/api/business/analyze', authRequired, async (req, res) => {
     });
   } catch (err) {
     console.error('Website analysis error:', err.message);
-    res.status(500).json({ error: err.message || 'Analysis failed. Please try again.' });
+    res.status(500).json({ error: safeErrorMessage(err, 'Analysis failed. Please try again.') });
   }
 });
 
@@ -17871,7 +17975,7 @@ async function runCompetitorAnalysis(spec, connection, secret, context, rowId, t
     await log('success', { competitorsAnalyzed: usable.length, competitorsUnreachable: measured.length - usable.length, competitorsNotIncluded: notIncluded, gaps: insights.content_gaps.length });
     return { ok: true };
   } catch (e) {
-    try { await pool.query(`UPDATE ${spec.table} SET status = 'failed', error_message = $2, completed_at = NOW() WHERE id = $1`, [rowId, String(e.message).slice(0, 500)]); } catch (e2) { console.error('Could not record competitor analysis failure:', e2.message); }
+    try { await pool.query(`UPDATE ${spec.table} SET status = 'failed', error_message = $2, completed_at = NOW() WHERE id = $1`, [rowId, safeErrorMessage(e, 'The task could not be completed.').slice(0, 500)]); } catch (e2) { console.error('Could not record competitor analysis failure:', e2.message); }
     await log('failed', errDetail(e));
     return { ok: false };
   }
@@ -18097,7 +18201,7 @@ const agentRunsInFlight = new Map(); // "platform:businessId" -> { startedAt, tr
 const agentRunKey = (platform, businessId) => `${platform}:${businessId}`;
 const logManual = (businessId, platform, taskType, outcome, detail) =>
   logAgentActivity({ businessId, platform, taskType, outcome, triggeredBy: 'manual', detail });
-const errDetail = e => ({ error: String((e && e.message) || e).slice(0, 300) });
+const errDetail = e => ({ error: safeErrorMessage(e && e.message ? e : { message: String(e) }, 'Something went wrong. Please try again.').slice(0, 300) });
 
 // Asks a run in progress to stop. Returns whether there was one.
 function stopAgentRun(platform, businessId) {
