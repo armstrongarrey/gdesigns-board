@@ -9266,11 +9266,26 @@ async function loadShopifyActions() {
   }
 }
 
+// Link fixes that were applied (by a person or automatically) or undone, newest first: Shopify's list used to show only what was waiting.
+function shopifyAppliedLinkFixesHtml(actions) {
+  const rows = (actions || []).filter(a => ['remove_broken_link', 'update_link_url'].includes(a.action_type) && ['executed', 'undone', 'execution_failed'].includes(a.execution_status)).slice(0, 10);
+  if (!rows.length) return '';
+  const status = a => a.execution_status === 'undone' ? [t('web.status_undone'), 'var(--muted)'] : a.execution_status === 'execution_failed' ? [t('web.status_could_not_apply'), '#eab308'] : [t('web.status_applied'), 'var(--green)'];
+  return `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin:18px 0 8px">${t('web.applied_links_title')}</div>` + rows.map(a => {
+    const [label, color] = status(a);
+    return `<div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px${a.execution_status === 'undone' ? ';opacity:.75' : ''}">
+      <div style="display:flex;justify-content:space-between;gap:10px"><div style="font-size:12.5px;color:var(--text)">${escapeHtml(a.target_title || '')}</div><span style="font-size:9.5px;font-weight:700;color:${color};white-space:nowrap">${label}</span></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px">${t(WEBSITE_ACTION_TYPE_LABELS[a.action_type] || 'web.action_type_title')}</div>
+      ${undoRowHtml(a, 'shopify')}
+    </div>`;
+  }).join('');
+}
 function renderShopifyActions(actions) {
   const contentEl = document.getElementById('shopifyActionsContent');
   const pending = actions.filter(a => a.approval_status === 'pending');
+  const appliedHtml = shopifyAppliedLinkFixesHtml(actions);
   if (!pending.length) {
-    contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_pending_changes')}</div>`;
+    contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_pending_changes')}</div>` + appliedHtml;
     return;
   }
   contentEl.innerHTML = renderCollapsibleItems(pending, (action) => {
@@ -9291,7 +9306,7 @@ function renderShopifyActions(actions) {
         <button class="btn-ghost" onclick="rejectShopifyAction('${action.id}')" style="font-size:11px;padding:5px 12px">${t('web.reject_button')}</button>
       </div>
     </div>`;
-  }, 5, 'shopifyActions');
+  }, 5, 'shopifyActions') + appliedHtml;
 }
 
 async function approveShopifyAction(actionId) {
@@ -10936,18 +10951,18 @@ async function loadWebsiteActions() {
 }
 
 // Undo for an applied link fix (the server keeps a copy of the page from just before, and refuses if the page has been edited since).
-function undoRowHtml(a) {
+function undoRowHtml(a, api = 'website') {
   if (!a.can_undo || a.execution_status !== 'executed') return '';
-  return `<div style="margin-top:8px"><button class="btn-secondary" style="font-size:11.5px;padding:4px 12px" onclick="undoWebsiteAction('${escapeHtml(a.id)}')" id="undoBtn-${escapeHtml(a.id)}">${t('web.undo')}</button></div>`;
+  return `<div style="margin-top:8px"><button class="btn-secondary" style="font-size:11.5px;padding:4px 12px" onclick="undoWebsiteAction('${escapeHtml(a.id)}', '${api === 'shopify' ? 'shopify' : 'website'}')" id="undoBtn-${escapeHtml(a.id)}">${t('web.undo')}</button></div>`;
 }
-async function undoWebsiteAction(actionId) {
+async function undoWebsiteAction(actionId, api = 'website') {
   if (!confirm(t('web.undo_confirm'))) return;
   const btn = document.getElementById(`undoBtn-${actionId}`); if (btn) btn.disabled = true;
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/actions/${encodeURIComponent(actionId)}/undo`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${api === 'shopify' ? 'shopify' : 'website'}/actions/${encodeURIComponent(actionId)}/undo`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
-    showToast(t('web.undo_done'), 'success'); loadWebsiteActions();
+    showToast(t('web.undo_done'), 'success'); if (api === 'shopify') loadShopifyActions(); else loadWebsiteActions();
   } catch (e) { showToast(t('board.connection_error'), 'error'); }
   finally { if (btn) btn.disabled = false; }
 }
