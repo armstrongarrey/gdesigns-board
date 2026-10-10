@@ -2294,7 +2294,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
            person to act on themselves. -->
       <div id="websiteBrokenLinksSection" class="wt-card" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.broken_links_title">Broken Internal Links</div>
+          <div><div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.broken_links_title">Broken Links</div><div style="font-size:11px;color:var(--muted);margin-top:2px" data-i18n="web.broken_links_subtitle">Internal &amp; External</div></div>
           <button class="btn-secondary" onclick="checkBrokenLinks('website')" id="websiteBrokenLinksBtn" data-i18n="web.check_links_button">Check Links</button>
         </div>
         <div id="websiteBrokenLinksContent"></div>
@@ -2355,6 +2355,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <button class="btn-primary" onclick="generateSeoProposals()" id="websiteSeoProposalsBtn" data-i18n="web.find_seo_improvements">Find SEO Improvements</button>
           </div>
         </div>
+        <div id="websiteFeaturedImages"></div>
         <div id="websiteActionsContent"></div>
       </div>
 
@@ -2594,7 +2595,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           </div>
         <div class="wt-card" id="shopifyBrokenLinksSection">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-            <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.broken_links_title">Broken Internal Links</div>
+            <div><div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.broken_links_title">Broken Links</div><div style="font-size:11px;color:var(--muted);margin-top:2px" data-i18n="web.broken_links_subtitle">Internal &amp; External</div></div>
             <button class="btn-secondary" onclick="checkBrokenLinks('shopify')" id="shopifyBrokenLinksBtn" data-i18n="web.check_links_button">Check Links</button>
           </div>
           <div id="shopifyBrokenLinksContent"></div>
@@ -2610,7 +2611,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div class="wt-card" id="shopifyGeneratedPostsSection"><div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.generated_posts_title">Generated Blog Posts</div><div id="shopifyGeneratedPostsContent"></div></div>
         <div class="wt-card" id="shopifyActionsSection">
             <div class="section-title" style="font-size:14px;margin-bottom:10px" data-i18n="web.proposed_changes_title">Proposed Changes</div>
-            <div id="shopifyActionsContent"></div>
+            <div id="shopifyFeaturedImages"></div>
+        <div id="shopifyActionsContent"></div>
           </div>
       </div>
       </div>
@@ -9268,7 +9270,7 @@ async function loadShopifyActions() {
 
 // Link fixes that were applied (by a person or automatically) or undone, newest first: Shopify's list used to show only what was waiting.
 function shopifyAppliedLinkFixesHtml(actions) {
-  const rows = (actions || []).filter(a => ['remove_broken_link', 'update_link_url'].includes(a.action_type) && ['executed', 'undone', 'execution_failed'].includes(a.execution_status)).slice(0, 10);
+  const rows = (actions || []).filter(a => ['remove_broken_link', 'update_link_url', 'generate_featured_image'].includes(a.action_type) && ['executed', 'undone', 'execution_failed'].includes(a.execution_status)).slice(0, 10);
   if (!rows.length) return '';
   const status = a => a.execution_status === 'undone' ? [t('web.status_undone'), 'var(--muted)'] : a.execution_status === 'execution_failed' ? [t('web.status_could_not_apply'), '#eab308'] : [t('web.status_applied'), 'var(--green)'];
   return `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin:18px 0 8px">${t('web.applied_links_title')}</div>` + rows.map(a => {
@@ -9281,6 +9283,7 @@ function shopifyAppliedLinkFixesHtml(actions) {
   }).join('');
 }
 function renderShopifyActions(actions) {
+  mountFeaturedImagesBlock('shopify');
   const contentEl = document.getElementById('shopifyActionsContent');
   const pending = actions.filter(a => a.approval_status === 'pending');
   const appliedHtml = shopifyAppliedLinkFixesHtml(actions);
@@ -9300,6 +9303,7 @@ function renderShopifyActions(actions) {
     <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(action.target_title || '')}</div>
       <div style="font-size:11.5px;color:var(--text2);margin-top:4px">${changeDescription}</div>
+      ${action.action_type === 'generate_featured_image' ? featuredPlanHtml(action, 'shopify') : ''}
       ${action.reasoning ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;font-style:italic">${escapeHtml(action.reasoning)}</div>` : ''}
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="btn-primary" onclick="approveShopifyAction('${action.id}')" style="font-size:11px;padding:5px 12px">${t('web.approve_button')}</button>
@@ -9610,6 +9614,7 @@ function agentActivityText(e) {
     case 'change_verified': return t(d.verified ? 'web.activity_change_verified' : 'web.activity_change_not_verified');
     case 'change_rejected': return t('web.activity_change_rejected');
     case 'change_undone': return t('web.activity_change_undone');
+    case 'featured_image_previewed': return t('web.activity_featured_preview');
     case 'cycle_failed': return t('web.activity_cycle_failed');
     case 'cycle_stopped': return t('web.activity_cycle_stopped');
     default: return e.task_type;
@@ -10648,6 +10653,81 @@ async function dismissCompetitorSuggestion(prefix, suggestionId) {
   } catch (e) { showToast(t('board.connection_error'), 'error'); }
 }
 
+// ── Featured images for existing pages and posts ────────────────────
+// Check what is missing (free), plan the next 15 (a text call, no picture yet), preview a picture before approving it (uses one image credit), approve, undo.
+// Everything shown comes from the site or the AI, so it is all escaped; no value is ever put inside script text (buttons read their id from data-id).
+const featuredState = { website: { status: null, error: null, busy: false }, shopify: { status: null, error: null, busy: false } };
+const fiApi = prefix => (prefix === 'shopify' ? 'shopify' : 'website');
+function featuredImagesBlockHtml(prefix) {
+  const st = featuredState[prefix], s = st.status, isShop = prefix === 'shopify', note = (txt, color) => `<div style="font-size:11.5px;color:${color || 'var(--muted)'};margin-top:6px;line-height:1.5">${escapeHtml(txt)}</div>`;
+  let h = `<div style="margin-bottom:14px;padding:12px 14px;border:1px solid var(--border);border-radius:10px"><div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap"><div style="min-width:0;flex:1"><div style="font-size:12.5px;font-weight:700;color:var(--text)">${t('web.fi_title')}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5">${t('web.fi_intro')}</div></div>`
+    + `<button class="btn-secondary" id="${prefix}FeaturedCheckBtn" style="font-size:12px;padding:6px 14px" onclick="checkFeaturedImages('${prefix}')"${st.busy ? ' disabled' : ''}>${t(st.busy ? 'web.fi_checking' : (s ? 'web.fi_check_again' : 'web.fi_check_btn'))}</button></div>`;
+  if (st.error) h += note(st.error, '#ff8080');
+  if (s) {
+    if (s.noBlog) h += note(t('web.fi_no_blog'));
+    else {
+      const missing = (s.postsMissing || 0) + (s.pagesMissing || 0), items = s.items || [];
+      h += `<div style="font-size:12.5px;color:var(--text2);margin-top:10px">${escapeHtml(missing ? (isShop ? tf('web.fi_counts_shopify', { posts: s.postsMissing || 0 }) : tf('web.fi_counts_wp', { posts: s.postsMissing || 0, pages: s.pagesMissing || 0 })) : t('web.fi_none'))}</div>`;
+      if (s.complete === false) h += note(t('web.fi_incomplete_note'), 'var(--gold)');
+      h += items.slice(0, 5).map(i => `<div style="font-size:11.5px;color:var(--muted);margin-top:4px">${targetTypeBadge(i.type)}${escapeHtml(i.title || '')}</div>`).join('') + (missing > Math.min(5, items.length) ? `<div style="font-size:11.5px;color:var(--muted);margin-top:4px">…</div>` : '');
+      if (s.pendingPlans) h += note(tf('web.fi_pending_plans', { n: s.pendingPlans }));
+      if (missing && s.waitingForPlan > 0) h += `<div style="margin-top:10px"><button class="btn-primary" id="${prefix}FeaturedPlanBtn" style="font-size:12px;padding:6px 14px" onclick="planFeaturedImagesFor('${prefix}')"${st.busy ? ' disabled' : ''}>${escapeHtml(tf('web.fi_plan_btn', { n: Math.min(15, s.waitingForPlan) }))}</button></div>`;
+      else if (missing) h += note(t('web.fi_all_planned'));
+      if (s.imagesAvailable === false) h += note(t(s.imagesUnavailableReason === 'turned_off' ? 'web.fi_unavailable_turned_off' : 'web.fi_unavailable_not_configured'), 'var(--gold)');
+      if (s.previewsPerDay) h += `<div style="font-size:10.5px;color:var(--muted);margin-top:8px">${escapeHtml(tf('web.fi_previews_today', { used: s.previewsToday || 0, limit: s.previewsPerDay }))}</div>`;
+    }
+  }
+  return h + '</div>';
+}
+function mountFeaturedImagesBlock(prefix) { const el = document.getElementById(`${prefix}FeaturedImages`); if (el) el.innerHTML = featuredImagesBlockHtml(prefix); }
+async function checkFeaturedImages(prefix) {
+  const st = featuredState[prefix]; st.busy = true; st.error = null; mountFeaturedImagesBlock(prefix);
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${fiApi(prefix)}/featured-images`), data = await res.json().catch(() => ({}));
+    if (res.status === 202 && data.pendingPoll) showToast(data.message || t('board.connection_error'));
+    else if (!res.ok) st.error = data.error || t('board.connection_error');
+    else st.status = data;
+  } catch (e) { st.error = t('board.connection_error'); }
+  finally { st.busy = false; mountFeaturedImagesBlock(prefix); }
+}
+async function planShopifyFeaturedImages() {
+  const btn = document.getElementById('shopifyFeaturedPlanBtn'); if (btn) { btn.disabled = true; btn.textContent = t('web.fi_planning'); }
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/featured-image-proposals`, { method: 'POST' }), data = await res.json().catch(() => ({}));
+    if (!res.ok) showToast(data.error || t('board.connection_error'), 'error');
+    else { showToast(data.proposals && data.proposals.length ? describeProposalResults(data.proposals) : (data.message || t('web.no_proposals_found_toast'))); loadShopifyActions(); }
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+}
+async function planFeaturedImagesFor(prefix) {
+  if (prefix === 'shopify') await planShopifyFeaturedImages(); else await generateFeaturedImageProposals();
+  await checkFeaturedImages(prefix);
+}
+// One plan, in full: what the picture will be called and described (these are what search engines read), the picture idea, and the preview.
+function featuredPlanHtml(a, prefix) {
+  const c = a.edited_change || a.proposed_change || {}, left = Math.max(0, 2 - (a.preview_regenerations || 0)), api = fiApi(prefix);
+  const row = (k, v) => (v ? `<div style="font-size:11.5px;margin-top:3px"><span style="color:var(--muted)">${t(k)}:</span> <span style="color:var(--text2)">${escapeHtml(v)}</span></div>` : '');
+  const full = prefix === 'shopify';   // WordPress's card already shows the picture idea, title and alt text; Shopify's shows nothing for a plan, so it gets them here
+  let h = `<div style="margin-bottom:8px">${full ? row('web.fi_plan_image_title', c.imageTitle) + row('web.fi_plan_alt', c.altText) : ''}${row('web.fi_plan_keyword', c.focusKeyword)}${row('web.fi_plan_file', c.fileBase ? c.fileBase + '.png' : '')}`
+    + (full && c.imagePrompt ? `<details style="margin-top:4px"><summary style="font-size:11.5px;color:var(--muted);cursor:pointer">${t('web.fi_plan_idea')}</summary><div style="font-size:11.5px;color:var(--text2);margin-top:3px;line-height:1.5">${escapeHtml(c.imagePrompt)}</div></details>` : '') + `</div>`;
+  const src = `/api/business/${encodeURIComponent(currentWebsiteBusinessId)}/${api}/actions/${encodeURIComponent(a.id)}/featured-image-preview?v=${encodeURIComponent(a.preview_created_at || '')}`;
+  h += `<div id="fiPreview-${escapeHtml(a.id)}" style="margin-bottom:10px">`
+    + (a.has_preview ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(t('web.fi_preview_alt'))}" style="max-width:100%;width:420px;border-radius:8px;display:block;margin-bottom:6px">` : `<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">${t('web.fi_no_preview_note')}</div>`)
+    + (!a.has_preview || left > 0 ? `<button class="btn-secondary" id="fiPreviewBtn-${escapeHtml(a.id)}" style="font-size:11.5px;padding:5px 12px" data-id="${escapeHtml(a.id)}" onclick="previewFeaturedImage('${prefix}', this.dataset.id)">${escapeHtml(a.has_preview ? tf('web.fi_preview_again', { n: left }) : t('web.fi_preview_btn'))}</button>` : '')
+    + `<div style="font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5">${t('web.fi_preview_note')}</div></div>`;
+  if (prefix === 'shopify') h += `<div style="font-size:10.5px;color:var(--gold);margin-bottom:8px;line-height:1.5">${t('web.fi_shopify_approve_note')}</div>`;
+  return h;
+}
+async function previewFeaturedImage(prefix, actionId) {
+  const btn = document.getElementById(`fiPreviewBtn-${actionId}`); if (btn) { btn.disabled = true; btn.textContent = t('web.fi_previewing'); }
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${fiApi(prefix)}/actions/${encodeURIComponent(actionId)}/featured-image-preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); if (btn) { btn.disabled = false; btn.textContent = t('web.fi_preview_btn'); } return; }
+    showToast(t('web.fi_preview_ready'));
+    const st = featuredState[prefix]; if (st.status && st.status.previewsPerDay) { st.status.previewsToday = (st.status.previewsToday || 0) + 1; mountFeaturedImagesBlock(prefix); }
+    if (prefix === 'shopify') loadShopifyActions(); else loadWebsiteActions();
+  } catch (e) { showToast(t('board.connection_error'), 'error'); if (btn) { btn.disabled = false; btn.textContent = t('web.fi_preview_btn'); } }
+}
+
 // Puts a suggested topic into this platform's blog post generator. Only the index travels through the page, never the text.
 function useCompetitorTopic(prefix, i) {
   const gap = (competitorState[prefix] || { gaps: [] }).gaps[i];
@@ -11068,6 +11148,7 @@ function targetTypeBadge(type) {
 }
 
 function renderWebsiteActionsContent(actions) {
+  mountFeaturedImagesBlock('website');
   const contentEl = document.getElementById('websiteActionsContent');
   const pending = actions.filter(a => a.approval_status === 'pending');
   const reviewed = actions.filter(a => a.approval_status !== 'pending');
@@ -11122,6 +11203,7 @@ function renderWebsiteActionsContent(actions) {
       <div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">${renderPreviousValue(a.previous_state, a.proposed_change)}</div>
       <div style="font-size:11.5px;color:var(--muted);margin-bottom:2px" data-i18n="web.proposed_value">Proposed</div>
       ${editFieldFor(a) ? `<input type="text" class="form-input" id="editField-${a.id}" data-original="${escapeHtml(a.proposed_change.title || a.proposed_change.metaDescription || '')}" value="${escapeHtml(a.proposed_change.title || a.proposed_change.metaDescription || '')}" style="font-size:12.5px;margin-bottom:8px">` : `<div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">${renderProposedValue(a.proposed_change)}</div>`}
+      ${a.action_type === 'generate_featured_image' ? featuredPlanHtml(a, 'website') : ''}
       ${a.reasoning ? `<div style="font-size:11.5px;color:var(--muted);font-style:italic;margin-bottom:10px">${escapeHtml(a.reasoning)}</div>` : ''}
       <div style="display:flex;gap:8px">
         <button class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="approveWebsiteAction('${a.id}', '${editFieldFor(a)}')" data-i18n="web.approve">Approve</button>
@@ -11148,6 +11230,7 @@ function renderWebsiteActionsContent(actions) {
             <div style="font-size:12.5px;color:var(--text)">${targetTypeBadge(a.target_type)}${escapeHtml(a.target_title)}</div>
             <button class="btn-primary" style="font-size:11.5px;padding:5px 12px" onclick="executeWebsiteAction('${a.id}')" id="executeBtn-${a.id}" data-i18n="web.execute">Execute</button>
           </div>
+          ${a.action_type === 'generate_featured_image' ? featuredPlanHtml(a, 'website') : ''}
         </div>`;
       }
       if (a.execution_status === 'executed' && (a.verification_status === 'verified' || a.verification_status === 'manually_confirmed')) {
