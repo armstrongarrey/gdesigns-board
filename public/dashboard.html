@@ -9599,6 +9599,7 @@ function agentActivityText(e) {
       return t('web.activity_sitemap_submitted');
     case 'sitemap_missing': return t('web.activity_sitemap_missing');
     case 'competitor_analysis': return failed ? t('web.activity_competitor_failed') : tf('web.activity_competitor_success', { competitors: d.competitorsAnalyzed || 0, gaps: d.gaps || 0 });
+    case 'competitor_discovery': return failed ? t('web.activity_competitor_discovery_failed') : tf('web.activity_competitor_discovery', { n: d.found || 0 });
     case 'proposals_generated': {
       if (failed) return t('web.activity_proposals_failed');
       if (!d.count) return t('web.activity_proposals_none');
@@ -10475,7 +10476,7 @@ function setCompetitorButton(prefix, running) {
   btn.textContent = t(running ? 'web.competitor_running_button' : 'web.competitor_run_button');
 }
 
-function renderCompetitorAnalysis(el, data, prefix = 'website') {
+function renderCompetitorAnalysisCore(el, data, prefix = 'website') {
   const state = competitorState[prefix], ui = platformUi(prefix);
   const dash = v => (v === null || v === undefined ? '–' : v);
   const list = (titleKey, items) => (items && items.length)
@@ -10516,6 +10517,8 @@ function renderCompetitorAnalysis(el, data, prefix = 'website') {
       + `<div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5">${t('web.competitor_evidence')} ${links}</div></div>`;
   }).join('');
   if (ins.ungrounded_gaps_dropped > 0) html += `<div style="font-size:10.5px;color:var(--muted);margin-top:8px">${escapeHtml(tf('web.competitor_dropped_note', { n: ins.ungrounded_gaps_dropped }))}</div>`;
+  html += competitorStrategyHtml(ins) + competitorPositioningHtml(ins);
+  if (ins.ungrounded_items_dropped > 0) html += `<div style="font-size:10.5px;color:var(--muted);margin-top:8px">${escapeHtml(tf('web.competitor_dropped_note', { n: ins.ungrounded_items_dropped }))}</div>`;
   html += list('web.competitor_ahead_title', ins.where_you_are_ahead) + list('web.competitor_quickwins_title', ins.quick_wins) + list('web.competitor_limits_title', ins.data_limits);
   el.innerHTML = html + competitorAddHtml(prefix);
 }
@@ -10565,6 +10568,84 @@ async function runCompetitorAnalysis(prefix = 'website') {
     showToast(t('board.connection_error'), 'error');
     setCompetitorButton(prefix, false);
   }
+}
+
+// ── Find my competitors, and the strategy sections of the report ────────────
+// The search suggests; the person decides. Every value shown here came from the web or an AI, so all of it is escaped, and no value is ever put inside
+// script text: a button learns which suggestion it belongs to from its data-id.
+const COMPETITOR_STRATEGY_BASES = ['gap', 'positioning', 'publishing_pace', 'content_depth', 'metadata'];
+function competitorEvidenceLinksHtml(list) {
+  return (list || []).map(ev => { const u = safeHttpUrl(ev.url), label = escapeHtml(`${ev.competitor || ''}${ev.competitor ? ': ' : ''}${ev.title || ev.url}`); return u ? `<a href="${escapeHtml(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--purple-light)">${label}</a>` : label; }).join(' · ');
+}
+function competitorStrategyHtml(ins) {
+  const items = (ins && ins.strategy) || []; if (!items.length) return '';
+  return `<div style="margin-top:16px;font-size:12.5px;font-weight:700;color:var(--text)">${t('web.strategy_title')}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5">${t('web.strategy_note')}</div>`
+    + items.map((a, i) => { const basis = COMPETITOR_STRATEGY_BASES.includes(a.based_on) ? a.based_on : 'gap', links = competitorEvidenceLinksHtml(a.evidence);
+      return `<div style="margin-top:10px;padding:10px 12px;background:var(--bg3);border-radius:8px;display:flex;gap:8px;align-items:flex-start"><span style="font-size:11px;font-weight:700;color:var(--gold);min-width:18px">${i + 1}.</span><div style="flex:1;min-width:0">`
+        + `<div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(a.action || '')}</div>${a.why ? `<div style="font-size:11.5px;color:var(--text2);margin-top:4px;line-height:1.5">${escapeHtml(a.why)}</div>` : ''}`
+        + `<div style="font-size:10.5px;color:var(--muted);margin-top:5px;line-height:1.5">${t('web.strategy_basis')} ${t('web.strategy_basis_' + basis)}${links ? ` · ${t('web.competitor_evidence')} ${links}` : ''}</div></div></div>`; }).join('');
+}
+function competitorPositioningHtml(ins) {
+  const items = (ins && ins.positioning) || []; if (!items.length) return '';
+  return `<div style="margin-top:16px;font-size:12.5px;font-weight:700;color:var(--text)">${t('web.positioning_title')}</div>`
+    + items.map(p => `<div style="margin-top:8px;font-size:12px;color:var(--text2);line-height:1.5"><span style="font-weight:600;color:var(--text)">${escapeHtml(p.competitor || '')}</span>: ${escapeHtml(p.angle || '')}<div style="font-size:10.5px;color:var(--muted);margin-top:2px">${t('web.competitor_evidence')} ${competitorEvidenceLinksHtml(p.evidence)}</div></div>`).join('');
+}
+function competitorSuggestionHtml(prefix, s) {
+  const url = safeHttpUrl(s.website), scope = s.scope === 'local' ? t('web.discover_scope_local') : s.scope === 'international' ? t('web.discover_scope_international') : '';
+  return `<div style="margin-top:8px;padding:10px 12px;background:var(--bg3);border-radius:8px;display:flex;gap:10px;align-items:flex-start">`
+    + `<input type="checkbox" class="${prefix}SuggestionPick" data-id="${escapeHtml(s.id)}" ${s.grounded ? 'checked' : ''} style="margin-top:3px"><div style="flex:1;min-width:0">`
+    + `<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(s.name || '')}${scope ? ` <span style="font-size:9.5px;font-weight:700;color:var(--muted);margin-left:6px">${scope}</span>` : ''}</div>`
+    + `<button class="btn-ghost" style="font-size:11px;padding:2px 8px" data-id="${escapeHtml(s.id)}" onclick="dismissCompetitorSuggestion('${prefix}', this.dataset.id)">${t('web.discover_dismiss')}</button></div>`
+    + (url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="font-size:11.5px;color:var(--purple-light)">${escapeHtml(url.replace(/^https?:\/\//, ''))}</a>` : '')
+    + (s.reason ? `<div style="font-size:11.5px;color:var(--text2);margin-top:3px;line-height:1.5">${escapeHtml(s.reason)}</div>` : '')
+    + (s.grounded ? `<div style="font-size:10.5px;color:var(--green);margin-top:3px">✓ ${t('web.discover_grounded')}</div>` : '') + `</div></div>`;
+}
+function competitorDiscoveryHtml(prefix, data) {
+  const sug = Array.isArray(data.suggestions) ? data.suggestions : [], canSearch = data.searchAvailable !== false;
+  if (!canSearch && !sug.length) return '';
+  const hasAny = data.competitorsWithWebsite > 0 || sug.length > 0 || !!data.lastSearchedAt;
+  let h = `<div id="${prefix}CompetitorDiscovery" style="margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:10px"><div style="font-size:12.5px;font-weight:700;color:var(--text)">${t('web.discover_title')}</div>`
+    + `<div style="font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.5">${t('web.discover_intro')}</div>`;
+  if (sug.length) h += `<div style="font-size:11.5px;color:var(--gold);margin-top:10px;line-height:1.5">${t('web.discover_review_note')}</div>` + sug.map(s => competitorSuggestionHtml(prefix, s)).join('')
+    + `<div style="margin-top:10px"><button class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="addSelectedCompetitors('${prefix}')">${t('web.discover_add_selected')}</button></div>`;
+  if (canSearch) h += `<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="${sug.length ? 'btn-secondary' : 'btn-primary'}" id="${prefix}CompetitorFindBtn" style="font-size:12px;padding:6px 14px" onclick="findCompetitors('${prefix}')">${t(hasAny ? 'web.discover_again_btn' : 'web.discover_btn')}</button>`
+    + (data.lastSearchedAt ? `<span style="font-size:10.5px;color:var(--muted)">${escapeHtml(tf('web.discover_last', { time: formatTimestamp(data.lastSearchedAt) }))}</span>` : '') + `</div>`;
+  return h + '</div>';
+}
+// The card as it was, plus the search panel: at the top when there is something to decide (or nothing is tracked yet), otherwise at the bottom.
+function renderCompetitorAnalysis(el, data, prefix = 'website') {
+  renderCompetitorAnalysisCore(el, data, prefix);
+  const html = competitorDiscoveryHtml(prefix, data); if (!html) return;
+  el.insertAdjacentHTML(!data.competitorsWithWebsite || (data.suggestions && data.suggestions.length) ? 'afterbegin' : 'beforeend', html);
+}
+async function findCompetitors(prefix) {
+  const btn = document.getElementById(`${prefix}CompetitorFindBtn`); if (btn) { btn.disabled = true; btn.textContent = t('web.discover_running'); }
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/competitors/discover`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform: prefix === 'shopify' ? 'shopify' : 'wordpress' }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); if (btn) { btn.disabled = false; btn.textContent = t('web.discover_again_btn'); } return; }
+    showToast(data.found ? tf('web.discover_found', { n: data.found }) : t('web.discover_none'));
+    await loadCompetitorAnalysis(prefix); loadAgentActivity(prefix);
+  } catch (e) { showToast(t('board.connection_error'), 'error'); if (btn) { btn.disabled = false; btn.textContent = t('web.discover_again_btn'); } }
+}
+async function addSelectedCompetitors(prefix) {
+  const ids = [...document.querySelectorAll(`.${prefix}SuggestionPick:checked`)].map(x => x.dataset.id);
+  if (!ids.length) { showToast(t('web.discover_pick_one'), 'error'); return; }
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/competitors/suggestions/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
+    if ((data.added || []).length) showToast(tf('web.discover_added_toast', { n: data.added.length }));
+    if ((data.skipped || []).some(x => x.reason === 'limit')) showToast(tf('web.discover_limit_note', { n: data.trackedLimit }), 'error');
+    loadCompetitorAnalysis(prefix);
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+}
+async function dismissCompetitorSuggestion(prefix, suggestionId) {
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/competitors/suggestions/${encodeURIComponent(suggestionId)}/dismiss`, { method: 'POST' });
+    if (!res.ok) { const data = await res.json().catch(() => ({})); showToast(data.error || t('board.connection_error'), 'error'); return; }
+    showToast(t('web.discover_dismissed_toast')); loadCompetitorAnalysis(prefix);
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
 }
 
 // Puts a suggested topic into this platform's blog post generator. Only the index travels through the page, never the text.
@@ -10953,7 +11034,7 @@ async function loadWebsiteActions() {
 // Undo for an applied link fix (the server keeps a copy of the page from just before, and refuses if the page has been edited since).
 function undoRowHtml(a, api = 'website') {
   if (!a.can_undo || a.execution_status !== 'executed') return '';
-  return `<div style="margin-top:8px"><button class="btn-secondary" style="font-size:11.5px;padding:4px 12px" onclick="undoWebsiteAction('${escapeHtml(a.id)}', '${api === 'shopify' ? 'shopify' : 'website'}')" id="undoBtn-${escapeHtml(a.id)}">${t('web.undo')}</button></div>`;
+  return `<div style="margin-top:8px"><button class="btn-secondary" style="font-size:11.5px;padding:4px 12px" data-id="${escapeHtml(a.id)}" onclick="undoWebsiteAction(this.dataset.id, '${api === 'shopify' ? 'shopify' : 'website'}')" id="undoBtn-${escapeHtml(a.id)}">${t('web.undo')}</button></div>`;
 }
 async function undoWebsiteAction(actionId, api = 'website') {
   if (!confirm(t('web.undo_confirm'))) return;
