@@ -194,10 +194,22 @@ select.form-input{appearance:none;cursor:pointer}
         <button class="auth-btn" onclick="doReset()" data-i18n="auth.set_new_password_btn">Set New Password</button>
       </div>
 
+      <!-- CONFIRM EMAIL (the link in the verification email) -->
+      <div id="confirmForm" style="display:none">
+        <div class="auth-title" data-i18n="auth.confirm_title">Confirm your email</div>
+        <div class="auth-sub"><span data-i18n="auth.confirm_sub">Enter the password chosen when this account was created, to activate:</span> <strong id="confirmEmail"></strong></div>
+        <div class="auth-error-box" id="confirmError"></div>
+        <div class="form-group"><label data-i18n="auth.password">Password</label><input class="form-input" type="password" id="confirmPassword" autocomplete="current-password" data-i18n-placeholder="auth.your_password" placeholder="Your password"></div>
+        <button class="auth-btn" onclick="doConfirm()" id="confirmBtn" data-i18n="auth.confirm_btn">Confirm and continue</button>
+        <div style="text-align:right;margin-top:10px"><button class="auth-link" onclick="switchTab('forgot')" data-i18n="auth.forgot_password">Forgot password?</button></div>
+        <div class="auth-sub" style="margin-top:18px;font-size:12.5px" data-i18n="auth.confirm_not_me">Did not create this account? Just ignore the email. Nothing can be done with it without the password.</div>
+      </div>
+
       <!-- VERIFY NOTICE -->
       <div id="verifyNotice" style="display:none">
         <div class="auth-title" data-i18n="auth.check_email">Check your email</div>
         <div class="auth-sub" id="verifySubText">We've sent a verification link to your email. Click the link to activate your account.</div>
+        <div class="auth-sub" style="margin-top:12px;font-size:13px" data-i18n="auth.verify_pw_hint">When you click the link, you will be asked for your password to confirm it is you.</div>
         <div class="auth-success show" style="margin-top:16px" data-i18n="auth.verification_sent">Verification email sent. Check your inbox and spam folder.</div>
         <button class="auth-btn" style="margin-top:16px" onclick="resendVerification()" data-i18n="auth.resend_email">Resend Email</button>
         <div class="auth-footer" style="margin-top:12px"><button class="auth-link" onclick="switchTab('login')" data-i18n="auth.back_to_signin">Back to sign in</button></div>
@@ -209,11 +221,14 @@ select.form-input{appearance:none;cursor:pointer}
 
 <script>
 const params = new URLSearchParams(location.search);
-const resetToken = params.get('token');
+const isVerifyPage = location.pathname.replace(/\/+$/, '') === '/auth/verify';   // the link in the verification email (it also carries ?token=, but it is not a reset link)
+const resetToken = isVerifyPage ? null : params.get('token');
+const verifyToken = isVerifyPage ? params.get('token') : null;
+function escHtml(s) { return String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 let pendingVerifyEmail = '';
 
 function switchTab(tab) {
-  ['loginForm','signupForm','forgotForm','resetForm','verifyNotice'].forEach(id => {
+  ['loginForm','signupForm','forgotForm','resetForm','verifyNotice','confirmForm'].forEach(id => {
     document.getElementById(id).style.display = 'none';
   });
   if (tab === 'login') document.getElementById('loginForm').style.display = 'block';
@@ -221,10 +236,12 @@ function switchTab(tab) {
   else if (tab === 'forgot') document.getElementById('forgotForm').style.display = 'block';
   else if (tab === 'reset') document.getElementById('resetForm').style.display = 'block';
   else if (tab === 'verify') document.getElementById('verifyNotice').style.display = 'block';
+  else if (tab === 'confirm') document.getElementById('confirmForm').style.display = 'block';
 }
 
 // Init
-if (resetToken) switchTab('reset');
+if (verifyToken) startConfirm();
+else if (resetToken) switchTab('reset');
 else if (params.get('mode') === 'signup') switchTab('signup');
 else switchTab('login');
 
@@ -253,7 +270,7 @@ function showSucc(id, msg) {
 }
 function showVerifyNotice(email) {
   pendingVerifyEmail = email;
-  document.getElementById('verifySubText').innerHTML = tf('auth.check_email_sub', { email: '<strong>' + email + '</strong>' });
+  document.getElementById('verifySubText').innerHTML = tf('auth.check_email_sub', { email: '<strong>' + escHtml(email) + '</strong>' });
   switchTab('verify');
 }
 
@@ -262,13 +279,13 @@ document.addEventListener('arreyon:langchange', () => {
   // (not via the generic data-i18n walk, since it needs the actual email
   // interpolated) — re-render it now so it doesn't stay in the old language.
   if (pendingVerifyEmail && document.getElementById('verifyNotice').style.display !== 'none') {
-    document.getElementById('verifySubText').innerHTML = tf('auth.check_email_sub', { email: '<strong>' + pendingVerifyEmail + '</strong>' });
+    document.getElementById('verifySubText').innerHTML = tf('auth.check_email_sub', { email: '<strong>' + escHtml(pendingVerifyEmail) + '</strong>' });
   }
 });
 
 // The server answers with a readable message AND a code. Known cases are shown in the language the person is using.
 function serverMsg(data, fallbackKey) {
-  const known = { rate_limited: 'auth.err_rate_limited', password_too_short: 'auth.err_password_length', password_too_long: 'auth.err_password_long', password_too_common: 'auth.err_password_common' };
+  const known = { rate_limited: 'auth.err_rate_limited', password_too_short: 'auth.err_password_length', password_too_long: 'auth.err_password_long', password_too_common: 'auth.err_password_common', wrong_password: 'auth.err_confirm_wrong', password_required: 'auth.err_password_required' };
   if (data && known[data.code]) return t(known[data.code]);
   return (data && data.error) || t(fallbackKey);
 }
@@ -337,6 +354,40 @@ async function doReset() {
   } catch(e) { showErr('resetError', t('auth.err_failed_retry')); }
 }
 
+// The link in the verification email: show which address it is for and ask for the password chosen at sign-up.
+// Nothing is verified until the server has checked that password.
+async function startConfirm() {
+  switchTab('confirm');
+  try {
+    const res = await fetch('/api/auth/verify-info?token=' + encodeURIComponent(verifyToken));
+    const data = await res.json();
+    if (res.ok && data.email) {
+      document.getElementById('confirmEmail').textContent = data.email;
+      document.getElementById('forgotEmail').value = data.email;      // so "Forgot password?" is one click
+      document.getElementById('confirmPassword').focus();
+    } else confirmExpired();
+  } catch (e) { /* the form still works; the server checks the link again when it is submitted */ }
+}
+function confirmExpired() {
+  try { history.replaceState(null, '', '/auth'); } catch (e) {}
+  switchTab('login'); showErr('loginError', t('auth.err_invalid_token'));
+}
+async function doConfirm() {
+  hideErr('confirmError');
+  const password = document.getElementById('confirmPassword').value;
+  if (!password) return showErr('confirmError', t('auth.err_password_required'));
+  const btn = document.getElementById('confirmBtn');
+  btn.disabled = true; btn.textContent = t('auth.signing_in');
+  try {
+    const res = await fetch('/api/auth/verify-email', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: verifyToken, password}) });
+    const data = await res.json();
+    if (data.success) { window.location.href = '/dashboard'; return; }
+    if (data.code === 'invalid_token') confirmExpired();
+    else showErr('confirmError', serverMsg(data, 'auth.err_failed_retry'));
+  } catch(e) { showErr('confirmError', t('auth.err_connection')); }
+  btn.disabled = false; btn.textContent = t('auth.confirm_btn');
+}
+
 async function resendVerification() {
   await fetch('/api/auth/resend-verification', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email: pendingVerifyEmail}) });
   alert(t('auth.resend_alert'));
@@ -347,6 +398,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Enter') {
     if (document.getElementById('loginForm').style.display !== 'none') doLogin();
     else if (document.getElementById('signupForm').style.display !== 'none') doSignup();
+    else if (document.getElementById('confirmForm').style.display !== 'none') doConfirm();
   }
 });
 </script>
