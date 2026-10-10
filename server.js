@@ -528,7 +528,7 @@ const WEBSITE_ROUTES = [
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/organization-schema'), 'schema'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/ai-visibility/(check|history)'), 'ai_visibility'],
   // proposed changes: reviewing/approving is Pro+, generating new proposals is Business+
-  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/actions(/[^/]+/(approve|execute|re-verify|confirm-manually|reject))?'), 'proposed_changes'],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/actions(/[^/]+/(approve|execute|re-verify|confirm-manually|reject|undo))?'), 'proposed_changes'],
   ['POST', routeRx(BIZ_PATH + '/website/(seo-proposals|duplicate-title-proposals|taxonomy-proposals|featured-image-proposals)'), 'find_improve_seo'],
   // partner network / backlinks
   ['*',    routeRx(BIZ_PATH + '/(backlinks|reciprocal-network)(/.*)?'), 'backlinks'],
@@ -6420,11 +6420,13 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
       const current = await readRes.json(), currentHtml = current.content?.raw ?? current.content?.rendered ?? '';
       const updatedHtml = replaceHrefInHtml(currentHtml, change.oldUrl, change.newUrl);
       if (updatedHtml === null) return { executed: false, verified: false, error: 'This link is no longer present in the current content: it may have already been fixed or the content has changed.' };
+      await saveLinkBackup(action.id, currentHtml, updatedHtml);
       const updateRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}`, { method: 'POST', body: { content: updatedHtml }, timeoutMs: 20000 });
       if (!updateRes.ok) return { executed: false, verified: false, error: `WordPress rejected saving this change (status ${updateRes.status}).` };
       const verifyRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?context=edit&_fields=content`, { timeoutMs: 15000 });
       if (!verifyRes.ok) return { executed: true, verified: false, error: 'The change was saved, but verification could not confirm it. Please check the post manually.' };
       const verifyData = await verifyRes.json(), verifyHtml = verifyData.content?.raw ?? verifyData.content?.rendered ?? '';
+      await refreshLinkBackupHash(action.id, verifyHtml);
       return verifyHtml.includes(`href="${change.newUrl}"`) || verifyHtml.includes(`href='${change.newUrl}'`) || verifyHtml.includes(change.newUrl.replace(/&/g, '&amp;')) ? { executed: true, verified: true } : { executed: true, verified: false, error: 'The change was saved, but the new address could not be confirmed in the post.' };
     }
     if (change.brokenUrl) {
@@ -6446,6 +6448,7 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
       }
       linkPattern.lastIndex = 0;
       const updatedHtml = currentHtml.replace(linkPattern, (match, innerText) => innerText);
+      await saveLinkBackup(action.id, currentHtml, updatedHtml);
 
       const updateRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}`, {
         method: 'POST', body: { content: updatedHtml }, timeoutMs: 20000,
@@ -6459,6 +6462,7 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
       if (!verifyRes.ok) return { executed: true, verified: false, error: 'The change was saved, but verification could not confirm it — please check the post manually.' };
       const verifyData = await verifyRes.json();
       const verifyHtml = verifyData.content?.raw ?? verifyData.content?.rendered ?? '';
+      await refreshLinkBackupHash(action.id, verifyHtml);
       if (!verifyHtml.includes(change.brokenUrl)) return { executed: true, verified: true };
       return { executed: true, verified: false, error: 'The change was saved, but the broken link still appears to be present.' };
     }
@@ -8448,7 +8452,8 @@ async function runInternalBrokenLinksPass(connection, decryptedPassword, preload
 //   ok · redirected (it moved for good) · broken (the page is gone, or the website no longer exists) · uncertain (the site refused, was down or too slow:
 //   many sites block automated checks, so that is never called "broken").
 const LINK_CHECK_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
-const LINK_CONFIRM_HOURS = 20, LINK_HOST_DELAY_MS = Number.isFinite(Number(process.env.LINK_HOST_DELAY_MS)) && process.env.LINK_HOST_DELAY_MS !== undefined && process.env.LINK_HOST_DELAY_MS !== '' ? Number(process.env.LINK_HOST_DELAY_MS) : 150;
+const LINK_CONFIRM_DAYS = 3, LINK_CONFIRM_DNS_DAYS = 7, LINK_MASS_FAILURE_RATIO = 0.25, LINK_MASS_FAILURE_MIN_SAMPLE = 8, LINK_AUTO_MAX_PER_PAGE = 5, LINK_AUTO_MAX_PER_SITE = 15,
+  LINK_HOST_DELAY_MS = Number.isFinite(Number(process.env.LINK_HOST_DELAY_MS)) && process.env.LINK_HOST_DELAY_MS !== undefined && process.env.LINK_HOST_DELAY_MS !== '' ? Number(process.env.LINK_HOST_DELAY_MS) : 150;
 const linkHostFamily = h => String(h || '').toLowerCase().replace(/^www\./, '');
 function normalizeLinkForCompare(u) { try { const x = new URL(u); x.hash = ''; return x.href.replace(/\/$/, ''); } catch { return String(u); } }
 async function linkRequest(url, method, timeoutMs) {
@@ -8536,31 +8541,59 @@ function replaceHrefInHtml(html, oldUrl, newUrl) {
   return html.replace(re, (m, a, b) => a + value + b);
 }
 
-// How long each address has been seen broken. A removal is only automatic once the link was STILL broken when checked again at least 20 hours later.
-async function updateLinkObservations(businessId, platform, brokenUrls, healthyUrls) {
-  for (const url of brokenUrls) {
+// How long each address has been seen with the same problem. A fix is only automatic once the link had the problem on a check made at least 3 days
+// earlier (7 days when the whole website seems to have vanished: lapsed domains are often renewed within days). Moves are confirmed the same way.
+// A flood of failures (a network problem on our side looks the same as 100 dead links) is never recorded or trusted: see linksUntrusted().
+const linksUntrusted = (checked, failed) => checked >= LINK_MASS_FAILURE_MIN_SAMPLE && failed / checked > LINK_MASS_FAILURE_RATIO;
+async function updateLinkObservations(businessId, platform, problems, healthyUrls) {
+  const items = (problems || []).map(p => (typeof p === 'string' ? { url: p, reason: 'broken' } : p));
+  for (const { url, reason } of items) {
     await pool.query(
-      `INSERT INTO broken_link_observations (business_id, platform, url) VALUES ($1, $2, $3)
-       ON CONFLICT (business_id, platform, url) DO UPDATE SET
-         first_broken_at = CASE WHEN broken_link_observations.last_broken_at < NOW() - INTERVAL '14 days' THEN NOW() ELSE broken_link_observations.first_broken_at END, last_broken_at = NOW()`, [businessId, platform, url]);
+      `INSERT INTO broken_link_observations (business_id, platform, url, reason) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (business_id, platform, url) DO UPDATE SET reason = EXCLUDED.reason,
+         first_broken_at = CASE WHEN broken_link_observations.last_broken_at < NOW() - INTERVAL '14 days' THEN NOW() ELSE broken_link_observations.first_broken_at END, last_broken_at = NOW()`, [businessId, platform, url, reason || 'broken']);
   }
-  if (healthyUrls.length) await pool.query('DELETE FROM broken_link_observations WHERE business_id = $1 AND platform = $2 AND url = ANY($3::text[])', [businessId, platform, healthyUrls]);
-  if (!brokenUrls.length) return new Set();
-  const r = await pool.query(`SELECT url FROM broken_link_observations WHERE business_id = $1 AND platform = $2 AND url = ANY($3::text[]) AND first_broken_at <= NOW() - ($4 || ' hours')::interval`, [businessId, platform, brokenUrls, String(LINK_CONFIRM_HOURS)]);
+  if (healthyUrls && healthyUrls.length) await pool.query('DELETE FROM broken_link_observations WHERE business_id = $1 AND platform = $2 AND url = ANY($3::text[])', [businessId, platform, healthyUrls]);
+  if (!items.length) return new Set();
+  const r = await pool.query(
+    `SELECT url FROM broken_link_observations WHERE business_id = $1 AND platform = $2 AND url = ANY($3::text[])
+       AND first_broken_at <= NOW() - ((CASE WHEN reason = 'dns' THEN $4::int ELSE $5::int END) * INTERVAL '1 day')`, [businessId, platform, items.map(i => i.url), LINK_CONFIRM_DNS_DAYS, LINK_CONFIRM_DAYS]);
   return new Set(r.rows.map(x => x.url));
 }
 
-// One fix proposal per (page, link). Not queued again while one is waiting, nor for 90 days after the person rejected it.
+// One fix proposal per (page, link). Not queued again while one is waiting; not for 90 days after the person rejected it (or undid it); never again after
+// they rejected it twice; and not for 7 days after the site refused it.
 async function queueLinkFix(connection, referrer, actionType, change, reasoning, keyField) {
   const type = referrer.isPost ? 'post' : 'page', same = `website_connection_id = $1 AND target_wp_id = $2 AND target_type = $3 AND action_type = $4 AND proposed_change->>$5 = $6`, args = [connection.id, referrer.id, type, actionType, keyField, change[keyField]];
   const waiting = await pool.query(`SELECT * FROM website_actions WHERE ${same} AND approval_status = 'pending' LIMIT 1`, args);
   if (waiting.rows.length) return { alreadyKnown: true, existing: waiting.rows[0] };     // the caller may still apply it, once the link is confirmed
+  const rejections = +(await pool.query(`SELECT count(*) FROM website_actions WHERE ${same} AND approval_status = 'rejected'`, args)).rows[0].count;
+  if (rejections >= 2) return { alreadyKnown: true };                                     // rejected twice: the person wants this link left alone, for good
   const declined = await pool.query(`SELECT 1 FROM website_actions WHERE ${same} AND ((approval_status = 'rejected' AND reviewed_at > NOW() - INTERVAL '90 days') OR (execution_status = 'execution_failed' AND reviewed_at > NOW() - INTERVAL '7 days')) LIMIT 1`, args);
-  if (declined.rows.length) return { alreadyKnown: true };   // the person said no (not asked again for 90 days), or the site refused it (not retried for 7 days)
+  if (declined.rows.length) return { alreadyKnown: true };
   const ins = await pool.query(
     `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
      VALUES ($1, 'seo_agent', $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`, [connection.id, actionType, type, referrer.id, referrer.url, referrer.title, JSON.stringify({}), JSON.stringify(change), reasoning]);
   return { row: ins.rows[0] };
+}
+
+// Alerts go through the same alert system as everything else (the Alerts page, and the email digest).
+async function linkAlertOwner(businessId) {
+  const r = await pool.query('SELECT u.id, u.preferred_language AS language, b.name FROM businesses b JOIN users u ON u.id = b.user_id WHERE b.id = $1', [businessId]);
+  return r.rows[0] || null;
+}
+async function noteRepeatedLinkFixFailure(connection, row) {
+  try {
+    const change = row.proposed_change || {}, keyField = change.brokenUrl ? 'brokenUrl' : 'oldUrl', key = change[keyField];
+    const failures = +(await pool.query(`SELECT count(*) FROM website_actions WHERE website_connection_id = $1 AND target_wp_id = $2 AND target_type = $3 AND action_type = $4 AND proposed_change->>$5 = $6 AND execution_status = 'execution_failed'`, [connection.id, row.target_wp_id, row.target_type, row.action_type, keyField, key])).rows[0].count;
+    if (failures < 2) return;
+    const owner = await linkAlertOwner(connection.business_id); if (!owner) return;
+    const recent = await pool.query(`SELECT 1 FROM monitoring_alerts WHERE business_id = $1 AND alert_type = 'website_link_fix_failing' AND created_at > NOW() - INTERVAL '7 days' LIMIT 1`, [connection.business_id]);
+    if (recent.rows.length) return;
+    const fr = owner.language === 'fr';
+    await createAlert(owner.id, connection.business_id, 'website_link_fix_failing', 'warning', fr ? 'Une correction de lien échoue de façon répétée' : 'A link fix keeps failing',
+      fr ? `Une correction de lien sur « ${row.target_title || 'une page'} » a été refusée par votre site à plusieurs reprises. Vérifiez les autorisations de la connexion ou le plugin Arreyon.` : `A link fix on "${row.target_title || 'a page'}" has been refused by your site more than once. Check the connection's permissions or the Arreyon plugin.`, { actionId: row.id });
+  } catch (e) { console.error('Could not raise the link-fix alert:', e.message); }
 }
 async function autoApplyLinkFix(connection, decryptedPassword, action, label) {
   await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
@@ -8568,12 +8601,40 @@ async function autoApplyLinkFix(connection, decryptedPassword, action, label) {
   const exec = await executeWebsiteAction({ ...action, approval_status: 'approved' }, connection, decryptedPassword);
   const updated = await pool.query(`UPDATE website_actions SET approval_status = 'approved', execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
     [exec.executed ? 'executed' : 'execution_failed', exec.executed ? (exec.verified ? 'verified' : 'verification_failed') : null, exec.error || null, action.id]);
+  if (!exec.executed) await noteRepeatedLinkFixFailure(connection, updated.rows[0]);
   return updated.rows[0];
+}
+// Tells the customer what was changed on their site by itself, and that it can be undone.
+async function notifyLinkFixesApplied(connection, appliedRows) {
+  try {
+    const done = appliedRows.filter(r => r.execution_status === 'executed'); if (!done.length) return;
+    const owner = await linkAlertOwner(connection.business_id); if (!owner) return;
+    const removed = done.filter(r => r.action_type === 'remove_broken_link').length, updated = done.filter(r => r.action_type === 'update_link_url').length, fr = owner.language === 'fr';
+    const parts = fr ? [removed ? `${removed} lien(s) mort(s) supprimé(s)` : '', updated ? `${updated} lien(s) déplacé(s) mis à jour` : ''] : [removed ? `removed ${removed} dead link${removed === 1 ? '' : 's'}` : '', updated ? `updated ${updated} moved link${updated === 1 ? '' : 's'}` : ''];
+    const what = parts.filter(Boolean).join(fr ? ' et ' : ' and ');
+    await createAlert(owner.id, connection.business_id, 'website_links_fixed', 'info', fr ? 'Liens corrigés automatiquement sur votre site' : 'Links fixed automatically on your site',
+      fr ? `Arreyon a ${what} sur votre site. Vous pouvez annuler chaque correction dans Modifications proposées.` : `Arreyon ${what} on your site. You can undo any of them under Proposed Changes.`, { removed, updated, actionIds: done.map(r => r.id) });
+  } catch (e) { console.error('Could not raise the links-fixed alert:', e.message); }
+}
+
+// A copy of the page's content from just before a link fix, so the fix can be undone. Only used if the page has not been edited since (see the undo route).
+const contentHash = html => crypto.createHash('sha256').update(String(html || ''), 'utf8').digest('hex');
+async function saveLinkBackup(actionId, before, after) {
+  if (!actionId) return;
+  try {
+    await pool.query(`DELETE FROM website_action_backups WHERE created_at < NOW() - INTERVAL '30 days'`);
+    await pool.query(`INSERT INTO website_action_backups (action_id, content_before, content_after_hash) VALUES ($1, $2, $3)
+                      ON CONFLICT (action_id) DO UPDATE SET content_before = EXCLUDED.content_before, content_after_hash = EXCLUDED.content_after_hash, created_at = NOW()`, [actionId, String(before || ''), contentHash(after)]);
+  } catch (e) { console.error('Could not keep the undo copy:', e.message); }
+}
+async function refreshLinkBackupHash(actionId, savedRaw) {   // what WordPress actually stored may differ slightly from what was sent: the undo check uses what it reports back
+  if (!actionId) return;
+  try { await pool.query('UPDATE website_action_backups SET content_after_hash = $1 WHERE action_id = $2', [contentHash(savedRaw), actionId]); } catch (e) { /* the earlier hash stays */ }
 }
 const LINK_REASON_TEXT = { dns: 'the website no longer exists', not_found: 'the page was not found (404)', gone: 'the page was removed (410)' };
 
 // The whole check: this site's own links, then links to other websites. Proposes a fix for each problem, and (on a site set to Managed + Automatic) applies the
-// safe ones. Returns the report: what was found, what was fixed, what is waiting, and what could not be verified.
+// safe, CONFIRMED ones. Returns the report: what was found, what was fixed, what is waiting, and what could not be verified.
 async function runBrokenLinksCheck(connection, decryptedPassword, preloadedContent = null) {
   let content = preloadedContent;
   if (!content) {
@@ -8588,57 +8649,120 @@ async function runBrokenLinksCheck(connection, decryptedPassword, preloadedConte
   let external = { checkedCount: 0, totalUniqueLinks: 0, ok: 0, okUrls: [], broken: [], redirected: [], uncertain: [], failed: false };
   try { external = await scanForBrokenExternalLinks(allItems); } catch (e) { console.error('External link scan failed:', e.message); external.failed = true; }
   const autoOk = await wordpressAutoExecuteAllowed(connection);
-  const confirmed = await updateLinkObservations(connection.business_id, 'wordpress', [...internal.brokenLinks.map(b => b.url), ...external.broken.map(b => b.url)], external.okUrls);
-  const proposals = [...(internal.proposals || [])];
-  let autoApplied = 0, alreadyKnown = 0, newPending = 0;
-  const MAX_EXTERNAL_PROPOSALS = 30; let external_made = 0;
 
-  // this site's own broken links that are now CONFIRMED broken: the waiting fix (new, or from an earlier check) is applied where the site allows it
-  if (autoOk) {
+  // Safety valve: when an unusual share of the links "fail" the cause is more likely a problem on OUR side (network, DNS) than hundreds of dead links.
+  // Such a scan is not trusted: nothing from it is remembered as broken and nothing is applied automatically (the findings are still shown).
+  const internalUntrusted = linksUntrusted(internal.checkedCount || 0, internal.brokenLinks.length);
+  const externalUntrusted = linksUntrusted(external.checkedCount, external.broken.length + external.uncertain.length);
+  const movedUrls = new Set(external.redirected.map(r => r.url));
+  const problems = [
+    ...(internalUntrusted ? [] : internal.brokenLinks.map(b => ({ url: b.url, reason: 'broken' }))),
+    ...(externalUntrusted ? [] : external.broken.map(b => ({ url: b.url, reason: b.reason === 'dns' ? 'dns' : 'broken' }))),
+    ...(externalUntrusted ? [] : external.redirected.map(r => ({ url: r.url, reason: 'moved' }))),
+  ];
+  const confirmed = await updateLinkObservations(connection.business_id, 'wordpress', problems, external.okUrls.filter(u => !movedUrls.has(u)));
+
+  const proposals = [...(internal.proposals || [])], appliedRows = [];
+  let autoApplied = 0, alreadyKnown = 0, autoLimited = false, externalMade = 0;
+  const MAX_EXTERNAL_PROPOSALS = 30, budget = { site: 0, perPage: new Map() };
+  // Automatic fixing is capped (per page and per site, per check) so a mistake nobody foresaw can only ever reach a few places; the rest wait for approval.
+  const apply = async (row, pageId, label) => {
+    if (budget.site >= LINK_AUTO_MAX_PER_SITE || (budget.perPage.get(pageId) || 0) >= LINK_AUTO_MAX_PER_PAGE) { autoLimited = true; return null; }
+    budget.site++; budget.perPage.set(pageId, (budget.perPage.get(pageId) || 0) + 1);
+    const done = await autoApplyLinkFix(connection, decryptedPassword, row, label); appliedRows.push(done); if (done.execution_status === 'executed') autoApplied++; return done;
+  };
+
+  if (autoOk && !internalUntrusted) {   // this site's own broken links that are now CONFIRMED: the waiting fix (new, or from an earlier check) is applied
     for (const b of internal.brokenLinks) {
       if (!confirmed.has(b.url)) continue;
       for (const ref of b.foundOn || []) {
         const waiting = (await pool.query(`SELECT * FROM website_actions WHERE website_connection_id = $1 AND target_wp_id = $2 AND target_type = $3 AND action_type = 'remove_broken_link' AND proposed_change->>'brokenUrl' = $4 AND approval_status = 'pending'`, [connection.id, ref.id, ref.isPost ? 'post' : 'page', ref.href])).rows;
         for (const row of waiting) {
-          const done = await autoApplyLinkFix(connection, decryptedPassword, row, `removed a dead link on "${ref.title}"`);
+          const done = await apply(row, ref.id, `removed a dead link on "${ref.title}"`); if (!done) continue;
           const at = proposals.findIndex(p => p.id === row.id); if (at >= 0) proposals[at] = done; else proposals.push(done);
-          if (done.execution_status === 'executed') autoApplied++;
         }
       }
     }
   }
   for (const b of external.broken) {
-    const isConfirmed = confirmed.has(b.url);
+    if (externalUntrusted) break;   // not trusted: no removal is even proposed from this scan
+    const isConfirmed = confirmed.has(b.url), why = LINK_REASON_TEXT[b.reason] || 'it does not work';
     for (const ref of b.foundOn) {
-      if (external_made >= MAX_EXTERNAL_PROPOSALS) break;
-      const why = LINK_REASON_TEXT[b.reason] || 'it does not work';
+      if (externalMade >= MAX_EXTERNAL_PROPOSALS) break;
       const q = await queueLinkFix(connection, ref, 'remove_broken_link', { brokenUrl: ref.href, external: true, confirmed: isConfirmed },
-        `This link to another website no longer works (${why}). ${isConfirmed ? 'It was still broken when checked again.' : 'It will be confirmed on the next check.'} The link is removed and its text kept.`, 'brokenUrl');
-      if (q.alreadyKnown) { alreadyKnown++; if (q.existing && autoOk && isConfirmed) { const done = await autoApplyLinkFix(connection, decryptedPassword, q.existing, `removed a dead link on "${ref.title}"`); proposals.push(done); if (done.execution_status === 'executed') autoApplied++; } continue; }
-      external_made++; let row = q.row;
-      if (autoOk && isConfirmed) { row = await autoApplyLinkFix(connection, decryptedPassword, row, `removed a dead link on "${ref.title}"`); if (row.execution_status === 'executed') autoApplied++; }
+        `This link to another website no longer works (${why}). ${isConfirmed ? 'It was still broken when checked again.' : 'It will be confirmed on a later check.'} The link is removed and its text kept.`, 'brokenUrl');
+      if (q.alreadyKnown) { alreadyKnown++; if (q.existing && autoOk && isConfirmed) { const done = await apply(q.existing, ref.id, `removed a dead link on "${ref.title}"`); if (done) proposals.push(done); } continue; }
+      externalMade++; let row = q.row;
+      if (autoOk && isConfirmed) { const done = await apply(row, ref.id, `removed a dead link on "${ref.title}"`); if (done) row = done; }
       proposals.push(row);
     }
   }
   for (const r of external.redirected) {
+    const isConfirmed = confirmed.has(r.url);
     for (const ref of r.foundOn) {
-      if (external_made >= MAX_EXTERNAL_PROPOSALS) break;
+      if (externalMade >= MAX_EXTERNAL_PROPOSALS) break;
       const q = await queueLinkFix(connection, ref, 'update_link_url', { oldUrl: ref.href, newUrl: r.finalUrl, crossDomain: !!r.crossDomain },
         `This link has moved permanently${r.crossDomain ? ' to a different website' : ''}. Updating it to the new address saves visitors an extra step.`, 'oldUrl');
-      if (q.alreadyKnown) { alreadyKnown++; if (q.existing && autoOk && !r.crossDomain) { const done = await autoApplyLinkFix(connection, decryptedPassword, q.existing, `updated a moved link on "${ref.title}"`); proposals.push(done); if (done.execution_status === 'executed') autoApplied++; } continue; }
-      external_made++; let row = q.row;
-      if (autoOk && !r.crossDomain) { row = await autoApplyLinkFix(connection, decryptedPassword, row, `updated a moved link on "${ref.title}"`); if (row.execution_status === 'executed') autoApplied++; }
+      const eligible = autoOk && !r.crossDomain && isConfirmed && !externalUntrusted;
+      if (q.alreadyKnown) { alreadyKnown++; if (q.existing && eligible) { const done = await apply(q.existing, ref.id, `updated a moved link on "${ref.title}"`); if (done) proposals.push(done); } continue; }
+      externalMade++; let row = q.row;
+      if (eligible) { const done = await apply(row, ref.id, `updated a moved link on "${ref.title}"`); if (done) row = done; }
       proposals.push(row);
     }
   }
+  if (appliedRows.length) await notifyLinkFixesApplied(connection, appliedRows);
   const pending = proposals.filter(p => p.approval_status === 'pending').length;
   return {
     ...internal, proposals, pendingCount: pending, alreadyPendingCount: (internal.alreadyPendingCount || 0) + alreadyKnown, autoExecutedCount: autoApplied,
     external: { checkedCount: external.checkedCount, totalUniqueLinks: external.totalUniqueLinks, ok: external.ok, broken: external.broken, redirected: external.redirected, uncertain: external.uncertain, failed: !!external.failed },
-    report: { internalChecked: internal.checkedCount, externalChecked: external.checkedCount, brokenInternal: internal.brokenLinks.length, brokenExternal: external.broken.length, redirected: external.redirected.length, uncertain: external.uncertain.length, fixed: autoApplied, waitingForApproval: pending },
+    report: { internalChecked: internal.checkedCount, externalChecked: external.checkedCount, brokenInternal: internal.brokenLinks.length, brokenExternal: external.broken.length, redirected: external.redirected.length, uncertain: external.uncertain.length, fixed: autoApplied, waitingForApproval: pending,
+      untrusted: { internal: internalUntrusted, external: externalUntrusted }, autoLimited },
   };
 }
 
+// The core of the undo: returns { ok: true } or { ok: false, status, error, code } (the route turns that into the answer).
+async function undoLinkFixAction(connection, action, userId) {
+    if (!['remove_broken_link', 'update_link_url'].includes(action.action_type) || action.execution_status !== 'executed') return { ok: false, status: 400, error: 'Only a link fix that was applied can be undone.' };
+    const backup = (await pool.query('SELECT * FROM website_action_backups WHERE action_id = $1', [action.id])).rows[0];
+    if (!backup) return { ok: false, status: 410, error: 'This fix is too old to undo here. Restore the page from its revisions in WordPress.', code: 'undo_expired' };
+    const decryptedPassword = decryptSecret(connection.wp_app_password_encrypted), wpType = action.target_type === 'post' ? 'posts' : 'pages';
+    const readRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?context=edit&_fields=content`, { timeoutMs: 15000 });
+    if (!readRes.ok) return { ok: false, status: 502, error: `Could not read the page's current content (status ${readRes.status}).` };
+    const current = await readRes.json(), currentHtml = current.content?.raw ?? current.content?.rendered ?? '';
+    if (contentHash(currentHtml) !== backup.content_after_hash) return { ok: false, status: 409, error: 'This page was edited after the fix, so it cannot be undone automatically. Restore it from the page\'s revisions in WordPress.', code: 'page_changed' };
+    const writeRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}`, { method: 'POST', body: { content: backup.content_before }, timeoutMs: 20000 });
+    if (!writeRes.ok) return { ok: false, status: 502, error: `WordPress rejected restoring the page (status ${writeRes.status}).` };
+    if (connection.connection_mode !== 'poll') await invalidatePushModeCache(connection);
+    // Treated as a "no": the same fix is not proposed again for 90 days, and never after a second one
+    await pool.query(`UPDATE website_actions SET execution_status = 'undone', verification_status = NULL, approval_status = 'rejected', reviewed_at = NOW() WHERE id = $1`, [action.id]);
+    await pool.query('DELETE FROM website_action_backups WHERE action_id = $1', [action.id]);
+    await logWebsiteAudit(connection.id, 'user', userId, 'proposal_undone', `Undid a link fix on "${action.target_title || 'a page'}"`, { actionId: action.id }, 'broken_links');
+  return { ok: true };
+}
+
+// Undoes an applied link fix. Only if the page has not been edited since (its saved content still matches what the fix left): otherwise the person's later
+// work could be overwritten, so it says so and points to WordPress's own revisions.
+app.post('/api/business/:id/website/actions/:actionId/undo', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
+    if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    recordRunFrom(res, req.params.id, 'wordpress', 'change_undone', () => ({}));
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.actionId)) return res.status(404).json({ error: 'Proposed change not found' });
+    const connResult = await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id]);
+    if (!connResult.rows.length) return res.status(404).json({ error: 'No website connected' });
+    const connection = connResult.rows[0];
+    const found = await pool.query('SELECT * FROM website_actions WHERE id = $1 AND website_connection_id = $2', [req.params.actionId, connection.id]);
+    if (!found.rows.length) return res.status(404).json({ error: 'Proposed change not found' });
+    const action = found.rows[0];
+    const out = await undoLinkFixAction(connection, action, req.userId);
+    if (!out.ok) return res.status(out.status).json({ error: out.error, code: out.code });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Undo link fix error:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to undo this change. Please try again.') });
+  }
+});
 
 app.post('/api/business/:id/website/broken-links', authRequired, async (req, res) => {
   let ran = false;
@@ -8959,7 +9083,7 @@ app.get('/api/business/:id/website/actions', authRequired, async (req, res) => {
     if (!connResult.rows.length) return res.json({ actions: [] });
 
     const actions = await pool.query(
-      'SELECT * FROM website_actions WHERE website_connection_id = $1 ORDER BY created_at DESC LIMIT 50',
+      'SELECT a.*, (b.action_id IS NOT NULL) AS can_undo FROM website_actions a LEFT JOIN website_action_backups b ON b.action_id = a.id WHERE a.website_connection_id = $1 ORDER BY a.created_at DESC LIMIT 50',
       [connResult.rows[0].id]
     );
     res.json({ actions: actions.rows });
@@ -18945,7 +19069,7 @@ const ACTIVITY_FEATURES = {
   intelligence: ['intelligence_refreshed'], audit: ['audit_completed'], ai_visibility: ['ai_visibility_checked'], keyword_rankings: ['keyword_snapshot'],
   sitemap: ['sitemap_submitted', 'sitemap_missing'], competitor: ['competitor_analysis'], technical_seo: ['technical_check'], broken_links: ['broken_links_checked'],
   schema: ['schema_installed', 'schema_removed'], content: ['content_generated', 'content_failed', 'content_missed'],
-  improvements: ['proposals_generated', 'change_applied', 'change_verified', 'change_rejected'],
+  improvements: ['proposals_generated', 'change_applied', 'change_verified', 'change_rejected', 'change_undone'],
 };
 const isActivityFeature = f => typeof f === 'string' && Object.prototype.hasOwnProperty.call(ACTIVITY_FEATURES, f);
 const ACTIVITY_FEATURE_SQL = 'CASE ' + Object.entries(ACTIVITY_FEATURES).map(([f, types]) => `WHEN task_type IN (${types.map(t => `'${t}'`).join(',')}) THEN '${f}'`).join(' ') + ' END';   // built from the constants above only
