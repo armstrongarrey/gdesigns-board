@@ -8626,6 +8626,12 @@ async function generateShopifyPost() {
       return;
     }
     showToast(t(data.publishStatus === 'publish' ? 'web.post_published_toast' : 'web.post_drafted_toast').replace('{title}', data.title), 'success');
+    if (data.featuredImage) {   // a missing picture is never silent
+      const fi = data.featuredImage;
+      if (fi.status === 'added') showToast(t('web.image_added_toast_shopify'), 'success');
+      else if (fi.status === 'failed') showToast(t('web.image_note_failed_shopify'), 'error');
+      else if (fi.status === 'skipped' && fi.reason !== 'not_requested') showToast(t('web.image_note_unavailable'), 'error');
+    }
     topicInput.value = '';
     loadShopifyGeneratedPosts();
   } catch (e) {
@@ -9273,6 +9279,7 @@ function renderShopifyActions(actions) {
     if (change.metaTitle) changeDescription = `${t('web.new_meta_title_label')}: "${escapeHtml(change.metaTitle)}"`;
     else if (change.metaDescription) changeDescription = `${t('web.new_meta_description_label')}: "${escapeHtml(change.metaDescription)}"`;
     else if (change.brokenUrl) changeDescription = tf('web.broken_link_description', { url: escapeHtml(change.brokenUrl) });
+    else if (change.oldUrl && change.newUrl) changeDescription = tf('web.link_update_description', { old: escapeHtml(change.oldUrl), new: escapeHtml(change.newUrl) });
 
     return `
     <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
@@ -9547,14 +9554,22 @@ function agentActivityText(e) {
   const d = e.detail || {};
   const failed = e.outcome === 'failed';
   switch (e.task_type) {
-    case 'content_generated': return tf(d.status === 'publish' ? 'web.activity_content_published' : 'web.activity_content_drafted', { title: d.title || '' });
+    case 'content_generated': {
+      const base = tf(d.status === 'publish' ? 'web.activity_content_published' : 'web.activity_content_drafted', { title: d.title || '' });
+      if (d.image === 'added') return base + ' — ' + t('web.activity_image_added');
+      if (d.image === 'failed' || (d.image === 'skipped' && d.imageReason && d.imageReason !== 'not_requested')) return base + ' — ' + t('web.activity_image_missing');
+      return base;
+    }
     case 'content_failed': return t('web.activity_content_failed');
     case 'ai_visibility_checked': return failed ? t('web.activity_ai_visibility_failed') : tf('web.activity_ai_visibility', { mentioned: d.mentionedCount || 0, total: d.checkedCount || 0 });
     case 'keyword_snapshot': return failed ? t('web.activity_keyword_snapshot_failed') : tf('web.activity_keyword_snapshot', { queries: d.queries || 0, opportunities: d.opportunities || 0 });
     case 'content_missed': return t('web.activity_content_missed');
     case 'schema_installed': return failed ? t('web.activity_schema_installed_failed') : d.theme ? tf('web.activity_schema_installed', { theme: d.theme }) : t('web.activity_schema_added');
     case 'schema_removed': return failed ? t('web.activity_schema_removed_failed') : t('web.activity_schema_removed');
-    case 'broken_links_checked': return failed ? t('web.activity_broken_links_failed') : tf('web.activity_broken_links', { broken: d.brokenCount || 0, checked: d.checkedCount || 0 });
+    case 'broken_links_checked':
+      if (failed) return t('web.activity_broken_links_failed');
+      if (d.externalChecked !== undefined) return tf('web.activity_broken_links_ext', { checked: (d.checkedCount || 0) + (d.externalChecked || 0), external: d.externalChecked || 0, broken: (d.brokenCount || 0) + (d.externalBroken || 0), moved: d.redirected || 0, fixed: d.fixed || 0 });
+      return tf('web.activity_broken_links', { broken: d.brokenCount || 0, checked: d.checkedCount || 0 });
     case 'intelligence_refreshed': return t(failed ? 'web.activity_intelligence_failed' : 'web.activity_intelligence_refreshed');
     case 'audit_completed': return failed ? t('web.activity_audit_failed') : tf('web.activity_audit_completed', { found: d.issuesFound || 0, fixed: d.autoFixed || 0, pending: d.pendingApproval || 0 });
     case 'technical_check':
@@ -9897,6 +9912,12 @@ async function generateBlogPostNow() {
       return;
     }
     showToast(t(data.publishStatus === 'publish' ? 'web.post_published_toast' : 'web.post_drafted_toast').replace('{title}', data.title), 'success');
+    if (generateFeaturedImage && data.featuredImage) {   // a missing picture is never silent
+      const fi = data.featuredImage;
+      if (fi.status === 'added') showToast(t('web.image_added_toast'), 'success');
+      else if (fi.status === 'failed') showToast(t('web.image_note_failed'), 'error');
+      else if (fi.status === 'skipped' && fi.reason !== 'not_requested') showToast(t('web.image_note_unavailable'), 'error');
+    }
     topicInput.value = '';
     loadWebsiteActivityLog();
     loadWebsiteGeneratedPosts();
@@ -10913,7 +10934,7 @@ async function loadWebsiteActions() {
   }
 }
 
-const WEBSITE_ACTION_TYPE_LABELS = { update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description', assign_taxonomy: 'web.action_type_taxonomy', generate_featured_image: 'web.action_type_featured_image', remove_broken_link: 'web.action_type_broken_link' };
+const WEBSITE_ACTION_TYPE_LABELS = { update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description', assign_taxonomy: 'web.action_type_taxonomy', generate_featured_image: 'web.action_type_featured_image', remove_broken_link: 'web.action_type_broken_link', update_link_url: 'web.action_type_link_update' };
 
 // Renders each proposal with its real previous value alongside the AI's
 // suggestion (spec's explicit CURRENT/PROPOSED preview format), an
@@ -10961,12 +10982,17 @@ function renderWebsiteActionsContent(actions) {
       return `<div><span style="color:var(--muted)">${t('web.field_broken_link')}:</span> ${escapeHtml(change.brokenUrl)}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:4px;font-style:italic">${t('web.broken_link_fix_description')}</div>`;
     }
+    if (change.oldUrl && change.newUrl) {
+      return `<div style="margin-bottom:4px"><span style="color:var(--muted)">${t('web.field_link_old')}:</span> ${escapeHtml(change.oldUrl)}</div>
+        <div><span style="color:var(--muted)">${t('web.field_link_new')}:</span> ${escapeHtml(change.newUrl)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;font-style:italic">${t(change.crossDomain ? 'web.link_update_cross_domain' : 'web.link_update_fix_description')}</div>`;
+    }
     return '';
   };
   const renderPreviousValue = (prev, change) => {
     if (change.title) return escapeHtml(prev.title || t('web.value_none'));
     if (change.metaDescription) return escapeHtml(prev.metaDescription || t('web.value_none'));
-    if (change.category || change.tags || change.imagePrompt || change.brokenUrl) return t('web.value_none');
+    if (change.category || change.tags || change.imagePrompt || change.brokenUrl || change.oldUrl) return t('web.value_none');
     return '';
   };
   const editFieldFor = (action) => action.proposed_change.title ? 'title' : (action.proposed_change.metaDescription ? 'metaDescription' : null);
@@ -11274,6 +11300,28 @@ async function generateFeaturedImageProposals() {
 // <prefix>BrokenLinksContent / <prefix>BrokenLinksBtn, and fixes proposed by the scan appear in that platform's approvals list.
 const blEl = (prefix, part) => document.getElementById(`${prefix}BrokenLinks${part}`);
 
+// The report of a link check: what was found among this site's own links and links to other websites, what was fixed, and what waits for approval.
+// Addresses and page titles come from the site (third-party text): always escaped.
+const LINK_REASON_KEYS = { dns: 'web.link_reason_dns', not_found: 'web.link_reason_not_found', gone: 'web.link_reason_gone', refused: 'web.link_reason_refused', server_error: 'web.link_reason_server_error', blocked: 'web.link_reason_blocked', redirects_to_homepage: 'web.link_reason_homepage' };
+const linkReason = key => t(LINK_REASON_KEYS[key] || 'web.link_reason_unreachable');
+function renderExternalLinkSections(ext) {
+  if (!ext) return '';
+  const card = (color, inner) => `<div style="background:var(--bg3);border-radius:10px;padding:14px 16px;margin-bottom:10px;border-left:3px solid ${color}">${inner}</div>`;
+  const address = u => `<div style="font-size:12.5px;font-weight:600;color:var(--text);margin-bottom:4px;word-break:break-all">${escapeHtml(u)}</div>`;
+  const note = x => `<div style="font-size:11px;color:var(--muted);margin-bottom:8px;word-break:break-word">${x}</div>`;
+  const foundOn = list => `<div style="font-size:11px;color:var(--muted)">${t('web.found_on')}: ${list.map(f => `${targetTypeBadge(f.isPost ? 'post' : 'page')}${escapeHtml(f.title)}`).join(', ')}</div>`;
+  const head = (key, n) => `<div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 8px">${escapeHtml(tf(key, { n }))}</div>`;
+  let html = '';
+  if (ext.broken.length) html += head('web.links_group_external_broken', ext.broken.length) + ext.broken.map(b => card('#ef4444', address(b.url) + note(escapeHtml(linkReason(b.reason))) + foundOn(b.foundOn))).join('');
+  if (ext.redirected.length) html += head('web.links_group_redirected', ext.redirected.length) + ext.redirected.map(r => card('#f59e0b', address(r.url) + note(escapeHtml(tf(r.crossDomain ? 'web.link_moved_to_other_site' : 'web.link_moved_to', { url: r.finalUrl }))) + foundOn(r.foundOn))).join('');
+  if (ext.uncertain.length) html += head('web.links_group_uncertain', ext.uncertain.length) + ext.uncertain.map(u => card('#64748b', address(u.url) + note(escapeHtml(linkReason(u.reason)) + (u.status ? ` (${escapeHtml(String(u.status))})` : '')) + foundOn(u.foundOn))).join('');
+  return html;
+}
+function renderLinkReportLine(rp) {
+  const text = tf('web.links_report_summary', { internal: rp.internalChecked, external: rp.externalChecked, broken: (rp.brokenInternal || 0) + (rp.brokenExternal || 0), moved: rp.redirected, unsure: rp.uncertain, fixed: rp.fixed, waiting: rp.waitingForApproval });
+  return `<div style="font-size:12.5px;color:var(--text2);margin-bottom:12px;line-height:1.55">${escapeHtml(text)}</div>`;
+}
+
 async function checkBrokenLinks(prefix = 'website') {
   const btn = blEl(prefix, 'Btn');
   const contentEl = blEl(prefix, 'Content');
@@ -11289,7 +11337,8 @@ async function checkBrokenLinks(prefix = 'website') {
     const checkedLine = t('web.links_checked_of').replace('{checked}', data.checkedCount).replace('{total}', data.totalUniqueLinks);
     // Only Shopify reports how much of the store it read (a part of it, when the store is large): say so
     const scopeLine = data.scope ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">${t('web.links_scope').replace('{posts}', data.scope.posts).replace('{totalPosts}', data.scope.totalPosts).replace('{pages}', data.scope.pages).replace('{totalPages}', data.scope.totalPages)}</div>` : '';
-    if (!data.brokenLinks.length) {
+    const ext = data.external || null, rp = data.report || null, extProblems = ext ? ext.broken.length + ext.redirected.length + ext.uncertain.length : 0;
+    if (!data.brokenLinks.length && !extProblems) {
       contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${escapeHtml(data.message)} (${checkedLine})${scopeLine}</div>`;
       return;
     }
@@ -11297,12 +11346,13 @@ async function checkBrokenLinks(prefix = 'website') {
     const waitingNote = data.alreadyPendingCount ? ` · ${t('web.link_fixes_already_pending').replace('{n}', data.alreadyPendingCount)}` : '';
     contentEl.innerHTML = `
       <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${checkedLine}${proposedNote}${waitingNote}${scopeLine}</div>
+      ${rp ? renderLinkReportLine(rp) : ''}
       ${data.brokenLinks.map(b => `
         <div style="background:var(--bg3);border-radius:10px;padding:14px 16px;margin-bottom:10px;border-left:3px solid #ef4444">
           <div style="font-size:12.5px;font-weight:600;color:var(--text);margin-bottom:4px;word-break:break-all">${escapeHtml(b.url)}</div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${b.status ? t('web.link_status').replace('{status}', b.status) : escapeHtml(b.error || '')}</div>
           <div style="font-size:11px;color:var(--muted)">${t('web.found_on')}: ${b.foundOn.map(f => `${targetTypeBadge(f.isPost ? 'post' : 'page')}${escapeHtml(f.title)}`).join(', ')}</div>
-        </div>`).join('')}`;
+        </div>`).join('')}${renderExternalLinkSections(ext)}`;
     if (data.proposals && data.proposals.length) (prefix === 'shopify' ? loadShopifyActions() : loadWebsiteActions());
   } catch (e) {
     contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
