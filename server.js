@@ -563,6 +563,11 @@ const AUTO_SEO_EXTRA_PATHS = [
   ['GET', /^\/api\/business$/],
   ['*',   routeRx(BIZ_PATH)],
   ['*',   routeRx(BIZ_PATH + '/competitors(/[^/]+)?')],
+  // finding competitors from the Competitor Analysis card (the card is where these accounts add them)
+  ['POST', routeRx(BIZ_PATH + '/competitors/discover')],
+  ['GET',  routeRx(BIZ_PATH + '/competitors/suggestions')],
+  ['POST', routeRx(BIZ_PATH + '/competitors/suggestions/confirm')],
+  ['POST', routeRx(BIZ_PATH + '/competitors/suggestions/[^/]+/dismiss')],
 ];
 
 function lockReasonFor(previousPlan) { return (previousPlan && previousPlan !== 'free') ? 'renew' : 'upgrade'; }
@@ -2243,6 +2248,41 @@ app.get('/api/business/:id/competitors', authRequired, async (req, res) => {
     console.error('List competitors error:', e.message);
     res.status(500).json({ error: 'Failed to load competitors' });
   }
+});
+
+// Finding competitors: suggest (a live web search), list, confirm, dismiss. All of it is the person's decision: nothing becomes a tracked competitor until confirmed.
+app.post('/api/business/:id/competitors/discover', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const platform = ['wordpress', 'shopify'].includes(req.body && req.body.platform) ? req.body.platform : null;   // only to show it in that card's activity history
+    if (platform) recordRunFrom(res, req.params.id, platform, 'competitor_discovery', body => ({ detail: { found: body.found, searched: body.searched } }));
+    const out = await runCompetitorDiscovery(req.params.id, account.id);
+    res.status(out.status).json(out.body);
+  } catch (e) {
+    console.error('Discover competitors error:', e.message);
+    res.status(500).json({ error: 'Could not search for competitors. Please try again.' });
+  }
+});
+app.get('/api/business/:id/competitors/suggestions', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    if (!(await pool.query('SELECT 1 FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id])).rows.length) return res.status(404).json({ error: 'Business not found' });
+    res.json(await competitorDiscoveryState(req.params.id));
+  } catch (e) { console.error('List suggestions error:', e.message); res.status(500).json({ error: 'Could not load the suggestions.' }); }
+});
+app.post('/api/business/:id/competitors/suggestions/confirm', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const out = await confirmCompetitorSuggestions(req.params.id, account.id, req.body && req.body.ids);
+    res.status(out.status).json(out.body);
+  } catch (e) { console.error('Confirm suggestions error:', e.message); res.status(500).json({ error: 'Could not add these competitors. Please try again.' }); }
+});
+app.post('/api/business/:id/competitors/suggestions/:suggestionId/dismiss', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const out = await dismissCompetitorSuggestion(req.params.id, account.id, req.params.suggestionId);
+    res.status(out.status).json(out.body);
+  } catch (e) { console.error('Dismiss suggestion error:', e.message); res.status(500).json({ error: 'Could not remove this suggestion. Please try again.' }); }
 });
 
 app.put('/api/business/:id/competitors/:competitorId', authRequired, async (req, res) => {
@@ -7728,7 +7768,7 @@ app.post('/api/business/:id/website/competitor-analysis', authRequired, async (r
     if (!conn) return res.status(404).json({ error: 'No WordPress site is connected for this business yet.' });
     if (conn.connection_mode === 'poll') return res.status(400).json({ error: 'Competitor analysis needs a WordPress connection that Arreyon can read directly. Sites in poll mode cannot be analyzed yet.' });
     const n = (await pool.query(`SELECT COUNT(*)::int AS n FROM tracked_competitors WHERE business_id = $1 AND website IS NOT NULL AND TRIM(website) <> ''`, [req.params.id])).rows[0].n;
-    if (!n) return res.status(400).json({ error: 'Add at least one competitor with a website first, then run the analysis.' });
+    if (!n) return res.status(400).json({ error: 'Find or add at least one competitor with a website first, then run the analysis.' });
     const biz = (await pool.query('SELECT id, user_id FROM businesses WHERE id = $1', [req.params.id])).rows[0];
     const context = await getBusinessContext(req.params.id, biz.user_id);
     if (!context) return res.status(500).json({ error: 'Business details could not be loaded.' });
@@ -7749,10 +7789,10 @@ app.get('/api/business/:id/website/competitor-analysis', authRequired, async (re
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
     const counts = (await pool.query(`SELECT COUNT(*)::int AS tracked, COUNT(*) FILTER (WHERE website IS NOT NULL AND TRIM(website) <> '')::int AS with_website FROM tracked_competitors WHERE business_id = $1`, [req.params.id])).rows[0];
     const conn = (await pool.query('SELECT id FROM website_connections WHERE business_id = $1', [req.params.id])).rows[0];
-    if (!conn) return res.json({ latest: null, running: false, trackedCompetitors: counts.tracked, competitorsWithWebsite: counts.with_website });
+    if (!conn) return res.json({ latest: null, running: false, trackedCompetitors: counts.tracked, competitorsWithWebsite: counts.with_website, ...(await competitorDiscoveryState(req.params.id)) });
     const running = (await pool.query(`SELECT 1 FROM website_competitor_analyses WHERE website_connection_id = $1 AND status = 'running' AND created_at > NOW() - INTERVAL '15 minutes'`, [conn.id])).rows.length > 0;
     const latest = (await pool.query(`SELECT id, status, triggered_by, own, competitors, insights, error_message, created_at, completed_at FROM website_competitor_analyses WHERE website_connection_id = $1 AND status <> 'running' ORDER BY created_at DESC LIMIT 1`, [conn.id])).rows[0] || null;
-    res.json({ latest, running, trackedCompetitors: counts.tracked, competitorsWithWebsite: counts.with_website });
+    res.json({ latest, running, trackedCompetitors: counts.tracked, competitorsWithWebsite: counts.with_website, ...(await competitorDiscoveryState(req.params.id)) });
   } catch (e) {
     console.error('Get competitor analysis error:', e.message);
     res.status(500).json({ error: 'Could not load the competitor analysis.' });
@@ -10480,7 +10520,7 @@ app.post('/api/business/:id/shopify/competitor-analysis', authRequired, async (r
     const conn = (await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
     if (!conn) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
     const n = (await pool.query(`SELECT COUNT(*)::int AS n FROM tracked_competitors WHERE business_id = $1 AND website IS NOT NULL AND TRIM(website) <> ''`, [req.params.id])).rows[0].n;
-    if (!n) return res.status(400).json({ error: 'Add at least one competitor with a website first, then run the analysis.' });
+    if (!n) return res.status(400).json({ error: 'Find or add at least one competitor with a website first, then run the analysis.' });
     const biz = (await pool.query('SELECT id, user_id FROM businesses WHERE id = $1', [req.params.id])).rows[0];
     const context = await getBusinessContext(req.params.id, biz.user_id);
     if (!context) return res.status(500).json({ error: 'Business details could not be loaded.' });
@@ -10501,10 +10541,10 @@ app.get('/api/business/:id/shopify/competitor-analysis', authRequired, async (re
     if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
     const counts = (await pool.query(`SELECT COUNT(*)::int AS tracked, COUNT(*) FILTER (WHERE website IS NOT NULL AND TRIM(website) <> '')::int AS with_website FROM tracked_competitors WHERE business_id = $1`, [req.params.id])).rows[0];
     const conn = (await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id])).rows[0];
-    if (!conn) return res.json({ latest: null, running: false, trackedCompetitors: counts.tracked, competitorsWithWebsite: counts.with_website });
+    if (!conn) return res.json({ latest: null, running: false, trackedCompetitors: counts.tracked, competitorsWithWebsite: counts.with_website, ...(await competitorDiscoveryState(req.params.id)) });
     const running = (await pool.query(`SELECT 1 FROM shopify_competitor_analyses WHERE shopify_connection_id = $1 AND status = 'running' AND created_at > NOW() - INTERVAL '15 minutes'`, [conn.id])).rows.length > 0;
     const latest = (await pool.query(`SELECT id, status, triggered_by, own, competitors, insights, error_message, created_at, completed_at FROM shopify_competitor_analyses WHERE shopify_connection_id = $1 AND status <> 'running' ORDER BY created_at DESC LIMIT 1`, [conn.id])).rows[0] || null;
-    res.json({ latest, running, trackedCompetitors: counts.tracked, competitorsWithWebsite: counts.with_website });
+    res.json({ latest, running, trackedCompetitors: counts.tracked, competitorsWithWebsite: counts.with_website, ...(await competitorDiscoveryState(req.params.id)) });
   } catch (e) {
     console.error('Get Shopify competitor analysis error:', e.message);
     res.status(500).json({ error: 'Could not load the competitor analysis.' });
@@ -16656,6 +16696,173 @@ async function collectCompetitorSiteData(rawUrl, { maxPages = 6, now = Date.now(
   return out;
 }
 
+// ???????????????????????????????????????????????????????????????????????????
+// COMPETITOR DISCOVERY ? business-level, used by every platform
+// A live web search (Perplexity) suggests real businesses that compete with this one. Nothing the search says is trusted as it comes: every candidate must be a
+// real website that loads (through safeFetch, so internal addresses are never contacted), not parked or for sale, not this business's own site, not a directory,
+// social network, marketplace or review site, and not one already tracked or dismissed. The person then CONFIRMS which to keep; only those are ever analysed.
+// ???????????????????????????????????????????????????????????????????????????
+const COMPETITOR_SEARCH_TIMEOUT_MS = 50000, COMPETITOR_CANDIDATES_MAX = 12, COMPETITOR_SHOWN_MAX = 8, COMPETITOR_SEARCH_COOLDOWN_SECONDS = 120, COMPETITOR_SEARCHES_PER_DAY = 5, MAX_TRACKED_COMPETITORS = 10;
+// Sites that list or host other businesses rather than being one: matched on a whole name inside the address (amazon in www.amazon.co.uk), never on a fragment.
+const COMPETITOR_NOISE_NAMES = new Set(['facebook', 'instagram', 'linkedin', 'twitter', 'youtube', 'tiktok', 'pinterest', 'reddit', 'quora', 'wikipedia', 'wikidata', 'britannica', 'yelp', 'tripadvisor', 'trustpilot', 'glassdoor', 'indeed',
+  'crunchbase', 'clutch', 'g2', 'capterra', 'sortlist', 'upwork', 'fiverr', 'freelancer', 'amazon', 'ebay', 'alibaba', 'aliexpress', 'jumia', 'google', 'bing', 'yahoo', 'duckduckgo', 'medium', 'substack', 'forbes', 'bloomberg',
+  'github', 'behance', 'dribbble', 'yellowpages', 'whatsapp', 'telegram', 'snapchat', 'tumblr', 'linktr', 'linktree']);
+const COMPETITOR_NOISE_HOSTS = new Set(['x.com', 't.co', 'bit.ly', 'goo.gl']);
+const PARKED_PAGE = /domain\s+(name\s+)?(is\s+)?(for\s+sale|parked)|buy\s+this\s+domain|this\s+domain\s+may\s+be\s+for\s+sale|sedo\.com\/search|hugedomains\.com|parkingcrew|domain\s+parking/i;
+
+function competitorDomain(raw) { const o = normalizeCompetitorUrl(raw); if (!o) return null; try { return new URL(o).hostname.toLowerCase().replace(/^www\./, ''); } catch (e) { return null; } }
+function isNoiseCompetitorHost(host) {
+  const h = String(host || '').toLowerCase().replace(/^www\./, ''); if (!h) return true;
+  if ([...COMPETITOR_NOISE_HOSTS].some(d => h === d || h.endsWith('.' + d))) return true;
+  return h.split('.').some(label => COMPETITOR_NOISE_NAMES.has(label));
+}
+const sameSiteDomain = (a, b) => !!a && !!b && (a === b || a.endsWith('.' + b) || b.endsWith('.' + a));
+
+// Reads the search's answer. Returns null if it cannot be read at all; otherwise { candidates, noise }.
+function parseCompetitorCandidates(answer, citations, { ownDomains = [], knownDomains = new Set() } = {}) {
+  let parsed; try { parsed = extractJSON(String(answer || '')); } catch (e) { return null; }
+  const list = Array.isArray(parsed && parsed.competitors) ? parsed.competitors : [];
+  const cites = (Array.isArray(citations) ? citations : []).map(u => { try { return new URL(u); } catch (e) { return null; } }).filter(Boolean);
+  const seen = new Set(), out = []; let noise = 0;
+  for (const c of list) {
+    if (!c || typeof c !== 'object') continue;
+    const name = String(c.name || '').replace(/\s+/g, ' ').trim().slice(0, 150), domain = competitorDomain(c.website);
+    if (!name || !domain || seen.has(domain)) continue;
+    if (ownDomains.some(o => sameSiteDomain(domain, o)) || knownDomains.has(domain)) continue;
+    if (isNoiseCompetitorHost(domain)) { noise++; continue; }
+    seen.add(domain);
+    const sources = cites.filter(u => sameSiteDomain(u.hostname.toLowerCase().replace(/^www\./, ''), domain)).map(u => u.href).slice(0, 3);
+    out.push({ name, website: normalizeCompetitorUrl(c.website), domain, reason: String(c.reason || '').replace(/\s+/g, ' ').trim().slice(0, 300), scope: c.scope === 'local' || c.scope === 'international' ? c.scope : null, grounded: sources.length > 0, sourceUrls: sources });
+    if (out.length >= COMPETITOR_CANDIDATES_MAX) break;
+  }
+  return { candidates: out, noise };
+}
+
+// Does this address really lead to a live website? (A made-up or dead address is dropped, never shown.)
+async function verifyCompetitorSite(origin) {
+  try {
+    const { html, finalUrl } = await safeFetch(origin + '/', { timeoutMs: 7000, maxBytes: 600000 });
+    const sig = extractPageSignals(html); let finalOrigin = origin; try { finalOrigin = new URL(finalUrl || origin).origin; } catch (e) { /* keep the address as given */ }
+    return { reachable: true, title: sig.title || null, finalOrigin, parked: PARKED_PAGE.test(String(html).slice(0, 20000)) };
+  } catch (e) { return { reachable: false, title: null, finalOrigin: origin, parked: false }; }
+}
+
+async function discoverCompetitors(business, context, { ownDomains = [], knownDomains = new Set() } = {}) {
+  const place = [business.city, business.country].filter(Boolean).join(', ');
+  const about = (summarizeBusinessContextForAI(context) || '').slice(0, 1500);
+  const prompt = `Use live web search to find REAL competitors of this business.
+BUSINESS: ${business.name || 'unnamed'}${business.industry ? ' | industry: ' + business.industry : ''}${place ? ' | based in: ' + place : ''}${business.website ? ' | website: ' + business.website : ''}
+${about ? 'WHAT IT DOES: ' + about : ''}
+Find up to 10 real businesses that compete directly with it for the same customers. Put those operating in the same country or city first, then a few well-known international ones.
+Rules: only real companies with their own website that you actually found in your search. Never invent a company or a web address. Do not include directories, marketplaces, review sites, social networks, news sites, or the business itself. Give each company's main website address exactly as you found it.
+Return ONLY JSON, no markdown: {"competitors":[{"name":"company name","website":"https://...","reason":"one sentence on why they compete with this business","scope":"local or international"}]}`;
+  let timer, results;
+  try { results = await Promise.race([perplexitySearch(prompt, { maxResults: 15 }), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('The competitor search took too long.')), COMPETITOR_SEARCH_TIMEOUT_MS); })]); }
+  finally { clearTimeout(timer); }
+  const answer = ((results || []).find(r => r.title === 'Perplexity research summary') || {}).snippet || '';
+  const citations = (results || []).filter(r => r.url).map(r => r.url);
+  const parsed = parseCompetitorCandidates(answer, citations, { ownDomains, knownDomains });
+  if (!parsed) throw new Error('The search result could not be read. Please try again.');
+
+  const verified = [], seen = new Set(); let unreachable = 0, parked = 0, redirectedAway = 0;
+  for (let i = 0; i < parsed.candidates.length; i += 4) {   // four at a time: polite to the sites, and quick enough
+    const batch = parsed.candidates.slice(i, i + 4), checks = await Promise.all(batch.map(c => verifyCompetitorSite(c.website)));
+    batch.forEach((c, k) => {
+      const v = checks[k];
+      if (!v.reachable) { unreachable++; return; }
+      if (v.parked) { parked++; return; }
+      let entry = { ...c, pageTitle: v.title };
+      const finalDomain = competitorDomain(v.finalOrigin);
+      if (finalDomain && !sameSiteDomain(finalDomain, c.domain)) {   // the address now leads to a different website: judged by where it really ends up
+        if (isNoiseCompetitorHost(finalDomain) || ownDomains.some(o => sameSiteDomain(finalDomain, o)) || knownDomains.has(finalDomain)) { redirectedAway++; return; }
+        entry = { ...entry, website: v.finalOrigin, domain: finalDomain };
+      }
+      if (seen.has(entry.domain)) return;
+      seen.add(entry.domain); verified.push(entry);
+    });
+  }
+  verified.sort((x, y) => (Number(y.grounded) - Number(x.grounded)) || ((x.scope === 'local' ? 0 : 1) - (y.scope === 'local' ? 0 : 1)));
+  return { candidates: verified.slice(0, COMPETITOR_SHOWN_MAX), searched: parsed.candidates.length, unreachable, parked, noise: parsed.noise + redirectedAway };
+}
+
+// Only 'suggested' rows are ever refreshed: something confirmed or dismissed stays exactly as the person decided.
+async function saveCompetitorSuggestions(businessId, candidates) {
+  for (const c of candidates) {
+    await pool.query(
+      `INSERT INTO competitor_suggestions (business_id, name, website, domain, reason, scope, grounded, source_urls, page_title) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (business_id, domain) DO UPDATE SET name = EXCLUDED.name, website = EXCLUDED.website, reason = EXCLUDED.reason, scope = EXCLUDED.scope, grounded = EXCLUDED.grounded,
+         source_urls = EXCLUDED.source_urls, page_title = EXCLUDED.page_title, discovered_at = NOW() WHERE competitor_suggestions.status = 'suggested'`,
+      [businessId, c.name, c.website, c.domain, c.reason, c.scope, c.grounded, JSON.stringify(c.sourceUrls || []), c.pageTitle || null]);
+  }
+}
+
+// What the Competitor Analysis card needs to show the "Find my competitors" panel. Never throws: the card must load even if this part cannot.
+async function competitorDiscoveryState(businessId) {
+  try {
+    const suggestions = (await pool.query(`SELECT id, name, website, domain, reason, scope, grounded, source_urls, page_title, discovered_at FROM competitor_suggestions WHERE business_id = $1 AND status = 'suggested' ORDER BY grounded DESC, discovered_at DESC LIMIT 12`, [businessId])).rows;
+    const last = (await pool.query(`SELECT created_at FROM competitor_discovery_runs WHERE business_id = $1 AND outcome = 'success' ORDER BY created_at DESC LIMIT 1`, [businessId])).rows[0];
+    return { suggestions, lastSearchedAt: last ? last.created_at : null, searchAvailable: !!process.env.PERPLEXITY_API_KEY, trackedLimit: MAX_TRACKED_COMPETITORS };
+  } catch (e) { console.error('Competitor discovery state error:', e.message); return { suggestions: [], lastSearchedAt: null, searchAvailable: false, trackedLimit: MAX_TRACKED_COMPETITORS }; }
+}
+
+// The whole search, answered as { status, body } (the route only passes it on).
+async function runCompetitorDiscovery(businessId, accountId) {
+  const business = (await pool.query('SELECT id, name, industry, country, city, website FROM businesses WHERE id = $1 AND user_id = $2', [businessId, accountId])).rows[0];
+  if (!business) return { status: 404, body: { error: 'Business not found' } };
+  if (!process.env.PERPLEXITY_API_KEY) return { status: 503, body: { error: 'Competitor search is not set up on this server yet. Please contact support.' } };
+  const recent = (await pool.query(`SELECT outcome, EXTRACT(EPOCH FROM (NOW() - created_at))::int AS age FROM competitor_discovery_runs WHERE business_id = $1 ORDER BY created_at DESC LIMIT 1`, [businessId])).rows[0];
+  if (recent && recent.outcome === 'running' && recent.age < 120) return { status: 409, body: { error: 'A search is already running for this business.' } };
+  if (recent && recent.age < COMPETITOR_SEARCH_COOLDOWN_SECONDS) return { status: 429, body: { error: 'Please wait a couple of minutes before searching again.', retryAfterSeconds: COMPETITOR_SEARCH_COOLDOWN_SECONDS - recent.age } };
+  const today = +(await pool.query(`SELECT count(*) FROM competitor_discovery_runs WHERE business_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`, [businessId])).rows[0].count;
+  if (today >= COMPETITOR_SEARCHES_PER_DAY) return { status: 429, body: { error: `You can search for competitors up to ${COMPETITOR_SEARCHES_PER_DAY} times a day. Please try again tomorrow, or add a competitor yourself.` } };
+  const run = (await pool.query(`INSERT INTO competitor_discovery_runs (business_id) VALUES ($1) RETURNING id`, [businessId])).rows[0];
+  try {
+    const context = await getBusinessContext(businessId, accountId);
+    const own = new Set([competitorDomain(business.website)].filter(Boolean));
+    for (const r of (await pool.query('SELECT site_url FROM website_connections WHERE business_id = $1', [businessId])).rows) { const d = competitorDomain(r.site_url); if (d) own.add(d); }
+    for (const r of (await pool.query('SELECT shop_domain FROM shopify_connections WHERE business_id = $1', [businessId])).rows) { const d = competitorDomain(r.shop_domain); if (d) own.add(d); }
+    const known = new Set();
+    for (const r of (await pool.query('SELECT website FROM tracked_competitors WHERE business_id = $1 AND website IS NOT NULL', [businessId])).rows) { const d = competitorDomain(r.website); if (d) known.add(d); }
+    for (const r of (await pool.query(`SELECT domain FROM competitor_suggestions WHERE business_id = $1 AND status <> 'suggested'`, [businessId])).rows) known.add(r.domain);
+    const found = await discoverCompetitors(business, context || {}, { ownDomains: [...own], knownDomains: known });
+    await saveCompetitorSuggestions(businessId, found.candidates);
+    await pool.query(`UPDATE competitor_discovery_runs SET outcome = 'success', found = $2 WHERE id = $1`, [run.id, found.candidates.length]);
+    return { status: 200, body: { ...(await competitorDiscoveryState(businessId)), found: found.candidates.length, searched: found.searched, droppedUnreachable: found.unreachable, droppedParked: found.parked, droppedNotCompetitors: found.noise } };
+  } catch (e) {
+    console.error('Competitor discovery error:', e.message);
+    await pool.query(`UPDATE competitor_discovery_runs SET outcome = 'failed', error_message = $2 WHERE id = $1`, [run.id, String(e.message || '').slice(0, 300)]).catch(() => {});
+    const readable = /could not be read|took too long/.test(e.message || '') ? e.message : 'The competitor search could not be completed right now. Please try again in a few minutes.';
+    return { status: 502, body: { error: readable } };
+  }
+}
+
+// Confirming turns suggestions into tracked competitors (what the analysis reads). Capped, and a business can never end up tracking the same site twice.
+async function confirmCompetitorSuggestions(businessId, accountId, ids) {
+  if (!(await pool.query('SELECT 1 FROM businesses WHERE id = $1 AND user_id = $2', [businessId, accountId])).rows.length) return { status: 404, body: { error: 'Business not found' } };
+  const wanted = [...new Set((Array.isArray(ids) ? ids : []).map(String))];
+  if (!wanted.length || wanted.length > 12 || wanted.some(i => !/^[0-9a-f-]{36}$/i.test(i))) return { status: 400, body: { error: 'Choose at least one competitor to add.' } };
+  const rows = (await pool.query(`SELECT * FROM competitor_suggestions WHERE business_id = $1 AND status = 'suggested' AND id = ANY($2::uuid[]) ORDER BY grounded DESC, discovered_at DESC`, [businessId, wanted])).rows;
+  const tracked = (await pool.query('SELECT id, website FROM tracked_competitors WHERE business_id = $1', [businessId])).rows;
+  const trackedDomains = new Map(tracked.map(t => [competitorDomain(t.website), t.id]).filter(x => x[0]));
+  let count = tracked.length; const added = [], skipped = [], found = new Set(rows.map(r => r.id));
+  for (const id of wanted) if (!found.has(id)) skipped.push({ id, reason: 'not_found' });
+  for (const r of rows) {
+    if (trackedDomains.has(r.domain)) { await pool.query(`UPDATE competitor_suggestions SET status = 'confirmed', tracked_competitor_id = $2, decided_at = NOW() WHERE id = $1`, [r.id, trackedDomains.get(r.domain)]); skipped.push({ id: r.id, reason: 'already_tracked' }); continue; }
+    if (count >= MAX_TRACKED_COMPETITORS) { skipped.push({ id: r.id, reason: 'limit' }); continue; }
+    const ins = (await pool.query(`INSERT INTO tracked_competitors (business_id, owner_id, name, website, notes) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, website`,
+      [businessId, accountId, r.name, r.website, ('Found by competitor search. ' + (r.reason || '')).trim().slice(0, 500)])).rows[0];
+    await pool.query(`UPDATE competitor_suggestions SET status = 'confirmed', tracked_competitor_id = $2, decided_at = NOW() WHERE id = $1`, [r.id, ins.id]);
+    count++; trackedDomains.set(r.domain, ins.id); added.push(ins);
+  }
+  return { status: 200, body: { added, skipped, trackedCount: count, trackedLimit: MAX_TRACKED_COMPETITORS } };
+}
+
+async function dismissCompetitorSuggestion(businessId, accountId, suggestionId) {
+  if (!/^[0-9a-f-]{36}$/i.test(String(suggestionId))) return { status: 404, body: { error: 'Suggestion not found' } };
+  const r = await pool.query(`UPDATE competitor_suggestions s SET status = 'dismissed', decided_at = NOW() FROM businesses b WHERE s.id = $1 AND s.business_id = $2 AND b.id = s.business_id AND b.user_id = $3 AND s.status = 'suggested' RETURNING s.id`, [suggestionId, businessId, accountId]);
+  return r.rows.length ? { status: 200, body: { success: true } } : { status: 404, body: { error: 'Suggestion not found' } };
+}
+
 // What the AI concludes from the MEASURED data and nothing else. Every content gap must cite competitor page URLs that were
 // really collected; a gap that cannot be traced to one is dropped here, in code, rather than trusted.
 async function synthesizeCompetitorInsights(context, ownSite, competitors) {
@@ -16673,12 +16880,15 @@ YOUR SITE (measured): ${JSON.stringify(ownSite)}${sampleNote}
 COMPETITOR SITES (measured; each page below was really fetched):
 ${JSON.stringify(competitors.map(c => ({ name: c.name, totalUrlsInSitemap: c.totalUrls, urlsUpdatedLast90Days: c.urlsLast90Days, avgWordsOnSampledPages: c.avgWords, pctSampledPagesWithMetaDescription: c.pctWithMetaDescription, pages: c.sampledPages.map(p => ({ url: p.url, title: p.title, h1: p.h1, h2s: p.h2s, words: p.wordCount })) })))}
 
-Find topics competitors cover on the pages above that the business's site does not appear to cover (compare against YOUR SITE's titles). Return ONLY valid JSON, no markdown:
+Find topics competitors cover on the pages above that the business's site does not appear to cover (compare against YOUR SITE's titles). For "positioning": for each competitor, one sentence on how it presents itself (from its page titles and headings), citing the exact page URLs that show it. For "strategy": at most 5 actions, most important first, each tied to ONE of: "gap" (a content gap above), "publishing_pace" (how often competitors publish, from urlsUpdatedLast90Days), "content_depth" (their average words on sampled pages), "metadata" (their share of pages with a meta description), or "positioning". An action based on a gap or on positioning must cite the exact competitor page URLs; one based on a measured number may cite none, but may only use numbers that appear in the data above. Never claim a result, a ranking or a traffic effect.
+Return ONLY valid JSON, no markdown:
 {
   "summary": "2-3 sentences on how the business's content compares, grounded in the data",
   "content_gaps": [ { "topic": "specific topic", "why_it_matters": "1 sentence", "evidence_urls": ["exact page URLs from the competitor data above"], "suggested_post_title": "a specific post title" } ],
   "where_you_are_ahead": ["short, evidence-based points"],
   "quick_wins": ["short, specific actions"],
+  "positioning": [ { "competitor": "competitor name exactly as given", "angle": "1 sentence", "evidence_urls": ["exact page URLs from the competitor data above"] } ],
+  "strategy": [ { "action": "a specific action", "why": "1-2 sentences grounded in the data", "based_on": "gap | publishing_pace | content_depth | metadata | positioning", "evidence_urls": ["exact page URLs, where required"] } ],
   "data_limits": ["anything that limits how far these conclusions can be trusted"]
 }`;
   const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Produce the comparison now, as JSON only.' }], complexity: 'complex', context: { feature: 'competitor_content_analysis' }, maxTokens: 4000 });
@@ -16690,9 +16900,16 @@ Find topics competitors cover on the pages above that the business's site does n
     return { topic: String(g.topic).slice(0, 200), why_it_matters: String(g.why_it_matters || '').slice(0, 400), suggested_post_title: String(g.suggested_post_title || '').slice(0, 200), evidence: urls.map(u => ({ url: u, competitor: known.get(u).competitor, title: known.get(u).title })) };
   }).filter(Boolean).slice(0, 8);
   const list = v => (Array.isArray(v) ? v.map(x => String(x).slice(0, 300)).slice(0, 8) : []);
+  const names = new Set(competitors.map(c => c.name)), urlsOf = v => (Array.isArray(v) ? v : []).map(u => String(u).replace(/\/+$/, '')).filter(u => known.has(u)), ev = urls => urls.slice(0, 4).map(u => ({ url: u, competitor: known.get(u).competitor, title: known.get(u).title || null }));
+  let droppedItems = 0;
+  const positioning = (Array.isArray(parsed.positioning) ? parsed.positioning : []).map(p => { const urls = urlsOf(p && p.evidence_urls); if (!p || !names.has(String(p.competitor)) || !String(p.angle || '').trim() || !urls.length) { droppedItems++; return null; } return { competitor: String(p.competitor), angle: String(p.angle).slice(0, 300), evidence: ev(urls) }; }).filter(Boolean).slice(0, 8);
+  const METRIC_BASES = ['publishing_pace', 'content_depth', 'metadata'], BASES = ['gap', 'positioning', ...METRIC_BASES];
+  const strategy = (Array.isArray(parsed.strategy) ? parsed.strategy : []).map(a => { const urls = urlsOf(a && a.evidence_urls), basis = a && BASES.includes(a.based_on) ? a.based_on : null;
+    if (!a || !String(a.action || '').trim() || !basis || (!urls.length && !METRIC_BASES.includes(basis))) { droppedItems++; return null; }
+    return { action: String(a.action).slice(0, 300), why: String(a.why || '').slice(0, 400), based_on: basis, evidence: ev(urls) }; }).filter(Boolean).slice(0, 5);
   const limits = list(parsed.data_limits);
   if (sampled) limits.unshift(`Only ${ownTitles} of your ${ownTotal} titles were compared, so a gap listed here may already be covered elsewhere on your site.`);
-  return { summary: String(parsed.summary || '').slice(0, 800), content_gaps: gaps, where_you_are_ahead: list(parsed.where_you_are_ahead), quick_wins: list(parsed.quick_wins), data_limits: limits.slice(0, 8), ungrounded_gaps_dropped: dropped };
+  return { summary: String(parsed.summary || '').slice(0, 800), content_gaps: gaps, where_you_are_ahead: list(parsed.where_you_are_ahead), quick_wins: list(parsed.quick_wins), positioning, strategy, data_limits: limits.slice(0, 8), ungrounded_gaps_dropped: dropped, ungrounded_items_dropped: droppedItems };
 }
 
 
@@ -19150,7 +19367,7 @@ const errDetail = e => ({ error: safeErrorMessage(e && e.message ? e : { message
 // Only the LOG is ever cleared: saved results (ranking snapshots and trends, audit runs, technical checks, proposals, posts) are never touched.
 const ACTIVITY_FEATURES = {
   intelligence: ['intelligence_refreshed'], audit: ['audit_completed'], ai_visibility: ['ai_visibility_checked'], keyword_rankings: ['keyword_snapshot'],
-  sitemap: ['sitemap_submitted', 'sitemap_missing'], competitor: ['competitor_analysis'], technical_seo: ['technical_check'], broken_links: ['broken_links_checked'],
+  sitemap: ['sitemap_submitted', 'sitemap_missing'], competitor: ['competitor_analysis', 'competitor_discovery'], technical_seo: ['technical_check'], broken_links: ['broken_links_checked'],
   schema: ['schema_installed', 'schema_removed'], content: ['content_generated', 'content_failed', 'content_missed'],
   improvements: ['proposals_generated', 'change_applied', 'change_verified', 'change_rejected', 'change_undone'],
 };
