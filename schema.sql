@@ -1942,3 +1942,14 @@ CREATE TABLE IF NOT EXISTS broken_link_observations (
   last_broken_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (business_id, platform, url)
 );
+
+
+-- Broken links, safer automatic fixes. Why a link was flagged (a vanished website is confirmed more slowly than a missing page), and a copy of a page's content from
+-- just before a fix, so the fix can be undone (kept 30 days; only used if the page has not been edited since).
+ALTER TABLE broken_link_observations ADD COLUMN IF NOT EXISTS reason VARCHAR(30);
+CREATE TABLE IF NOT EXISTS website_action_backups (
+  action_id UUID PRIMARY KEY REFERENCES website_actions(id) ON DELETE CASCADE,
+  content_before TEXT NOT NULL,
+  content_after_hash VARCHAR(64) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
