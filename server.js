@@ -7,7 +7,7 @@ const dns = require('dns').promises;
 const PDFDocument = require('pdfkit');
 const { Document: DocxDocument, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, AlignmentType, BorderStyle, ImageRun } = require('docx');
 // nodemailer removed — Render blocks outbound SMTP; using Resend HTTP API instead
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('crypto');   // built into Node: no extra package needed
 const path = require('path');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -303,6 +303,8 @@ for (const [name, fallbackNote] of [['JWT_SECRET', 'login tokens'], ['ADMIN_PASS
   if (!process.env[name] && process.env.NODE_ENV === 'production') console.warn(`SECURITY WARNING: ${name} is not set, so the built-in default is in use for ${fallbackNote}. Set it in Render.`);
 }
 
+if (!process.env.PAGESPEED_API_KEY && process.env.NODE_ENV === 'production') console.warn("SETUP NOTICE: PAGESPEED_API_KEY is not set, so speed and mobile checks share Google's anonymous daily allowance, which runs out. Create a free key in Google Cloud (PageSpeed Insights API) and set it in Render.");
+
 // ── Limits on the public routes (registered before the routes themselves, so they run first) ──
 app.post('/api/auth/register', limitIp('register', 5, RL_HOUR, 'Too many sign-ups from this connection. Please try again later.'), limitAll('register', 600, RL_HOUR, 'Sign-ups are very busy right now. Please try again in a little while.'));
 app.post('/api/auth/forgot-password', limitIp('forgot', 5, RL_HOUR, 'Too many reset requests. Please try again later.'));
@@ -520,7 +522,7 @@ const WEBSITE_ROUTES = [
   ['*',    routeRx(BIZ_PATH + '/website/activity-log'), 'activity_log'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/competitor-analysis'), 'competitor'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/technical-seo/(check|history)'), 'technical_seo'],
-  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/keyword-rankings'), 'keyword_rankings'],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/keyword-rankings(/check)?'), 'keyword_rankings'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/sitemap/(submit|status)'), 'sitemap'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/broken-links'), 'broken_links'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/organization-schema'), 'schema'],
@@ -7586,12 +7588,27 @@ app.get('/api/business/:id/website/keyword-rankings', authRequired, async (req, 
     const account = await resolveAccount(req.userId);
     const { connection: siteConnection, error, status } = await getConnectionForBusiness(req);
     if (error) return res.status(status).json({ error });
-    const out = await loadKeywordRankingsFor(wordpressKeywordSpec, account.id, siteConnection, siteConnection.site_url);
-    if (out.error) return res.status(out.status).json({ error: out.error });
-    res.json({ rankings: out.rankings, snapshotDate: out.snapshotDate, comparedWith: out.comparedWith, trendAvailable: out.trendAvailable });
+    res.json(await readSavedKeywordRankings(wordpressKeywordSpec, req.params.id, 'wordpress', account.id, siteConnection, siteConnection.site_url));
   } catch (err) {
     console.error('Keyword rankings error:', err.message);
     res.status(500).json({ error: safeErrorMessage(err, 'Failed to load keyword rankings. Please try again.') });
+  }
+});
+
+app.post('/api/business/:id/website/keyword-rankings/check', authRequired, async (req, res) => {
+  let owned = false;
+  try {
+    const account = await resolveAccount(req.userId);
+    const { connection: siteConnection, error, status } = await getConnectionForBusiness(req);
+    if (error) return res.status(status).json({ error });
+    owned = true;
+    const out = await runManualKeywordCheck(wordpressKeywordSpec, 'wordpress', req.params.id, account.id, siteConnection, siteConnection.site_url);
+    if (out.error) return res.status(out.status).json({ error: out.error });
+    res.json(out.view);
+  } catch (err) {
+    console.error('Keyword rankings check error:', err.message);
+    if (owned) await logManual(req.params.id, 'wordpress', 'keyword_snapshot', 'failed', errDetail(err));
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to check keyword rankings. Please try again.') });
   }
 });
 
@@ -7620,7 +7637,7 @@ app.post('/api/business/:id/website/technical-seo/check', authRequired, async (r
   } catch (err) {
     console.error('Technical SEO check error:', err.message);
     if (owned) await logManual(req.params.id, 'wordpress', 'technical_check', 'failed', errDetail(err));
-    res.status(500).json({ error: safeErrorMessage(err, 'Failed to run the technical SEO check. Please try again.') });
+    return sendTechnicalCheckError(res, err);
   }
 });
 
@@ -9964,7 +9981,7 @@ app.post('/api/business/:id/shopify/technical-seo/check', authRequired, async (r
   } catch (err) {
     console.error('Shopify technical SEO check error:', err.message);
     if (owned) await logManual(req.params.id, 'shopify', 'technical_check', 'failed', errDetail(err));
-    res.status(500).json({ error: safeErrorMessage(err, 'Failed to run the technical SEO check. Please try again.') });
+    return sendTechnicalCheckError(res, err);
   }
 });
 
@@ -10069,12 +10086,28 @@ app.get('/api/business/:id/shopify/keyword-rankings', authRequired, async (req, 
     const conn = (await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
     if (!conn) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
     // The store's real domain (what customers and Google use), never its myshopify.com address
-    const out = await loadKeywordRankingsFor(shopifyKeywordSpec, account.id, conn, await shopifyStoreUrlFor(conn));
-    if (out.error) return res.status(out.status).json({ error: out.error });
-    res.json({ rankings: out.rankings, snapshotDate: out.snapshotDate, comparedWith: out.comparedWith, trendAvailable: out.trendAvailable });
+    res.json(await readSavedKeywordRankings(shopifyKeywordSpec, req.params.id, 'shopify', account.id, conn, await shopifyStoreUrlFor(conn)));
   } catch (err) {
     console.error('Shopify keyword rankings error:', err.message);
     res.status(500).json({ error: safeErrorMessage(err, 'Failed to load keyword rankings. Please try again.') });
+  }
+});
+
+app.post('/api/business/:id/shopify/keyword-rankings/check', authRequired, async (req, res) => {
+  let owned = false;
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json({ error: 'Business not found' });
+    owned = true;
+    const account = await resolveAccount(req.userId);
+    const conn = (await pool.query(`SELECT * FROM shopify_connections WHERE business_id = $1 AND connection_status = 'connected'`, [req.params.id])).rows[0];
+    if (!conn) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
+    const out = await runManualKeywordCheck(shopifyKeywordSpec, 'shopify', req.params.id, account.id, conn, await shopifyStoreUrlFor(conn));
+    if (out.error) return res.status(out.status).json({ error: out.error });
+    res.json(out.view);
+  } catch (err) {
+    console.error('Shopify keyword rankings check error:', err.message);
+    if (owned) await logManual(req.params.id, 'shopify', 'keyword_snapshot', 'failed', errDetail(err));
+    res.status(500).json({ error: safeErrorMessage(err, 'Failed to check keyword rankings. Please try again.') });
   }
 });
 
@@ -10886,7 +10919,33 @@ function buildMobileFriendliness(audits, viewportInfo) {
   return { overall, checks };
 }
 
+// Google's PageSpeed service answers "quota exceeded" when its daily allowance is used up. Without our own API key every site that
+// calls it anonymously shares one small allowance, which is gone early each day. Customers get a plain explanation, not Google's text.
+function sendTechnicalCheckError(res, err) {
+  if (err && err.code === 'pagespeed_unavailable') return res.status(503).json({ error: err.message, code: 'pagespeed_unavailable' });
+  return res.status(500).json({ error: safeErrorMessage(err, 'Failed to run the technical SEO check. Please try again.') });
+}
+class PageSpeedUnavailableError extends Error { constructor(message) { super(message); this.name = 'PageSpeedUnavailableError'; this.code = 'pagespeed_unavailable'; } }
+const PAGESPEED_REUSE_MS = (Number.isFinite(Number(process.env.PAGESPEED_REUSE_SECONDS)) && process.env.PAGESPEED_REUSE_SECONDS !== undefined && process.env.PAGESPEED_REUSE_SECONDS !== '' ? Math.max(0, Number(process.env.PAGESPEED_REUSE_SECONDS)) : 60) * 1000;   // PAGESPEED_REUSE_SECONDS=0 turns the reuse off
+const pageSpeedRecent = new Map();     // site address -> { at, value }: a result from the last minute is reused (a double click costs nothing)
+const pageSpeedRunning = new Map();    // site address -> the check already under way: two requests for one site share one call to Google
+const pageSpeedKey = u => String(u === undefined || u === null ? '' : u).trim().toLowerCase().replace(/\/+$/, '');
+function isPageSpeedQuotaProblem(status, data) {
+  const e = data && data.error, msg = String((e && e.message) || '');
+  return status === 429 || !!(e && e.status === 'RESOURCE_EXHAUSTED') || /quota/i.test(msg) || !!(e && Array.isArray(e.errors) && e.errors.some(x => /rateLimitExceeded|quotaExceeded|dailyLimitExceeded/i.test(String(x && x.reason))));
+}
 async function checkCoreWebVitals(siteUrl) {
+  const key = pageSpeedKey(siteUrl), hit = pageSpeedRecent.get(key);
+  if (hit && Date.now() - hit.at < PAGESPEED_REUSE_MS) return structuredClone(hit.value);
+  if (pageSpeedRunning.has(key)) return structuredClone(await pageSpeedRunning.get(key));
+  const running = runCoreWebVitals(siteUrl); pageSpeedRunning.set(key, running);
+  try {
+    const value = await running; pageSpeedRecent.set(key, { at: Date.now(), value });
+    if (pageSpeedRecent.size > 300) for (const [k, v] of pageSpeedRecent) { if (Date.now() - v.at >= PAGESPEED_REUSE_MS) pageSpeedRecent.delete(k); }
+    return structuredClone(value);
+  } finally { pageSpeedRunning.delete(key); }   // a failure is never kept, so the next try asks Google again
+}
+async function runCoreWebVitals(siteUrl) {
   const apiKey = process.env.PAGESPEED_API_KEY;
   const viewportPromise = fetchHomepageViewport(siteUrl);   // read while Google runs its (slow) test, so it adds no waiting; never rejects
   const params = new URLSearchParams({ url: siteUrl, strategy: 'mobile', category: 'PERFORMANCE' });
@@ -10903,7 +10962,13 @@ async function checkCoreWebVitals(siteUrl) {
     clearTimeout(timeout);
   }
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || 'Google PageSpeed Insights could not analyze this site.');
+  if (!res.ok) {
+    if (isPageSpeedQuotaProblem(res.status, data)) {
+      console.warn(apiKey ? 'PageSpeed allowance reached, even with the configured PAGESPEED_API_KEY.' : 'PageSpeed allowance reached: PAGESPEED_API_KEY is not set, so Google\'s shared anonymous allowance is being used. Set a key in Render.');
+      throw new PageSpeedUnavailableError("Google's speed test service has reached its daily limit, so the speed and mobile checks can't run right now. Please try again later.");
+    }
+    throw new Error(data.error?.message || 'Google PageSpeed Insights could not analyze this site.');
+  }
 
   const audits = data.lighthouseResult?.audits || {};
   const categories = data.lighthouseResult?.categories || {};
@@ -18392,32 +18457,17 @@ async function runAiVisibilityQueries(spec, connection, context, siteUrl) {
 // with a spec: { table, fk }; the caller supplies the connection and the site's real address. The Search Console property is
 // matched to that address by the same rule everywhere (an address that cannot be read never matches, so another site's data is
 // never shown under this one). Returns { error, status } for something the person can fix, or { rankings, snapshotDate }.
-async function loadKeywordRankingsFor(spec, accountId, connection, siteUrl) {
-  const matched = await resolveMatchingGscConnection(accountId, siteUrl);
-  if (matched.error) return { error: matched.error, status: /not connected/i.test(matched.error) ? 404 : 400 };
-
-  const rankings = await fetchGSCKeywordRankings(matched.gscConnection, 28, 50);
-  const snapshotDate = new Date().toISOString().split('T')[0];
-  // One snapshot per day per query, so a trend can be shown later rather than only the latest numbers.
-  for (const r of rankings) {
-    await pool.query(
-      `INSERT INTO ${spec.table} (${spec.fk}, query, clicks, impressions, ctr, avg_position, snapshot_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (${spec.fk}, query, snapshot_date) DO UPDATE SET clicks = $3, impressions = $4, ctr = $5, avg_position = $6`,
-      [connection.id, r.query, r.clicks, r.impressions, r.ctr, r.avgPosition, snapshotDate]
-    );
-  }
-  // Which way each query is moving: its position now against its position in the most recent snapshot that is at least 6 days old
-  // (never today's own, never one from a few hours ago). The snapshot table keeps this history; nothing is compared if there is none.
-  // A LOWER position number is better, so positionChange is previous minus now: positive means it improved. A move of less than half
-  // a position is "steady", not movement. A query with no earlier record is "new" (only once some history exists at all).
-  const earlier = await pool.query(`SELECT MAX(snapshot_date)::text AS compared_with FROM ${spec.table} WHERE ${spec.fk} = $1 AND snapshot_date <= CURRENT_DATE - 6`, [connection.id]);
+// How each query is moving: its position in this snapshot against its position in the most recent snapshot that is at least 6 days OLDER than it
+// (never the same day, never one from a few hours ago). A LOWER position number is better, so positionChange is previous minus now: positive means
+// it improved. A move of less than half a position is "steady". A query with no earlier record is "new" (only once some history exists at all).
+async function buildKeywordRankingsView(spec, connection, rankings, snapshotDate) {
+  const earlier = await pool.query(`SELECT MAX(snapshot_date)::text AS compared_with FROM ${spec.table} WHERE ${spec.fk} = $1 AND snapshot_date <= $2::date - 6`, [connection.id, snapshotDate]);
   const comparedWith = earlier.rows[0].compared_with || null, trendAvailable = !!comparedWith;
   const previous = new Map();
   if (trendAvailable && rankings.length) {
     const prev = await pool.query(
       `SELECT DISTINCT ON (query) query, avg_position, snapshot_date::text AS snapshot_date FROM ${spec.table}
-       WHERE ${spec.fk} = $1 AND snapshot_date <= CURRENT_DATE - 6 AND query = ANY($2) ORDER BY query, snapshot_date DESC`, [connection.id, rankings.map(r => r.query)]);
+       WHERE ${spec.fk} = $1 AND snapshot_date <= $3::date - 6 AND query = ANY($2) ORDER BY query, snapshot_date DESC`, [connection.id, rankings.map(r => r.query), snapshotDate]);
     for (const p of prev.rows) previous.set(p.query, p);
   }
   return {
@@ -18434,6 +18484,51 @@ async function loadKeywordRankingsFor(spec, accountId, connection, siteUrl) {
     }),
     snapshotDate, comparedWith, trendAvailable,
   };
+}
+
+// Pulls FRESH numbers from Search Console and saves them (one snapshot per day per query, so a trend can be shown later). Used by the
+// "Check Keyword Rankings" button and by the automatic cycle.
+async function loadKeywordRankingsFor(spec, accountId, connection, siteUrl) {
+  const matched = await resolveMatchingGscConnection(accountId, siteUrl);
+  if (matched.error) return { error: matched.error, status: /not connected/i.test(matched.error) ? 404 : 400 };
+
+  const rankings = await fetchGSCKeywordRankings(matched.gscConnection, 28, 50);
+  const snapshotDate = new Date().toISOString().split('T')[0];
+  for (const r of rankings) {
+    await pool.query(
+      `INSERT INTO ${spec.table} (${spec.fk}, query, clicks, impressions, ctr, avg_position, snapshot_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (${spec.fk}, query, snapshot_date) DO UPDATE SET clicks = $3, impressions = $4, ctr = $5, avg_position = $6`,
+      [connection.id, r.query, r.clicks, r.impressions, r.ctr, r.avgPosition, snapshotDate]
+    );
+  }
+  return buildKeywordRankingsView(spec, connection, rankings, snapshotDate);
+}
+
+// What the page shows when it opens: the most recent SAVED snapshot. No call to Google, so it is instant and never uses up anything.
+async function readSavedKeywordRankings(spec, businessId, platform, accountId, connection, siteUrl) {
+  const matched = await resolveMatchingGscConnection(accountId, siteUrl);
+  const base = { searchConsoleReady: !matched.error, searchConsoleMessage: matched.error || null };
+  const latest = (await pool.query(`SELECT MAX(snapshot_date)::text AS d FROM ${spec.table} WHERE ${spec.fk} = $1`, [connection.id])).rows[0].d;
+  const last = (await pool.query(`SELECT created_at, triggered_by FROM website_agent_activity WHERE business_id = $1 AND platform = $2 AND task_type = 'keyword_snapshot' AND outcome = 'success' ORDER BY created_at DESC LIMIT 1`, [businessId, platform])).rows[0];
+  if (!latest) return { ...base, rankings: [], snapshotDate: null, comparedWith: null, trendAvailable: null, neverChecked: true, lastCheckedAt: null, lastCheckedBy: null };
+  const rows = (await pool.query(`SELECT query, clicks, impressions, ctr, avg_position FROM ${spec.table} WHERE ${spec.fk} = $1 AND snapshot_date = $2::date ORDER BY impressions DESC, query LIMIT 50`, [connection.id, latest])).rows;
+  const view = await buildKeywordRankingsView(spec, connection, rows.map(r => ({ query: r.query, clicks: r.clicks, impressions: r.impressions, ctr: Number(r.ctr), avgPosition: Number(r.avg_position) })), latest);
+  return { ...base, ...view, neverChecked: false, lastCheckedAt: last ? last.created_at : null, lastCheckedBy: last ? last.triggered_by : null };
+}
+
+// The "Check Keyword Rankings" button. A second click within 30 seconds (a double click, two tabs) shows what was just saved instead of asking Google again.
+const keywordCheckCooldown = new Map();   // "platform:connectionId" -> when the last check ran
+const KEYWORD_CHECK_COOLDOWN_MS = 30 * 1000;
+async function runManualKeywordCheck(spec, platform, businessId, accountId, connection, siteUrl) {
+  const key = `${platform}:${connection.id}`, last = keywordCheckCooldown.get(key);
+  if (last && Date.now() - last < KEYWORD_CHECK_COOLDOWN_MS) return { view: { ...(await readSavedKeywordRankings(spec, businessId, platform, accountId, connection, siteUrl)), checkedAt: new Date().toISOString(), reused: true } };
+  const out = await loadKeywordRankingsFor(spec, accountId, connection, siteUrl);
+  if (out.error) return { error: out.error, status: out.status };       // not set up (Search Console missing or on another site): said plainly, not logged as a failed run
+  keywordCheckCooldown.set(key, Date.now());
+  await logManual(businessId, platform, 'keyword_snapshot', 'success', { queries: out.rankings.length, opportunities: out.rankings.filter(r => r.isPageTwoOpportunity).length });
+  const now = new Date().toISOString();
+  return { view: { ...out, searchConsoleReady: true, searchConsoleMessage: null, neverChecked: false, lastCheckedAt: now, lastCheckedBy: 'manual', checkedAt: now, reused: false } };
 }
 
 // ── Broken internal links — the scan is the same for every platform ─────────
