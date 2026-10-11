@@ -662,28 +662,32 @@ const STARTER_DIRECTORS = ['rockefeller', 'ogilvy', 'buffett', 'dangote', 'kotle
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM = process.env.RESEND_FROM || 'Arreyon Consult <onboarding@resend.dev>';
 
-async function sendEmail(to, subject, html) {
+async function sendEmail(to, subject, html, opts = {}) {
   if (!RESEND_API_KEY) {
     console.error('Email error: RESEND_API_KEY not configured');
-    return;
+    return false;
   }
   try {
+    const payload = { from: RESEND_FROM, to: [to], subject, html };
+    if (opts && opts.replyTo) payload.reply_to = opts.replyTo;
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${RESEND_API_KEY}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ from: RESEND_FROM, to: [to], subject, html })
+      body: JSON.stringify(payload)
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       console.error('Email error:', res.status, err?.message || JSON.stringify(err));
-      return;
+      return false;
     }
     console.log('Email sent successfully to:', to);
+    return true;
   } catch(e) {
     console.error('Email error:', e.message);
+    return false;
   }
 }
 
@@ -12712,6 +12716,120 @@ app.get('/api/public/reviews', async (req, res) => {
   try { const out = await reviewPublicList(); res.set('Cache-Control', 'public, max-age=300'); res.json({ reviews: out.reviews, summary: out.summary }); } catch (e) { res.status(500).json(REVIEW_ERROR); }
 });
 
+// ── Contact form (homepage) ───────────────────────────────────────────────
+// A visitor writes to us. The message is SAVED first (so it is never lost), then emailed to CONTACT_NOTIFY_EMAIL (default gdesignsme@gmail.com) with the visitor's
+// address as the reply-to. Nothing is ever emailed TO the visitor automatically: a public form that mails whatever address is typed in is a way to send spam in our name.
+// Against bots: a hidden trap field and a form that was filled in faster than a person can (both answered with "sent", nothing saved), a limit per address and one for
+// everybody combined, and the same message twice within 10 minutes is kept once (a double click). A real person is never silently refused.
+const CONTACT_NOTIFY_TO = () => (String(process.env.CONTACT_NOTIFY_EMAIL || '').trim() || 'gdesignsme@gmail.com');
+const CONTACT_NAME_MIN = 2, CONTACT_NAME_MAX = 120, CONTACT_EMAIL_MAX = 254, CONTACT_PHONE_MAX = 40, CONTACT_MESSAGE_MIN = 10, CONTACT_MESSAGE_MAX = 2000, CONTACT_PER_PAGE = 20, CONTACT_EXPORT_MAX = 10000, CONTACT_MIN_FILL_MS = 1500;
+const CONTACT_EMAIL_RX = /^[A-Za-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
+const cleanContactText = (v, max, multiline) => {
+  let t = String(v == null ? '' : v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u2028\u2029]/g, '');
+  t = multiline ? t.replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n') : t.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ');
+  return t.trim().slice(0, max);
+};
+async function contactSubmit(body, now = Date.now()) {
+  const b = body && typeof body === 'object' ? body : {};
+  const ok = { status: 200, body: { success: true } };
+  if (cleanContactText(b.website, 200)) return { ...ok, saved: false };   // the hidden trap field: only a program fills it in
+  const age = now - Number(b.startedAt); if (Number.isFinite(age) && age >= 0 && age < CONTACT_MIN_FILL_MS) return { ...ok, saved: false };   // faster than a person can type
+  const name = cleanContactText(b.name, CONTACT_NAME_MAX), email = cleanContactText(b.email, CONTACT_EMAIL_MAX), phone = cleanContactText(b.phone, CONTACT_PHONE_MAX), message = cleanContactText(b.message, CONTACT_MESSAGE_MAX, true);
+  const bad = error => ({ status: 400, body: { error } });
+  if (name.length < CONTACT_NAME_MIN) return bad('Please enter your name.');
+  if (String(b.email == null ? '' : b.email).trim().length > CONTACT_EMAIL_MAX || !CONTACT_EMAIL_RX.test(email) || email.includes('..')) return bad('Please enter a valid email address.');   // too long is refused, never cut (a cut address could be a different address)
+  if (phone && !/^[0-9+()\-.\s]{5,40}$/.test(phone)) return bad('Please enter a valid phone number, or leave it empty.');
+  if (message.length < CONTACT_MESSAGE_MIN) return bad(`Please write a message of at least ${CONTACT_MESSAGE_MIN} characters.`);
+  if ((await pool.query(`SELECT 1 FROM contact_messages WHERE lower(email) = lower($1) AND message = $2 AND created_at > NOW() - INTERVAL '10 minutes' LIMIT 1`, [email, message])).rows.length) return { ...ok, saved: false, duplicate: true };
+  const row = (await pool.query(`INSERT INTO contact_messages (name, email, phone, message, language) VALUES ($1,$2,$3,$4,$5) RETURNING *`, [name, email, phone || null, message, b.language === 'fr' ? 'fr' : 'en'])).rows[0];
+  return { ...ok, saved: true, row };
+}
+function contactNotificationEmail(row) {
+  const e = escapeHtmlText, when = new Date(row.created_at || Date.now()).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  const line = (label, valueHtml) => `<tr><td style="padding:6px 14px 6px 0;color:#6b7280;font-size:13px;vertical-align:top;white-space:nowrap">${label}</td><td style="padding:6px 0;font-size:14px;color:#111827">${valueHtml}</td></tr>`;
+  const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+    <h2 style="margin:0 0 4px;font-size:18px;color:#111827">New message from the website contact form</h2>
+    <div style="font-size:12px;color:#6b7280;margin-bottom:16px">${e(when)}</div>
+    <table style="border-collapse:collapse;width:100%">${line('Name', e(row.name))}${line('Email', `<a href="mailto:${e(row.email)}" style="color:#6d28d9">${e(row.email)}</a>`)}${line('Phone', row.phone ? e(row.phone) : '<span style="color:#9ca3af">not given</span>')}${line('Language', e(row.language === 'fr' ? 'French' : 'English'))}</table>
+    <div style="margin-top:14px;padding:14px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:14px;line-height:1.6;color:#111827;white-space:pre-wrap">${e(row.message)}</div>
+    <p style="font-size:12px;color:#6b7280;margin-top:16px">Reply to this email to answer them directly. All messages are also in the admin panel under <a href="${e(BASE_URL)}/admin" style="color:#6d28d9">Contacts</a>.</p></div>`;
+  return { subject: `New contact message from ${cleanContactText(row.name, 80)}`, html };
+}
+async function notifyContact(row) {
+  const { subject, html } = contactNotificationEmail(row), sent = await sendEmail(CONTACT_NOTIFY_TO(), subject, html, { replyTo: row.email });
+  if (sent) await pool.query('UPDATE contact_messages SET emailed_at = NOW() WHERE id = $1', [row.id]);
+  return sent;
+}
+const likeEscape = t => t.replace(/[\\%_]/g, m => '\\' + m);
+async function contactAdminList(status, q, page) {
+  const st = ['new', 'handled', 'all'].includes(status) ? status : 'all', pg = Math.max(1, Math.floor(Number(page)) || 1), term = cleanContactText(q, 100), like = '%' + likeEscape(term) + '%';
+  const counts = { new: 0, handled: 0 }; (await pool.query('SELECT status, count(*)::int AS n FROM contact_messages GROUP BY status')).rows.forEach(r => { counts[r.status] = r.n; });
+  const where = `($1 = 'all' OR status = $1) AND ($2 = '' OR name ILIKE $3 ESCAPE '\\' OR email ILIKE $3 ESCAPE '\\' OR phone ILIKE $3 ESCAPE '\\' OR message ILIKE $3 ESCAPE '\\')`;
+  const matching = (await pool.query(`SELECT count(*)::int AS n FROM contact_messages WHERE ${where}`, [st, term, like])).rows[0].n, pages = Math.max(1, Math.ceil(matching / CONTACT_PER_PAGE));
+  const rows = (await pool.query(`SELECT id, name, email, phone, message, language, status, handled_at, emailed_at, created_at FROM contact_messages WHERE ${where} ORDER BY created_at DESC LIMIT ${CONTACT_PER_PAGE} OFFSET $4`, [st, term, like, (pg - 1) * CONTACT_PER_PAGE])).rows;
+  return { contacts: rows.map(r => ({ id: r.id, name: r.name, email: r.email, phone: r.phone, message: r.message, language: r.language, status: r.status, handledAt: r.handled_at, emailedAt: r.emailed_at, createdAt: r.created_at })), counts: { ...counts, total: counts.new + counts.handled }, status: st, q: term, page: pg, pages, perPage: CONTACT_PER_PAGE, matching, notifyTo: CONTACT_NOTIFY_TO() };
+}
+async function contactSetStatus(id, status) {
+  if (!REVIEW_ID_RX.test(String(id || ''))) return { status: 404, body: { error: 'Message not found.' } };
+  const r = await pool.query(`UPDATE contact_messages SET status = $2::varchar, handled_at = CASE WHEN $2::varchar = 'handled' THEN NOW() ELSE NULL END WHERE id = $1 RETURNING id`, [id, status === 'handled' ? 'handled' : 'new']);
+  return r.rows.length ? { status: 200, body: { success: true } } : { status: 404, body: { error: 'Message not found.' } };
+}
+async function contactDelete(id) {
+  if (!REVIEW_ID_RX.test(String(id || ''))) return { status: 404, body: { error: 'Message not found.' } };
+  const r = await pool.query('DELETE FROM contact_messages WHERE id = $1 RETURNING id', [id]);
+  return r.rows.length ? { status: 200, body: { success: true } } : { status: 404, body: { error: 'Message not found.' } };
+}
+// ── An Excel file, written directly (a spreadsheet is a zip of a few small XML files), so there is no extra package to install ──
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const XLSX_CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32Buffer(buf) { let c = 0xFFFFFFFF; for (let i = 0; i < buf.length; i++) c = XLSX_CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function zipFiles(files) {
+  const zlib = require('zlib'), parts = [], central = []; let offset = 0; const dosDate = ((2020 - 1980) << 9) | (1 << 5) | 1;
+  for (const f of files) {
+    const name = Buffer.from(f.name, 'utf8'), raw = Buffer.isBuffer(f.data) ? f.data : Buffer.from(f.data, 'utf8'), comp = zlib.deflateRawSync(raw), crc = crc32Buffer(raw);
+    const lh = Buffer.alloc(30); lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x0800, 6); lh.writeUInt16LE(8, 8); lh.writeUInt16LE(0, 10); lh.writeUInt16LE(dosDate, 12); lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(comp.length, 18); lh.writeUInt32LE(raw.length, 22); lh.writeUInt16LE(name.length, 26);
+    const ch = Buffer.alloc(46); ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8); ch.writeUInt16LE(8, 10); ch.writeUInt16LE(0, 12); ch.writeUInt16LE(dosDate, 14); ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(comp.length, 20); ch.writeUInt32LE(raw.length, 24); ch.writeUInt16LE(name.length, 28); ch.writeUInt32LE(offset, 42);
+    parts.push(lh, name, comp); central.push(ch, name); offset += 30 + name.length + comp.length;
+  }
+  const cd = Buffer.concat(central), end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10); end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, cd, end]);
+}
+// Text for an XML file: characters XML cannot hold are dropped, the rest escaped. (Cells are written as TEXT, so something that starts with = + - @ is never run as a formula.)
+const xlsxText = v => String(v == null ? '' : v).slice(0, 32000).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '').replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const xlsxCol = i => { let t = ''; for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) t = String.fromCharCode(65 + ((n - 1) % 26)) + t; return t; };
+function buildXlsx({ sheetName, headers, rows, widths }) {
+  const name = String(sheetName || 'Sheet1').replace(/[\[\]:*?\/\\]/g, ' ').trim().slice(0, 31) || 'Sheet1', lastCol = xlsxCol(headers.length - 1), lastRow = rows.length + 1;
+  const cell = (c, r, v, style) => typeof v === 'number' && Number.isFinite(v) ? `<c r="${xlsxCol(c)}${r}" s="${style}"><v>${v}</v></c>` : `<c r="${xlsxCol(c)}${r}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xlsxText(v)}</t></is></c>`;
+  const head = `<row r="1" ht="22" customHeight="1">${headers.map((h, c) => cell(c, 1, h, 1)).join('')}</row>`;
+  const body = rows.map((row, i) => `<row r="${i + 2}">${row.map((v, c) => cell(c, i + 2, v, typeof v === 'number' ? 3 : 2)).join('')}</row>`).join('');
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:${lastCol}${lastRow}"/><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols>${headers.map((h, c) => `<col min="${c + 1}" max="${c + 1}" width="${(widths && widths[c]) || 18}" customWidth="1"/>`).join('')}</cols><sheetData>${head}${body}</sheetData><autoFilter ref="A1:${lastCol}${lastRow}"/></worksheet>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF4C1D95"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="top"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  const workbook = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${xlsxText(name)}" sheetId="1" r:id="rId1"/></sheets><definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">'${name.replace(/'/g, "''").replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}'!$A$1:$${lastCol}$${lastRow}</definedName></definedNames></workbook>`;
+  return zipFiles([
+    { name: '[Content_Types].xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>` },
+    { name: '_rels/.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
+    { name: 'xl/workbook.xml', data: workbook },
+    { name: 'xl/_rels/workbook.xml.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
+    { name: 'xl/styles.xml', data: styles },
+    { name: 'xl/worksheets/sheet1.xml', data: sheet },
+  ]);
+}
+const CONTACT_EXPORT_HEADERS = ['#', 'Received (UTC)', 'Name', 'Email', 'Phone', 'Message', 'Status', 'Language', 'Handled (UTC)', 'Email notification'];
+const contactStamp = d => (d ? new Date(d).toISOString().replace('T', ' ').slice(0, 16) : '');
+async function contactExport(status, q) {
+  const st = ['new', 'handled', 'all'].includes(status) ? status : 'all', term = cleanContactText(q, 100), like = '%' + likeEscape(term) + '%';
+  const rows = (await pool.query(`SELECT name, email, phone, message, language, status, handled_at, emailed_at, created_at FROM contact_messages WHERE ($1 = 'all' OR status = $1) AND ($2 = '' OR name ILIKE $3 ESCAPE '\\' OR email ILIKE $3 ESCAPE '\\' OR phone ILIKE $3 ESCAPE '\\' OR message ILIKE $3 ESCAPE '\\') ORDER BY created_at DESC LIMIT ${CONTACT_EXPORT_MAX}`, [st, term, like])).rows;
+  return buildXlsx({ sheetName: 'Contacts', headers: CONTACT_EXPORT_HEADERS, widths: [6, 18, 24, 32, 18, 70, 10, 10, 18, 18],
+    rows: rows.map((r, i) => [i + 1, contactStamp(r.created_at), r.name, r.email, r.phone || '', r.message, r.status === 'handled' ? 'Handled' : 'New', r.language === 'fr' ? 'French' : 'English', contactStamp(r.handled_at), r.emailed_at ? 'Sent' : 'Not sent']) });
+}
+const CONTACT_ERROR = { error: 'Something went wrong. Please try again.' };
+app.post('/api/contact', capBody(20 * 1024), limitIp('contact', 5, RL_HOUR, 'You have sent several messages already. Please try again later, or contact us on WhatsApp or by email.'), limitAll('contact', 300, RL_HOUR), async (req, res) => {
+  try {
+    const out = await contactSubmit(req.body); res.status(out.status).json(out.body);
+    if (out.saved) notifyContact(out.row).catch(e => console.error('Contact notification error:', e.message));   // after the answer: a slow email never makes the visitor wait
+  } catch (e) { console.error('Contact error:', e.message); res.status(500).json({ error: 'Sorry, your message could not be sent. Please try again, or email us directly.' }); }
+});
+
 // Logout
 app.post('/api/auth/logout', (req, res) => {
   res.clearCookie('arreyon_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
@@ -13639,6 +13757,24 @@ for (const action of ['approve', 'hide']) app.post(`/api/admin/reviews/:id/${act
 });
 app.delete('/api/admin/reviews/:id', adminRequired, async (req, res) => {
   try { const out = await reviewModerate(req.params.id, 'delete'); res.status(out.status).json(out.body); } catch (e) { res.status(500).json(REVIEW_ERROR); }
+});
+
+// ── Admin: contact messages. List, search, mark handled, delete, and download everything as an Excel file. ──
+app.get('/api/admin/contacts/export', adminRequired, async (req, res) => {
+  try {
+    const file = await contactExport(req.query.status, req.query.q);
+    res.set({ 'Content-Type': XLSX_MIME, 'Content-Disposition': `attachment; filename="arreyon-contacts-${new Date().toISOString().slice(0, 10)}.xlsx"`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+    res.send(file);
+  } catch (e) { console.error('Contacts export error:', e.message); res.status(500).json(CONTACT_ERROR); }
+});
+app.get('/api/admin/contacts', adminRequired, async (req, res) => {
+  try { res.json(await contactAdminList(req.query.status, req.query.q, req.query.page)); } catch (e) { res.status(500).json(CONTACT_ERROR); }
+});
+for (const [path, status] of [['handled', 'handled'], ['new', 'new']]) app.post(`/api/admin/contacts/:id/${path}`, adminRequired, async (req, res) => {
+  try { const out = await contactSetStatus(req.params.id, status); res.status(out.status).json(out.body); } catch (e) { res.status(500).json(CONTACT_ERROR); }
+});
+app.delete('/api/admin/contacts/:id', adminRequired, async (req, res) => {
+  try { const out = await contactDelete(req.params.id); res.status(out.status).json(out.body); } catch (e) { res.status(500).json(CONTACT_ERROR); }
 });
 
 // ── Admin: platform-wide oversight of the Partner Network — this is the
