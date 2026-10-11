@@ -531,6 +531,7 @@ const WEBSITE_ROUTES = [
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/keyword-rankings(/check)?'), 'keyword_rankings'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/sitemap/(submit|status)'), 'sitemap'],
   ['*',    routeRx(BIZ_PATH + '/website/sitemap/(generate|generated|download|verify)'), 'sitemap'],
+  ['*',    routeRx(BIZ_PATH + '/shopify/sitemap/check'), 'sitemap'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/broken-links'), 'broken_links'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/organization-schema'), 'schema'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/ai-visibility/(check|history)'), 'ai_visibility'],
@@ -11503,6 +11504,7 @@ const SHOPIFY_TEXT = {
   tags_read_failed: "Could not read this post's current tags (status {status}).", tags_none: 'No change to apply.', tags_save_rejected: 'Shopify rejected saving these tags (status {status}).',
   tags_verify_unconfirmed: 'The tags were saved, but verification could not confirm them.', tags_verify_missing: 'The tags were saved, but Shopify does not show them on the post yet.',
   meta_save_rejected: 'Shopify rejected saving this change (status {status}).',
+  read_products_failed: 'Shopify could not list the products of this store (status {status}).', read_collections_failed: 'Shopify could not list the collections of this store (status {status}).', sitemap_check_failed: 'Could not check the sitemap. Please try again.',
   runs_load_failed: 'Could not load audit history.', runs_clear_failed: 'Could not clear audit history.', runs_invalid: 'Those are not valid audit runs.', runs_specify: 'Specify which runs to clear: ids or all.',
   log_load_failed: 'Could not load the activity log.', log_clear_failed: 'Could not clear the activity log.', log_invalid: 'Those are not valid entries.', log_unknown_feature: 'Unknown feature.',
   log_specify: 'Specify which entries to clear: ids, feature, or all.',
@@ -11806,6 +11808,119 @@ for (const [method, path, action] of [['put', '', 'edit'], ['post', '/publish', 
     const ctx = await shopifyPostRouteContext(req); if (ctx.failure) return res.status(ctx.status).json(ctx.failure);
     const out = await SHOPIFY_POST_ACTIONS[action](ctx.connection, ctx.accessToken, ctx.post, req); res.status(out.status).json(out.body);
   } catch (e) { console.error(`Shopify ${action} post error:`, e.message); res.status(500).json(shopifyFail(action === 'edit' ? 'save_failed' : action === 'publish' ? 'publish_failed' : 'delete_failed')); }
+});
+
+// shopify-own:end
+// shopify-own:start
+// ── Shopify sitemap: check the store's own sitemap against what is really published ───────────────────────────────────────────────────
+// Shopify builds its sitemap (/sitemap.xml) by itself, keeps it up to date and does not let it be replaced, so there is nothing to build or upload. What is useful is to
+// SEE whether it works: is it reachable (a password-protected store hides everything), does robots.txt or the home page shut search engines out, and does it list
+// every published product, page, collection and article. Nothing here is shared with WordPress.
+const SHOPIFY_SITEMAP_MAX_URLS = 50000, SHOPIFY_SITEMAP_MAX_REQUESTS = 400, SHOPIFY_SITEMAP_FETCH_BYTES = 12 * 1024 * 1024, SHOPIFY_SITEMAP_CHILDREN = 40, SHOPIFY_SITEMAP_PAGE = 250;
+const shopifyXmlUnescape = s => String(s).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10))).replace(/&amp;/g, '&');
+const shopifySitemapLocs = xml => [...String(xml).matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)].map(m => shopifyXmlUnescape(m[1]));
+// An address, as the path inside the store: the same page can be reached on the store's own address or its custom domain, so only the path is compared (no trailing slash, no query).
+const shopifyPathKey = url => { try { const p = new URL(url).pathname.replace(/\/+$/, ''); return p || '/'; } catch (e) { return null; } };
+// The store's public pages (its sitemap, robots.txt, home page), read safely: only public hosts, a time limit, a size limit. Null when it cannot be read.
+async function shopifyPublicFetch(url, { timeoutMs = 8000, maxBytes = SHOPIFY_SITEMAP_FETCH_BYTES } = {}) {
+  try {
+    const parsed = new URL(url); if (!/^https?:$/.test(parsed.protocol)) return null; await assertPublicHost(parsed.hostname);
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: controller.signal, redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36', 'Accept': 'application/xml,text/xml,text/html,*/*;q=0.8' } });
+      const buf = Buffer.from(await res.arrayBuffer()); return { status: res.status, ok: res.ok, finalUrl: res.url || url, text: buf.length > maxBytes ? null : buf.toString('utf8'), tooLarge: buf.length > maxBytes };
+    } finally { clearTimeout(timer); }
+  } catch (e) { return null; }
+}
+// robots.txt, read the way crawlers read it: groups of rules per user-agent. "Everything is blocked" means the group for all crawlers (*) disallows "/" and does not allow it back.
+function shopifyRobotsBlocksAll(txt) {
+  let inStar = false, blocks = false, groupHasRule = false;
+  for (const raw of String(txt).split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, '').trim(); const m = line.match(/^([a-z-]+)\s*:\s*(.*)$/i); if (!m) continue; const key = m[1].toLowerCase(), val = m[2].trim();
+    if (key === 'user-agent') { if (groupHasRule) { inStar = false; groupHasRule = false; } if (val === '*') inStar = true; }
+    else { groupHasRule = true; if (inStar && key === 'disallow' && val === '/') blocks = true; if (inStar && key === 'allow' && val === '/') blocks = false; }
+  }
+  return blocks;
+}
+// The sitemap the store serves: an index of parts (products, pages, collections, blogs), each followed. A store with a storefront password sends everyone to its password page.
+async function shopifyLiveSitemap(storeUrl) {
+  const url = storeUrl.replace(/\/+$/, '') + '/sitemap.xml', r = await shopifyPublicFetch(url);
+  const out = { url, reachable: !!r, status: r ? r.status : null, valid: false, passwordProtected: false, kind: null, children: 0, urls: [] };
+  if (!r) return out;
+  if (r.ok && r.text && (/\/password\/?$/.test(new URL(r.finalUrl).pathname) || (!/<sitemapindex|<urlset/i.test(r.text) && /<form[^>]+action=["'][^"']*\/password/i.test(r.text)))) { out.passwordProtected = true; return out; }
+  if (!r.ok || !r.text || !/<sitemapindex|<urlset/i.test(r.text)) return out;
+  out.valid = true; out.kind = /<sitemapindex/i.test(r.text) ? 'index' : 'urlset'; const locs = shopifySitemapLocs(r.text);
+  if (out.kind === 'urlset') { out.urls = locs; return out; }
+  for (const child of locs.slice(0, SHOPIFY_SITEMAP_CHILDREN)) { const c = await shopifyPublicFetch(child); if (!c || !c.ok || !c.text || !/<urlset/i.test(c.text)) continue; out.children++; out.urls = out.urls.concat(shopifySitemapLocs(c.text)); if (out.urls.length >= SHOPIFY_SITEMAP_MAX_URLS) break; }
+  return out;
+}
+// One kind of content, all its pages of results (by id, 250 at a time), published only. The store refusing the connection is recorded, like everywhere else; a kind that cannot be read stops the check.
+async function shopifySitemapList(connection, accessToken, path, extra, state, failCode) {
+  const items = []; let since = 0;
+  for (;;) {
+    if (state.requests >= SHOPIFY_SITEMAP_MAX_REQUESTS || state.count >= SHOPIFY_SITEMAP_MAX_URLS) { state.truncated = true; break; }
+    state.requests++;
+    const res = await shopifyApiRequest(connection.shop_domain, accessToken, `${path}?limit=${SHOPIFY_SITEMAP_PAGE}&since_id=${since}&published_status=published&fields=id,handle${extra}`, { timeoutMs: 20000 });
+    if (res.status === 401 || res.status === 403) {
+      await pool.query(`UPDATE shopify_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
+      await logShopifyAudit(connection.id, 'system', null, 'connection_lost', 'Shopify no longer accepts the connection: it needs to be reconnected', {}, 'connection'); throw shopifyThrow('auth_lost');
+    }
+    if (!res.ok) throw shopifyThrow(failCode, { status: res.status });
+    let batch = []; try { const body = await res.json(); batch = Object.values(body || {}).find(Array.isArray) || []; } catch (e) { batch = []; }
+    for (const it of batch) if (it && it.handle && it.id) { items.push(it); state.count++; since = Math.max(since, it.id); }
+    if (batch.length < SHOPIFY_SITEMAP_PAGE) break;
+  }
+  return items;
+}
+// Everything published that Shopify should list: products (active, on the online store), pages, collections, and the articles of every blog.
+async function shopifySitemapContent(connection, accessToken, storeUrl) {
+  const base = storeUrl.replace(/\/+$/, ''), state = { requests: 0, count: 0, truncated: false }, counts = { products: 0, pages: 0, collections: 0, articles: 0 }, items = [], seen = new Set();
+  const add = (kind, path) => { const k = shopifyPathKey(base + path); if (!k || seen.has(k)) return; seen.add(k); items.push({ url: base + path, key: k, kind }); counts[kind]++; };
+  for (const p of await shopifySitemapList(connection, accessToken, '/products.json', '&status=active', state, 'read_products_failed')) add('products', '/products/' + encodeURIComponent(p.handle));
+  for (const p of await shopifySitemapList(connection, accessToken, '/pages.json', '', state, 'list_pages_failed')) add('pages', '/pages/' + encodeURIComponent(p.handle));
+  for (const path of ['/custom_collections.json', '/smart_collections.json']) for (const c of await shopifySitemapList(connection, accessToken, path, '', state, 'read_collections_failed')) add('collections', '/collections/' + encodeURIComponent(c.handle));
+  const blogsRes = await shopifyApiRequest(connection.shop_domain, accessToken, '/blogs.json?limit=50&fields=id,handle', { timeoutMs: 20000 }); state.requests++;
+  if (blogsRes.status === 401 || blogsRes.status === 403) throw shopifyThrow('auth_lost');
+  const blogs = blogsRes.ok ? ((await blogsRes.json().catch(() => ({}))).blogs || []) : [];
+  for (const b of blogs.slice(0, 20)) for (const a of await shopifySitemapList(connection, accessToken, `/blogs/${Number(b.id)}/articles.json`, '', state, 'list_articles_failed')) add('articles', `/blogs/${encodeURIComponent(b.handle)}/${encodeURIComponent(a.handle)}`);
+  return { items, counts, truncated: state.truncated, blogRoots: new Set(blogs.map(b => '/blogs/' + encodeURIComponent(b.handle))) };
+}
+// What is published but not in the sitemap, and what is in it but not published. The home page, the blogs' own pages and the list of collections are in a sitemap without being "content".
+function shopifySitemapCompare(content, liveUrls) {
+  const inMap = new Set(liveUrls.map(shopifyPathKey).filter(Boolean)), real = new Set(content.items.map(i => i.key));
+  const missing = content.items.filter(i => !inMap.has(i.key)).map(i => i.url), structural = k => k === '/' || k === '/collections' || content.blogRoots.has(k);
+  const extra = liveUrls.filter(u => { const k = shopifyPathKey(u); return k && !real.has(k) && !structural(k); });
+  return { missing, extra };
+}
+async function shopifySitemapDiagnosis(storeUrl) {
+  const base = storeUrl.replace(/\/+$/, ''), out = { robots: { exists: false, blocksEverything: false, listsSitemap: false }, home: { checked: false, noindex: false } };
+  const robots = await shopifyPublicFetch(base + '/robots.txt'); if (robots && robots.ok && robots.text !== null) out.robots = { exists: true, blocksEverything: shopifyRobotsBlocksAll(robots.text), listsSitemap: /(^|\n)\s*sitemap:\s*\S+/i.test(robots.text) };
+  const home = await shopifyPublicFetch(base + '/'); if (home && home.ok && home.text !== null && !/\/password\/?$/.test(new URL(home.finalUrl).pathname)) out.home = { checked: true, noindex: /<meta[^>]+name=["']robots["'][^>]*content=["'][^"']*noindex/i.test(home.text) || /<meta[^>]+content=["'][^"']*noindex[^"']*["'][^>]*name=["']robots["']/i.test(home.text) };
+  return out;
+}
+// The route preamble: the caller's business and a connected store.
+async function shopifySitemapRouteContext(req) {
+  if (!(await userOwnsBusiness(req))) return { status: 404, failure: shopifyFail('business_not_found') };
+  const connection = (await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id])).rows[0];
+  if (!connection) return { status: 404, failure: shopifyFail('no_store') };
+  if (connection.connection_status !== 'connected') return { status: 400, failure: shopifyFail('store_disconnected') };
+  const accessToken = decryptSecret(connection.access_token_encrypted);
+  return { connection, accessToken, storeUrl: await getShopifyStoreUrl(connection, accessToken) };
+}
+app.post('/api/business/:id/shopify/sitemap/check', authRequired, async (req, res) => {
+  try {
+    const ctx = await shopifySitemapRouteContext(req); if (ctx.failure) return res.status(ctx.status).json(ctx.failure);
+    const [live, content, diagnosis] = await Promise.all([shopifyLiveSitemap(ctx.storeUrl), shopifySitemapContent(ctx.connection, ctx.accessToken, ctx.storeUrl), shopifySitemapDiagnosis(ctx.storeUrl)]);
+    const total = content.items.length, out = { verdict: 'none', live: live.valid ? { url: live.url, kind: live.kind, urlCount: live.urls.length, children: live.children } : { url: live.url, kind: null, urlCount: 0, children: 0 }, sitemap: { reachable: live.reachable, status: live.status, valid: live.valid }, password: live.passwordProtected,
+      robots: diagnosis.robots, home: diagnosis.home, content: { ...content.counts, total, truncated: content.truncated }, missingCount: 0, missing: [], extraCount: 0, extra: [] };
+    if (live.valid) { const cmp = shopifySitemapCompare(content, live.urls); Object.assign(out, { missingCount: cmp.missing.length, missing: cmp.missing.slice(0, 25), extraCount: cmp.extra.length, extra: cmp.extra.slice(0, 10), verdict: cmp.missing.length ? 'incomplete' : 'complete' }); }
+    await logShopifyAudit(ctx.connection.id, 'user', req.userId, 'sitemap_checked', `Checked the store's sitemap: ${out.verdict}`, { verdict: out.verdict, missingCount: out.missingCount, extraCount: out.extraCount, total }, 'general');
+    res.json(out);
+  } catch (err) {
+    console.error('Shopify sitemap check error:', err.message);
+    if (err.shopifyCode) return res.status(err.shopifyCode === 'auth_lost' ? 400 : 502).json(shopifyFail(err.shopifyCode, err.shopifyParams || undefined));
+    res.status(500).json(shopifyFail('sitemap_check_failed'));
+  }
 });
 
 // shopify-own:end
