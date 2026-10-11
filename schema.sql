@@ -2154,3 +2154,33 @@ CREATE TABLE IF NOT EXISTS website_health_state (
   PRIMARY KEY (business_id, platform, kind)
 );
 ALTER TABLE monitoring_preferences ADD COLUMN IF NOT EXISTS website_alerts_enabled BOOLEAN DEFAULT TRUE;
+
+-- ── Shopify: audit history and activity log (the same two cards WordPress has) ─────────────────────────────────────────────────────────
+-- One row per audit run (manual or automatic): what was found, what was fixed by itself, what waits for approval, and the page-by-page breakdown.
+CREATE TABLE IF NOT EXISTS shopify_audit_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  shopify_connection_id UUID REFERENCES shopify_connections(id) ON DELETE CASCADE,
+  triggered_by VARCHAR(20) NOT NULL, -- 'manual' | 'automatic'
+  status VARCHAR(20) DEFAULT 'running', -- 'running' | 'completed' | 'failed'
+  issues_found_count INTEGER DEFAULT 0,
+  auto_fixed_count INTEGER DEFAULT 0,
+  pending_approval_count INTEGER DEFAULT 0,
+  findings_summary JSONB,
+  error_message TEXT,
+  started_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_shopify_audit_runs_connection ON shopify_audit_runs(shopify_connection_id, started_at DESC);
+-- The activity log: who did what to the store (a person, the AI agent, or the system), tagged by feature so it can be viewed and cleared per feature.
+CREATE TABLE IF NOT EXISTS shopify_audit_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  shopify_connection_id UUID REFERENCES shopify_connections(id) ON DELETE CASCADE,
+  actor_type VARCHAR(20) NOT NULL, -- 'user' | 'ai_agent' | 'system'
+  actor_id UUID,
+  action_type VARCHAR(50) NOT NULL,
+  description TEXT NOT NULL,
+  details JSONB,
+  feature VARCHAR(50) NOT NULL DEFAULT 'general',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_shopify_audit_log_connection ON shopify_audit_log(shopify_connection_id, created_at DESC);
