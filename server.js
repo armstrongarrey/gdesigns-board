@@ -522,8 +522,10 @@ const WEBSITE_ROUTES = [
   // analysis
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/intelligence'), 'intelligence'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/run-audit'), 'audit'],
-  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/audit-runs'), 'audit'],
-  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/activity-log'), 'activity_log'],
+  ['*',    routeRx(BIZ_PATH + '/website/audit-runs'), 'audit'],
+  ['*',    routeRx(BIZ_PATH + '/shopify/audit-runs'), 'audit'],
+  ['*',    routeRx(BIZ_PATH + '/website/activity-log'), 'activity_log'],
+  ['*',    routeRx(BIZ_PATH + '/shopify/activity-log'), 'activity_log'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/competitor-analysis'), 'competitor'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/technical-seo/(check|history)'), 'technical_seo'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/keyword-rankings(/check)?'), 'keyword_rankings'],
@@ -7619,7 +7621,7 @@ app.post('/api/business/:id/shopify/featured-image-proposals', authRequired, asy
       return r.ok ? wpStripHtml(((await r.json()).article || {}).body_html || '').slice(0, 500) : '';
     }, req.userId);
     if (!planned.proposals.length) return res.json({ proposals: [], scan: featuredScanSummary(scan, planned), message: 'The articles without a featured image already have a plan waiting, or were turned down recently.' });
-    await logShopifyProposalRun(connection, req.userId, 'featured_images', 'Looked for articles without a featured image', planned);
+    await logShopifyProposalRun(connection, req.userId, 'featured_images', planned);
     res.json({ proposals: planned.proposals, scan: featuredScanSummary(scan, planned) });
   } catch (err) {
     console.error('Shopify featured image proposals error:', err.message);
@@ -7692,7 +7694,7 @@ async function runAiVisibilityCheck(connection, context) {
   return outcome;
 }
 
-async function suggestBlogPostTopics(context, existingPosts, count = 5, platformName = 'WordPress') {
+async function suggestBlogPostTopics(context, existingPosts, count = 5) {
   const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
   const existingTitles = existingPosts.map(p => p.title).filter(Boolean);
   const industry = context?.business?.industry || '';
@@ -7710,7 +7712,7 @@ async function suggestBlogPostTopics(context, existingPosts, count = 5, platform
     // research step fails for any reason.
   }
 
-  const prompt = `You are an SEO/AEO/GEO content strategist proposing real, currently valuable blog topic ideas for a real business's ${platformName} site.
+  const prompt = `You are an SEO/AEO/GEO content strategist proposing real, currently valuable blog topic ideas for a real business's WordPress site.
 ${contextSummary}
 ${researchNotes}
 REAL TITLES ALREADY PUBLISHED ON THIS SITE — do not propose something that substantially duplicates one of these:
@@ -9973,7 +9975,7 @@ app.post('/api/business/:id/shopify/actions/:actionId/undo', authRequired, async
     if (!action) return res.status(404).json({ error: 'Proposed change not found' });
     const out = action.action_type === 'generate_featured_image' ? await undoShopifyFeaturedImageAction(connection, action, decryptSecret(connection.access_token_encrypted)) : await undoShopifyLinkFixAction(connection, action, decryptSecret(connection.access_token_encrypted));
     if (!out.ok) return res.status(out.status).json({ error: out.error, code: out.code });
-    await logShopifyAudit(connection.id, 'user', req.userId, 'change_undone', `Undone: ${shopifyChangeLabel(action)}`, { actionId: action.id, actionType: action.action_type }, shopifyFeatureForActionType(action.action_type));
+    await logShopifyAudit(connection.id, 'user', req.userId, 'change_undone', `Undone: ${shopifyChangeLabel(action)}`, { actionId: action.id, actionType: action.action_type, change: shopifyChangeParts(action) }, shopifyFeatureForActionType(action.action_type));
     res.json({ success: true });
   } catch (err) {
     console.error('Undo Shopify link fix error:', err.message);
@@ -10019,7 +10021,7 @@ app.post('/api/business/:id/shopify/actions/:actionId/approve', authRequired, as
     );
 
     await logShopifyChangeDecision(connection, action, req.userId, execResult);
-    if (!execResult.executed) { await logManual(req.params.id, 'shopify', 'change_applied', 'failed', { error: String(execResult.error || 'Shopify rejected this change.').slice(0, 300) }); return res.status(400).json({ error: execResult.error || 'Shopify rejected this change.' }); }
+    if (!execResult.executed) { await logManual(req.params.id, 'shopify', 'change_applied', 'failed', { error: String(execResult.error || 'Shopify rejected this change.').slice(0, 300) }); return res.status(400).json({ error: execResult.error || 'Shopify rejected this change.', ...(execResult.errorCode ? { code: execResult.errorCode, params: execResult.errorParams || undefined } : {}) }); }
     res.json({ success: true });
   } catch (err) {
     console.error('Approve Shopify action error:', err.message);
@@ -10037,7 +10039,7 @@ app.post('/api/business/:id/shopify/actions/:actionId/reject', authRequired, asy
       `UPDATE shopify_actions SET approval_status = 'rejected', reviewed_at = NOW() WHERE id = $1 AND shopify_connection_id = $2 AND approval_status = 'pending' RETURNING id, action_type, target_title, proposed_change`,
       [req.params.actionId, connResult.rows[0].id]
     );
-    if (result.rows.length) { await dropFeaturedPreview('shopify', req.params.actionId); await logShopifyAudit(connResult.rows[0].id, 'user', req.userId, 'proposal_rejected', `Rejected: ${shopifyChangeLabel(result.rows[0])}`, { actionId: result.rows[0].id, actionType: result.rows[0].action_type }, shopifyFeatureForActionType(result.rows[0].action_type)); }
+    if (result.rows.length) { await dropFeaturedPreview('shopify', req.params.actionId); await logShopifyAudit(connResult.rows[0].id, 'user', req.userId, 'proposal_rejected', `Rejected: ${shopifyChangeLabel(result.rows[0])}`, { actionId: result.rows[0].id, actionType: result.rows[0].action_type, change: shopifyChangeParts(result.rows[0]) }, shopifyFeatureForActionType(result.rows[0].action_type)); }
     if (!result.rows.length) return res.status(404).json({ error: 'Proposed change not found or already reviewed.' });
     res.json({ success: true });
   } catch (e) {
@@ -10328,14 +10330,17 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 // yet, so auto-execution would have no real, user-controlled gate to
 // check against. A disclosed, honest scope boundary for this first
 // real version, not a silent omission.
+// shopify-own:start
 // ── Shopify: audit history and activity log ──────────────────────────────────────────────────────────────────────────────────────────
-// The activity log says who did what to the store, in plain words, grouped by feature. A log write NEVER breaks the thing it describes: if it fails, the failure is noted
-// on the server and the action goes on. Only the LOG is ever cleared from the dashboard; the changes themselves, posts and saved results are never touched.
+// The activity log says who did what to the store, grouped by feature. Each entry stores the FACTS (what kind of change, which page, how many) as well as an English
+// sentence; the dashboard builds the sentence again in the person's own language, so the log reads correctly in French or English whenever it is opened.
+// A log write NEVER breaks the thing it describes: if it fails, the failure is noted on the server and the action goes on. Only the LOG is ever cleared from the
+// dashboard; the changes themselves, posts and saved results are never touched.
 const SHOPIFY_LOG_FEATURES = ['seo_proposals', 'taxonomy', 'duplicate_titles', 'broken_links', 'featured_images', 'content_generation', 'intelligence', 'connection', 'general'];
 async function logShopifyAudit(connectionId, actorType, actorId, actionType, description, details, feature = 'general') {
   try {
     await pool.query(`INSERT INTO shopify_audit_log (shopify_connection_id, actor_type, actor_id, action_type, description, details, feature) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [connectionId, actorType, actorId && REVIEW_ID_RX.test(String(actorId)) ? actorId : null, String(actionType).slice(0, 50), String(description || actionType).slice(0, 500), JSON.stringify(details || {}), SHOPIFY_LOG_FEATURES.includes(feature) ? feature : 'general']);
+      [connectionId, actorType, actorId && SHOPIFY_UUID_RX.test(String(actorId)) ? actorId : null, String(actionType).slice(0, 50), String(description || actionType).slice(0, 500), JSON.stringify(details || {}), SHOPIFY_LOG_FEATURES.includes(feature) ? feature : 'general']);
   } catch (e) { console.error('Shopify activity log write failed:', e.message); }
 }
 function shopifyFeatureForActionType(type) {
@@ -10345,24 +10350,34 @@ function shopifyFeatureForActionType(type) {
   if (type === 'remove_broken_link' || type === 'update_link_url') return 'broken_links';
   return 'general';
 }
-function shopifyChangeLabel(action) {
-  const c = action.proposed_change || {};
-  const what = action.action_type === 'generate_featured_image' ? 'Featured image' : action.action_type === 'update_link_url' ? `Change link ${c.oldUrl || ''} to ${c.newUrl || ''}` : describeShopifyActionChange(action);
-  return `${what}${action.target_title ? ` on "${action.target_title}"` : ''}`;
+// What a proposed change IS, as facts (kind, value, page) rather than a sentence, so the dashboard can say it in any language.
+function shopifyChangeParts(action) {
+  const c = action.proposed_change || {}, t = action.action_type, targetTitle = action.target_title || '';
+  if (t === 'update_meta_title') return { kind: 'meta_title', value: c.metaTitle || '', targetTitle };
+  if (t === 'update_meta_description') return { kind: 'meta_description', value: c.metaDescription || '', targetTitle };
+  if (t === 'add_tags') return { kind: 'tags', value: (Array.isArray(c.tags) ? c.tags : []).join(', '), targetTitle };
+  if (t === 'generate_featured_image') return { kind: 'featured_image', value: '', targetTitle };
+  if (t === 'remove_broken_link') return { kind: 'remove_link', value: c.brokenUrl || '', targetTitle };
+  if (t === 'update_link_url') return { kind: 'change_link', value: c.oldUrl || '', to: c.newUrl || '', targetTitle };
+  return { kind: 'other', value: t || '', targetTitle };
 }
+const SHOPIFY_CHANGE_ENGLISH = { meta_title: p => `Meta title: "${p.value}"`, meta_description: p => `Meta description: "${p.value}"`, tags: p => `Add tags: ${p.value}`, featured_image: () => 'Featured image', remove_link: p => `Remove broken link to ${p.value}`, change_link: p => `Change link ${p.value} to ${p.to}`, other: p => p.value || 'Change' };
+const shopifyChangeLabel = action => { const p = shopifyChangeParts(action); return `${SHOPIFY_CHANGE_ENGLISH[p.kind](p)}${p.targetTitle ? ` on "${p.targetTitle}"` : ''}`; };
 // What happened when a person approved a change.
 async function logShopifyChangeDecision(connection, action, userId, exec) {
-  const label = shopifyChangeLabel(action), feature = shopifyFeatureForActionType(action.action_type), details = { actionId: action.id, actionType: action.action_type };
+  const label = shopifyChangeLabel(action), feature = shopifyFeatureForActionType(action.action_type), details = { actionId: action.id, actionType: action.action_type, change: shopifyChangeParts(action) };
   if (exec.executed) return logShopifyAudit(connection.id, 'user', userId, exec.verified === false ? 'change_applied_unverified' : 'change_applied', `${exec.verified === false ? 'Applied, but could not be verified' : 'Applied'}: ${label}`, details, feature);
-  return logShopifyAudit(connection.id, 'user', userId, 'change_failed', `Could not apply: ${label}`, { ...details, error: String(exec.error || '').slice(0, 300) }, feature);
+  return logShopifyAudit(connection.id, 'user', userId, 'change_failed', `Could not apply: ${label}`, { ...details, error: String(exec.error || '').slice(0, 300), errorCode: exec.errorCode || null, errorParams: exec.errorParams || null }, feature);
 }
-// A suggestion run by a person (tags, duplicate titles, featured images): one line for the run, one for each change the store applied by itself.
-async function logShopifyProposalRun(connection, userId, feature, what, out) {
+// A suggestion run by a person: one line for the run, one for each change the store applied by itself.
+const SHOPIFY_RUN_WORDS = { tags: ['taxonomy', 'Looked for posts without tags'], duplicate_titles: ['duplicate_titles', 'Looked for duplicate titles'], featured_images: ['featured_images', 'Looked for articles without a featured image'] };
+async function logShopifyProposalRun(connection, userId, what, out) {
+  const [feature, words] = SHOPIFY_RUN_WORDS[what] || ['general', 'Looked for improvements'];
   const proposals = Array.isArray(out && out.proposals) ? out.proposals : [], auto = proposals.filter(p => p.execution_status === 'executed');
-  await logShopifyAudit(connection.id, 'user', userId, 'proposals_generated', proposals.length ? `${what}: ${proposals.length} proposal(s) made${auto.length ? `, ${auto.length} applied automatically` : ''}` : `${what}: nothing to propose`, { count: proposals.length, autoApplied: auto.length }, feature);
-  for (const a of auto) await logShopifyAudit(connection.id, 'system', null, 'change_auto_applied', `Applied automatically: ${shopifyChangeLabel(a)}`, { actionId: a.id, actionType: a.action_type }, shopifyFeatureForActionType(a.action_type));
+  await logShopifyAudit(connection.id, 'user', userId, 'proposals_generated', proposals.length ? `${words}: ${proposals.length} proposal(s) made${auto.length ? `, ${auto.length} applied automatically` : ''}` : `${words}: nothing to propose`, { what, count: proposals.length, autoApplied: auto.length }, feature);
+  for (const a of auto) await logShopifyAudit(connection.id, 'system', null, 'change_auto_applied', `Applied automatically: ${shopifyChangeLabel(a)}`, { actionId: a.id, actionType: a.action_type, change: shopifyChangeParts(a) }, shopifyFeatureForActionType(a.action_type));
 }
-// The audit's result in the shape the history card shows: totals, a found/fixed/waiting line per kind of problem, and what happened to each page.
+// The audit's result in the shape the history card shows: totals, a found/fixed/waiting line per kind of problem, and what happened to each page (as facts).
 function shopifyAuditSummary(result) {
   const f = (result && result.foundIssues) || {}, fixed = (result && result.autoApplied) || [], pending = (result && result.proposalsCreated) || [];
   const bucket = a => a.action_type === 'update_meta_title' ? 'metaTitle' : a.action_type === 'update_meta_description' ? 'metaDescription' : 'brokenLinks';
@@ -10371,7 +10386,10 @@ function shopifyAuditSummary(result) {
     const fx = fixed.filter(a => bucket(a) === key).length, pd = pending.filter(a => bucket(a) === key).length, found = Number(f[key]) || 0;
     if (found || fx || pd) findings[key] = { found, fixed: fx, pending: pd };
   }
-  const pages = new Map(), add = (a, status) => { const k = `${a.target_type}:${a.target_shopify_id}`; if (!pages.has(k)) pages.set(k, { title: a.target_title || '', url: a.target_url || '', changes: [] }); pages.get(k).changes.push({ description: shopifyChangeLabel({ ...a, target_title: null }), status }); };
+  const pages = new Map(), add = (a, status) => {
+    const k = `${a.target_type}:${a.target_shopify_id}`, p = shopifyChangeParts(a); if (!pages.has(k)) pages.set(k, { title: a.target_title || '', url: a.target_url || '', changes: [] });
+    pages.get(k).changes.push({ kind: p.kind, value: p.value, ...(p.to ? { to: p.to } : {}), description: SHOPIFY_CHANGE_ENGLISH[p.kind](p), status });
+  };
   fixed.forEach(a => add(a, 'fixed')); pending.forEach(a => add(a, 'pending'));
   return { issuesFound: Object.values(f).reduce((n, v) => n + (Number(v) || 0), 0), autoFixed: fixed.length, pending: pending.length, findings: { ...findings, byPage: [...pages.values()] } };
 }
@@ -10390,7 +10408,7 @@ async function runShopifyAuditRecorded(connection, accessToken, context, userId,
   try {
     const sum = shopifyAuditSummary(result);
     if (runId) await pool.query(`UPDATE shopify_audit_runs SET status = 'completed', issues_found_count = $1, auto_fixed_count = $2, pending_approval_count = $3, findings_summary = $4, completed_at = NOW() WHERE id = $5`, [sum.issuesFound, sum.autoFixed, sum.pending, JSON.stringify(sum.findings), runId]);
-    for (const a of result.autoApplied || []) await logShopifyAudit(connection.id, 'system', null, 'change_auto_applied', `Applied automatically: ${shopifyChangeLabel(a)}`, { actionId: a.id, actionType: a.action_type, runId }, shopifyFeatureForActionType(a.action_type));
+    for (const a of result.autoApplied || []) await logShopifyAudit(connection.id, 'system', null, 'change_auto_applied', `Applied automatically: ${shopifyChangeLabel(a)}`, { actionId: a.id, actionType: a.action_type, change: shopifyChangeParts(a), runId }, shopifyFeatureForActionType(a.action_type));
     await logShopifyAudit(connection.id, actor, userId, 'audit_run_completed', `Audit run completed: ${sum.issuesFound} issue(s) found, ${sum.autoFixed} auto-fixed, ${sum.pending} awaiting approval`, { runId, issuesFound: sum.issuesFound, autoFixed: sum.autoFixed, pendingApproval: sum.pending }, 'general');
   } catch (e) {
     console.error('Shopify audit record could not be completed:', e.message);
@@ -10400,51 +10418,52 @@ async function runShopifyAuditRecorded(connection, accessToken, context, userId,
 }
 // Routes: the list of audit runs, and clearing it; the activity log, and clearing it (selected entries, one feature, or everything).
 async function shopifyConnectionIdForRequest(req) {
-  if (!(await userOwnsBusiness(req))) return { status: 404, error: 'Business not found' };
+  if (!(await userOwnsBusiness(req))) return { status: 404, failure: shopifyFail('business_not_found') };
   const row = (await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id])).rows[0];
   return row ? { id: row.id } : { id: null };
 }
-const validIds = list => Array.isArray(list) && list.length > 0 && list.length <= 500 && list.every(x => REVIEW_ID_RX.test(String(x)));
+const shopifyValidIds = list => Array.isArray(list) && list.length > 0 && list.length <= 500 && list.every(x => SHOPIFY_UUID_RX.test(String(x)));
 app.get('/api/business/:id/shopify/audit-runs', authRequired, async (req, res) => {
   try {
-    const c = await shopifyConnectionIdForRequest(req); if (c.error) return res.status(c.status).json({ error: c.error });
+    const c = await shopifyConnectionIdForRequest(req); if (c.failure) return res.status(c.status).json(c.failure);
     if (!c.id) return res.json({ runs: [] });
     res.json({ runs: (await pool.query('SELECT * FROM shopify_audit_runs WHERE shopify_connection_id = $1 ORDER BY started_at DESC LIMIT 50', [c.id])).rows });
-  } catch (e) { console.error('Get Shopify audit runs error:', e.message); res.status(500).json({ error: 'Could not load audit history.' }); }
+  } catch (e) { console.error('Get Shopify audit runs error:', e.message); res.status(500).json(shopifyFail('runs_load_failed')); }
 });
 app.delete('/api/business/:id/shopify/audit-runs', authRequired, async (req, res) => {
   try {
-    const c = await shopifyConnectionIdForRequest(req); if (c.error) return res.status(c.status).json({ error: c.error });
-    if (!c.id) return res.status(404).json({ error: 'No Shopify store connected' });
+    const c = await shopifyConnectionIdForRequest(req); if (c.failure) return res.status(c.status).json(c.failure);
+    if (!c.id) return res.status(404).json(shopifyFail('no_store'));
     const { ids, all } = req.body || {};
-    if (ids !== undefined) { if (!validIds(ids)) return res.status(400).json({ error: 'Those are not valid audit runs.' }); return res.json({ success: true, clearedCount: (await pool.query('DELETE FROM shopify_audit_runs WHERE shopify_connection_id = $1 AND id = ANY($2::uuid[]) RETURNING id', [c.id, ids])).rows.length }); }
+    if (ids !== undefined) { if (!shopifyValidIds(ids)) return res.status(400).json(shopifyFail('runs_invalid')); return res.json({ success: true, clearedCount: (await pool.query('DELETE FROM shopify_audit_runs WHERE shopify_connection_id = $1 AND id = ANY($2::uuid[]) RETURNING id', [c.id, ids])).rows.length }); }
     if (all === true) return res.json({ success: true, clearedCount: (await pool.query('DELETE FROM shopify_audit_runs WHERE shopify_connection_id = $1 RETURNING id', [c.id])).rows.length });
-    res.status(400).json({ error: 'Specify which runs to clear: ids or all.' });
-  } catch (e) { console.error('Clear Shopify audit runs error:', e.message); res.status(500).json({ error: 'Could not clear audit history.' }); }
+    res.status(400).json(shopifyFail('runs_specify'));
+  } catch (e) { console.error('Clear Shopify audit runs error:', e.message); res.status(500).json(shopifyFail('runs_clear_failed')); }
 });
 app.get('/api/business/:id/shopify/activity-log', authRequired, async (req, res) => {
   try {
-    const c = await shopifyConnectionIdForRequest(req); if (c.error) return res.status(c.status).json({ error: c.error });
+    const c = await shopifyConnectionIdForRequest(req); if (c.failure) return res.status(c.status).json(c.failure);
     const feature = req.query.feature && req.query.feature !== 'all' ? String(req.query.feature) : null;
-    if (feature && !SHOPIFY_LOG_FEATURES.includes(feature)) return res.status(400).json({ error: 'Unknown feature.' });
+    if (feature && !SHOPIFY_LOG_FEATURES.includes(feature)) return res.status(400).json(shopifyFail('log_unknown_feature'));
     if (!c.id) return res.json({ entries: [], featureCounts: [] });
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 200), cols = 'id, actor_type, actor_id, action_type, description, details, feature, created_at';
     const rows = feature ? await pool.query(`SELECT ${cols} FROM shopify_audit_log WHERE shopify_connection_id = $1 AND feature = $2 ORDER BY created_at DESC LIMIT $3`, [c.id, feature, limit]) : await pool.query(`SELECT ${cols} FROM shopify_audit_log WHERE shopify_connection_id = $1 ORDER BY created_at DESC LIMIT $2`, [c.id, limit]);
     res.json({ entries: rows.rows, featureCounts: (await pool.query('SELECT feature, COUNT(*)::int AS count FROM shopify_audit_log WHERE shopify_connection_id = $1 GROUP BY feature', [c.id])).rows });
-  } catch (e) { console.error('Get Shopify activity log error:', e.message); res.status(500).json({ error: 'Could not load the activity log.' }); }
+  } catch (e) { console.error('Get Shopify activity log error:', e.message); res.status(500).json(shopifyFail('log_load_failed')); }
 });
 app.delete('/api/business/:id/shopify/activity-log', authRequired, async (req, res) => {
   try {
-    const c = await shopifyConnectionIdForRequest(req); if (c.error) return res.status(c.status).json({ error: c.error });
-    if (!c.id) return res.status(404).json({ error: 'No Shopify store connected' });
+    const c = await shopifyConnectionIdForRequest(req); if (c.failure) return res.status(c.status).json(c.failure);
+    if (!c.id) return res.status(404).json(shopifyFail('no_store'));
     const { ids, feature, all } = req.body || {};   // exactly one of three explicit modes, never an ambiguous default that could clear more than was asked
-    if (ids !== undefined) { if (!validIds(ids)) return res.status(400).json({ error: 'Those are not valid entries.' }); return res.json({ success: true, clearedCount: (await pool.query('DELETE FROM shopify_audit_log WHERE shopify_connection_id = $1 AND id = ANY($2::uuid[]) RETURNING id', [c.id, ids])).rows.length }); }
-    if (feature !== undefined && feature !== 'all') { if (!SHOPIFY_LOG_FEATURES.includes(feature)) return res.status(400).json({ error: 'Unknown feature.' }); return res.json({ success: true, clearedCount: (await pool.query('DELETE FROM shopify_audit_log WHERE shopify_connection_id = $1 AND feature = $2 RETURNING id', [c.id, feature])).rows.length }); }
+    if (ids !== undefined) { if (!shopifyValidIds(ids)) return res.status(400).json(shopifyFail('log_invalid')); return res.json({ success: true, clearedCount: (await pool.query('DELETE FROM shopify_audit_log WHERE shopify_connection_id = $1 AND id = ANY($2::uuid[]) RETURNING id', [c.id, ids])).rows.length }); }
+    if (feature !== undefined && feature !== 'all') { if (!SHOPIFY_LOG_FEATURES.includes(feature)) return res.status(400).json(shopifyFail('log_unknown_feature')); return res.json({ success: true, clearedCount: (await pool.query('DELETE FROM shopify_audit_log WHERE shopify_connection_id = $1 AND feature = $2 RETURNING id', [c.id, feature])).rows.length }); }
     if (all === true || feature === 'all') return res.json({ success: true, clearedCount: (await pool.query('DELETE FROM shopify_audit_log WHERE shopify_connection_id = $1 RETURNING id', [c.id])).rows.length });
-    res.status(400).json({ error: 'Specify which entries to clear: ids, feature, or all.' });
-  } catch (e) { console.error('Clear Shopify activity log error:', e.message); res.status(500).json({ error: 'Could not clear the activity log.' }); }
+    res.status(400).json(shopifyFail('log_specify'));
+  } catch (e) { console.error('Clear Shopify activity log error:', e.message); res.status(500).json(shopifyFail('log_clear_failed')); }
 });
 
+// shopify-own:end
 async function runShopifyAudit(connection, accessToken, context, userId = null) {
   const { items } = await getShopifyContentForIntelligence(connection, accessToken);
   const auditStoreUrl = await getShopifyStoreUrl(connection, accessToken);
@@ -10648,20 +10667,20 @@ async function executeShopifyAction(action, connection, accessToken) {
       // Tags are only ever ADDED: whatever the article already has is kept, in the same order. Reads the live tags right before writing.
       const articlePath = `/blogs/${connection.blog_id}/articles/${action.target_shopify_id}.json`;
       const readRes = await shopifyApiRequest(connection.shop_domain, accessToken, `${articlePath.replace('.json', '')}.json?fields=id,tags`, { timeoutMs: 15000 });
-      if (!readRes.ok) return { executed: false, error: `Could not read this post's current tags (status ${readRes.status}).` };
+      if (!readRes.ok) return { executed: false, error: `Could not read this post's current tags (status ${readRes.status}).`, errorCode: 'tags_read_failed', errorParams: { status: readRes.status } };
       const current = String(((await readRes.json()).article || {}).tags || '').split(',').map(x => x.trim()).filter(Boolean);
       const wanted = (Array.isArray(change.tags) ? change.tags : []).map(x => String(x).trim()).filter(Boolean);
-      if (!wanted.length) return { executed: false, error: 'No change to apply.' };
+      if (!wanted.length) return { executed: false, error: 'No change to apply.', errorCode: 'tags_none' };
       const have = new Set(current.map(x => x.toLowerCase())), merged = [...current];
       for (const tag of wanted) if (!have.has(tag.toLowerCase())) { have.add(tag.toLowerCase()); merged.push(tag); }
       if (merged.length === current.length) return { executed: true, verified: true };   // they are all there already
       await pool.query('UPDATE shopify_actions SET previous_state = $1 WHERE id = $2', [JSON.stringify({ tags: current }), action.id]);
       const putRes = await shopifyApiRequest(connection.shop_domain, accessToken, articlePath, { method: 'PUT', body: { article: { id: action.target_shopify_id, tags: merged.join(', ') } }, timeoutMs: 15000 });
-      if (!putRes.ok) return { executed: false, error: `Shopify rejected saving these tags (status ${putRes.status}).` };
+      if (!putRes.ok) return { executed: false, error: `Shopify rejected saving these tags (status ${putRes.status}).`, errorCode: 'tags_save_rejected', errorParams: { status: putRes.status } };
       const check = await shopifyApiRequest(connection.shop_domain, accessToken, `${articlePath.replace('.json', '')}.json?fields=id,tags`, { timeoutMs: 15000 });
-      if (!check.ok) return { executed: true, verified: false, error: 'The tags were saved, but verification could not confirm them.' };
+      if (!check.ok) return { executed: true, verified: false, error: 'The tags were saved, but verification could not confirm them.', errorCode: 'tags_verify_unconfirmed' };
       const now = new Set(String(((await check.json()).article || {}).tags || '').split(',').map(x => x.trim().toLowerCase()));
-      return wanted.every(tag => now.has(tag.toLowerCase())) ? { executed: true, verified: true } : { executed: true, verified: false, error: 'The tags were saved, but Shopify does not show them on the post yet.' };
+      return wanted.every(tag => now.has(tag.toLowerCase())) ? { executed: true, verified: true } : { executed: true, verified: false, error: 'The tags were saved, but Shopify does not show them on the post yet.', errorCode: 'tags_verify_missing' };
     }
     if (change.oldUrl && change.newUrl) {
       // Changes only the address of the one link, keeping its text and the rest of the tag. Reads the page's current content right before editing.
@@ -10743,7 +10762,7 @@ async function executeShopifyAction(action, connection, accessToken) {
 
     for (const mf of metafields) {
       const res = await upsertShopifyMetafield(connection, accessToken, resourceType, action.target_shopify_id, mf, action.target_type === 'post' ? 'article' : 'page');
-      if (!res.ok) return { executed: false, error: `Shopify rejected saving this change (status ${res.status}).` };
+      if (!res.ok) return { executed: false, error: `Shopify rejected saving this change (status ${res.status}).`, errorCode: 'meta_save_rejected', errorParams: { status: res.status } };
     }
     return { executed: true, verified: true };
   } catch (e) {
@@ -11283,7 +11302,62 @@ app.get('/api/business/:id/shopify/generated-posts', authRequired, async (req, r
   }
 });
 
-// ── Shopify: topic ideas, tag suggestions and duplicate-title fixes (the same three things WordPress has) ──────────────────────────────
+// shopify-own:start
+// ── Shopify: its own texts and helpers ───────────────────────────────────────────────────────────────────────────────────────────────
+// Everything below belongs to Shopify alone: nothing in it is shared with WordPress, so a change on one platform can never break the other.
+// Every sentence the Shopify features send to the dashboard has a CODE, parameters and an English sentence. The dashboard shows the sentence in the person's own
+// language (the translation shopify.msg.<code>); the English sentence is only the fallback for a code the dashboard does not know.
+const SHOPIFY_TEXT = {
+  business_not_found: 'Business not found', no_store: 'No Shopify store connected', store_disconnected: 'This Shopify store is disconnected. Please reconnect it first.',
+  post_not_found: 'Post not found.', auth_lost: 'Shopify no longer accepts the connection for this store. Please reconnect it first.',
+  article_missing: 'This article no longer exists in Shopify. You can remove it from this list.',
+  title_required: 'Please enter a title.', body_required: 'The post body cannot be empty.', tags_not_list: 'Tags must be a list.', tags_too_many: 'A post can have at most {max} tags.',
+  save_rejected: 'Shopify rejected saving these changes (status {status}).', publish_rejected: 'Shopify rejected publishing this post (status {status}).', delete_rejected: 'Shopify rejected deleting this draft (status {status}).',
+  delete_check_rejected: 'Shopify rejected checking this post before deleting it (status {status}).',
+  delete_unreadable: 'Could not check this post in Shopify before deleting it, so nothing was deleted. Please try again.',
+  delete_now_live: 'This post has been published in Shopify since it was created, so it is live. It was not deleted. If you really want it removed, delete it in Shopify admin.',
+  delete_is_live: 'This post is live. Only a draft can be deleted here. A published post should be removed from Shopify admin.',
+  save_failed: 'Could not save this post.', publish_failed: 'Could not publish this post.', delete_failed: 'Could not delete this draft.',
+  topics_failed: 'Failed to generate topic suggestions. Please try again.', tags_failed: 'Failed to generate tag suggestions. Please try again.', duplicates_failed: 'Failed to generate duplicate-title fixes. Please try again.',
+  topics_ai_missing: 'Could not generate topic suggestions: the response was missing required data. Please try again.',
+  list_articles_failed: 'Shopify could not list the articles of this store (status {status}).', list_pages_failed: 'Shopify could not list the pages of this store (status {status}).',
+  tags_ai_unreadable: "Could not generate tag proposals: the AI's response could not be read (please try again).", tags_ai_truncated: "Could not generate tag proposals: the AI's response could not be read (it appears to have been cut off before finishing; please try again).",
+  tags_ai_missing: 'Could not generate tag proposals: the response was missing required data. Please try again.',
+  dups_ai_unreadable: "Could not generate duplicate-title fixes: the AI's response could not be read (please try again).", dups_ai_truncated: "Could not generate duplicate-title fixes: the AI's response could not be read (it appears to have been cut off before finishing; please try again).",
+  dups_ai_missing: 'Could not generate duplicate-title fixes: the response was missing required data. Please try again.',
+  no_blog_tags: 'No blog was found on this Shopify store, so there are no posts to tag.', no_posts: 'This store has no blog posts yet, so there is nothing to tag.',
+  all_tagged: 'Every post already has at least one tag: nothing to propose right now.', tags_waiting: 'Every post without tags already has a tag suggestion waiting for your review.',
+  no_duplicates: 'No duplicate page or post titles were found: nothing to propose right now.', duplicates_waiting: 'Every duplicate title already has a fix waiting for your review.',
+  duplicates_distinct: 'No duplicate titles were found: pages that share a name already have different SEO titles.',
+  tags_read_failed: "Could not read this post's current tags (status {status}).", tags_none: 'No change to apply.', tags_save_rejected: 'Shopify rejected saving these tags (status {status}).',
+  tags_verify_unconfirmed: 'The tags were saved, but verification could not confirm them.', tags_verify_missing: 'The tags were saved, but Shopify does not show them on the post yet.',
+  meta_save_rejected: 'Shopify rejected saving this change (status {status}).',
+  runs_load_failed: 'Could not load audit history.', runs_clear_failed: 'Could not clear audit history.', runs_invalid: 'Those are not valid audit runs.', runs_specify: 'Specify which runs to clear: ids or all.',
+  log_load_failed: 'Could not load the activity log.', log_clear_failed: 'Could not clear the activity log.', log_invalid: 'Those are not valid entries.', log_unknown_feature: 'Unknown feature.',
+  log_specify: 'Specify which entries to clear: ids, feature, or all.',
+};
+const shopifyFormat = (code, params) => String(SHOPIFY_TEXT[code] || code).replace(/\{(\w+)\}/g, (m, k) => (params && params[k] !== undefined ? String(params[k]) : m));
+const shopifyFail = (code, params) => ({ error: shopifyFormat(code, params), code, ...(params ? { params } : {}) });
+const shopifyNote = (code, params) => ({ message: shopifyFormat(code, params), messageCode: code, ...(params ? { messageParams: params } : {}) });
+function shopifyThrow(code, params) { const e = new Error(shopifyFormat(code, params)); e.shopifyCode = code; e.shopifyParams = params || null; return e; }
+const SHOPIFY_UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const shopifyCleanText = (v, max) => String(v == null ? '' : v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u2028\u2029]/g, '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim().slice(0, max);
+function shopifyDecodeEntities(str) {
+  if (!str) return '';
+  const named = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', hellip: '\u2026', mdash: '\u2014', ndash: '\u2013', lsquo: '\u2018', rsquo: '\u2019', ldquo: '\u201C', rdquo: '\u201D', copy: '\u00A9', reg: '\u00AE', trade: '\u2122' };
+  return str.replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16))).replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10))).replace(/&(\w+);/g, (m, name) => (named[name] !== undefined ? named[name] : m));
+}
+const shopifyStripHtml = html => (html ? shopifyDecodeEntities(String(html).replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim() : '');
+// The language of the person asking: what the dashboard says it is showing, else what they saved in their profile, else English.
+async function shopifyRequestLanguage(req) {
+  const asked = req.body && req.body.language; if (asked === 'fr' || asked === 'en') return asked;
+  const row = (await pool.query('SELECT preferred_language FROM users WHERE id = $1', [req.userId])).rows[0];
+  return row && row.preferred_language === 'fr' ? 'fr' : 'en';
+}
+// Added to every AI request for Shopify: the explanation is written for the person reading it, the titles/tags/topics follow the store's own language.
+const shopifyLanguageNote = lang => `\nLANGUAGE: write every "reasoning" and "rationale" sentence in ${lang === 'fr' ? 'French (Fran\u00E7ais)' : 'English'}, because that is the language of the person reading it. Write every title, tag and topic in the same language as this store's own content shown above; if it shows none, write them in ${lang === 'fr' ? 'French' : 'English'}. Keep the JSON keys exactly as specified.`;
+
+// ── Shopify: topic ideas, tag suggestions and duplicate-title fixes ──────────────────────────────────────────────────────────────────
 // Every suggestion is a PROPOSAL the owner approves (or, on a store set to Automatic, applied like the other low-risk fixes). Tags are only ever added, never removed.
 // Duplicate titles: every page or post whose title (or SEO title, if it has one) is shared with another gets a new, distinct SEO TITLE proposed; the first one keeps its own.
 const SHOPIFY_PROPOSAL_CAP = 15, SHOPIFY_LIST_LIMIT = 250, SHOPIFY_DUPLICATE_LOOKUPS = 40;
@@ -11293,15 +11367,15 @@ async function shopifyListResources(connection, accessToken, kind, fields) {
   if (res.status === 401 || res.status === 403) {
     await pool.query(`UPDATE shopify_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);   // the store refused us: recorded, so the rest of the tool tells the truth
     await logShopifyAudit(connection.id, 'system', null, 'connection_lost', 'Shopify no longer accepts the connection: it needs to be reconnected', {}, 'connection');
-    const e = new Error('Shopify no longer accepts the connection for this store. Please reconnect it first.'); e.code = 'auth_lost'; throw e;
+    throw shopifyThrow('auth_lost');
   }
-  if (!res.ok) throw new Error(`Shopify could not list the ${kind} of this store (status ${res.status}).`);
+  if (!res.ok) throw shopifyThrow(kind === 'articles' ? 'list_articles_failed' : 'list_pages_failed', { status: res.status });
   return (await res.json())[kind] || [];
 }
 const shopifyTagList = text => String(text || '').split(',').map(x => x.trim()).filter(Boolean);
 function cleanProposedTags(raw) {
   const seen = new Set(), out = [];
-  for (const item of Array.isArray(raw) ? raw : []) for (const part of String(item == null ? '' : item).split(',')) { const tag = cleanContactText(part, 255); if (tag && !seen.has(tag.toLowerCase())) { seen.add(tag.toLowerCase()); out.push(tag); } }
+  for (const item of Array.isArray(raw) ? raw : []) for (const part of String(item == null ? '' : item).split(',')) { const tag = shopifyCleanText(part, 255); if (tag && !seen.has(tag.toLowerCase())) { seen.add(tag.toLowerCase()); out.push(tag); } }
   return out.slice(0, 4);
 }
 // Saves the proposals the AI made and, on a store set to Automatic, applies the low-risk ones. A failed automatic apply stays pending so the owner sees it.
@@ -11318,11 +11392,40 @@ async function saveShopifyProposals(connection, accessToken, rows) {
   }
   return { proposals, autoApplied };
 }
-async function readProposalJson(raw, what) {
+// what: 'tags' | 'dups'. The AI's answer must be readable and must hold a list of proposals; otherwise a coded message the person can read in their language.
+function readShopifyProposalJson(raw, what) {
   try { return extractJSON(raw); }
-  catch (e) { const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```'); console.error(`${what} JSON parse failed:`, e.message); throw new Error(`Could not generate ${what} ? the AI's response could not be read${looksTruncated ? ' (it appears to have been cut off before finishing; please try again)' : ' (please try again)'}.`.replace(' ? ', ': ')); }
+  catch (e) { console.error(`Shopify ${what} proposals JSON parse failed:`, e.message); throw shopifyThrow(`${what}_ai_${!raw.trim().endsWith('}') && !raw.trim().endsWith('```') ? 'truncated' : 'unreadable'}`); }
 }
-async function shopifyTopicSuggestions(context, connection, accessToken) {
+// Topic ideas for a Shopify blog: the explanation is written for the person reading it, the topics in the language of the store's own posts.
+async function suggestShopifyBlogPostTopics(context, existingPosts, count = 5, lang = 'en') {
+  const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
+  const existingTitles = existingPosts.map(p => p.title).filter(Boolean), industry = context?.business?.industry || '';
+  let researchNotes = '';
+  try {
+    const results = await researchSearch(industry ? `${industry} trends questions 2026` : `${context?.business?.name || 'small business'} industry trends 2026`, { maxResults: 6 });
+    if (results.length) researchNotes = `\nREAL, CURRENT SEARCH RESULTS ON WHAT'S BEING DISCUSSED IN THIS REAL INDUSTRY RIGHT NOW (use these to ground genuinely current, real topic ideas, not just general knowledge):\n${results.map(r => `- "${r.title}": ${r.snippet ? r.snippet.slice(0, 150) : ''}`).join('\n')}\n`;
+  } catch (e) { /* ideas can still be made from the business context alone */ }
+  const prompt = `You are an SEO/AEO/GEO content strategist proposing real, currently valuable blog topic ideas for a real business's Shopify site.
+${contextSummary}
+${researchNotes}
+REAL TITLES ALREADY PUBLISHED ON THIS SITE: do not propose something that substantially duplicates one of these:
+${existingTitles.length ? existingTitles.map(t => `- ${t}`).join('\n') : '(No existing published posts found.)'}
+
+Propose ${count} real, specific topic ideas, each one genuinely useful for this business's real audience, optimized for:
+- SEO (real, realistic search demand for a business at this scale, not hyper-competitive global terms)
+- AEO (answer-engine/AI-assistant citation potential: a clear, directly-answerable core question)
+- GEO (generative-engine visibility: specific, well-structured, genuinely citable content, not generic filler)
+${shopifyLanguageNote(lang)}
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{"topics": [{"topic": "...", "focusKeyword": "...", "searchIntent": "informational|commercial|transactional|navigational", "rationale": "1 sentence on why this is a genuinely good, currently relevant opportunity for this business"}]}`;
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Propose the topics now, as JSON only.' }], complexity: 'complex', context: { feature: 'shopify_blog_post_topic_suggestions' }, maxTokens: 2000 });
+  const parsed = extractJSON(raw);
+  if (!Array.isArray(parsed.topics)) throw shopifyThrow('topics_ai_missing');
+  return parsed.topics;
+}
+async function shopifyTopicSuggestions(context, connection, accessToken, lang = 'en') {
   let posts = [];
   try {
     if (connection.blog_id) {
@@ -11330,20 +11433,20 @@ async function shopifyTopicSuggestions(context, connection, accessToken) {
       if (res.ok) posts = ((await res.json()).articles || []).map(a => ({ title: a.title }));
     }
   } catch (e) { /* topic ideas are still useful without the list of existing posts (a slightly higher chance of repeating one) */ }
-  return suggestBlogPostTopics(context, posts, 5, 'Shopify');
+  return suggestShopifyBlogPostTopics(context, posts, 5, lang);
 }
-async function runShopifyTagProposalGeneration(connection, accessToken, context) {
-  if (!connection.blog_id) return { proposals: [], message: 'No blog was found on this Shopify store, so there are no posts to tag.' };
+async function runShopifyTagProposalGeneration(connection, accessToken, context, lang = 'en') {
+  if (!connection.blog_id) return { proposals: [], ...shopifyNote('no_blog_tags') };
   const articles = await shopifyListResources(connection, accessToken, 'articles', 'id,title,handle,tags,body_html');
-  if (!articles.length) return { proposals: [], message: 'This store has no blog posts yet, so there is nothing to tag.' };
+  if (!articles.length) return { proposals: [], ...shopifyNote('no_posts') };
   const freq = new Map(); for (const a of articles) for (const tag of shopifyTagList(a.tags)) freq.set(tag, (freq.get(tag) || 0) + 1);
   const existingTags = [...freq.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]).slice(0, 60);
   const waiting = new Set((await pool.query(`SELECT target_shopify_id FROM shopify_actions WHERE shopify_connection_id = $1 AND action_type = 'add_tags' AND approval_status = 'pending'`, [connection.id])).rows.map(r => String(r.target_shopify_id)));
   const untagged = articles.filter(a => !shopifyTagList(a.tags).length), candidates = untagged.filter(a => !waiting.has(String(a.id))).slice(0, SHOPIFY_PROPOSAL_CAP);
-  if (!untagged.length) return { proposals: [], message: 'Every post already has at least one tag: nothing to propose right now.' };
-  if (!candidates.length) return { proposals: [], message: 'Every post without tags already has a tag suggestion waiting for your review.' };
+  if (!untagged.length) return { proposals: [], ...shopifyNote('all_tagged') };
+  if (!candidates.length) return { proposals: [], ...shopifyNote('tags_waiting') };
   const storeUrl = await getShopifyStoreUrl(connection, accessToken), blogHandle = await getShopifyBlogHandle(connection, accessToken);
-  const summary = candidates.map((c, i) => `[${i}] "${c.title}" (${storeUrl}/blogs/${blogHandle}/${c.handle})\n  Starts: ${wpStripHtml(c.body_html || '').slice(0, 300) || '(no text)'}`).join('\n');
+  const summary = candidates.map((c, i) => `[${i}] "${c.title}" (${storeUrl}/blogs/${blogHandle}/${c.handle})\n  Starts: ${shopifyStripHtml(c.body_html || '').slice(0, 300) || '(no text)'}`).join('\n');
   const prompt = `You are an SEO Agent adding tags to the blog posts of a real Shopify store. Every post below has NO tags yet. Suggest only what the post's own content supports; never invent details.
 ${summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.'}
 
@@ -11354,17 +11457,18 @@ POSTS WITHOUT TAGS:
 ${summary}
 
 For EACH numbered post, suggest 2-4 short tags (existing ones preferred) based on its actual content.
+${shopifyLanguageNote(lang)}
 
 Return ONLY valid JSON, no markdown, in exactly this structure:
 { "proposals": [ { "index": 0, "suggested_tags": ["tag1", "tag2"], "reasoning": "1 sentence on why these fit this post's actual content" } ] }`;
-  const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the tag proposals now, as JSON only.' }], complexity: 'complex', context: { feature: 'shopify_tag_proposals' }, maxTokens: 3000 });
-  const result = await readProposalJson(raw, 'tag proposals');
-  if (!Array.isArray(result.proposals)) throw new Error(`Could not generate tag proposals: the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Provide the tag proposals now, as JSON only.' }], complexity: 'complex', context: { feature: 'shopify_tag_proposals' }, maxTokens: 3000 });
+  const result = readShopifyProposalJson(raw, 'tags');
+  if (!Array.isArray(result.proposals)) throw shopifyThrow('tags_ai_missing');
   const rows = [], used = new Set();
   for (const p of result.proposals) {
     const c = candidates[p && p.index]; if (!c || used.has(c.id)) continue;
     const tags = cleanProposedTags(p.suggested_tags); if (!tags.length) continue; used.add(c.id);
-    rows.push({ actionType: 'add_tags', targetType: 'post', id: c.id, url: `${storeUrl}/blogs/${blogHandle}/${c.handle}`, title: c.title, previous: { tags: [] }, change: { tags }, reasoning: cleanContactText(p.reasoning, 500) });
+    rows.push({ actionType: 'add_tags', targetType: 'post', id: c.id, url: `${storeUrl}/blogs/${blogHandle}/${c.handle}`, title: c.title, previous: { tags: [] }, change: { tags }, reasoning: shopifyCleanText(p.reasoning, 500) });
   }
   return saveShopifyProposals(connection, accessToken, rows);
 }
@@ -11375,19 +11479,19 @@ async function shopifySeoMetafield(connection, accessToken, resourceType, id) {
     return ((await res.json()).metafields || []).find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || '';
   } catch (e) { return null; }   // unknown: that page is left out rather than guessed about
 }
-async function runShopifyDuplicateTitleProposalGeneration(connection, accessToken, context) {
+async function runShopifyDuplicateTitleProposalGeneration(connection, accessToken, context, lang = 'en') {
   const articles = connection.blog_id ? await shopifyListResources(connection, accessToken, 'articles', 'id,title,handle') : [], pages = await shopifyListResources(connection, accessToken, 'pages', 'id,title,handle');
   const items = [...pages.map(p => ({ type: 'page', id: p.id, title: p.title, handle: p.handle })), ...articles.map(a => ({ type: 'post', id: a.id, title: a.title, handle: a.handle }))];   // pages first: the first of a group keeps its title
   const norm = x => String(x || '').trim().toLowerCase().replace(/\s+/g, ' ');
   // 1. cheap: pages and posts sharing a TITLE. 2. only those few are asked for their SEO title (it may already tell them apart).
   const byTitle = new Map(); for (const it of items) { const k = norm(it.title); if (!k) continue; if (!byTitle.has(k)) byTitle.set(k, []); byTitle.get(k).push(it); }
   const shared = [...byTitle.values()].filter(g => g.length > 1).flat().slice(0, SHOPIFY_DUPLICATE_LOOKUPS);
-  if (!shared.length) return { proposals: [], message: 'No duplicate page or post titles were found: nothing to propose right now.' };
+  if (!shared.length) return { proposals: [], ...shopifyNote('no_duplicates') };
   for (const it of shared) { const meta = await shopifySeoMetafield(connection, accessToken, it.type === 'post' ? 'articles' : 'pages', it.id); it.metaTitle = meta; it.known = meta !== null; }
   const groups = new Map(); for (const it of shared.filter(x => x.known)) { const k = norm(it.metaTitle || it.title); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(it); }
   const waiting = new Set((await pool.query(`SELECT target_shopify_id FROM shopify_actions WHERE shopify_connection_id = $1 AND action_type = 'update_meta_title' AND approval_status = 'pending'`, [connection.id])).rows.map(r => String(r.target_shopify_id)));
   const candidates = []; for (const g of groups.values()) if (g.length > 1) for (const it of g.slice(1)) if (!waiting.has(String(it.id))) candidates.push(it);
-  if (!candidates.length) return { proposals: [], message: groups.size && [...groups.values()].some(g => g.length > 1) ? 'Every duplicate title already has a fix waiting for your review.' : 'No duplicate titles were found: pages that share a name already have different SEO titles.' };
+  if (!candidates.length) return { proposals: [], ...shopifyNote([...groups.values()].some(g => g.length > 1) ? 'duplicates_waiting' : 'duplicates_distinct') };
   const taken = new Set([...items.map(i => norm(i.title)), ...shared.map(i => norm(i.metaTitle))]);   // a new title must not collide with any title on the store
   const storeUrl = await getShopifyStoreUrl(connection, accessToken), blogHandle = await getShopifyBlogHandle(connection, accessToken);
   const urlOf = it => it.type === 'page' ? `${storeUrl}/pages/${it.handle}` : `${storeUrl}/blogs/${blogHandle}/${it.handle}`, capped = candidates.slice(0, SHOPIFY_PROPOSAL_CAP);
@@ -11399,104 +11503,103 @@ PAGES/POSTS SHARING A TITLE WITH ANOTHER PAGE ON THIS STORE:
 ${summary}
 
 For EACH numbered item, write a new, genuinely distinct title of 50-60 characters, grounded in that item's own address and likely content, that no longer collides with the other page's title. Never invent details that are not supported by what you are told.
+${shopifyLanguageNote(lang)}
 
 Return ONLY valid JSON, no markdown, in exactly this structure:
 { "proposals": [ { "index": 0, "suggested_title": "specific, distinct title", "reasoning": "1 sentence on why this title is now distinct and still fits" } ] }`;
-  const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the duplicate-title fixes now, as JSON only.' }], complexity: 'complex', context: { feature: 'shopify_duplicate_title_proposals' }, maxTokens: 3000 });
-  const result = await readProposalJson(raw, 'duplicate-title fixes');
-  if (!Array.isArray(result.proposals)) throw new Error(`Could not generate duplicate-title fixes: the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Provide the duplicate-title fixes now, as JSON only.' }], complexity: 'complex', context: { feature: 'shopify_duplicate_title_proposals' }, maxTokens: 3000 });
+  const result = readShopifyProposalJson(raw, 'dups');
+  if (!Array.isArray(result.proposals)) throw shopifyThrow('dups_ai_missing');
   const rows = [], used = new Set();
   for (const p of result.proposals) {
-    const c = capped[p && p.index], title = cleanContactText(p && p.suggested_title, 255);
+    const c = capped[p && p.index], title = shopifyCleanText(p && p.suggested_title, 255);
     if (!c || !title || used.has(c.id) || taken.has(norm(title))) continue;   // no title, a repeat, or one that would collide with another page: skipped
     used.add(c.id); taken.add(norm(title));
-    rows.push({ actionType: 'update_meta_title', targetType: c.type, id: c.id, url: urlOf(c), title: c.title, previous: { metaTitle: c.metaTitle || null, title: c.title }, change: { metaTitle: title }, reasoning: cleanContactText(p.reasoning, 500) });
+    rows.push({ actionType: 'update_meta_title', targetType: c.type, id: c.id, url: urlOf(c), title: c.title, previous: { metaTitle: c.metaTitle || null, title: c.title }, change: { metaTitle: title }, reasoning: shopifyCleanText(p.reasoning, 500) });
   }
   return saveShopifyProposals(connection, accessToken, rows);
 }
-// The route preamble: the caller's business, a connected store, and the business context the AI works from.
+// The route preamble: the caller's business, a connected store, the business context the AI works from, and the language of the person asking.
 async function shopifyProposalRouteContext(req) {
   const account = await resolveAccount(req.userId), context = await getBusinessContext(req.params.id, account.id);
-  if (!context) return { status: 404, error: 'Business not found' };
+  if (!context) return { status: 404, failure: shopifyFail('business_not_found') };
   const connection = (await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id])).rows[0];
-  if (!connection) return { status: 404, error: 'No Shopify store connected' };
-  if (connection.connection_status !== 'connected') return { status: 400, error: 'This Shopify store is disconnected. Please reconnect it first.' };
-  return { context, connection, accessToken: decryptSecret(connection.access_token_encrypted) };
+  if (!connection) return { status: 404, failure: shopifyFail('no_store') };
+  if (connection.connection_status !== 'connected') return { status: 400, failure: shopifyFail('store_disconnected') };
+  return { context, connection, accessToken: decryptSecret(connection.access_token_encrypted), lang: await shopifyRequestLanguage(req) };
 }
 const SHOPIFY_PROPOSAL_ROUTES = [
-  { path: 'tag-proposals', kind: 'tags', feature: 'taxonomy', what: 'Looked for posts without tags', run: runShopifyTagProposalGeneration, failure: 'Failed to generate tag suggestions. Please try again.' },
-  { path: 'duplicate-title-proposals', kind: 'duplicate_titles', feature: 'duplicate_titles', what: 'Looked for duplicate titles', run: runShopifyDuplicateTitleProposalGeneration, failure: 'Failed to generate duplicate-title fixes. Please try again.' },
+  { path: 'tag-proposals', kind: 'tags', run: runShopifyTagProposalGeneration, failure: 'tags_failed' },
+  { path: 'duplicate-title-proposals', kind: 'duplicate_titles', run: runShopifyDuplicateTitleProposalGeneration, failure: 'duplicates_failed' },
 ];
 for (const r of SHOPIFY_PROPOSAL_ROUTES) app.post(`/api/business/:id/shopify/${r.path}`, authRequired, async (req, res) => {
   try {
-    const ctx = await shopifyProposalRouteContext(req); if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+    const ctx = await shopifyProposalRouteContext(req); if (ctx.failure) return res.status(ctx.status).json(ctx.failure);
     recordRunFrom(res, req.params.id, 'shopify', 'proposals_generated', b => ({ detail: { kind: r.kind, count: proposalCount(b) } }));
-    const out = await r.run(ctx.connection, ctx.accessToken, ctx.context);
-    await logShopifyProposalRun(ctx.connection, req.userId, r.feature, r.what, out);
+    const out = await r.run(ctx.connection, ctx.accessToken, ctx.context, ctx.lang);
+    await logShopifyProposalRun(ctx.connection, req.userId, r.kind, out);
     res.json(out);
   } catch (err) {
     console.error(`Shopify ${r.kind} proposals error:`, err.message);
-    if (err.code === 'auth_lost') return res.status(400).json({ error: err.message, code: 'auth_lost' });
-    res.status(500).json({ error: safeErrorMessage(err, r.failure) });
+    if (err.shopifyCode) return res.status(err.shopifyCode === 'auth_lost' ? 400 : 500).json(shopifyFail(err.shopifyCode, err.shopifyParams || undefined));
+    res.status(500).json(shopifyFail(r.failure));
   }
 });
 app.post('/api/business/:id/shopify/topic-suggestions', authRequired, async (req, res) => {
   try {
-    const ctx = await shopifyProposalRouteContext(req); if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
-    res.json({ topics: await shopifyTopicSuggestions(ctx.context, ctx.connection, ctx.accessToken) });
-  } catch (err) { console.error('Shopify topic suggestions error:', err.message); res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate topic suggestions. Please try again.') }); }
+    const ctx = await shopifyProposalRouteContext(req); if (ctx.failure) return res.status(ctx.status).json(ctx.failure);
+    res.json({ topics: await shopifyTopicSuggestions(ctx.context, ctx.connection, ctx.accessToken, ctx.lang) });
+  } catch (err) { console.error('Shopify topic suggestions error:', err.message); res.status(500).json(shopifyFail(err.shopifyCode || 'topics_failed')); }
 });
 
 // ── Shopify generated posts: edit, publish, and delete a draft, inside the tool ──────────────────────────────────────────────────────
-// The same three things WordPress has. Every change is made on the REAL article in Shopify first, and only then in our copy, so the two never disagree.
+// Every change is made on the REAL article in Shopify first, and only then in our copy, so the two never disagree.
 // Rules: a title and a body are required; tags are a list (a comma splits one into two); an empty meta title or description means "leave as it is"
 // (Shopify refuses empty values, so clearing one is done in Shopify admin); only a DRAFT can be deleted, and Shopify is asked first whether it is still a draft.
 const SHOPIFY_POST_LIMITS = { title: 255, metaTitle: 255, metaDescription: 320, tag: 255, tags: 25, body: 200000 };
 function cleanShopifyPostFields(body, post) {
   const b = body && typeof body === 'object' ? body : {}, L = SHOPIFY_POST_LIMITS;
-  const title = b.title === undefined ? post.title : cleanContactText(b.title, L.title);
-  if (!title) return { error: 'Please enter a title.' };
+  const title = b.title === undefined ? post.title : shopifyCleanText(b.title, L.title);
+  if (!title) return { failure: shopifyFail('title_required') };
   let bodyHtml = post.body_html;
-  if (b.bodyHtml !== undefined) { bodyHtml = String(b.bodyHtml == null ? '' : b.bodyHtml).replace(/\u0000/g, '').slice(0, L.body); if (!bodyHtml.trim()) return { error: 'The post body cannot be empty.' }; }
-  const keep = (given, current, max) => { if (given === undefined) return current || null; const v = cleanContactText(given, max); return v || current || null; };   // empty = leave as it is
+  if (b.bodyHtml !== undefined) { bodyHtml = String(b.bodyHtml == null ? '' : b.bodyHtml).replace(/\u0000/g, '').slice(0, L.body); if (!bodyHtml.trim()) return { failure: shopifyFail('body_required') }; }
+  const keep = (given, current, max) => { if (given === undefined) return current || null; const v = shopifyCleanText(given, max); return v || current || null; };   // empty = leave as it is
   const metaTitle = keep(b.metaTitle, post.meta_title, L.metaTitle), metaDescription = keep(b.metaDescription, post.meta_description, L.metaDescription);
   let tags = (post.tags || '').split(',').map(x => x.trim()).filter(Boolean);
   if (b.tags !== undefined) {
-    if (!Array.isArray(b.tags)) return { error: 'Tags must be a list.' };
+    if (!Array.isArray(b.tags)) return { failure: shopifyFail('tags_not_list') };
     const seen = new Set(); tags = [];
-    for (const raw of b.tags) for (const part of String(raw == null ? '' : raw).split(',')) { const tag = cleanContactText(part, L.tag); if (tag && !seen.has(tag.toLowerCase())) { seen.add(tag.toLowerCase()); tags.push(tag); } }
-    if (tags.length > L.tags) return { error: `A post can have at most ${L.tags} tags.` };
+    for (const raw of b.tags) for (const part of String(raw == null ? '' : raw).split(',')) { const tag = shopifyCleanText(part, L.tag); if (tag && !seen.has(tag.toLowerCase())) { seen.add(tag.toLowerCase()); tags.push(tag); } }
+    if (tags.length > L.tags) return { failure: shopifyFail('tags_too_many', { max: L.tags }) };
   }
   return { fields: { title, bodyHtml, metaTitle, metaDescription, tags } };
 }
 const shopifyArticlePath = (connection, post) => `/blogs/${connection.blog_id}/articles/${post.shopify_article_id}.json`;
-// What Shopify said, in words the person can act on. null = it worked.
-function shopifyPostFailure(res, doing) {
-  if (res.status === 404) return { status: 404, body: { error: 'This article no longer exists in Shopify. You can remove it from this list.', code: 'article_missing' } };
-  if (res.status === 401 || res.status === 403) return { status: 400, body: { error: 'Shopify no longer accepts the connection for this store. Please reconnect it first.', code: 'auth_lost' } };
-  return res.ok ? null : { status: 400, body: { error: `Shopify rejected ${doing} (status ${res.status}).` } };
+// What Shopify said, as a coded message the person can act on. null = it worked.
+function shopifyPostFailure(res, rejectCode) {
+  if (res.status === 404) return { status: 404, body: shopifyFail('article_missing') };
+  if (res.status === 401 || res.status === 403) return { status: 400, body: shopifyFail('auth_lost') };
+  return res.ok ? null : { status: 400, body: shopifyFail(rejectCode, { status: res.status }) };
 }
 async function shopifyEditPost(connection, accessToken, post, body, actorId) {
-  const parsed = cleanShopifyPostFields(body, post); if (parsed.error) return { status: 400, body: { error: parsed.error } };
+  const parsed = cleanShopifyPostFields(body, post); if (parsed.failure) return { status: 400, body: parsed.failure };
   const f = parsed.fields;
   const res = await shopifyApiRequest(connection.shop_domain, accessToken, shopifyArticlePath(connection, post), { method: 'PUT', timeoutMs: 20000, body: { article: { id: post.shopify_article_id, title: f.title, body_html: f.bodyHtml, tags: f.tags.join(', '),
     metafields: [...(f.metaTitle ? [{ namespace: 'global', key: 'title_tag', value: f.metaTitle, type: 'single_line_text_field' }] : []), ...(f.metaDescription ? [{ namespace: 'global', key: 'description_tag', value: f.metaDescription, type: 'single_line_text_field' }] : [])] } } });
-  const fail = shopifyPostFailure(res, 'saving these changes'); if (fail) return fail;
+  const fail = shopifyPostFailure(res, 'save_rejected'); if (fail) return fail;
   let article = null; try { article = (await res.json()).article || null; } catch (e) { /* the save worked; we just could not read the answer */ }
   const status = article && typeof article.published === 'boolean' ? (article.published ? 'publish' : 'draft') : post.status;
   await pool.query(`UPDATE shopify_generated_posts SET title = $1, body_html = $2, meta_title = $3, meta_description = $4, tags = $5, status = $6, handle = COALESCE($7, handle), updated_at = NOW() WHERE id = $8`,
     [f.title, f.bodyHtml, f.metaTitle, f.metaDescription, f.tags.join(', '), status, article && article.handle ? article.handle : null, post.id]);
-  await logManual(connection.business_id, 'shopify', 'content_edited', 'success', { title: f.title, postId: post.id });
-  await logShopifyAudit(connection.id, 'user', actorId, 'generated_post_edited', `Edited generated post: "${f.title}"`, { postId: post.id, articleId: post.shopify_article_id }, 'content_generation');
+  await logShopifyAudit(connection.id, 'user', actorId, 'generated_post_edited', `Edited generated post: "${f.title}"`, { title: f.title, postId: post.id, articleId: post.shopify_article_id }, 'content_generation');
   return { status: 200, body: { success: true, status } };
 }
 async function shopifyPublishPost(connection, accessToken, post, actorId) {
   if (post.status === 'publish') return { status: 200, body: { success: true, already: true } };
   const res = await shopifyApiRequest(connection.shop_domain, accessToken, shopifyArticlePath(connection, post), { method: 'PUT', timeoutMs: 15000, body: { article: { id: post.shopify_article_id, published: true } } });
-  const fail = shopifyPostFailure(res, 'publishing this post'); if (fail) return fail;
+  const fail = shopifyPostFailure(res, 'publish_rejected'); if (fail) return fail;
   await pool.query(`UPDATE shopify_generated_posts SET status = 'publish', updated_at = NOW() WHERE id = $1`, [post.id]);
-  await logManual(connection.business_id, 'shopify', 'content_published', 'success', { title: post.title, postId: post.id, url: post.article_url || null });
-  await logShopifyAudit(connection.id, 'user', actorId, 'generated_post_published', `Published: "${post.title}"`, { postId: post.id, articleId: post.shopify_article_id }, 'content_generation');
+  await logShopifyAudit(connection.id, 'user', actorId, 'generated_post_published', `Published: "${post.title}"`, { title: post.title, postId: post.id, articleId: post.shopify_article_id }, 'content_generation');
   return { status: 200, body: { success: true } };
 }
 async function shopifyDeleteDraft(connection, accessToken, post, actorId) {
@@ -11504,37 +11607,37 @@ async function shopifyDeleteDraft(connection, accessToken, post, actorId) {
   // admin), it is never deleted from here: deleting a live post is done in Shopify admin.
   const look = await shopifyApiRequest(connection.shop_domain, accessToken, `${shopifyArticlePath(connection, post).replace('.json', '')}.json?fields=id,published_at`, { timeoutMs: 15000 });
   if (look.status === 404) { await pool.query('DELETE FROM shopify_generated_posts WHERE id = $1', [post.id]); return { status: 200, body: { success: true, alreadyGone: true } }; }
-  const fail = shopifyPostFailure(look, 'the check before deleting'); if (fail) return { status: 400, body: { error: fail.body.error.replace('the check before deleting', 'checking this post before deleting it'), code: fail.body.code } };
+  const fail = shopifyPostFailure(look, 'delete_check_rejected'); if (fail) return fail;
   let live = null; try { live = (await look.json()).article || null; } catch (e) { /* unreadable: treated as unknown below */ }
-  if (!live) return { status: 400, body: { error: 'Could not check this post in Shopify before deleting it, so nothing was deleted. Please try again.' } };
-  if (live.published_at) { await pool.query(`UPDATE shopify_generated_posts SET status = 'publish', updated_at = NOW() WHERE id = $1`, [post.id]); return { status: 400, body: { error: post.status === 'draft' ? 'This post has been published in Shopify since it was created, so it is live. It was not deleted. If you really want it removed, delete it in Shopify admin.' : 'This post is live. Only a draft can be deleted here. A published post should be removed from Shopify admin.', code: 'now_live' } }; }
+  if (!live) return { status: 400, body: shopifyFail('delete_unreadable') };
+  if (live.published_at) { await pool.query(`UPDATE shopify_generated_posts SET status = 'publish', updated_at = NOW() WHERE id = $1`, [post.id]); return { status: 400, body: shopifyFail(post.status === 'draft' ? 'delete_now_live' : 'delete_is_live') }; }
   const del = await shopifyApiRequest(connection.shop_domain, accessToken, shopifyArticlePath(connection, post), { method: 'DELETE', timeoutMs: 15000 });
-  if (!del.ok && del.status !== 404) { const f = shopifyPostFailure(del, 'deleting this draft'); return f || { status: 400, body: { error: `Shopify rejected deleting this draft (status ${del.status}).` } }; }
+  if (!del.ok && del.status !== 404) return shopifyPostFailure(del, 'delete_rejected') || { status: 400, body: shopifyFail('delete_rejected', { status: del.status }) };
   await pool.query('DELETE FROM shopify_generated_posts WHERE id = $1', [post.id]);
-  await logManual(connection.business_id, 'shopify', 'content_deleted', 'success', { title: post.title });
-  await logShopifyAudit(connection.id, 'user', actorId, 'generated_post_deleted', `Deleted draft: "${post.title}"`, { articleId: post.shopify_article_id }, 'content_generation');
+  await logShopifyAudit(connection.id, 'user', actorId, 'generated_post_deleted', `Deleted draft: "${post.title}"`, { title: post.title, articleId: post.shopify_article_id }, 'content_generation');
   return { status: 200, body: { success: true } };
 }
 // The route preamble: the caller's business, a connected store, and a post that belongs to that store.
 async function shopifyPostRouteContext(req) {
-  if (!REVIEW_ID_RX.test(String(req.params.postId || ''))) return { status: 404, error: 'Post not found.' };
+  if (!SHOPIFY_UUID_RX.test(String(req.params.postId || ''))) return { status: 404, failure: shopifyFail('post_not_found') };
   const account = await resolveAccount(req.userId);
-  if (!(await pool.query('SELECT 1 FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id])).rows.length) return { status: 404, error: 'Business not found' };
+  if (!(await pool.query('SELECT 1 FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id])).rows.length) return { status: 404, failure: shopifyFail('business_not_found') };
   const connection = (await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id])).rows[0];
-  if (!connection) return { status: 404, error: 'No Shopify store connected' };
-  if (connection.connection_status !== 'connected') return { status: 400, error: 'This Shopify store is disconnected. Please reconnect it first.' };
+  if (!connection) return { status: 404, failure: shopifyFail('no_store') };
+  if (connection.connection_status !== 'connected') return { status: 400, failure: shopifyFail('store_disconnected') };
   const post = (await pool.query('SELECT * FROM shopify_generated_posts WHERE id = $1 AND shopify_connection_id = $2', [req.params.postId, connection.id])).rows[0];
-  if (!post) return { status: 404, error: 'Post not found.' };
+  if (!post) return { status: 404, failure: shopifyFail('post_not_found') };
   return { connection, post, accessToken: decryptSecret(connection.access_token_encrypted) };
 }
 const SHOPIFY_POST_ACTIONS = { edit: (c, t, p, req) => shopifyEditPost(c, t, p, req.body, req.userId), publish: (c, t, p, req) => shopifyPublishPost(c, t, p, req.userId), delete: (c, t, p, req) => shopifyDeleteDraft(c, t, p, req.userId) };
 for (const [method, path, action] of [['put', '', 'edit'], ['post', '/publish', 'publish'], ['delete', '', 'delete']]) app[method](`/api/business/:id/shopify/generated-posts/:postId${path}`, authRequired, async (req, res) => {
   try {
-    const ctx = await shopifyPostRouteContext(req); if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+    const ctx = await shopifyPostRouteContext(req); if (ctx.failure) return res.status(ctx.status).json(ctx.failure);
     const out = await SHOPIFY_POST_ACTIONS[action](ctx.connection, ctx.accessToken, ctx.post, req); res.status(out.status).json(out.body);
-  } catch (e) { console.error(`Shopify ${action} post error:`, e.message); res.status(500).json({ error: action === 'edit' ? 'Could not save this post.' : action === 'publish' ? 'Could not publish this post.' : 'Could not delete this draft.' }); }
+  } catch (e) { console.error(`Shopify ${action} post error:`, e.message); res.status(500).json(shopifyFail(action === 'edit' ? 'save_failed' : action === 'publish' ? 'publish_failed' : 'delete_failed')); }
 });
 
+// shopify-own:end
 app.post('/api/business/:id/shopify/generate-post', authRequired, async (req, res) => {
   let owned = false;
   try {
@@ -11592,7 +11695,7 @@ app.post('/api/business/:id/shopify/generate-post', authRequired, async (req, re
     }
 
     const featuredImage = req.body?.generateFeaturedImage === false ? { status: 'skipped', reason: 'not_requested' } : await addFeaturedImageToShopifyArticle(connection, accessToken, result.id, { imagePrompt: featuredImagePromptFor(generated.title, generated.focusKeyword), focusKeyword: generated.focusKeyword, title: generated.title });
-    await logShopifyAudit(connection.id, 'user', req.userId, 'generated_post', `Generated a post: "${generated.title}" (${result.status === 'publish' ? 'published' : 'saved as a draft'})`, { postId: savedPost.rows[0].id, articleId: result.id }, 'content_generation');
+    await logShopifyAudit(connection.id, 'user', req.userId, 'generated_post', `Generated a post: "${generated.title}" (${result.status === 'publish' ? 'published' : 'saved as a draft'})`, { title: generated.title, published: result.status === 'publish', postId: savedPost.rows[0].id, articleId: result.id }, 'content_generation');
     await logManual(req.params.id, 'shopify', 'content_generated', 'success', { title: generated.title, status: result.status, url: result.url || null, postId: savedPost.rows[0].id, image: featuredImage.status, imageReason: featuredImage.reason });
     res.json({ success: true, title: generated.title, publishStatus: result.status, url: result.url, featuredImage });
   } catch (err) {
@@ -19972,27 +20075,6 @@ const ALERT_MESSAGES = {
     })
   }
 };
-// Website alerts: the owner's own language, a plain title, what it means, and what to do. A reminder (the problem is still there after a week) says so in the title.
-const WEBSITE_ALERT_MESSAGES = {
-  websiteConnectionLost: {
-    en: (biz, platform, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}Reconnect your ${platform} site: ${biz}`, message: `Arreyon Consult can no longer sign in to your ${platform} site. ${platform === 'WordPress' ? 'The Application Password was probably revoked or has expired.' : 'The store may have uninstalled the app or removed its access.'} Automatic checks and fixes are paused until you reconnect it in the Website Tool.` }),
-    fr: (biz, platform, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Reconnectez votre site ${platform} : ${biz}`, message: `Arreyon Consult ne peut plus se connecter à votre site ${platform}. ${platform === 'WordPress' ? "Le mot de passe d'application a probablement été révoqué ou a expiré." : "La boutique a peut-être désinstallé l'application ou retiré son accès."} Les vérifications et corrections automatiques sont suspendues jusqu'à la reconnexion dans l'outil Site Web.` })
-  },
-  websiteUnreachable: {
-    en: (biz, platform, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}We could not reach your website: ${biz}`, message: `Arreyon Consult could not connect to your ${platform} site on two checks in a row. If your site is down, your visitors cannot reach it either. Automatic checks and fixes cannot run until it is back. If the site is fine, check that nothing (a security plugin or a firewall) is blocking Arreyon Consult.` }),
-    fr: (biz, platform, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Impossible d'atteindre votre site : ${biz}`, message: `Arreyon Consult n'a pas pu se connecter à votre site ${platform} lors de deux vérifications de suite. Si votre site est en panne, vos visiteurs ne peuvent pas y accéder non plus. Les vérifications et corrections automatiques ne peuvent pas s'exécuter tant qu'il n'est pas de retour. Si le site fonctionne, vérifiez que rien (une extension de sécurité ou un pare-feu) ne bloque Arreyon Consult.` })
-  },
-  websiteRobotsBlocking: {
-    en: (biz, platform, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your website is hidden from Google: ${biz}`, message: `Your robots.txt tells search engines not to visit any page of your site, so your pages can drop out of Google. If this is not on purpose, remove the block. ${platform === 'WordPress' ? 'In WordPress, check Settings > Reading and untick "Discourage search engines from indexing this site", and check your SEO plugin.' : 'In Shopify, check that your robots.txt.liquid has not been edited to block everything.'}` }),
-    fr: (biz, platform, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Votre site est masqué pour Google : ${biz}`, message: `Votre fichier robots.txt demande aux moteurs de recherche de ne visiter aucune page de votre site : vos pages peuvent disparaître de Google. Si ce n'est pas voulu, supprimez ce blocage. ${platform === 'WordPress' ? 'Dans WordPress, vérifiez Réglages > Lecture et décochez « Demander aux moteurs de recherche de ne pas indexer ce site », et vérifiez votre extension SEO.' : 'Dans Shopify, vérifiez que votre fichier robots.txt.liquid n\'a pas été modifié pour tout bloquer.'}` })
-  },
-  websiteNotMobile: {
-    en: (biz, platform, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your website is not set up for phones: ${biz}`, message: `Your site does not tell phones how to display it (there is no mobile viewport setting). Most visitors browse on a phone, and Google ranks the mobile version of a site first, so this can hurt your visibility. ${platform === 'WordPress' ? 'Ask your theme developer, or switch to a responsive theme.' : 'Use a current Shopify theme, or ask your developer to add the viewport tag to theme.liquid.'}` }),
-    fr: (biz, platform, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Votre site n'est pas adapté aux téléphones : ${biz}`, message: `Votre site n'indique pas aux téléphones comment s'afficher (aucun paramètre d'affichage mobile). La plupart des visiteurs naviguent sur téléphone, et Google classe d'abord la version mobile d'un site : cela peut nuire à votre visibilité. ${platform === 'WordPress' ? 'Demandez à votre développeur de thème, ou passez à un thème adaptatif.' : 'Utilisez un thème Shopify récent, ou demandez à votre développeur d\'ajouter la balise viewport dans theme.liquid.'}` })
-  }
-};
-Object.assign(ALERT_MESSAGES, WEBSITE_ALERT_MESSAGES);
-
 function alertText(templateKey, language, ...args) {
   const lang = language === 'fr' ? 'fr' : 'en';
   return ALERT_MESSAGES[templateKey][lang](...args);
@@ -20307,103 +20389,220 @@ async function checkOpportunityRadar(ownerId, prefs, language) {
 // one digest email per owner covering everything new since the last run.
 // Each owner is processed independently: if one owner's data causes an
 // unexpected error, that must not stop the sweep for everyone else.
-// ── Website alerts ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-// Four problems a site owner needs to hear about, checked once a day with the other alerts (and emailed in the same daily digest):
-//   connection_lost   (critical) the connection was refused (WordPress: Application Password revoked/expired; Shopify: access removed). Nothing automatic can run.
+// wordpress-own:start
+// ── WordPress alerts ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Four problems a WordPress site owner needs to hear about, checked once a day with the other alerts (and emailed in the same daily digest):
+//   connection_lost   (critical) the Application Password was refused. Nothing automatic can run.
 //   site_unreachable  (warning)  the site could not be reached on TWO checks in a row (one blip never raises an alarm)
 //   robots_blocking   (critical) robots.txt tells every search engine to stay away from the whole site
 //   not_mobile_ready  (warning)  the latest technical check found no mobile viewport setting
-// An alert is raised ONCE when a problem starts, and again as a reminder only if it is still there after 7 days (website_health_state remembers). When the problem
-// goes away the state is cleared quietly, so a problem that comes back is a new alert. WEBSITE_ALERTS_OFF=1 switches all of this off; the owner can switch it off
-// in alert preferences. Nothing is checked for an account whose plan has expired.
-const WEBSITE_REMIND_DAYS = 7, WEBSITE_UNREACHABLE_AFTER = 2, WEBSITE_PROBE_TIMEOUT_MS = 12000;
-async function websiteHealthCount(businessId, platform, kind, failed) {
-  const r = await pool.query(`INSERT INTO website_health_state (business_id, platform, kind, failures) VALUES ($1, $2, $3, $4)
-    ON CONFLICT (business_id, platform, kind) DO UPDATE SET failures = CASE WHEN $5 THEN website_health_state.failures + 1 ELSE 0 END, updated_at = NOW() RETURNING failures`, [businessId, platform, kind, failed ? 1 : 0, !!failed]);
+// An alert is raised ONCE when a problem starts, and again as a reminder only if it is still there after 7 days (wordpress_health_state remembers). When the problem
+// goes away the state is cleared quietly, so a problem that comes back is a new alert. WORDPRESS_ALERTS_OFF=1 switches all of this off; the owner can switch it off
+// in alert preferences. Nothing is checked for an account whose plan has expired. Nothing here is shared with Shopify.
+const WORDPRESS_ALERT_MESSAGES = {
+  connectionLost: {
+    en: (biz, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}Reconnect your WordPress site: ${biz}`, message: 'Arreyon Consult can no longer sign in to your WordPress site. The Application Password was probably revoked or has expired. Automatic checks and fixes are paused until you reconnect it in the Website Tool.' }),
+    fr: (biz, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Reconnectez votre site WordPress : ${biz}`, message: "Arreyon Consult ne peut plus se connecter à votre site WordPress. Le mot de passe d'application a probablement été révoqué ou a expiré. Les vérifications et corrections automatiques sont suspendues jusqu'à la reconnexion dans l'outil Site Web." }),
+  },
+  unreachable: {
+    en: (biz, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}We could not reach your website: ${biz}`, message: 'Arreyon Consult could not connect to your WordPress site on two checks in a row. If your site is down, your visitors cannot reach it either. Automatic checks and fixes cannot run until it is back. If the site is fine, check that nothing (a security plugin or a firewall) is blocking Arreyon Consult.' }),
+    fr: (biz, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Impossible d'atteindre votre site : ${biz}`, message: "Arreyon Consult n'a pas pu se connecter à votre site WordPress lors de deux vérifications de suite. Si votre site est en panne, vos visiteurs ne peuvent pas y accéder non plus. Les vérifications et corrections automatiques ne peuvent pas s'exécuter tant qu'il n'est pas de retour. Si le site fonctionne, vérifiez que rien (une extension de sécurité ou un pare-feu) ne bloque Arreyon Consult." }),
+  },
+  robotsBlocking: {
+    en: (biz, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your website is hidden from Google: ${biz}`, message: 'Your robots.txt tells search engines not to visit any page of your site, so your pages can drop out of Google. If this is not on purpose, remove the block. In WordPress, check Settings > Reading and untick "Discourage search engines from indexing this site", and check your SEO plugin.' }),
+    fr: (biz, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Votre site est masqué pour Google : ${biz}`, message: "Votre fichier robots.txt demande aux moteurs de recherche de ne visiter aucune page de votre site : vos pages peuvent disparaître de Google. Si ce n'est pas voulu, supprimez ce blocage. Dans WordPress, vérifiez Réglages > Lecture et décochez « Demander aux moteurs de recherche de ne pas indexer ce site », et vérifiez votre extension SEO." }),
+  },
+  notMobile: {
+    en: (biz, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your website is not set up for phones: ${biz}`, message: 'Your site does not tell phones how to display it (there is no mobile viewport setting). Most visitors browse on a phone, and Google ranks the mobile version of a site first, so this can hurt your visibility. Ask your theme developer, or switch to a responsive theme.' }),
+    fr: (biz, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Votre site n'est pas adapté aux téléphones : ${biz}`, message: "Votre site n'indique pas aux téléphones comment s'afficher (aucun paramètre d'affichage mobile). La plupart des visiteurs naviguent sur téléphone, et Google classe d'abord la version mobile d'un site : cela peut nuire à votre visibilité. Demandez à votre développeur de thème, ou passez à un thème adaptatif." }),
+  },
+};
+const wordpressAlertText = (key, lang, biz, remind) => WORDPRESS_ALERT_MESSAGES[key][lang === 'fr' ? 'fr' : 'en'](biz, remind);
+const WORDPRESS_REMIND_DAYS = 7, WORDPRESS_UNREACHABLE_AFTER = 2, WORDPRESS_PROBE_TIMEOUT_MS = 12000;
+async function wordpressHealthCount(businessId, kind, failed) {
+  const r = await pool.query(`INSERT INTO wordpress_health_state (business_id, kind, failures) VALUES ($1, $2, $3)
+    ON CONFLICT (business_id, kind) DO UPDATE SET failures = CASE WHEN $4 THEN wordpress_health_state.failures + 1 ELSE 0 END, updated_at = NOW() RETURNING failures`, [businessId, kind, failed ? 1 : 0, !!failed]);
   return r.rows[0].failures;
 }
-async function websiteHealthStep(businessId, platform, kind, active, detail) {
-  const cur = (await pool.query('SELECT * FROM website_health_state WHERE business_id = $1 AND platform = $2 AND kind = $3', [businessId, platform, kind])).rows[0], json = JSON.stringify(detail || {});
+async function wordpressHealthStep(businessId, kind, active, detail) {
+  const cur = (await pool.query('SELECT * FROM wordpress_health_state WHERE business_id = $1 AND kind = $2', [businessId, kind])).rows[0], json = JSON.stringify(detail || {});
   if (!active) {
-    if (cur && cur.active) await pool.query(`UPDATE website_health_state SET active = false, since = NULL, detail = $4, updated_at = NOW() WHERE business_id = $1 AND platform = $2 AND kind = $3`, [businessId, platform, kind, json]);
+    if (cur && cur.active) await pool.query(`UPDATE wordpress_health_state SET active = false, since = NULL, detail = $3, updated_at = NOW() WHERE business_id = $1 AND kind = $2`, [businessId, kind, json]);
     return { raise: false, cleared: !!(cur && cur.active) };
   }
   if (!cur || !cur.active) {
-    await pool.query(`INSERT INTO website_health_state (business_id, platform, kind, active, since, last_alerted_at, detail) VALUES ($1, $2, $3, true, NOW(), NOW(), $4)
-      ON CONFLICT (business_id, platform, kind) DO UPDATE SET active = true, since = NOW(), last_alerted_at = NOW(), detail = $4, updated_at = NOW()`, [businessId, platform, kind, json]);
+    await pool.query(`INSERT INTO wordpress_health_state (business_id, kind, active, since, last_alerted_at, detail) VALUES ($1, $2, true, NOW(), NOW(), $3)
+      ON CONFLICT (business_id, kind) DO UPDATE SET active = true, since = NOW(), last_alerted_at = NOW(), detail = $3, updated_at = NOW()`, [businessId, kind, json]);
     return { raise: true, reason: 'new' };
   }
-  const due = !cur.last_alerted_at || Date.now() - new Date(cur.last_alerted_at).getTime() >= WEBSITE_REMIND_DAYS * 864e5;
-  await pool.query(`UPDATE website_health_state SET detail = $4, updated_at = NOW()${due ? ', last_alerted_at = NOW()' : ''} WHERE business_id = $1 AND platform = $2 AND kind = $3`, [businessId, platform, kind, json]);
+  const due = !cur.last_alerted_at || Date.now() - new Date(cur.last_alerted_at).getTime() >= WORDPRESS_REMIND_DAYS * 864e5;
+  await pool.query(`UPDATE wordpress_health_state SET detail = $3, updated_at = NOW()${due ? ', last_alerted_at = NOW()' : ''} WHERE business_id = $1 AND kind = $2`, [businessId, kind, json]);
   return due ? { raise: true, reason: 'reminder' } : { raise: false };
 }
-// A live check that the connection still works (the same test the "Check connection" button makes). 401 = the credentials were refused for good; anything else that
-// fails (403, a server error, no answer) is "a problem", which only counts once it happens twice in a row.
+// A live check that the login still works (the same test the "Check connection" button makes). 401 = refused for good; anything else that fails (403, a server
+// error, no answer) is "a problem", which only counts once it happens twice in a row.
 async function probeWordPressConnection(connection) {
   try {
-    const res = await wpApiRequest(connection.site_url, connection.wp_username, decryptSecret(connection.wp_app_password_encrypted), '/wp/v2/pages?per_page=1&status=any&context=edit', { timeoutMs: WEBSITE_PROBE_TIMEOUT_MS });
+    const res = await wpApiRequest(connection.site_url, connection.wp_username, decryptSecret(connection.wp_app_password_encrypted), '/wp/v2/pages?per_page=1&status=any&context=edit', { timeoutMs: WORDPRESS_PROBE_TIMEOUT_MS });
     if (res.status === 401) return { state: 'auth_lost', status: 401 };
     return res.ok ? { state: 'ok' } : { state: 'problem', status: res.status };
   } catch (e) { return { state: 'problem', error: safeErrorMessage(e, 'The site could not be reached.') }; }
 }
-async function probeShopifyConnection(connection) {
-  try {
-    const res = await shopifyApiRequest(connection.shop_domain, decryptSecret(connection.access_token_encrypted), '/shop.json', { timeoutMs: WEBSITE_PROBE_TIMEOUT_MS });
-    if (res.status === 401 || res.status === 403) return { state: 'auth_lost', status: res.status };
-    return res.ok ? { state: 'ok' } : { state: 'problem', status: res.status };
-  } catch (e) { return { state: 'problem', error: safeErrorMessage(e, 'The store could not be reached.') }; }
-}
-const WEBSITE_ALERT_PLATFORMS = {
-  wordpress: { table: 'website_connections', label: 'WordPress', probe: probeWordPressConnection, siteUrl: async c => c.site_url, hasCredentials: c => (c.connection_mode || 'push') !== 'poll' },
-  shopify: { table: 'shopify_connections', label: 'Shopify', probe: probeShopifyConnection, siteUrl: c => shopifyStoreUrlFor(c), hasCredentials: () => true },
+const WORDPRESS_ALERT_KINDS = {
+  connection_lost: { template: 'connectionLost', severity: 'critical' }, site_unreachable: { template: 'unreachable', severity: 'warning' },
+  robots_blocking: { template: 'robotsBlocking', severity: 'critical' }, not_mobile_ready: { template: 'notMobile', severity: 'warning' },
 };
-const WEBSITE_ALERT_KINDS = {
-  connection_lost: { template: 'websiteConnectionLost', severity: 'critical' }, site_unreachable: { template: 'websiteUnreachable', severity: 'warning' },
-  robots_blocking: { template: 'websiteRobotsBlocking', severity: 'critical' }, not_mobile_ready: { template: 'websiteNotMobile', severity: 'warning' },
-};
-// One business, one platform. Returns how many alerts were raised.
-async function checkWebsiteHealth(ownerId, business, platform, lang) {
-  const cfg = WEBSITE_ALERT_PLATFORMS[platform], conn = (await pool.query(`SELECT * FROM ${cfg.table} WHERE business_id = $1`, [business.id])).rows[0], name = business.name || 'your website';
-  const step = (kind, active, detail) => websiteHealthStep(business.id, platform, kind, active, detail);
+// One WordPress site. Returns how many alerts were raised.
+async function checkWordPressHealth(ownerId, business, lang) {
+  const conn = (await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [business.id])).rows[0], name = business.name || 'your website';
+  const step = (kind, active, detail) => wordpressHealthStep(business.id, kind, active, detail);
   let raised = 0;
   const raise = async (kind, result, extra) => {
     if (!result.raise) return;
-    const k = WEBSITE_ALERT_KINDS[kind], text = alertText(k.template, lang, name, cfg.label, result.reason === 'reminder');
-    await createAlert(ownerId, business.id, 'website_' + kind, k.severity, text.title, text.message, { businessId: business.id, platform, kind, reason: result.reason, connectionId: conn.id, ...(extra || {}) }); raised++;
+    const k = WORDPRESS_ALERT_KINDS[kind], text = wordpressAlertText(k.template, lang, name, result.reason === 'reminder');
+    await createAlert(ownerId, business.id, 'wordpress_' + kind, k.severity, text.title, text.message, { businessId: business.id, platform: 'wordpress', kind, reason: result.reason, connectionId: conn.id, ...(extra || {}) }); raised++;
   };
-  if (!conn || ['disconnected', 'pending'].includes(conn.connection_status)) { for (const kind of Object.keys(WEBSITE_ALERT_KINDS)) await step(kind, false); return 0; }   // not connected (or disconnected on purpose): nothing to alert about
-  // 1. is the connection working?
+  if (!conn || ['disconnected', 'pending'].includes(conn.connection_status)) { for (const kind of Object.keys(WORDPRESS_ALERT_KINDS)) await step(kind, false); return 0; }   // not connected (or disconnected on purpose): nothing to alert about
+  // 1. is the connection working? (a site that connects through the plugin has no stored login, so only a recorded expiry counts)
   let lost = conn.connection_status === 'auth_expired', problems = 0;
-  if (!lost && cfg.hasCredentials(conn)) {
-    const probe = await cfg.probe(conn);
-    if (probe.state === 'auth_lost') { lost = true; await pool.query(`UPDATE ${cfg.table} SET connection_status = 'auth_expired'${platform === 'wordpress' ? ", last_error = 'Credentials no longer valid'" : ''} WHERE id = $1`, [conn.id]); if (platform === 'shopify') await logShopifyAudit(conn.id, 'system', null, 'connection_lost', 'Shopify no longer accepts the connection: it needs to be reconnected', {}, 'connection'); }
-    else if (probe.state === 'problem') problems = await websiteHealthCount(business.id, platform, 'site_unreachable', true);
+  if (!lost && (conn.connection_mode || 'push') !== 'poll') {
+    const probe = await probeWordPressConnection(conn);
+    if (probe.state === 'auth_lost') { lost = true; await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired', last_error = 'Credentials no longer valid' WHERE id = $1`, [conn.id]); }
+    else if (probe.state === 'problem') problems = await wordpressHealthCount(business.id, 'site_unreachable', true);
     else {
-      await websiteHealthCount(business.id, platform, 'site_unreachable', false);
-      if (['needs_attention', 'error'].includes(conn.connection_status)) await pool.query(`UPDATE ${cfg.table} SET connection_status = 'connected', last_verified_at = NOW()${platform === 'wordpress' ? ', last_error = NULL' : ''} WHERE id = $1`, [conn.id]);   // it works again: say so
+      await wordpressHealthCount(business.id, 'site_unreachable', false);
+      if (['needs_attention', 'error'].includes(conn.connection_status)) await pool.query(`UPDATE website_connections SET connection_status = 'connected', last_verified_at = NOW(), last_error = NULL WHERE id = $1`, [conn.id]);   // it works again: say so
     }
   }
-  const unreachable = !lost && problems >= WEBSITE_UNREACHABLE_AFTER;
+  const unreachable = !lost && problems >= WORDPRESS_UNREACHABLE_AFTER;
   await raise('connection_lost', await step('connection_lost', lost, { status: conn.connection_status }));
   await raise('site_unreachable', await step('site_unreachable', unreachable, { failures: problems }));
   if (lost || unreachable) return raised;   // nothing else can be checked on a site that cannot be reached
   // 2. does robots.txt shut everyone out? (a live look; if the file cannot be read, nothing changes: an unknown is never "fixed")
-  const siteUrl = await cfg.siteUrl(conn);
-  if (siteUrl) { const robots = await checkRobotsTxt(siteUrl); if (robots.exists) await raise('robots_blocking', await step('robots_blocking', !!robots.blocksEverything, { siteUrl }), { siteUrl }); }
+  if (conn.site_url) { const robots = await checkRobotsTxt(conn.site_url); if (robots.exists) await raise('robots_blocking', await step('robots_blocking', !!robots.blocksEverything, { siteUrl: conn.site_url }), { siteUrl: conn.site_url }); }
   // 3. is it set up for phones? (from the latest technical check; a check that could not tell, or no check yet, changes nothing)
-  const latest = (await pool.query(`SELECT mobile_friendly, checked_at FROM website_technical_seo_checks WHERE business_id = $1 AND platform = $2 ORDER BY checked_at DESC LIMIT 1`, [business.id, platform])).rows[0], overall = latest && latest.mobile_friendly && latest.mobile_friendly.overall;
+  const latest = (await pool.query(`SELECT mobile_friendly, checked_at FROM website_technical_seo_checks WHERE business_id = $1 AND platform = 'wordpress' ORDER BY checked_at DESC LIMIT 1`, [business.id])).rows[0], overall = latest && latest.mobile_friendly && latest.mobile_friendly.overall;
   if (overall && overall !== 'unknown') { const bad = overall === 'poor'; await raise('not_mobile_ready', await step('not_mobile_ready', bad, { overall, checkedAt: latest.checked_at }), { checkedAt: latest.checked_at }); }
   return raised;
 }
-async function checkWebsiteAlerts(ownerId, prefs, language) {
-  if (process.env.WEBSITE_ALERTS_OFF === '1' || (prefs && prefs.website_alerts_enabled === false) || !(await ciOwnerActive(ownerId))) return { raised: 0 };
+async function checkWordPressAlerts(ownerId, prefs, language) {
+  if (process.env.WORDPRESS_ALERTS_OFF === '1' || (prefs && prefs.wordpress_alerts_enabled === false) || !(await ciOwnerActive(ownerId))) return { raised: 0 };
   const lang = language === 'fr' ? 'fr' : 'en'; let raised = 0;
   const businesses = (await pool.query('SELECT id, name FROM businesses WHERE user_id = $1 AND COALESCE(is_active, true)', [ownerId])).rows;
-  for (const b of businesses) for (const platform of Object.keys(WEBSITE_ALERT_PLATFORMS)) {
-    try { raised += await checkWebsiteHealth(ownerId, b, platform, lang); } catch (e) { console.error(`Website alert check failed (${b.id}, ${platform}):`, e.message); }   // one site failing never stops the others
+  for (const b of businesses) {
+    try { raised += await checkWordPressHealth(ownerId, b, lang); } catch (e) { console.error(`WordPress alert check failed (${b.id}):`, e.message); }   // one site failing never stops the others
   }
   return { raised };
 }
+// wordpress-own:end
+
+// shopify-own:start
+// ── Shopify alerts ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Four problems a Shopify store owner needs to hear about, checked once a day with the other alerts (and emailed in the same daily digest):
+//   connection_lost   (critical) Shopify refused the connection (access removed or the app uninstalled). Nothing automatic can run.
+//   site_unreachable  (warning)  the site could not be reached on TWO checks in a row (one blip never raises an alarm)
+//   robots_blocking   (critical) robots.txt tells every search engine to stay away from the whole site
+//   not_mobile_ready  (warning)  the latest technical check found no mobile viewport setting
+// An alert is raised ONCE when a problem starts, and again as a reminder only if it is still there after 7 days (shopify_health_state remembers). When the problem
+// goes away the state is cleared quietly, so a problem that comes back is a new alert. SHOPIFY_ALERTS_OFF=1 switches all of this off; the owner can switch it off
+// in alert preferences. Nothing is checked for an account whose plan has expired. Nothing here is shared with WordPress.
+const SHOPIFY_ALERT_MESSAGES = {
+  connectionLost: {
+    en: (biz, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}Reconnect your Shopify store: ${biz}`, message: 'Arreyon Consult can no longer sign in to your Shopify store. The store may have uninstalled the app or removed its access. Automatic checks and fixes are paused until you reconnect it in the Website Tool.' }),
+    fr: (biz, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Reconnectez votre boutique Shopify : ${biz}`, message: "Arreyon Consult ne peut plus se connecter à votre boutique Shopify. La boutique a peut-être désinstallé l'application ou retiré son accès. Les vérifications et corrections automatiques sont suspendues jusqu'à la reconnexion dans l'outil Site Web." }),
+  },
+  unreachable: {
+    en: (biz, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}We could not reach your store: ${biz}`, message: 'Arreyon Consult could not connect to your Shopify store on two checks in a row. If your store is down, your customers cannot reach it either. Automatic checks and fixes cannot run until it is back. If the store is fine, check that Shopify is not showing a problem with your account or plan.' }),
+    fr: (biz, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Impossible d'atteindre votre boutique : ${biz}`, message: "Arreyon Consult n'a pas pu se connecter à votre boutique Shopify lors de deux vérifications de suite. Si votre boutique est en panne, vos clients ne peuvent pas y accéder non plus. Les vérifications et corrections automatiques ne peuvent pas s'exécuter tant qu'elle n'est pas de retour. Si la boutique fonctionne, vérifiez que Shopify n'indique pas de problème avec votre compte ou votre abonnement." }),
+  },
+  robotsBlocking: {
+    en: (biz, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your store is hidden from Google: ${biz}`, message: 'Your robots.txt tells search engines not to visit any page of your store, so your pages can drop out of Google. If this is not on purpose, remove the block. In Shopify, check that your robots.txt.liquid has not been edited to block everything.' }),
+    fr: (biz, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Votre boutique est masquée pour Google : ${biz}`, message: "Votre fichier robots.txt demande aux moteurs de recherche de ne visiter aucune page de votre boutique : vos pages peuvent disparaître de Google. Si ce n'est pas voulu, supprimez ce blocage. Dans Shopify, vérifiez que votre fichier robots.txt.liquid n'a pas été modifié pour tout bloquer." }),
+  },
+  notMobile: {
+    en: (biz, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your store is not set up for phones: ${biz}`, message: 'Your store does not tell phones how to display it (there is no mobile viewport setting). Most customers browse on a phone, and Google ranks the mobile version of a site first, so this can hurt your visibility. Use a current Shopify theme, or ask your developer to add the viewport tag to theme.liquid.' }),
+    fr: (biz, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Votre boutique n'est pas adaptée aux téléphones : ${biz}`, message: "Votre boutique n'indique pas aux téléphones comment s'afficher (aucun paramètre d'affichage mobile). La plupart des clients naviguent sur téléphone, et Google classe d'abord la version mobile d'un site : cela peut nuire à votre visibilité. Utilisez un thème Shopify récent, ou demandez à votre développeur d'ajouter la balise viewport dans theme.liquid." }),
+  },
+};
+const shopifyAlertText = (key, lang, biz, remind) => SHOPIFY_ALERT_MESSAGES[key][lang === 'fr' ? 'fr' : 'en'](biz, remind);
+const SHOPIFY_REMIND_DAYS = 7, SHOPIFY_UNREACHABLE_AFTER = 2, SHOPIFY_PROBE_TIMEOUT_MS = 12000;
+async function shopifyHealthCount(businessId, kind, failed) {
+  const r = await pool.query(`INSERT INTO shopify_health_state (business_id, kind, failures) VALUES ($1, $2, $3)
+    ON CONFLICT (business_id, kind) DO UPDATE SET failures = CASE WHEN $4 THEN shopify_health_state.failures + 1 ELSE 0 END, updated_at = NOW() RETURNING failures`, [businessId, kind, failed ? 1 : 0, !!failed]);
+  return r.rows[0].failures;
+}
+async function shopifyHealthStep(businessId, kind, active, detail) {
+  const cur = (await pool.query('SELECT * FROM shopify_health_state WHERE business_id = $1 AND kind = $2', [businessId, kind])).rows[0], json = JSON.stringify(detail || {});
+  if (!active) {
+    if (cur && cur.active) await pool.query(`UPDATE shopify_health_state SET active = false, since = NULL, detail = $3, updated_at = NOW() WHERE business_id = $1 AND kind = $2`, [businessId, kind, json]);
+    return { raise: false, cleared: !!(cur && cur.active) };
+  }
+  if (!cur || !cur.active) {
+    await pool.query(`INSERT INTO shopify_health_state (business_id, kind, active, since, last_alerted_at, detail) VALUES ($1, $2, true, NOW(), NOW(), $3)
+      ON CONFLICT (business_id, kind) DO UPDATE SET active = true, since = NOW(), last_alerted_at = NOW(), detail = $3, updated_at = NOW()`, [businessId, kind, json]);
+    return { raise: true, reason: 'new' };
+  }
+  const due = !cur.last_alerted_at || Date.now() - new Date(cur.last_alerted_at).getTime() >= SHOPIFY_REMIND_DAYS * 864e5;
+  await pool.query(`UPDATE shopify_health_state SET detail = $3, updated_at = NOW()${due ? ', last_alerted_at = NOW()' : ''} WHERE business_id = $1 AND kind = $2`, [businessId, kind, json]);
+  return due ? { raise: true, reason: 'reminder' } : { raise: false };
+}
+// A live check that the connection still works: it asks the store for its own details with the saved access. 401 or 403 = Shopify removed the access for good;
+// anything else that fails (a missing or frozen store, a server error, no answer) is "a problem", which only counts once it happens twice in a row.
+async function probeShopifyConnection(connection) {
+  try {
+    const res = await shopifyApiRequest(connection.shop_domain, decryptSecret(connection.access_token_encrypted), '/shop.json', { timeoutMs: SHOPIFY_PROBE_TIMEOUT_MS });
+    if (res.status === 401 || res.status === 403) return { state: 'auth_lost', status: res.status };
+    return res.ok ? { state: 'ok' } : { state: 'problem', status: res.status };
+  } catch (e) { return { state: 'problem', error: safeErrorMessage(e, 'The store could not be reached.') }; }
+}
+const SHOPIFY_ALERT_KINDS = {
+  connection_lost: { template: 'connectionLost', severity: 'critical' }, site_unreachable: { template: 'unreachable', severity: 'warning' },
+  robots_blocking: { template: 'robotsBlocking', severity: 'critical' }, not_mobile_ready: { template: 'notMobile', severity: 'warning' },
+};
+// One Shopify store. Returns how many alerts were raised.
+async function checkShopifyHealth(ownerId, business, lang) {
+  const conn = (await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [business.id])).rows[0], name = business.name || 'your store';
+  const step = (kind, active, detail) => shopifyHealthStep(business.id, kind, active, detail);
+  let raised = 0;
+  const raise = async (kind, result, extra) => {
+    if (!result.raise) return;
+    const k = SHOPIFY_ALERT_KINDS[kind], text = shopifyAlertText(k.template, lang, name, result.reason === 'reminder');
+    await createAlert(ownerId, business.id, 'shopify_' + kind, k.severity, text.title, text.message, { businessId: business.id, platform: 'shopify', kind, reason: result.reason, connectionId: conn.id, ...(extra || {}) }); raised++;
+  };
+  if (!conn || ['disconnected', 'pending'].includes(conn.connection_status)) { for (const kind of Object.keys(SHOPIFY_ALERT_KINDS)) await step(kind, false); return 0; }   // not connected (or disconnected on purpose): nothing to alert about
+  // 1. is the connection working?
+  let lost = conn.connection_status === 'auth_expired', problems = 0;
+  if (!lost) {
+    const probe = await probeShopifyConnection(conn);
+    if (probe.state === 'auth_lost') {
+      lost = true; await pool.query(`UPDATE shopify_connections SET connection_status = 'auth_expired' WHERE id = $1`, [conn.id]);
+      await logShopifyAudit(conn.id, 'system', null, 'connection_lost', 'Shopify no longer accepts the connection: it needs to be reconnected', {}, 'connection');
+    }
+    else if (probe.state === 'problem') problems = await shopifyHealthCount(business.id, 'site_unreachable', true);
+    else await shopifyHealthCount(business.id, 'site_unreachable', false);
+  }
+  const unreachable = !lost && problems >= SHOPIFY_UNREACHABLE_AFTER;
+  await raise('connection_lost', await step('connection_lost', lost, { status: conn.connection_status }));
+  await raise('site_unreachable', await step('site_unreachable', unreachable, { failures: problems }));
+  if (lost || unreachable) return raised;   // nothing else can be checked on a site that cannot be reached
+  // 2. does robots.txt shut everyone out? (a live look; if the file cannot be read, nothing changes: an unknown is never "fixed")
+  const siteUrl = await shopifyStoreUrlFor(conn);
+  if (siteUrl) { const robots = await checkRobotsTxt(siteUrl); if (robots.exists) await raise('robots_blocking', await step('robots_blocking', !!robots.blocksEverything, { siteUrl }), { siteUrl }); }
+  // 3. is it set up for phones? (from the latest technical check; a check that could not tell, or no check yet, changes nothing)
+  const latest = (await pool.query(`SELECT mobile_friendly, checked_at FROM website_technical_seo_checks WHERE business_id = $1 AND platform = 'shopify' ORDER BY checked_at DESC LIMIT 1`, [business.id])).rows[0], overall = latest && latest.mobile_friendly && latest.mobile_friendly.overall;
+  if (overall && overall !== 'unknown') { const bad = overall === 'poor'; await raise('not_mobile_ready', await step('not_mobile_ready', bad, { overall, checkedAt: latest.checked_at }), { checkedAt: latest.checked_at }); }
+  return raised;
+}
+async function checkShopifyAlerts(ownerId, prefs, language) {
+  if (process.env.SHOPIFY_ALERTS_OFF === '1' || (prefs && prefs.shopify_alerts_enabled === false) || !(await ciOwnerActive(ownerId))) return { raised: 0 };
+  const lang = language === 'fr' ? 'fr' : 'en'; let raised = 0;
+  const businesses = (await pool.query('SELECT id, name FROM businesses WHERE user_id = $1 AND COALESCE(is_active, true)', [ownerId])).rows;
+  for (const b of businesses) {
+    try { raised += await checkShopifyHealth(ownerId, b, lang); } catch (e) { console.error(`Shopify alert check failed (${b.id}):`, e.message); }   // one site failing never stops the others
+  }
+  return { raised };
+}
+// shopify-own:end
 
 async function runMonitoringSweep() {
   console.log('Monitoring sweep starting...');
@@ -20425,7 +20624,8 @@ async function runMonitoringSweep() {
         await checkOverdueLeadFollowUps(owner.id, prefs, owner.preferred_language);
         await checkMarketingAlerts(owner.id, prefs, owner.preferred_language);
         await checkGrowthAlerts(owner.id, prefs, owner.preferred_language);
-        await checkWebsiteAlerts(owner.id, prefs, owner.preferred_language);
+        await checkWordPressAlerts(owner.id, prefs, owner.preferred_language);
+        await checkShopifyAlerts(owner.id, prefs, owner.preferred_language);
         await checkOpportunityRadar(owner.id, prefs, owner.preferred_language);
         await checkSubscriptionExpiry(owner.id, prefs, owner.preferred_language);
         ownersChecked++;
@@ -21007,7 +21207,7 @@ const errDetail = e => ({ error: safeErrorMessage(e && e.message ? e : { message
 const ACTIVITY_FEATURES = {
   intelligence: ['intelligence_refreshed'], audit: ['audit_completed'], ai_visibility: ['ai_visibility_checked'], keyword_rankings: ['keyword_snapshot'],
   sitemap: ['sitemap_submitted', 'sitemap_missing'], competitor: ['competitor_analysis', 'competitor_discovery'], technical_seo: ['technical_check'], broken_links: ['broken_links_checked'],
-  schema: ['schema_installed', 'schema_removed'], content: ['content_generated', 'content_failed', 'content_missed', 'content_edited', 'content_published', 'content_deleted'],
+  schema: ['schema_installed', 'schema_removed'], content: ['content_generated', 'content_failed', 'content_missed'],
   improvements: ['proposals_generated', 'change_applied', 'change_verified', 'change_rejected', 'change_undone', 'featured_image_previewed', 'featured_images_checked'],
 };
 const isActivityFeature = f => typeof f === 'string' && Object.prototype.hasOwnProperty.call(ACTIVITY_FEATURES, f);
@@ -21637,7 +21837,6 @@ function shopifyAuditActivityDetail(audit) {
 function describeShopifyActionChange(action) {
   const c = action.proposed_change || {};
   if (c.brokenUrl) return `Remove broken link to ${c.brokenUrl}`;
-  if (Array.isArray(c.tags) && c.tags.length) return `Add tags: ${c.tags.join(', ')}`;
   const parts = [];
   if (c.metaTitle) parts.push(`Meta title: "${c.metaTitle}"`);
   if (c.metaDescription) parts.push(`Meta description: "${c.metaDescription}"`);
@@ -22032,7 +22231,7 @@ async function generateShopifyScheduledPost(entry, context, connection) {
       [connection.id, result.id, topic, generated.title, result.handle, generated.bodyHtml, generated.metaTitle, generated.metaDescription, generated.tags.join(', '), result.status, result.url]
     );
     postId = saved.rows[0].id;
-    await logShopifyAudit(connection.id, 'system', null, 'generated_post_scheduled', `Generated a scheduled post: "${generated.title}" (${result.status === 'publish' ? 'published' : 'saved as a draft'})`, { postId, articleId: result.id }, 'content_generation');
+    await logShopifyAudit(connection.id, 'system', null, 'generated_post_scheduled', `Generated a scheduled post: "${generated.title}" (${result.status === 'publish' ? 'published' : 'saved as a draft'})`, { title: generated.title, published: result.status === 'publish', postId, articleId: result.id }, 'content_generation');
 
     // Recorded post by post: the cooldown and no-repeat checks read this
     // table, so each post must be visible to the next one generated.
@@ -22151,21 +22350,21 @@ app.get('/api/alerts/preferences', authRequired, async (req, res) => {
     const result = await pool.query('SELECT * FROM monitoring_preferences WHERE owner_id = $1', [account.id]);
     // No row yet means every alert type is on by default — matches the
     // column defaults, so this is safe to hand back as-is.
-    const prefs = result.rows[0] || { metrics_alerts_enabled: true, competitor_alerts_enabled: true, team_activity_alerts_enabled: true, email_alerts_enabled: true, lead_alerts_enabled: true, marketing_alerts_enabled: true, growth_alerts_enabled: true, opportunity_radar_enabled: true, website_alerts_enabled: true };
+    const prefs = result.rows[0] || { metrics_alerts_enabled: true, competitor_alerts_enabled: true, team_activity_alerts_enabled: true, email_alerts_enabled: true, lead_alerts_enabled: true, marketing_alerts_enabled: true, growth_alerts_enabled: true, opportunity_radar_enabled: true, wordpress_alerts_enabled: true, shopify_alerts_enabled: true };
     res.json({ preferences: prefs });
   } catch (e) { res.status(500).json({ error: 'Failed to load preferences' }); }
 });
 
 app.put('/api/alerts/preferences', authRequired, async (req, res) => {
-  const { metricsAlertsEnabled, competitorAlertsEnabled, teamActivityAlertsEnabled, emailAlertsEnabled, leadAlertsEnabled, marketingAlertsEnabled, growthAlertsEnabled, opportunityRadarEnabled, websiteAlertsEnabled } = req.body;
+  const { metricsAlertsEnabled, competitorAlertsEnabled, teamActivityAlertsEnabled, emailAlertsEnabled, leadAlertsEnabled, marketingAlertsEnabled, growthAlertsEnabled, opportunityRadarEnabled, wordpressAlertsEnabled, shopifyAlertsEnabled } = req.body;
   try {
     const account = await resolveAccount(req.userId);
     if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can manage alert preferences' });
     await pool.query(
-      `INSERT INTO monitoring_preferences (owner_id, metrics_alerts_enabled, competitor_alerts_enabled, team_activity_alerts_enabled, email_alerts_enabled, lead_alerts_enabled, marketing_alerts_enabled, growth_alerts_enabled, opportunity_radar_enabled, website_alerts_enabled, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10::boolean, TRUE), NOW())
-       ON CONFLICT (owner_id) DO UPDATE SET metrics_alerts_enabled = $2, competitor_alerts_enabled = $3, team_activity_alerts_enabled = $4, email_alerts_enabled = $5, lead_alerts_enabled = $6, marketing_alerts_enabled = $7, growth_alerts_enabled = $8, opportunity_radar_enabled = $9, website_alerts_enabled = COALESCE($10::boolean, monitoring_preferences.website_alerts_enabled, TRUE), updated_at = NOW()`,
-      [account.id, metricsAlertsEnabled !== false, competitorAlertsEnabled !== false, teamActivityAlertsEnabled !== false, emailAlertsEnabled !== false, leadAlertsEnabled !== false, marketingAlertsEnabled !== false, growthAlertsEnabled !== false, opportunityRadarEnabled !== false, typeof websiteAlertsEnabled === 'boolean' ? websiteAlertsEnabled : null]
+      `INSERT INTO monitoring_preferences (owner_id, metrics_alerts_enabled, competitor_alerts_enabled, team_activity_alerts_enabled, email_alerts_enabled, lead_alerts_enabled, marketing_alerts_enabled, growth_alerts_enabled, opportunity_radar_enabled, wordpress_alerts_enabled, shopify_alerts_enabled, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10::boolean, TRUE), COALESCE($11::boolean, TRUE), NOW())
+       ON CONFLICT (owner_id) DO UPDATE SET metrics_alerts_enabled = $2, competitor_alerts_enabled = $3, team_activity_alerts_enabled = $4, email_alerts_enabled = $5, lead_alerts_enabled = $6, marketing_alerts_enabled = $7, growth_alerts_enabled = $8, opportunity_radar_enabled = $9, wordpress_alerts_enabled = COALESCE($10::boolean, monitoring_preferences.wordpress_alerts_enabled, TRUE), shopify_alerts_enabled = COALESCE($11::boolean, monitoring_preferences.shopify_alerts_enabled, TRUE), updated_at = NOW()`,
+      [account.id, metricsAlertsEnabled !== false, competitorAlertsEnabled !== false, teamActivityAlertsEnabled !== false, emailAlertsEnabled !== false, leadAlertsEnabled !== false, marketingAlertsEnabled !== false, growthAlertsEnabled !== false, opportunityRadarEnabled !== false, typeof wordpressAlertsEnabled === 'boolean' ? wordpressAlertsEnabled : null, typeof shopifyAlertsEnabled === 'boolean' ? shopifyAlertsEnabled : null]
     );
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Failed to save preferences' }); }
