@@ -295,8 +295,8 @@ CREATE INDEX IF NOT EXISTS idx_research_sources_session ON research_sources(rese
 -- ── DEFAULT CMS CONTENT ────────────────────────────────────────────────────
 INSERT INTO cms_content (section, key, value, type) VALUES
 -- Hero section
-('hero', 'headline', 'Your AI Consultant and Board of Directors. Available 24/7.', 'text'),
-('hero', 'subheadline', 'Arreyon Consult convenes 29 legendary business minds around your challenge. Get boardroom-grade strategy, analysis, and a report you can act on.', 'text'),
+('hero', 'headline', 'Your AI Business Intelligence Team. Available 24/7.', 'text'),
+('hero', 'subheadline', 'Research your market, analyze your business, challenge your strategy, and turn complex decisions into clear actions, with 29 AI business minds available 24/7.', 'text'),
 ('hero', 'cta_primary', 'Start Free', 'text'),
 ('hero', 'cta_secondary', 'See How It Works', 'text'),
 ('hero', 'social_proof', 'Trusted by founders across Africa and beyond', 'text'),
@@ -433,6 +433,15 @@ Full consultation history', 'textarea'),
 ('footer', 'copyright', '2026 Arreyon Consult by G-DESIGNS LTD. All rights reserved.', 'text')
 
 ON CONFLICT (section, key) DO NOTHING;
+
+-- ── Hero wording: the website tool / Auto SEO is now part of the message ────────────────────────────────────────────────────────────
+-- A site that still has the ORIGINAL hero text gets the new text in English and French together. Anything an admin edited in the CMS is left exactly as it is.
+UPDATE cms_content SET value = 'Your AI Business Intelligence Team. Available 24/7.', value_fr = 'Votre équipe IA d''intelligence d''affaires. Disponible 24h/24, 7j/7.', updated_at = NOW() WHERE section = 'hero' AND key = 'headline' AND value = 'Your AI Consultant and Board of Directors. Available 24/7.';
+UPDATE cms_content SET value = 'Research your market, analyze your business, challenge your strategy, and turn complex decisions into clear actions, with 29 AI business minds available 24/7.', value_fr = 'Étudiez votre marché, analysez votre entreprise, mettez votre stratégie à l''épreuve et transformez des décisions complexes en actions claires, avec 29 esprits d''affaires IA disponibles 24h/24, 7j/7.', updated_at = NOW() WHERE section = 'hero' AND key = 'subheadline' AND value = 'Arreyon Consult convenes 29 legendary business minds around your challenge. Get boardroom-grade strategy, analysis, and a report you can act on.';
+-- A brand-new database has the new English text and no French yet: give it the matching French now, instead of waiting for the automatic translation.
+UPDATE cms_content SET value_fr = 'Votre équipe IA d''intelligence d''affaires. Disponible 24h/24, 7j/7.' WHERE section = 'hero' AND key = 'headline' AND value = 'Your AI Business Intelligence Team. Available 24/7.' AND value_fr IS NULL;
+UPDATE cms_content SET value_fr = 'Étudiez votre marché, analysez votre entreprise, mettez votre stratégie à l''épreuve et transformez des décisions complexes en actions claires, avec 29 esprits d''affaires IA disponibles 24h/24, 7j/7.' WHERE section = 'hero' AND key = 'subheadline' AND value = 'Research your market, analyze your business, challenge your strategy, and turn complex decisions into clear actions, with 29 AI business minds available 24/7.' AND value_fr IS NULL;
+
 
 -- One-time refresh: the "features" section originally described the platform
 -- before the Business Intelligence upgrade (Website Analyzer, Research,
