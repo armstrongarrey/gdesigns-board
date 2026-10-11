@@ -2119,3 +2119,20 @@ CREATE TABLE IF NOT EXISTS reviews (
 CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews (status, rating DESC, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reviews_user ON reviews (user_id, created_at DESC);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS review_prompted_at TIMESTAMPTZ;
+
+-- ── Contact form messages (homepage) ─────────────────────────────────────────
+-- Every message is saved FIRST, then emailed, so it can never be lost if the email fails. 'emailed_at' says whether the notification really went out.
+CREATE TABLE IF NOT EXISTS contact_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name VARCHAR(120) NOT NULL,
+  email VARCHAR(254) NOT NULL,
+  phone VARCHAR(40),
+  message TEXT NOT NULL,
+  language VARCHAR(5) NOT NULL DEFAULT 'en',
+  status VARCHAR(10) NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'handled')),
+  handled_at TIMESTAMPTZ,
+  emailed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_contact_messages_status ON contact_messages (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_contact_messages_created ON contact_messages (created_at DESC);
