@@ -2687,6 +2687,23 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 </div>
 
 <!-- PAYMENT MODAL -->
+<div id="reviewOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:10000;align-items:center;justify-content:center;padding:16px" role="dialog" aria-modal="true" aria-labelledby="reviewTitle" onclick="if(event.target===this)skipReview()">
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;max-width:460px;width:100%;padding:22px;max-height:92vh;overflow:auto">
+    <div id="reviewTitle" style="font-size:16px;font-weight:700;color:var(--text)" data-i18n="rev.title">How is Arreyon Consult working for you?</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px;line-height:1.5" data-i18n="rev.intro">It takes a minute and helps us improve.</div>
+    <div id="reviewStars" role="radiogroup" aria-label="Your rating" style="display:flex;gap:4px;margin:14px 0 4px"></div>
+    <label for="reviewComment" style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-top:12px" data-i18n="rev.comment_label">Tell us about your experience (it may appear on our website once approved)</label>
+    <textarea id="reviewComment" class="form-input" rows="3" maxlength="600" style="margin-top:5px;resize:vertical" data-i18n-placeholder="rev.comment_placeholder" placeholder="What do you like most?"></textarea>
+    <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--text2);margin-top:8px;line-height:1.5;cursor:pointer"><input type="checkbox" id="reviewShowName" style="margin-top:3px"><span data-i18n="rev.show_name">You may show my first name and business with this review</span></label>
+    <label for="reviewImprove" style="display:block;font-size:12px;font-weight:600;color:var(--text2);margin-top:12px" data-i18n="rev.improve_label">What could we improve? (private: only our team sees this)</label>
+    <textarea id="reviewImprove" class="form-input" rows="3" maxlength="1000" style="margin-top:5px;resize:vertical" data-i18n-placeholder="rev.improve_placeholder" placeholder="Anything missing, confusing or not working well?"></textarea>
+    <div id="reviewMsg" role="status" style="font-size:12px;margin-top:10px;min-height:16px;line-height:1.5"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:12px">
+      <button class="btn-ghost" id="reviewSkipBtn" onclick="skipReview()" data-i18n="rev.skip">Skip and sign out</button>
+      <button class="btn-primary" id="reviewSubmitBtn" onclick="submitReview()" data-i18n="rev.submit">Submit and sign out</button>
+    </div>
+  </div>
+</div>
 <div id="paymentModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:200;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--bg2);border:1px solid var(--border-light);border-radius:16px;width:100%;max-width:500px;max-height:90vh;overflow-y:auto;padding:32px;position:relative">
     <button onclick="closePayment()" style="position:absolute;top:14px;right:14px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:22px;line-height:1">×</button>
@@ -4362,7 +4379,11 @@ async function doLogoutEverywhere() {
   window.location.href = '/';
 }
 
-async function doLogout() {
+// Signing out. A customer is asked for a review at most once every 30 days (the server decides). The question NEVER blocks leaving: it has Skip, Escape and
+// a click outside, a slow or failing server simply means no question, and a failed send leaves Skip available.
+let REVIEW_PROMPT_TIMEOUT_MS = 3000, REVIEW_THANKS_MS = 900;
+const reviewState = { open: false, rating: 0, busy: false };
+async function finishLogout() {
   try {
     await fetch('/api/auth/logout', { method:'POST' });
   } catch (e) {
@@ -4371,6 +4392,54 @@ async function doLogout() {
     // a worse outcome than proceeding even if the server call failed.
   }
   window.location.href = '/';
+}
+async function doLogout() {
+  if (reviewState.open) return;
+  let ask = false;
+  try {
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null, timer = ctl ? setTimeout(() => ctl.abort(), REVIEW_PROMPT_TIMEOUT_MS) : null;
+    const res = await fetch('/api/reviews/prompt', { method: 'POST', signal: ctl ? ctl.signal : undefined });
+    if (timer) clearTimeout(timer);
+    if (res.ok) ask = !!((await res.json()) || {}).ask;
+  } catch (e) { /* no question this time */ }
+  if (ask) openReviewPrompt(); else await finishLogout();
+}
+function renderReviewStars() {
+  const box = document.getElementById('reviewStars'); box.innerHTML = ''; box.setAttribute('aria-label', t('rev.rating_label'));
+  for (let n = 1; n <= 5; n++) {
+    const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'radio'); b.dataset.star = String(n);
+    b.setAttribute('aria-checked', String(reviewState.rating === n)); b.setAttribute('aria-label', tf('rev.star_label', { n }));
+    b.textContent = '\u2605'; b.style.cssText = `background:none;border:none;cursor:pointer;font-size:30px;line-height:1;padding:0 2px;color:${n <= reviewState.rating ? 'var(--gold)' : 'var(--border-light)'}`;
+    b.onclick = () => { reviewState.rating = n; renderReviewStars(); };
+    box.appendChild(b);
+  }
+}
+function reviewKeydown(e) { if (e.key === 'Escape') skipReview(); }
+function openReviewPrompt() {
+  reviewState.open = true; reviewState.rating = 0; reviewState.busy = false;
+  ['reviewComment', 'reviewImprove'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('reviewShowName').checked = false; document.getElementById('reviewMsg').textContent = '';
+  ['reviewSkipBtn', 'reviewSubmitBtn'].forEach(id => { document.getElementById(id).disabled = false; });
+  renderReviewStars(); document.getElementById('reviewOverlay').style.display = 'flex'; document.addEventListener('keydown', reviewKeydown);
+  const first = document.querySelector('#reviewStars button'); if (first) first.focus();
+}
+function closeReviewPrompt() { reviewState.open = false; document.getElementById('reviewOverlay').style.display = 'none'; document.removeEventListener('keydown', reviewKeydown); }
+function skipReview() { if (reviewState.busy) return; closeReviewPrompt(); finishLogout(); }
+async function submitReview() {
+  if (reviewState.busy) return;
+  const msg = document.getElementById('reviewMsg'), say = (text, color) => { msg.textContent = text; msg.style.color = color || 'var(--muted)'; };
+  if (!reviewState.rating) { say(t('rev.rating_required'), 'var(--red)'); return; }
+  reviewState.busy = true; document.getElementById('reviewSubmitBtn').disabled = true; say(t('rev.sending'));
+  try {
+    const res = await fetch('/api/reviews', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rating: reviewState.rating, comment: document.getElementById('reviewComment').value, improvement: document.getElementById('reviewImprove').value, showName: document.getElementById('reviewShowName').checked }) });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok || res.status === 429) {   // 429: today's review is already in: thank them and carry on
+      say(res.ok ? t('rev.thanks') : (data.error || t('rev.thanks')), 'var(--green)'); document.getElementById('reviewSkipBtn').disabled = true;
+      setTimeout(() => { reviewState.busy = false; closeReviewPrompt(); finishLogout(); }, REVIEW_THANKS_MS); return;
+    }
+    say(data.error || t('board.connection_error'), 'var(--red)');
+  } catch (e) { say(t('board.connection_error'), 'var(--red)'); }
+  reviewState.busy = false; document.getElementById('reviewSubmitBtn').disabled = false;   // a failure never traps them: Skip still signs out
 }
 
 // ── WEBSITE ANALYZER ─────────────────────────────────────────────────────────
