@@ -174,6 +174,9 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     <button class="nav-item" onclick="showSection('reviews')" id="nav-reviews">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><span data-i18n="admin.nav_reviews">Reviews</span><span id="reviewsBadge" style="display:none;margin-left:auto;background:var(--purple);color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700"></span>
     </button>
+    <button class="nav-item" onclick="showSection('contacts')" id="nav-contacts">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg><span data-i18n="admin.nav_contacts">Contacts</span><span id="contactsBadge" style="display:none;margin-left:auto;background:var(--purple);color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700"></span>
+    </button>
     <button class="nav-item" onclick="showSection('coupons')" id="nav-coupons">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span data-i18n="admin.nav_coupons">Coupon Codes</span>
     </button>
@@ -362,6 +365,27 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
 
 
     <!-- ANNOUNCEMENTS -->
+    <div class="section-view" id="section-contacts">
+      <div class="msg-box" id="contactsMsg"></div>
+      <div class="form-card">
+        <div class="form-card-title" data-i18n="contacts_admin.title">Contact messages</div>
+        <div id="contactsIntro" style="font-size:12px;color:var(--muted);line-height:1.6"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px">
+          <span id="contactsFilters" style="display:flex;gap:8px;flex-wrap:wrap"></span>
+          <input class="form-input" id="contactsSearch" style="max-width:260px;flex:1;min-width:160px" data-i18n-placeholder="contacts_admin.search_ph" placeholder="Search name, email, phone or message" onkeydown="if(event.key==='Enter')searchContacts()">
+          <button class="btn-ghost" style="font-size:12px;padding:6px 14px" onclick="searchContacts()" data-i18n="contacts_admin.search">Search</button>
+          <a class="btn-primary" id="contactsExport" href="/api/admin/contacts/export?status=all" style="font-size:12px;padding:7px 16px;text-decoration:none;margin-left:auto" data-i18n="contacts_admin.download">Download Excel</a>
+        </div>
+      </div>
+      <div class="table-card" style="margin-top:14px">
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th data-i18n="contacts_admin.col_date">Date</th><th data-i18n="contacts_admin.col_name">Name</th><th data-i18n="contacts_admin.col_contact">Email / Phone</th><th data-i18n="contacts_admin.col_message">Message</th><th data-i18n="contacts_admin.col_status">Status</th><th data-i18n="contacts_admin.col_email">Notification</th><th data-i18n="contacts_admin.col_actions">Actions</th></tr></thead>
+          <tbody id="contactsList"></tbody>
+        </table></div>
+        <div id="contactsPager" style="display:flex;gap:10px;align-items:center;justify-content:center;padding:12px;font-size:12px;color:var(--muted)"></div>
+      </div>
+    </div>
+
     <div class="section-view" id="section-reviews">
       <div class="msg-box" id="reviewsMsg"></div>
       <div class="form-card">
@@ -524,7 +548,7 @@ function showAdminDashboard() {
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appSidebar').style.display = 'flex';
   document.getElementById('appMain').style.display = 'flex';
-  loadOverview(); loadPayments(); loadUsers(); loadCMS(); loadAnnouncements(); loadCoupons(); refreshSecurityStatus(); refreshReviewBadge();
+  loadOverview(); loadPayments(); loadUsers(); loadCMS(); loadAnnouncements(); loadCoupons(); refreshSecurityStatus(); refreshReviewBadge(); refreshContactsBadge();
 }
 
 async function adminLogin() {
@@ -694,14 +718,75 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const nav = document.getElementById('nav-' + name);
   if (nav) nav.classList.add('active');
-  const titleKeys = {reviews:'admin.nav_reviews',pricing:'admin.nav_pricing',overview:'admin.nav_overview',payments:'admin.nav_payments',users:'admin.nav_users','team-members':'admin.nav_team_members','partner-network':'admin.nav_partner_network',usage:'admin.nav_usage',cms:'admin.nav_cms',announcements:'admin.nav_announcements',coupons:'admin.nav_coupons',security:'admin.nav_security'};
+  const titleKeys = {contacts:'admin.nav_contacts',reviews:'admin.nav_reviews',pricing:'admin.nav_pricing',overview:'admin.nav_overview',payments:'admin.nav_payments',users:'admin.nav_users','team-members':'admin.nav_team_members','partner-network':'admin.nav_partner_network',usage:'admin.nav_usage',cms:'admin.nav_cms',announcements:'admin.nav_announcements',coupons:'admin.nav_coupons',security:'admin.nav_security'};
   document.getElementById('topbarTitle').textContent = titleKeys[name] ? t(titleKeys[name]) : name;
   if (name === 'usage') loadUsageStats();
   if (name === 'reviews') loadAdminReviews();
+  if (name === 'contacts') loadAdminContacts();
   if (name === 'security') refreshSecurityStatus();
   if (name === 'pricing') loadPlanPricingAdmin();
   if (name === 'team-members') loadAdminTeamMembers();
   if (name === 'partner-network') { loadPartnerNetworkOverview(); loadPartnerNetworkPlacements(); }
+}
+
+// ── CONTACT MESSAGES ─────────────────────────────────────────────────────────
+// Everything a visitor wrote is shown as plain text (esc). The Excel button is an ordinary link: the browser sends the admin sign-in itself.
+const contactsAdmin = { status: 'all', q: '', page: 1, data: null };
+const contactDate = v => { const d = v ? new Date(v) : null; return d && !isNaN(d) ? d.toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''; };
+function setContactsBadge(n) { const b = document.getElementById('contactsBadge'); if (!b) return; b.textContent = String(n || 0); b.style.display = n ? 'inline-block' : 'none'; }
+async function refreshContactsBadge() {
+  try { const res = await fetch('/api/admin/contacts?status=new&page=1'); if (!res.ok) return; const d = await res.json(); setContactsBadge((d.counts || {}).new || 0); } catch (e) {}
+}
+function contactRowHtml(c) {
+  const mail = /^[^\s<>"'@]+@[^\s<>"'@]+$/.test(c.email || '') ? `<a href="mailto:${esc(c.email)}" style="color:var(--purple-light)">${esc(c.email)}</a>` : esc(c.email);
+  const note = c.emailedAt ? `<span style="color:var(--green);font-size:11px;font-weight:700">${esc(t('contacts_admin.email_sent'))}</span>` : `<span style="color:var(--gold);font-size:11px;font-weight:700">${esc(t('contacts_admin.email_not_sent'))}</span>`;
+  const btn = (fn, key, cls) => `<button class="${cls}" style="font-size:11px;padding:4px 10px" data-id="${esc(c.id)}" onclick="${fn}(this.dataset.id${fn === 'setContactStatus' ? `,'${c.status === 'handled' ? 'new' : 'handled'}'` : ''})">${esc(t(key))}</button>`;
+  return `<tr>
+    <td style="white-space:nowrap;font-size:12px">${esc(contactDate(c.createdAt))}</td>
+    <td style="font-size:12px;font-weight:600">${esc(c.name)}${c.language === 'fr' ? ' <span style="color:var(--muted);font-weight:400">(FR)</span>' : ''}</td>
+    <td style="font-size:12px"><div>${mail}</div><div style="color:var(--muted)">${esc(c.phone || '')}</div></td>
+    <td style="font-size:12px;max-width:340px;white-space:pre-wrap;word-break:break-word">${esc(c.message)}</td>
+    <td><span class="badge badge-${c.status === 'handled' ? 'success' : 'warning'}">${esc(t('contacts_admin.status_' + c.status))}</span>${c.handledAt ? `<div style="font-size:10.5px;color:var(--muted);margin-top:3px">${esc(contactDate(c.handledAt))}</div>` : ''}</td>
+    <td>${note}</td>
+    <td class="td-actions">${btn('setContactStatus', c.status === 'handled' ? 'contacts_admin.mark_new' : 'contacts_admin.mark_handled', 'btn-ghost')}${btn('deleteContact', 'contacts_admin.delete', 'btn-danger')}</td>
+  </tr>`;
+}
+function renderAdminContacts() {
+  const d = contactsAdmin.data; if (!d) return;
+  document.getElementById('contactsIntro').textContent = tf('contacts_admin.intro', { email: d.notifyTo || '' });
+  document.getElementById('contactsFilters').innerHTML = ['new', 'handled', 'all'].map(k => {
+    const n = k === 'all' ? d.counts.total : d.counts[k];
+    return `<button class="${d.status === k ? 'btn-primary' : 'btn-ghost'}" style="font-size:12px;padding:6px 14px" data-status="${k}" onclick="setContactsFilter(this.dataset.status)">${esc(t('contacts_admin.f_' + k))} (${n})</button>`;
+  }).join('');
+  document.getElementById('contactsList').innerHTML = d.contacts.length ? d.contacts.map(contactRowHtml).join('') : `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">${esc(t(d.q ? 'contacts_admin.no_results' : 'contacts_admin.empty'))}</td></tr>`;
+  document.getElementById('contactsPager').innerHTML = d.pages > 1 ? `<button class="btn-ghost" style="font-size:12px;padding:4px 12px" onclick="setContactsPage(${d.page - 1})"${d.page <= 1 ? ' disabled' : ''}>&larr;</button><span>${esc(tf('contacts_admin.page', { page: d.page, pages: d.pages }))}</span><button class="btn-ghost" style="font-size:12px;padding:4px 12px" onclick="setContactsPage(${d.page + 1})"${d.page >= d.pages ? ' disabled' : ''}>&rarr;</button>` : '';
+  document.getElementById('contactsExport').href = `/api/admin/contacts/export?status=${encodeURIComponent(d.status)}&q=${encodeURIComponent(d.q || '')}`;   // downloads exactly what is being looked at
+  setContactsBadge(d.counts.new);
+}
+async function loadAdminContacts() {
+  try {
+    const res = await fetch(`/api/admin/contacts?status=${encodeURIComponent(contactsAdmin.status)}&q=${encodeURIComponent(contactsAdmin.q)}&page=${contactsAdmin.page}`), data = await res.json().catch(() => ({}));
+    if (!res.ok) { showMsg('contactsMsg', data.error || t('contacts_admin.failed'), 'error'); return; }
+    contactsAdmin.data = data; contactsAdmin.status = data.status; contactsAdmin.page = data.page; renderAdminContacts();
+  } catch (e) { showMsg('contactsMsg', t('contacts_admin.failed'), 'error'); }
+}
+function setContactsFilter(status) { contactsAdmin.status = status; contactsAdmin.page = 1; loadAdminContacts(); }
+function searchContacts() { contactsAdmin.q = document.getElementById('contactsSearch').value.trim(); contactsAdmin.page = 1; loadAdminContacts(); }
+function setContactsPage(page) { contactsAdmin.page = Math.max(1, page); loadAdminContacts(); }
+async function setContactStatus(id, status) {
+  try {
+    const res = await fetch(`/api/admin/contacts/${encodeURIComponent(id)}/${status === 'handled' ? 'handled' : 'new'}`, { method: 'POST' }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { showMsg('contactsMsg', data.error || t('contacts_admin.failed'), 'error'); return; }
+    showMsg('contactsMsg', t('contacts_admin.done'), 'success'); loadAdminContacts();
+  } catch (e) { showMsg('contactsMsg', t('contacts_admin.failed'), 'error'); }
+}
+async function deleteContact(id) {
+  if (!confirm(t('contacts_admin.delete_confirm'))) return;
+  try {
+    const res = await fetch(`/api/admin/contacts/${encodeURIComponent(id)}`, { method: 'DELETE' }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { showMsg('contactsMsg', data.error || t('contacts_admin.failed'), 'error'); return; }
+    showMsg('contactsMsg', t('contacts_admin.done'), 'success'); loadAdminContacts();
+  } catch (e) { showMsg('contactsMsg', t('contacts_admin.failed'), 'error'); }
 }
 
 // ── CUSTOMER REVIEWS ─────────────────────────────────────────────────────────
