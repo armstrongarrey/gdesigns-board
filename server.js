@@ -508,6 +508,9 @@ const WEBSITE_ROUTES = [
   ['POST', routeRx(BIZ_PATH + '/website/topic-suggestions'), 'generate_post'],
   ['*',    routeRx(BIZ_PATH + '/website/generated-posts(/[^/]+(/(publish|log-entries))?)?'), 'posts_list'],
   ['GET',  routeRx(BIZ_PATH + '/shopify/generated-posts'), 'posts_list'],
+  ['PUT',  routeRx(BIZ_PATH + '/shopify/generated-posts/[^/]+'), 'posts_list'],
+  ['POST', routeRx(BIZ_PATH + '/shopify/generated-posts/[^/]+/publish'), 'posts_list'],
+  ['DELETE', routeRx(BIZ_PATH + '/shopify/generated-posts/[^/]+'), 'posts_list'],
   ['GET',  routeRx(BIZ_PATH + '/website/(categories|tags)'), 'taxonomy_read'],
   ['POST', routeRx(BIZ_PATH + '/website/(categories|tags)'), 'taxonomy_create'],
   ['GET',  routeRx(BIZ_PATH + '/website/media'), 'media'],
@@ -11123,6 +11126,91 @@ app.get('/api/business/:id/shopify/generated-posts', authRequired, async (req, r
   }
 });
 
+// ── Shopify generated posts: edit, publish, and delete a draft, inside the tool ──────────────────────────────────────────────────────
+// The same three things WordPress has. Every change is made on the REAL article in Shopify first, and only then in our copy, so the two never disagree.
+// Rules: a title and a body are required; tags are a list (a comma splits one into two); an empty meta title or description means "leave as it is"
+// (Shopify refuses empty values, so clearing one is done in Shopify admin); only a DRAFT can be deleted, and Shopify is asked first whether it is still a draft.
+const SHOPIFY_POST_LIMITS = { title: 255, metaTitle: 255, metaDescription: 320, tag: 255, tags: 25, body: 200000 };
+function cleanShopifyPostFields(body, post) {
+  const b = body && typeof body === 'object' ? body : {}, L = SHOPIFY_POST_LIMITS;
+  const title = b.title === undefined ? post.title : cleanContactText(b.title, L.title);
+  if (!title) return { error: 'Please enter a title.' };
+  let bodyHtml = post.body_html;
+  if (b.bodyHtml !== undefined) { bodyHtml = String(b.bodyHtml == null ? '' : b.bodyHtml).replace(/\u0000/g, '').slice(0, L.body); if (!bodyHtml.trim()) return { error: 'The post body cannot be empty.' }; }
+  const keep = (given, current, max) => { if (given === undefined) return current || null; const v = cleanContactText(given, max); return v || current || null; };   // empty = leave as it is
+  const metaTitle = keep(b.metaTitle, post.meta_title, L.metaTitle), metaDescription = keep(b.metaDescription, post.meta_description, L.metaDescription);
+  let tags = (post.tags || '').split(',').map(x => x.trim()).filter(Boolean);
+  if (b.tags !== undefined) {
+    if (!Array.isArray(b.tags)) return { error: 'Tags must be a list.' };
+    const seen = new Set(); tags = [];
+    for (const raw of b.tags) for (const part of String(raw == null ? '' : raw).split(',')) { const tag = cleanContactText(part, L.tag); if (tag && !seen.has(tag.toLowerCase())) { seen.add(tag.toLowerCase()); tags.push(tag); } }
+    if (tags.length > L.tags) return { error: `A post can have at most ${L.tags} tags.` };
+  }
+  return { fields: { title, bodyHtml, metaTitle, metaDescription, tags } };
+}
+const shopifyArticlePath = (connection, post) => `/blogs/${connection.blog_id}/articles/${post.shopify_article_id}.json`;
+// What Shopify said, in words the person can act on. null = it worked.
+function shopifyPostFailure(res, doing) {
+  if (res.status === 404) return { status: 404, body: { error: 'This article no longer exists in Shopify. You can remove it from this list.', code: 'article_missing' } };
+  if (res.status === 401 || res.status === 403) return { status: 400, body: { error: 'Shopify no longer accepts the connection for this store. Please reconnect it first.', code: 'auth_lost' } };
+  return res.ok ? null : { status: 400, body: { error: `Shopify rejected ${doing} (status ${res.status}).` } };
+}
+async function shopifyEditPost(connection, accessToken, post, body, actorId) {
+  const parsed = cleanShopifyPostFields(body, post); if (parsed.error) return { status: 400, body: { error: parsed.error } };
+  const f = parsed.fields;
+  const res = await shopifyApiRequest(connection.shop_domain, accessToken, shopifyArticlePath(connection, post), { method: 'PUT', timeoutMs: 20000, body: { article: { id: post.shopify_article_id, title: f.title, body_html: f.bodyHtml, tags: f.tags.join(', '),
+    metafields: [...(f.metaTitle ? [{ namespace: 'global', key: 'title_tag', value: f.metaTitle, type: 'single_line_text_field' }] : []), ...(f.metaDescription ? [{ namespace: 'global', key: 'description_tag', value: f.metaDescription, type: 'single_line_text_field' }] : [])] } } });
+  const fail = shopifyPostFailure(res, 'saving these changes'); if (fail) return fail;
+  let article = null; try { article = (await res.json()).article || null; } catch (e) { /* the save worked; we just could not read the answer */ }
+  const status = article && typeof article.published === 'boolean' ? (article.published ? 'publish' : 'draft') : post.status;
+  await pool.query(`UPDATE shopify_generated_posts SET title = $1, body_html = $2, meta_title = $3, meta_description = $4, tags = $5, status = $6, handle = COALESCE($7, handle), updated_at = NOW() WHERE id = $8`,
+    [f.title, f.bodyHtml, f.metaTitle, f.metaDescription, f.tags.join(', '), status, article && article.handle ? article.handle : null, post.id]);
+  await logManual(connection.business_id, 'shopify', 'content_edited', 'success', { title: f.title, postId: post.id });
+  return { status: 200, body: { success: true, status } };
+}
+async function shopifyPublishPost(connection, accessToken, post) {
+  if (post.status === 'publish') return { status: 200, body: { success: true, already: true } };
+  const res = await shopifyApiRequest(connection.shop_domain, accessToken, shopifyArticlePath(connection, post), { method: 'PUT', timeoutMs: 15000, body: { article: { id: post.shopify_article_id, published: true } } });
+  const fail = shopifyPostFailure(res, 'publishing this post'); if (fail) return fail;
+  await pool.query(`UPDATE shopify_generated_posts SET status = 'publish', updated_at = NOW() WHERE id = $1`, [post.id]);
+  await logManual(connection.business_id, 'shopify', 'content_published', 'success', { title: post.title, postId: post.id, url: post.article_url || null });
+  return { status: 200, body: { success: true } };
+}
+async function shopifyDeleteDraft(connection, accessToken, post) {
+  // Ask Shopify first, whatever our copy says. If the article is already gone, our entry is simply removed. If it exists and is LIVE (it was published, here or in Shopify
+  // admin), it is never deleted from here: deleting a live post is done in Shopify admin.
+  const look = await shopifyApiRequest(connection.shop_domain, accessToken, `${shopifyArticlePath(connection, post).replace('.json', '')}.json?fields=id,published_at`, { timeoutMs: 15000 });
+  if (look.status === 404) { await pool.query('DELETE FROM shopify_generated_posts WHERE id = $1', [post.id]); return { status: 200, body: { success: true, alreadyGone: true } }; }
+  const fail = shopifyPostFailure(look, 'the check before deleting'); if (fail) return { status: 400, body: { error: fail.body.error.replace('the check before deleting', 'checking this post before deleting it'), code: fail.body.code } };
+  let live = null; try { live = (await look.json()).article || null; } catch (e) { /* unreadable: treated as unknown below */ }
+  if (!live) return { status: 400, body: { error: 'Could not check this post in Shopify before deleting it, so nothing was deleted. Please try again.' } };
+  if (live.published_at) { await pool.query(`UPDATE shopify_generated_posts SET status = 'publish', updated_at = NOW() WHERE id = $1`, [post.id]); return { status: 400, body: { error: post.status === 'draft' ? 'This post has been published in Shopify since it was created, so it is live. It was not deleted. If you really want it removed, delete it in Shopify admin.' : 'This post is live. Only a draft can be deleted here. A published post should be removed from Shopify admin.', code: 'now_live' } }; }
+  const del = await shopifyApiRequest(connection.shop_domain, accessToken, shopifyArticlePath(connection, post), { method: 'DELETE', timeoutMs: 15000 });
+  if (!del.ok && del.status !== 404) { const f = shopifyPostFailure(del, 'deleting this draft'); return f || { status: 400, body: { error: `Shopify rejected deleting this draft (status ${del.status}).` } }; }
+  await pool.query('DELETE FROM shopify_generated_posts WHERE id = $1', [post.id]);
+  await logManual(connection.business_id, 'shopify', 'content_deleted', 'success', { title: post.title });
+  return { status: 200, body: { success: true } };
+}
+// The route preamble: the caller's business, a connected store, and a post that belongs to that store.
+async function shopifyPostRouteContext(req) {
+  if (!REVIEW_ID_RX.test(String(req.params.postId || ''))) return { status: 404, error: 'Post not found.' };
+  const account = await resolveAccount(req.userId);
+  if (!(await pool.query('SELECT 1 FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id])).rows.length) return { status: 404, error: 'Business not found' };
+  const connection = (await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id])).rows[0];
+  if (!connection) return { status: 404, error: 'No Shopify store connected' };
+  if (connection.connection_status !== 'connected') return { status: 400, error: 'This Shopify store is disconnected. Please reconnect it first.' };
+  const post = (await pool.query('SELECT * FROM shopify_generated_posts WHERE id = $1 AND shopify_connection_id = $2', [req.params.postId, connection.id])).rows[0];
+  if (!post) return { status: 404, error: 'Post not found.' };
+  return { connection, post, accessToken: decryptSecret(connection.access_token_encrypted) };
+}
+const SHOPIFY_POST_ACTIONS = { edit: (c, t, p, req) => shopifyEditPost(c, t, p, req.body, req.userId), publish: (c, t, p) => shopifyPublishPost(c, t, p), delete: (c, t, p) => shopifyDeleteDraft(c, t, p) };
+for (const [method, path, action] of [['put', '', 'edit'], ['post', '/publish', 'publish'], ['delete', '', 'delete']]) app[method](`/api/business/:id/shopify/generated-posts/:postId${path}`, authRequired, async (req, res) => {
+  try {
+    const ctx = await shopifyPostRouteContext(req); if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+    const out = await SHOPIFY_POST_ACTIONS[action](ctx.connection, ctx.accessToken, ctx.post, req); res.status(out.status).json(out.body);
+  } catch (e) { console.error(`Shopify ${action} post error:`, e.message); res.status(500).json({ error: action === 'edit' ? 'Could not save this post.' : action === 'publish' ? 'Could not publish this post.' : 'Could not delete this draft.' }); }
+});
+
 app.post('/api/business/:id/shopify/generate-post', authRequired, async (req, res) => {
   let owned = false;
   try {
@@ -20594,7 +20682,7 @@ const errDetail = e => ({ error: safeErrorMessage(e && e.message ? e : { message
 const ACTIVITY_FEATURES = {
   intelligence: ['intelligence_refreshed'], audit: ['audit_completed'], ai_visibility: ['ai_visibility_checked'], keyword_rankings: ['keyword_snapshot'],
   sitemap: ['sitemap_submitted', 'sitemap_missing'], competitor: ['competitor_analysis', 'competitor_discovery'], technical_seo: ['technical_check'], broken_links: ['broken_links_checked'],
-  schema: ['schema_installed', 'schema_removed'], content: ['content_generated', 'content_failed', 'content_missed'],
+  schema: ['schema_installed', 'schema_removed'], content: ['content_generated', 'content_failed', 'content_missed', 'content_edited', 'content_published', 'content_deleted'],
   improvements: ['proposals_generated', 'change_applied', 'change_verified', 'change_rejected', 'change_undone', 'featured_image_previewed', 'featured_images_checked'],
 };
 const isActivityFeature = f => typeof f === 'string' && Object.prototype.hasOwnProperty.call(ACTIVITY_FEATURES, f);
