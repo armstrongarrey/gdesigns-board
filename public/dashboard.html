@@ -881,6 +881,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;cursor:pointer">
           <input type="checkbox" id="prefGrowth" onchange="saveAlertPreferences()"> <span data-i18n="alerts.pref_growth">Growth (behind schedule, no recent check-in)</span>
         </label>
+        <label style="display:flex;align-items:center;gap:10px;margin-bottom:12px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="prefWebsite" onchange="saveAlertPreferences()"> <span data-i18n="alerts.pref_website">Website problems (connection lost, hidden from Google, not set up for phones)</span>
+        </label>
         <label style="display:flex;align-items:center;gap:10px;margin-bottom:16px;font-size:13px;cursor:pointer">
           <input type="checkbox" id="prefOpportunity" onchange="saveAlertPreferences()"> <span data-i18n="alerts.pref_opportunity">📡 Opportunity Radar (positive signals worth acting on)</span>
         </label>
@@ -4210,6 +4213,7 @@ async function loadAlertPreferences() {
     document.getElementById('prefMarketing').checked = p.marketing_alerts_enabled !== false;
     document.getElementById('prefGrowth').checked = p.growth_alerts_enabled !== false;
     document.getElementById('prefOpportunity').checked = p.opportunity_radar_enabled !== false;
+    document.getElementById('prefWebsite').checked = p.website_alerts_enabled !== false;
     document.getElementById('prefEmail').checked = p.email_alerts_enabled !== false;
     alertPrefsLoaded = true;
   } catch (e) {
@@ -4229,6 +4233,7 @@ async function saveAlertPreferences() {
         marketingAlertsEnabled: document.getElementById('prefMarketing').checked,
         growthAlertsEnabled: document.getElementById('prefGrowth').checked,
         opportunityRadarEnabled: document.getElementById('prefOpportunity').checked,
+        websiteAlertsEnabled: document.getElementById('prefWebsite').checked,
         emailAlertsEnabled: document.getElementById('prefEmail').checked
       })
     });
