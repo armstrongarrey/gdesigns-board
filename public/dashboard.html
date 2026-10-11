@@ -2554,13 +2554,33 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
               <div class="section-title" style="margin-bottom:0;font-size:14px" data-i18n="web.audit_run_title">Run Audit & Optimize</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn-ghost" onclick="clearShopifyAuditHistory()" data-i18n="web.clear_audit_history">Clear History</button>
                 <button class="btn-secondary" onclick="generateShopifyTagProposals()" id="shopifyTagProposalsBtn" data-i18n="web.suggest_tags">Suggest Tags</button>
                 <button class="btn-secondary" onclick="generateShopifyDuplicateTitleProposals()" id="shopifyDuplicateTitleBtn" data-i18n="web.fix_duplicate_titles">Fix Duplicate Titles</button>
                 <button class="btn-primary" onclick="runShopifyAudit()" id="shopifyRunAuditBtn" data-i18n="web.run_audit_button">Run Audit & Optimize</button>
               </div>
             </div>
             <div id="shopifyAuditRunContent"></div>
+            <div id="shopifyAuditHistoryContent" style="margin-top:12px"></div>
           </div>
+        <div class="wt-card" id="shopifyActivityLogSection">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+            <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.activity_log_title">Activity Log</div>
+            <button class="btn-secondary" onclick="loadShopifyActivityLog()" data-i18n="web.refresh">Refresh</button>
+          </div>
+          <div id="shopifyActivityLogTabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px"></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer">
+              <input type="checkbox" id="shopifyActivityLogSelectAll" onchange="toggleSelectAllShopifyActivityLog(this.checked)" style="width:auto">
+              <span data-i18n="web.select_all">Select all</span>
+            </label>
+            <div style="display:flex;gap:8px">
+              <button class="btn-ghost" onclick="clearSelectedShopifyActivityLog()" data-i18n="web.clear_selected">Clear Selected</button>
+              <button class="btn-ghost" onclick="clearShopifyActivityLogByFeature()" id="shopifyClearFeatureBtn" data-i18n="web.clear_this_view">Clear This View</button>
+            </div>
+          </div>
+          <div id="shopifyActivityLogContent"></div>
+        </div>
         <div class="wt-card" id="shopifyAiVisibilitySection">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
             <div class="section-title" style="margin-bottom:0;font-size:15px" data-i18n="web.ai_visibility_title">AI Visibility</div>
@@ -3007,7 +3027,7 @@ const WEBSITE_FEATURE_ELEMENTS = {
   ai_visibility: ['websiteAiVisibilitySection', 'shopifyAiVisibilitySection'], keyword_rankings: ['websiteKeywordRankingsSection', 'shopifyKeywordRankingsSection'],
   sitemap: ['websiteSitemapSection', 'shopifySitemapSection'], competitor: ['websiteCompetitorSection', 'shopifyCompetitorSection'],
   technical_seo: ['websiteTechnicalSeoSection', 'shopifyTechnicalSeoSection'], broken_links: ['websiteBrokenLinksSection', 'shopifyBrokenLinksSection'],
-  schema: ['websiteSchemaSection', 'shopifySchemaSection'], media: ['websiteMediaSection'], activity_log: ['websiteActivityLogSection'],
+  schema: ['websiteSchemaSection', 'shopifySchemaSection'], media: ['websiteMediaSection'], activity_log: ['websiteActivityLogSection', 'shopifyActivityLogSection'],
   proposed_changes: ['websiteActionsSection', 'shopifyActionsSection'],
   backlinks: ['platformTabBacklinks', 'platformTabPartnerNetwork', 'backlinksSection', 'partnerNetworkSection']
 };
@@ -8630,6 +8650,8 @@ async function loadShopifyStatus() {
     if (webHas('agent_activity')) loadAgentActivity('shopify');
     renderWebsiteIntelligenceContent(data.connection.website_intelligence, data.connection.website_intelligence_generated_at, 'shopifyIntelligenceContent');
     if (webHas('proposed_changes')) loadShopifyActions();
+    if (webHas('audit')) loadShopifyAuditRuns();
+    if (webHas('activity_log')) loadShopifyActivityLog();
     if (webHas('posts_list')) loadShopifyGeneratedPosts();
     if (webHas('ai_visibility')) loadAiVisibilityHistory('shopify');
     if (webHas('keyword_rankings')) loadKeywordRankings('shopify');
@@ -8773,6 +8795,7 @@ async function loadShopifyGeneratedPosts() {
       return;
     }
     renderShopifyGeneratedPosts(data.posts || []);
+    refreshShopifyLog();
   } catch (e) {
     contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
   }
@@ -9414,6 +9437,81 @@ async function runShopifyProposals(btnId, idleKey, busyKey, path) {
 function generateShopifyTagProposals() { return runShopifyProposals('shopifyTagProposalsBtn', 'web.suggest_tags', 'web.finding_tags', 'tag-proposals'); }
 function generateShopifyDuplicateTitleProposals() { return runShopifyProposals('shopifyDuplicateTitleBtn', 'web.fix_duplicate_titles', 'web.finding_duplicates', 'duplicate-title-proposals'); }
 
+// ── Shopify: audit history and activity log (the same two cards WordPress has) ───────────────────────────────────────────────────────
+// Only the LOG and the list of past runs are ever cleared here: proposals, changes, posts and saved results are never touched.
+async function loadShopifyAuditRuns() {
+  const contentEl = document.getElementById('shopifyAuditHistoryContent'); if (!contentEl) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/audit-runs`), data = await res.json().catch(() => ({}));
+    if (!res.ok) { contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080;padding:8px 0">${escapeHtml(data.error || t('board.connection_error'))}</div>`; return; }
+    renderShopifyAuditRuns(data.runs || []);
+  } catch (e) { contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080;padding:8px 0">${t('board.connection_error')}</div>`; }
+}
+async function clearShopifyAuditHistory() {
+  if (!confirm(t('web.confirm_clear_audit_history'))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/audit-runs`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all: true }) }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
+    showToast(t('web.entries_cleared').replace('{n}', data.clearedCount), 'success'); loadShopifyAuditRuns();
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+}
+let currentShopifyLogFeature = 'all', currentShopifyLogEntries = [];
+function refreshShopifyLog() { if (webHas('activity_log') && document.getElementById('shopifyActivityLogContent')) loadShopifyActivityLog(); }
+async function loadShopifyActivityLog() {
+  const contentEl = document.getElementById('shopifyActivityLogContent'); if (!contentEl) return;
+  contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${t('web.loading')}</div>`;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/activity-log?feature=${encodeURIComponent(currentShopifyLogFeature)}`), data = await res.json().catch(() => ({}));
+    if (!res.ok) { contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${escapeHtml(data.error || t('board.connection_error'))}</div>`; return; }
+    currentShopifyLogEntries = data.entries || []; renderShopifyActivityLogTabs(data.featureCounts || []); renderShopifyActivityLogList();
+  } catch (e) { contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`; }
+}
+function renderShopifyActivityLogTabs(featureCounts) {
+  const byFeature = {}; featureCounts.forEach(f => { byFeature[f.feature] = f.count; });
+  const total = featureCounts.reduce((sum, f) => sum + f.count, 0);
+  document.getElementById('shopifyActivityLogTabs').innerHTML = ACTIVITY_LOG_FEATURES.map(f => {
+    const count = f.key === 'all' ? total : (byFeature[f.key] || 0);
+    if (f.key !== 'all' && count === 0) return '';   // features with nothing in them do not clutter the tab bar
+    const active = currentShopifyLogFeature === f.key;
+    return `<button onclick="switchShopifyActivityLogFeature('${f.key}')" style="padding:6px 12px;border-radius:20px;font-size:12px;border:1px solid ${active ? 'var(--purple)' : 'var(--border)'};background:${active ? 'rgba(139,92,246,.15)' : 'transparent'};color:${active ? 'var(--purple-light)' : 'var(--text2)'};cursor:pointer">${t(f.labelKey)} (${count})</button>`;
+  }).join('');
+}
+function switchShopifyActivityLogFeature(feature) { currentShopifyLogFeature = feature; loadShopifyActivityLog(); }
+function renderShopifyActivityLogList() {
+  const contentEl = document.getElementById('shopifyActivityLogContent'); document.getElementById('shopifyActivityLogSelectAll').checked = false;
+  if (!currentShopifyLogEntries.length) { contentEl.innerHTML = `<div style="text-align:center;padding:20px;color:var(--muted);font-size:13px">${t('web.no_activity_yet')}</div>`; return; }
+  contentEl.innerHTML = currentShopifyLogEntries.map(entry => {
+    const full = new Date(entry.created_at).toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' });
+    return `
+    <div style="display:flex;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);margin-bottom:6px;align-items:flex-start">
+      <input type="checkbox" class="shopify-activity-log-checkbox" data-id="${escapeHtml(entry.id)}" style="width:auto;margin-top:3px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12.5px;color:var(--text)">${escapeHtml(entry.description)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px" title="${escapeHtml(full)}">${timeAgo(entry.created_at)} · ${escapeHtml(full)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+function toggleSelectAllShopifyActivityLog(checked) { document.querySelectorAll('.shopify-activity-log-checkbox').forEach(cb => { cb.checked = checked; }); }
+async function clearSelectedShopifyActivityLog() {
+  const ids = [...document.querySelectorAll('.shopify-activity-log-checkbox:checked')].map(cb => cb.dataset.id);
+  if (!ids.length) { showToast(t('web.select_entries_first'), 'error'); return; }
+  if (!confirm(t('web.confirm_clear_selected').replace('{n}', ids.length))) return;
+  await performShopifyActivityLogClear({ ids });
+}
+async function clearShopifyActivityLogByFeature() {
+  const label = currentShopifyLogFeature === 'all' ? t('web.feature_all') : t((ACTIVITY_LOG_FEATURES.find(f => f.key === currentShopifyLogFeature) || { labelKey: 'web.feature_all' }).labelKey);
+  if (!confirm(t('web.confirm_clear_view').replace('{view}', label))) return;
+  await performShopifyActivityLogClear(currentShopifyLogFeature === 'all' ? { all: true } : { feature: currentShopifyLogFeature });
+}
+async function performShopifyActivityLogClear(payload) {
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/activity-log`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
+    showToast(t('web.entries_cleared').replace('{n}', data.clearedCount), 'success'); loadShopifyActivityLog();
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+}
+
 // ── SHOPIFY AUDIT & PROPOSED CHANGES ─────────────────────────────────────
 async function runShopifyAudit() {
   const btn = document.getElementById('shopifyRunAuditBtn');
@@ -9433,7 +9531,7 @@ async function runShopifyAudit() {
     const autoNote = data.autoApplied && data.autoApplied.length ? ' ' + tf('web.shopify_audit_auto_applied', { count: data.autoApplied.length }) : '';
     contentEl.innerHTML = `<div style="font-size:12.5px;color:var(--text2)">${tf('web.shopify_audit_summary', { analyzed: data.analyzedCount, found: totalFound, new: newCount })}${escapeHtml(autoNote)}</div>`;
     showToast(tf('web.shopify_audit_toast', { new: newCount }), 'success');
-    loadShopifyActions();
+    loadShopifyActions(); loadShopifyAuditRuns();
   } catch (e) {
     contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:#ff8080;font-size:13px">${t('board.connection_error')}</div>`;
   } finally {
@@ -9449,6 +9547,7 @@ async function loadShopifyActions() {
     const data = await res.json();
     renderShopifyActions(data.actions || []);
     setOverview('shopify', { pending: (data.actions || []).filter(a => a.approval_status === 'pending').length });
+    refreshShopifyLog();
   } catch (e) {
     contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080">${t('board.connection_error')}</div>`;
   }
@@ -10368,6 +10467,8 @@ async function deleteGeneratedDraft(postId) {
 
 // ── RUN AUDIT & OPTIMIZE ─────────────────────────────────────────────────
 const AUDIT_CATEGORY_LABELS = {
+  metaTitle: 'web.action_type_title',
+  metaDescription: 'web.action_type_description',
   seoProposals: 'web.audit_category_seo',
   taxonomy: 'web.audit_category_taxonomy',
   duplicateTitles: 'web.audit_category_duplicate_titles',
@@ -11395,8 +11496,8 @@ async function loadWebsiteAuditRuns() {
   }
 }
 
-function renderAuditRunsList(runs) {
-  const contentEl = document.getElementById('websiteAuditRunContent');
+function renderAuditRunsInto(runs, o) {
+  const contentEl = document.getElementById(o.contentId);
   if (!runs.length) {
     contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_audit_runs')}</div>`;
     return;
@@ -11416,12 +11517,12 @@ function renderAuditRunsList(runs) {
     const byPage = findings.byPage || [];
     const pageRows = byPage.length ? renderCollapsibleItems(byPage, (page) => `
       <div style="background:var(--bg2);border-radius:8px;padding:10px 12px;margin-top:6px">
-        <div style="font-size:12px;font-weight:600;color:var(--text)"><a href="${escapeHtml(page.url)}" target="_blank" style="color:var(--text)">${escapeHtml(page.title)}</a></div>
+        <div style="font-size:12px;font-weight:600;color:var(--text)"><a href="${escapeHtml(safeHttpUrl(page.url) || '#')}" target="_blank" style="color:var(--text)">${escapeHtml(page.title)}</a></div>
         ${page.changes.map(c => `<div style="font-size:11.5px;color:var(--text2);margin-top:3px">${c.status === 'fixed' ? '✓' : '○'} ${escapeHtml(c.description)} <span style="font-size:9.5px;color:${c.status === 'fixed' ? '#22c55e' : '#f59e0b'};text-transform:uppercase">${t(c.status === 'fixed' ? 'web.status_fixed_label' : 'web.status_pending_label')}</span></div>`).join('')}
       </div>`, 5, `auditPages-${run.id}`) : '';
 
     const jumpToApprovals = run.pending_approval_count > 0
-      ? `<button class="btn-ghost" onclick="document.getElementById('websiteActionsSection')?.scrollIntoView({behavior:'smooth',block:'start'})" style="font-size:11px;padding:4px 10px;margin-top:8px" data-i18n="web.view_pending_approvals">View Pending Approvals</button>`
+      ? `<button class="btn-ghost" onclick="document.getElementById('${o.approvalsId}')?.scrollIntoView({behavior:'smooth',block:'start'})" style="font-size:11px;padding:4px 10px;margin-top:8px" data-i18n="web.view_pending_approvals">View Pending Approvals</button>`
       : '';
 
     return `
@@ -11435,8 +11536,10 @@ function renderAuditRunsList(runs) {
       ${jumpToApprovals}
       ${pageRows}
     </div>`;
-  }, 5, 'auditRuns');
+  }, 5, o.collapseKey);
 }
+function renderAuditRunsList(runs) { renderAuditRunsInto(runs, { contentId: 'websiteAuditRunContent', approvalsId: 'websiteActionsSection', collapseKey: 'auditRuns' }); }
+function renderShopifyAuditRuns(runs) { renderAuditRunsInto(runs, { contentId: 'shopifyAuditHistoryContent', approvalsId: 'shopifyActionsSection', collapseKey: 'shopifyAuditRuns' }); }
 
 // The "Suggest Categories & Tags" button in Proposed Changes: the AI proposes tag assignments, and you approve them.
 async function generateTaxonomyProposals() {
