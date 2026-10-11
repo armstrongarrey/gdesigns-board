@@ -768,6 +768,32 @@ const EMAIL_TEMPLATES = {
        <p style="color:#888;font-size:13px">Cette invitation expire dans 7 jours.</p>`
     })
   },
+  competitiveReport: {
+    en: (p) => ({
+      subject: `Your ${String(p.kindLabel || '').toLowerCase()} competitive intelligence report: ${p.businessName}`,
+      html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
+        <h2>${p.kindLabel} Competitive Intelligence Report</h2>
+        <p style="color:#555;margin-top:-8px">${p.businessName} &middot; ${p.periodLabel}</p>
+        <p>${p.summary}</p>
+        <p style="font-size:13px;color:#555">${p.findings} finding(s): ${p.threats} threat(s), ${p.opportunities} opportunit(ies).</p>
+        ${p.ciActionsHtml ? `<h3 style="margin-bottom:6px">Recommended actions</h3>${p.ciActionsHtml}` : ''}
+        <p style="font-size:13px;color:#555">The full report, with every source, is in your Reports Center, where you can also download it as a PDF or Word file.</p>
+        <a href="${p.dashboardUrl}" style="display:inline-block;background:#6C3Bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:12px">Open the Reports Center</a>
+      </div>`
+    }),
+    fr: (p) => ({
+      subject: `Votre rapport de veille concurrentielle (${String(p.kindLabel || '').toLowerCase()}) : ${p.businessName}`,
+      html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto">
+        <h2>Rapport de veille concurrentielle &ndash; ${p.kindLabel}</h2>
+        <p style="color:#555;margin-top:-8px">${p.businessName} &middot; ${p.periodLabel}</p>
+        <p>${p.summary}</p>
+        <p style="font-size:13px;color:#555">${p.findings} constat(s) : ${p.threats} menace(s), ${p.opportunities} opportunit&eacute;(s).</p>
+        ${p.ciActionsHtml ? `<h3 style="margin-bottom:6px">Actions recommand&eacute;es</h3>${p.ciActionsHtml}` : ''}
+        <p style="font-size:13px;color:#555">Le rapport complet, avec toutes les sources, se trouve dans votre Centre de rapports, o&ugrave; vous pouvez aussi le t&eacute;l&eacute;charger en PDF ou en Word.</p>
+        <a href="${p.dashboardUrl}" style="display:inline-block;background:#6C3Bff;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:12px">Ouvrir le Centre de rapports</a>
+      </div>`
+    })
+  },
   monitoringDigest: {
     en: (p) => ({
       subject: `${p.alertCount} new alert${p.alertCount > 1 ? 's' : ''} on Arreyon Consult`,
@@ -834,7 +860,7 @@ function escapeHtmlEmail(str) {
 
 // Values go into the email HTML escaped, so a name can never add links or formatting to an email that comes from us.
 // (A subject line is plain text, not HTML, so it keeps the raw value.) alertsHtml is built here on the server from escaped pieces.
-const RAW_HTML_EMAIL_PARAMS = new Set(['alertsHtml']);
+const RAW_HTML_EMAIL_PARAMS = new Set(['alertsHtml', 'ciActionsHtml']);
 const SELF_ESCAPING_EMAIL_TEMPLATES = new Set(['taskAssigned']);   // these already escape their own values (escaping twice would show &amp;lt;)
 function buildEmail(type, lang, params) {
   const langKey = lang === 'fr' ? 'fr' : 'en';
@@ -2209,6 +2235,7 @@ app.post('/api/business/:id/competitors', authRequired, async (req, res) => {
       `INSERT INTO tracked_competitors (business_id, owner_id, name, website, notes) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
       [req.params.id, account.id, name.trim(), website?.trim() || null, notes?.trim() || null]
     );
+    trackNewCompetitorsSoon(req.params.id);   // tracked right away, in the background
     res.json({ success: true, competitor: inserted.rows[0] });
   } catch (e) {
     console.error('Create competitor error:', e.message);
@@ -16910,11 +16937,11 @@ function extractPageSignals(html) {
   const h2s = [...h.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)].map(m => strip(m[1])).filter(Boolean).slice(0, 8);
   const bodyOnly = (/<body[^>]*>([\s\S]*)<\/body>/i.exec(h) || [null, h])[1]; // the visible page, not the <head> (the title is not body text)
   const body = strip(bodyOnly.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<nav[\s\S]*?<\/nav>/gi, ' ').replace(/<footer[\s\S]*?<\/footer>/gi, ' '));
-  return { title: title ? strip(title) : null, hasMetaDescription: metaDescription.trim().length > 0, h1: h1 ? strip(h1) : null, h2s, wordCount: body ? body.split(/\s+/).filter(Boolean).length : 0 };
+  return { title: title ? strip(title) : null, hasMetaDescription: metaDescription.trim().length > 0, metaDescription: strip(metaDescription).slice(0, 300), h1: h1 ? strip(h1) : null, h2s, wordCount: body ? body.split(/\s+/).filter(Boolean).length : 0 };
 }
 
 // Returns only what could be measured; 'reachable' is false when nothing at all could be read.
-async function collectCompetitorSiteData(rawUrl, { maxPages = 6, now = Date.now() } = {}) {
+async function collectCompetitorSiteData(rawUrl, { maxPages = 6, now = Date.now(), keepUrls = false } = {}) {
   const base = normalizeCompetitorUrl(rawUrl);
   const out = { site: base, reachable: false, sitemapFound: false, totalUrls: 0, urlsLast90Days: 0, sampledPages: [], avgWords: null, pctWithMetaDescription: null, notes: [] };
   if (!base) { out.notes.push('invalid_url'); return out; }
@@ -16950,6 +16977,11 @@ async function collectCompetitorSiteData(rawUrl, { maxPages = 6, now = Date.now(
     } catch (e) { out.notes.push('page_unreadable'); }
   }
   const pages = out.sampledPages;
+  if (keepUrls) {   // tracking only: the newest page addresses (for seeing what is new next time) and the home page's own words
+    out.recentUrls = urls.filter(u => sameHost(u.loc)).sort((a, b) => (new Date(b.lastmod || 0).getTime() || 0) - (new Date(a.lastmod || 0).getTime() || 0)).slice(0, 300).map(u => ({ url: u.loc, lastmod: u.lastmod || null }));
+    const home = pages.find(p => { try { return new URL(p.url).pathname === '/'; } catch (e) { return false; } });
+    out.homepage = home ? { url: home.url, title: home.title, h1: home.h1, metaDescription: home.metaDescription || '', h2s: home.h2s || [] } : null;
+  }
   out.reachable = pages.length > 0 || out.sitemapFound;
   if (pages.length) {
     out.avgWords = Math.round(pages.reduce((s, p) => s + p.wordCount, 0) / pages.length);
@@ -17009,26 +17041,88 @@ async function verifyCompetitorSite(origin) {
   } catch (e) { return { reachable: false, title: null, finalOrigin: origin, parked: false }; }
 }
 
-async function discoverCompetitors(business, context, { ownDomains = [], knownDomains = new Set() } = {}) {
-  const place = [business.city, business.country].filter(Boolean).join(', ');
-  const about = (summarizeBusinessContextForAI(context) || '').slice(0, 1500);
-  const prompt = `Use live web search to find REAL competitors of this business.
-BUSINESS: ${business.name || 'unnamed'}${business.industry ? ' | industry: ' + business.industry : ''}${place ? ' | based in: ' + place : ''}${business.website ? ' | website: ' + business.website : ''}
+// ── Markets ────────────────────────────────
+// A business competes somewhere, and often in more than one place. Up to 3 markets can be listed (a country, and optionally a city); discovery searches each
+// one, the first first. With none listed, the business's own city and country are used, exactly as before.
+const MAX_MARKETS = 3;
+const marketLabel = m => [m && m.city, m && m.country].filter(Boolean).join(', ');
+const cleanMarketPart = v => String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+async function getBusinessMarkets(businessId, business) {
+  const rows = (await pool.query('SELECT city, country FROM business_markets WHERE business_id = $1 ORDER BY position, created_at', [businessId])).rows;
+  if (rows.length) return { markets: rows.map(r => ({ city: r.city || '', country: r.country })), saved: true };
+  const own = business ? { city: cleanMarketPart(business.city), country: cleanMarketPart(business.country) } : { city: '', country: '' };
+  return { markets: own.city || own.country ? [own] : [], saved: false, fallback: own.city || own.country ? own : null };
+}
+async function saveBusinessMarkets(businessId, accountId, list) {
+  if (!(await pool.query('SELECT 1 FROM businesses WHERE id = $1 AND user_id = $2', [businessId, accountId])).rows.length) return { status: 404, body: { error: 'Business not found' } };
+  if (!Array.isArray(list)) return { status: 400, body: { error: 'Send the markets as a list.' } };
+  if (list.length > MAX_MARKETS) return { status: 400, body: { error: `You can list up to ${MAX_MARKETS} markets.` } };
+  const out = [], seen = new Set();
+  for (const m of list) {
+    const country = cleanMarketPart(m && m.country), city = cleanMarketPart(m && m.city);
+    if (!country || !/[\p{L}]/u.test(country) || (city && !/[\p{L}]/u.test(city))) return { status: 400, body: { error: 'Each market needs a country (and a city is optional). Please use letters.' } };
+    const key = `${city.toLowerCase()}|${country.toLowerCase()}`; if (seen.has(key)) continue; seen.add(key); out.push({ city, country });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN'); await client.query('DELETE FROM business_markets WHERE business_id = $1', [businessId]);
+    for (let i = 0; i < out.length; i++) await client.query('INSERT INTO business_markets (business_id, country, city, position) VALUES ($1, $2, $3, $4)', [businessId, out[i].country, out[i].city || null, i]);
+    await client.query('COMMIT');
+  } catch (e) { await client.query('ROLLBACK').catch(() => {}); throw e; } finally { client.release(); }
+  return { status: 200, body: { markets: out, saved: out.length > 0 } };
+}
+app.get('/api/business/:id/markets', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId);
+    const biz = (await pool.query('SELECT id, city, country FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id])).rows[0];
+    if (!biz) return res.status(404).json({ error: 'Business not found' });
+    const m = await getBusinessMarkets(biz.id, biz); res.json({ markets: m.markets, saved: m.saved, fallback: m.fallback || null, max: MAX_MARKETS });
+  } catch (e) { console.error('Get markets error:', e.message); res.status(500).json({ error: 'Could not load the markets.' }); }
+});
+app.put('/api/business/:id/markets', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId); const out = await saveBusinessMarkets(req.params.id, account.id, req.body && req.body.markets);
+    res.status(out.status).json(out.body);
+  } catch (e) { console.error('Save markets error:', e.message); res.status(500).json({ error: 'Could not save the markets. Please try again.' }); }
+});
+
+function competitorSearchPrompt(business, about, market) {
+  const place = marketLabel(market);
+  const order = market.city ? `Put those in ${market.city} first, then others in ${market.country || 'the same country'}, then a few well-known international ones.` : market.country ? `Put those in ${market.country} first, then a few well-known international ones.` : 'Put the closest ones first.';
+  return `Use live web search to find REAL competitors of this business${place ? ' in this market: ' + place : ''}.
+BUSINESS: ${business.name || 'unnamed'}${business.industry ? ' | industry: ' + business.industry : ''}${place ? ' | market to search: ' + place : ''}${business.website ? ' | website: ' + business.website : ''}
 ${about ? 'WHAT IT DOES: ' + about : ''}
-Find up to 10 real businesses that compete directly with it for the same customers. Put those operating in the same country or city first, then a few well-known international ones.
+Find up to 10 real businesses that compete directly with it for the same customers. ${order}
 Rules: only real companies with their own website that you actually found in your search. Never invent a company or a web address. Do not include directories, marketplaces, review sites, social networks, news sites, or the business itself. Give each company's main website address exactly as you found it.
 Return ONLY JSON, no markdown: {"competitors":[{"name":"company name","website":"https://...","reason":"one sentence on why they compete with this business","scope":"local or international"}]}`;
-  let timer, results;
-  try { results = await Promise.race([perplexitySearch(prompt, { maxResults: 15 }), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('The competitor search took too long.')), COMPETITOR_SEARCH_TIMEOUT_MS); })]); }
-  finally { clearTimeout(timer); }
-  const answer = ((results || []).find(r => r.title === 'Perplexity research summary') || {}).snippet || '';
-  const citations = (results || []).filter(r => r.url).map(r => r.url);
-  const parsed = parseCompetitorCandidates(answer, citations, { ownDomains, knownDomains });
-  if (!parsed) throw new Error('The search result could not be read. Please try again.');
+}
 
-  const verified = [], seen = new Set(); let unreachable = 0, parked = 0, redirectedAway = 0;
-  for (let i = 0; i < parsed.candidates.length; i += 4) {   // four at a time: polite to the sites, and quick enough
-    const batch = parsed.candidates.slice(i, i + 4), checks = await Promise.all(batch.map(c => verifyCompetitorSite(c.website)));
+// Searches each market (at the same time), merges what was found (the same company is kept once, under the first market that found it), checks every site is real,
+// and orders the result: first market first, then the ones the search's own sources include, then local before international.
+async function discoverCompetitors(business, context, { ownDomains = [], knownDomains = new Set(), markets = null } = {}) {
+  const list = (markets && markets.length ? markets : [{ city: business.city, country: business.country }]).slice(0, MAX_MARKETS).map(m => ({ city: cleanMarketPart(m.city), country: cleanMarketPart(m.country) }));
+  const about = (summarizeBusinessContextForAI(context) || '').slice(0, 1500);
+  const searchOne = async market => {
+    let timer;
+    try { return { market, results: await Promise.race([perplexitySearch(competitorSearchPrompt(business, about, market), { maxResults: 15 }), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('The competitor search took too long.')), COMPETITOR_SEARCH_TIMEOUT_MS); })]) }; }
+    finally { clearTimeout(timer); }
+  };
+  const settled = await Promise.allSettled(list.map(searchOne));
+  const ok = settled.filter(x => x.status === 'fulfilled').map(x => x.value);
+  if (!ok.length) throw settled[0].reason;
+  const merged = [], seen = new Set(); let noise = 0, unreadable = 0;
+  ok.forEach((r, mi) => {
+    const answer = ((r.results || []).find(x => x.title === 'Perplexity research summary') || {}).snippet || '', citations = (r.results || []).filter(x => x.url).map(x => x.url);
+    const parsed = parseCompetitorCandidates(answer, citations, { ownDomains, knownDomains: new Set([...knownDomains, ...seen]) });
+    if (!parsed) { unreadable++; return; }
+    noise += parsed.noise;
+    for (const c of parsed.candidates.slice(0, list.length > 1 ? 6 : COMPETITOR_CANDIDATES_MAX)) { seen.add(c.domain); merged.push({ ...c, market: marketLabel(r.market) || null, marketIndex: mi }); }
+  });
+  if (!merged.length && unreadable === ok.length) throw new Error('The search result could not be read. Please try again.');
+
+  const verified = [], dedupe = new Set(); let unreachable = 0, parked = 0, redirectedAway = 0;
+  for (let i = 0; i < merged.length; i += 4) {   // four at a time: polite to the sites, and quick enough
+    const batch = merged.slice(i, i + 4), checks = await Promise.all(batch.map(c => verifyCompetitorSite(c.website)));
     batch.forEach((c, k) => {
       const v = checks[k];
       if (!v.reachable) { unreachable++; return; }
@@ -17039,29 +17133,29 @@ Return ONLY JSON, no markdown: {"competitors":[{"name":"company name","website":
         if (isNoiseCompetitorHost(finalDomain) || ownDomains.some(o => sameSiteDomain(finalDomain, o)) || knownDomains.has(finalDomain)) { redirectedAway++; return; }
         entry = { ...entry, website: v.finalOrigin, domain: finalDomain };
       }
-      if (seen.has(entry.domain)) return;
-      seen.add(entry.domain); verified.push(entry);
+      if (dedupe.has(entry.domain)) return;
+      dedupe.add(entry.domain); verified.push(entry);
     });
   }
-  verified.sort((x, y) => (Number(y.grounded) - Number(x.grounded)) || ((x.scope === 'local' ? 0 : 1) - (y.scope === 'local' ? 0 : 1)));
-  return { candidates: verified.slice(0, COMPETITOR_SHOWN_MAX), searched: parsed.candidates.length, unreachable, parked, noise: parsed.noise + redirectedAway };
+  verified.sort((x, y) => (x.marketIndex - y.marketIndex) || (Number(y.grounded) - Number(x.grounded)) || ((x.scope === 'local' ? 0 : 1) - (y.scope === 'local' ? 0 : 1)));
+  return { candidates: verified.slice(0, COMPETITOR_SHOWN_MAX + 2 * (list.length - 1)), searched: merged.length, unreachable, parked, noise: noise + redirectedAway, marketsSearched: ok.length, marketsFailed: settled.length - ok.length };
 }
 
 // Only 'suggested' rows are ever refreshed: something confirmed or dismissed stays exactly as the person decided.
 async function saveCompetitorSuggestions(businessId, candidates) {
   for (const c of candidates) {
     await pool.query(
-      `INSERT INTO competitor_suggestions (business_id, name, website, domain, reason, scope, grounded, source_urls, page_title) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO competitor_suggestions (business_id, name, website, domain, reason, scope, grounded, source_urls, page_title, market) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (business_id, domain) DO UPDATE SET name = EXCLUDED.name, website = EXCLUDED.website, reason = EXCLUDED.reason, scope = EXCLUDED.scope, grounded = EXCLUDED.grounded,
-         source_urls = EXCLUDED.source_urls, page_title = EXCLUDED.page_title, discovered_at = NOW() WHERE competitor_suggestions.status = 'suggested'`,
-      [businessId, c.name, c.website, c.domain, c.reason, c.scope, c.grounded, JSON.stringify(c.sourceUrls || []), c.pageTitle || null]);
+         source_urls = EXCLUDED.source_urls, page_title = EXCLUDED.page_title, market = EXCLUDED.market, discovered_at = NOW() WHERE competitor_suggestions.status = 'suggested'`,
+      [businessId, c.name, c.website, c.domain, c.reason, c.scope, c.grounded, JSON.stringify(c.sourceUrls || []), c.pageTitle || null, c.market || null]);
   }
 }
 
 // What the Competitor Analysis card needs to show the "Find my competitors" panel. Never throws: the card must load even if this part cannot.
 async function competitorDiscoveryState(businessId) {
   try {
-    const suggestions = (await pool.query(`SELECT id, name, website, domain, reason, scope, grounded, source_urls, page_title, discovered_at FROM competitor_suggestions WHERE business_id = $1 AND status = 'suggested' ORDER BY grounded DESC, discovered_at DESC LIMIT 12`, [businessId])).rows;
+    const suggestions = (await pool.query(`SELECT id, name, website, domain, reason, scope, grounded, source_urls, page_title, market, discovered_at FROM competitor_suggestions WHERE business_id = $1 AND status = 'suggested' ORDER BY grounded DESC, discovered_at DESC LIMIT 14`, [businessId])).rows;
     const last = (await pool.query(`SELECT created_at FROM competitor_discovery_runs WHERE business_id = $1 AND outcome = 'success' ORDER BY created_at DESC LIMIT 1`, [businessId])).rows[0];
     return { suggestions, lastSearchedAt: last ? last.created_at : null, searchAvailable: !!process.env.PERPLEXITY_API_KEY, trackedLimit: MAX_TRACKED_COMPETITORS };
   } catch (e) { console.error('Competitor discovery state error:', e.message); return { suggestions: [], lastSearchedAt: null, searchAvailable: false, trackedLimit: MAX_TRACKED_COMPETITORS }; }
@@ -17086,10 +17180,11 @@ async function runCompetitorDiscovery(businessId, accountId) {
     const known = new Set();
     for (const r of (await pool.query('SELECT website FROM tracked_competitors WHERE business_id = $1 AND website IS NOT NULL', [businessId])).rows) { const d = competitorDomain(r.website); if (d) known.add(d); }
     for (const r of (await pool.query(`SELECT domain FROM competitor_suggestions WHERE business_id = $1 AND status <> 'suggested'`, [businessId])).rows) known.add(r.domain);
-    const found = await discoverCompetitors(business, context || {}, { ownDomains: [...own], knownDomains: known });
+    const markets = (await getBusinessMarkets(businessId, business)).markets;
+    const found = await discoverCompetitors(business, context || {}, { ownDomains: [...own], knownDomains: known, markets });
     await saveCompetitorSuggestions(businessId, found.candidates);
     await pool.query(`UPDATE competitor_discovery_runs SET outcome = 'success', found = $2 WHERE id = $1`, [run.id, found.candidates.length]);
-    return { status: 200, body: { ...(await competitorDiscoveryState(businessId)), found: found.candidates.length, searched: found.searched, droppedUnreachable: found.unreachable, droppedParked: found.parked, droppedNotCompetitors: found.noise } };
+    return { status: 200, body: { ...(await competitorDiscoveryState(businessId)), found: found.candidates.length, searched: found.searched, droppedUnreachable: found.unreachable, droppedParked: found.parked, droppedNotCompetitors: found.noise, marketsSearched: found.marketsSearched, marketsFailed: found.marketsFailed } };
   } catch (e) {
     console.error('Competitor discovery error:', e.message);
     await pool.query(`UPDATE competitor_discovery_runs SET outcome = 'failed', error_message = $2 WHERE id = $1`, [run.id, String(e.message || '').slice(0, 300)]).catch(() => {});
@@ -17116,6 +17211,7 @@ async function confirmCompetitorSuggestions(businessId, accountId, ids) {
     await pool.query(`UPDATE competitor_suggestions SET status = 'confirmed', tracked_competitor_id = $2, decided_at = NOW() WHERE id = $1`, [r.id, ins.id]);
     count++; trackedDomains.set(r.domain, ins.id); added.push(ins);
   }
+  if (added.length) trackNewCompetitorsSoon(businessId);   // the ones just added are tracked right away, in the background
   return { status: 200, body: { added, skipped, trackedCount: count, trackedLimit: MAX_TRACKED_COMPETITORS } };
 }
 
@@ -17124,6 +17220,421 @@ async function dismissCompetitorSuggestion(businessId, accountId, suggestionId) 
   const r = await pool.query(`UPDATE competitor_suggestions s SET status = 'dismissed', decided_at = NOW() FROM businesses b WHERE s.id = $1 AND s.business_id = $2 AND b.id = s.business_id AND b.user_id = $3 AND s.status = 'suggested' RETURNING s.id`, [suggestionId, businessId, accountId]);
   return r.rows.length ? { status: 200, body: { success: true } } : { status: 404, body: { error: 'Suggestion not found' } };
 }
+
+// ══════════════════════════════════════════════════
+// COMPETITIVE INTELLIGENCE ? every competitor a business adds is tracked, and the owner gets a weekly and a monthly report
+// What is watched is only what is PUBLIC: the competitor's website (a snapshot each check, compared with the last), and what the web says about it (a live
+// search, with the source of every item). Nothing is guessed: each finding rests on evidence that was really found, and one that cannot be traced to its
+// sources is dropped here, in code. Ad spend, traffic, followers and private prices are not visible and are never claimed.
+// ══════════════════════════════════════════════════
+const CI = { RECHECK_HOURS: 156, MANUAL_COOLDOWN_HOURS: 3, SNAPSHOTS_KEPT: 12, WEB_ITEMS: 6, NEW_PAGES: 8, FINDINGS_PER_COMPETITOR: 5, SWEEP_BUSINESSES: 20, REPORT_DELAY_HOURS: 6, MANUAL_REPORTS_PER_DAY: 5, RUN_STALE_MINUTES: 30, WEB_MAX_AGE_DAYS: 120 };
+const ciNorm = v => String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
+const ciHash = v => crypto.createHash('sha1').update(String(v || '')).digest('hex').slice(0, 10);
+const ciPlain = v => ciNorm(String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, ' '));
+const ciWeekKey = ms => { const d = new Date(ms), t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); const day = (t.getUTCDay() + 6) % 7; t.setUTCDate(t.getUTCDate() - day + 3); const y = t.getUTCFullYear(), first = new Date(Date.UTC(y, 0, 4)); return `${y}-W${String(1 + Math.round(((t - first) / 864e5 - 3 + ((first.getUTCDay() + 6) % 7)) / 7)).padStart(2, '0')}`; };
+function ciUrlKind(url) {
+  let p = ''; try { p = new URL(url).pathname.toLowerCase(); } catch (e) { return 'page'; }
+  if (/\/(pricing|prices?|plans?|tarifs?|prix|packages?|offers?|offres?)(\/|$|-)/.test(p)) return 'pricing';
+  if (/\/(careers?|jobs?|hiring|recrutement|emploi|vacanc\w+|join-us)(\/|$|-)/.test(p)) return 'hiring';
+  if (/\/(services?|solutions?|products?|produits?)\/[^/]+/.test(p)) return 'offering';
+  return 'page';
+}
+const ciHumanTitle = url => { try { const seg = new URL(url).pathname.split('/').filter(Boolean).pop() || ''; return decodeURIComponent(seg).replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[-_]+/g, ' ').trim(); } catch (e) { return ''; } };
+
+// What changed between two snapshots of a competitor's website. Pure: nothing here is estimated, and every signal carries the address it refers to.
+function diffCompetitorSnapshots(prev, cur) {
+  const signals = []; if (!prev || !cur) return signals;
+  const ph = prev.homepage || {}, ch = cur.homepage || {}, hp = ch.url || cur.site;
+  for (const [field, label] of [['title', 'homepage title'], ['h1', 'main headline'], ['metaDescription', 'site description']]) {
+    const a = ciNorm(ph[field]), b = ciNorm(ch[field]);
+    if (a && b && a !== b) signals.push({ key: `site:${field}:${ciHash(b)}`, kind: 'site_change', field, url: hp, text: `The competitor's ${label} changed from "${a.slice(0, 160)}" to "${b.slice(0, 160)}".` });
+  }
+  const before = new Set((prev.recentUrls || []).map(u => u.url));
+  if (before.size) {
+    for (const u of (cur.recentUrls || []).filter(x => !before.has(x.url)).slice(0, CI.NEW_PAGES)) {
+      const k = ciUrlKind(u.url), kind = k === 'pricing' ? 'pricing_page' : k === 'hiring' ? 'hiring' : k === 'offering' ? 'new_offering' : 'new_content', what = { pricing_page: 'A new pricing or plans page', hiring: 'A new careers or jobs page', new_offering: 'A new service or product page', new_content: 'A new page or post' }[kind], t = ciHumanTitle(u.url);
+      signals.push({ key: `page:${u.url}`, kind, url: u.url, lastmod: u.lastmod || null, text: `${what} appeared on the competitor's website${t ? `: "${t}"` : ''} (${u.url})${u.lastmod ? `, last modified ${String(u.lastmod).slice(0, 10)}` : ''}.` });
+    }
+  }
+  const x = prev.urlsLast90Days, y = cur.urlsLast90Days;
+  if (Number.isFinite(x) && Number.isFinite(y) && Math.abs(y - x) >= 5 && (x === 0 || Math.abs(y - x) / x >= 0.5)) signals.push({ key: `pace:${ciWeekKey(Date.now())}`, kind: y > x ? 'pace_up' : 'pace_down', url: cur.site, text: `The number of pages the competitor updated in the last 90 days went from ${x} to ${y}.` });
+  return signals;
+}
+const ciSnapshotMetrics = d => (d ? { totalUrls: d.sitemapFound ? d.totalUrls : null, urlsLast90Days: d.sitemapFound ? d.urlsLast90Days : null, avgWords: d.avgWords, pctWithMetaDescription: d.pctWithMetaDescription, homepageTitle: (d.homepage && d.homepage.title) || null } : null);
+
+// What the web says the competitor has done lately (a live search). Only items with a source address that the search itself returned are kept.
+async function searchCompetitorWeb(competitor, business, markets) {
+  if (!process.env.PERPLEXITY_API_KEY) return { items: [], skipped: 'not_configured' };
+  const place = (markets || []).map(marketLabel).filter(Boolean).join('; ');
+  const prompt = `Use live web search. What has the business "${ciPlain(competitor.name)}"${competitor.website ? ` (${competitor.website})` : ''}${place ? `, which operates in ${place},` : ''} done publicly in roughly the last 30 days? Look for: product or service launches, price or offer changes, partnerships, hiring, press coverage, awards, events, advertising or social campaigns, new locations, customer reviews.
+Only report things you actually found in sources, each with the exact web address of its source. If you found nothing recent, return an empty list. Never invent anything.
+Return ONLY JSON, no markdown: {"items":[{"headline":"short factual headline","summary":"1-2 factual sentences","date":"YYYY-MM-DD or null","type":"launch|pricing|partnership|hiring|press|award|event|campaign|expansion|review|other","source_url":"https://..."}]}`;
+  let timer, results;
+  try { results = await Promise.race([perplexitySearch(prompt, { maxResults: 12 }), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('The web search took too long.')), COMPETITOR_SEARCH_TIMEOUT_MS); })]); }
+  catch (e) { console.error('Competitor web search failed:', e.message); return { items: [], error: 'search_failed' }; }
+  finally { clearTimeout(timer); }
+  const answer = ((results || []).find(r => r.title === 'Perplexity research summary') || {}).snippet || '', citations = (results || []).filter(r => r.url).map(r => r.url);
+  let parsed; try { parsed = extractJSON(answer); } catch (e) { return { items: [], error: 'unreadable' }; }
+  const hosts = new Set(citations.map(u => { try { return new URL(u).hostname.replace(/^www\./, '').toLowerCase(); } catch (e) { return null; } }).filter(Boolean));
+  const out = [], seen = new Set(), now = Date.now();
+  for (const it of Array.isArray(parsed && parsed.items) ? parsed.items : []) {
+    if (!it || typeof it !== 'object') continue;
+    let url; try { const u = new URL(String(it.source_url || '')); if (!/^https?:$/.test(u.protocol)) continue; url = u.href; if (!hosts.has(u.hostname.replace(/^www\./, '').toLowerCase())) continue; } catch (e) { continue; }   // a source the search did not return is not a source
+    const headline = ciPlain(it.headline).slice(0, 160); if (!headline || seen.has(url)) continue;
+    let date = null; if (it.date && /^\d{4}-\d{2}-\d{2}$/.test(String(it.date))) { const t = Date.parse(it.date); if (Number.isFinite(t)) { if (now - t > CI.WEB_MAX_AGE_DAYS * 864e5) continue; if (t - now < 2 * 864e5) date = String(it.date); } }
+    seen.add(url); out.push({ key: `web:${url}`, kind: ['launch', 'pricing', 'partnership', 'hiring', 'press', 'award', 'event', 'campaign', 'expansion', 'review'].includes(it.type) ? it.type : 'other', url, date, headline, text: `${headline}. ${ciPlain(it.summary).slice(0, 400)}${date ? ` (${date})` : ''}` });
+    if (out.length >= CI.WEB_ITEMS) break;
+  }
+  return { items: out };
+}
+
+// The evidence the AI may use: each item is numbered, and anything already turned into a finding before is left out (so nothing is reported twice).
+function ciBuildEvidence(signals, webItems, covered) {
+  const all = [...signals.map(x => ({ key: x.key, type: 'site', kind: x.kind, text: x.text, url: x.url })), ...webItems.map(x => ({ key: x.key, type: 'web', kind: x.kind, text: x.text, url: x.url }))];
+  return all.filter(e => e.url && !covered.has(e.key)).slice(0, 14).map((e, i) => ({ ...e, id: 'E' + (i + 1) }));
+}
+async function ciRecommend({ business, context, competitor, evidence, language, userId }) {
+  const prompt = `You are a competitive intelligence analyst advising the owner of a business. Use ONLY the evidence below: every item was really observed.
+THE BUSINESS: ${(summarizeBusinessContextForAI(context) || ciPlain(business.name) || 'No detailed context is available.').slice(0, 1500)}
+THE COMPETITOR: ${ciPlain(competitor.name)}${competitor.website ? ' (' + competitor.website + ')' : ''}
+EVIDENCE (cite by id):
+${evidence.map(e => `[${e.id}] (${e.type}) ${e.text}`).join('\n')}
+
+Write up to ${CI.FINDINGS_PER_COMPETITOR} findings. Each one: the evidence ids it rests on; a short factual headline (at most 120 characters); its impact for THIS business ("threat", "opportunity" or "info"); why it matters (1-2 sentences); ONE concrete action the owner can take (or null if none is warranted); a priority from 1 (act this week) to 5 (just be aware). Never claim traffic, revenue, rankings or results, and never state anything the evidence does not show.
+Return ONLY valid JSON, no markdown: {"findings":[{"evidence":["E1"],"headline":"...","impact":"threat|opportunity|info","why_it_matters":"...","recommendation":"...","priority":3}]}`;
+  const raw = await callAI({ persona: prompt + frenchInstruction(language === 'fr' ? 'fr' : 'en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the findings now, as JSON only.' }], complexity: 'complex', context: { feature: 'competitor_tracking', userId }, maxTokens: 2500 });
+  const parsed = extractJSON(raw), byId = new Map(evidence.map(e => [e.id, e])); let dropped = 0; const findings = [];
+  for (const f of Array.isArray(parsed && parsed.findings) ? parsed.findings : []) {
+    const used = [...new Set((Array.isArray(f && f.evidence) ? f.evidence : []).map(String))].filter(id => byId.has(id)).map(id => byId.get(id));
+    const headline = ciPlain(f && f.headline).slice(0, 160);
+    if (!used.length || !headline) { dropped++; continue; }   // a finding that cannot be traced to evidence that was really found is not kept
+    const pr = Math.round(Number(f.priority));
+    findings.push({ kind: used[0].kind, headline, detail: ciPlain(f.why_it_matters).slice(0, 500) || null, impact: ['threat', 'opportunity', 'info'].includes(f.impact) ? f.impact : 'info', priority: pr >= 1 && pr <= 5 ? pr : 3, recommendation: ciPlain(f.recommendation).slice(0, 400) || null, sources: [...new Set(used.map(e => e.url))].slice(0, 5), evidenceKeys: used.map(e => e.key) });
+    if (findings.length >= CI.FINDINGS_PER_COMPETITOR) break;
+  }
+  return { findings, dropped };
+}
+// If the AI cannot be reached the activity is still recorded, plainly and without advice, rather than lost.
+const ciFallbackFindings = evidence => evidence.slice(0, CI.FINDINGS_PER_COMPETITOR).map(e => ({ kind: e.kind, headline: ciPlain(e.text).slice(0, 160), detail: null, impact: 'info', priority: 4, recommendation: null, sources: [e.url], evidenceKeys: [e.key] }));
+
+// Checks one competitor. Never throws what it found: a site that cannot be read, a search that fails, an AI that is down each just mean less is reported.
+async function trackCompetitor(ctx, comp) {
+  const out = { id: comp.id, name: comp.name, siteReachable: null, signals: [], webItems: [], findings: [], webSkipped: null, webFailed: false, aiFailed: false, dropped: 0 };
+  if (comp.website) {
+    const data = await collectCompetitorSiteData(comp.website, { keepUrls: true });
+    out.siteReachable = !!data.reachable;
+    if (data.reachable) {
+      const prev = (await pool.query('SELECT data FROM competitor_snapshots WHERE competitor_id = $1 ORDER BY taken_at DESC LIMIT 1', [comp.id])).rows[0];
+      out.signals = diffCompetitorSnapshots(prev && prev.data, data);
+      out.baseline = !prev;
+      await pool.query('INSERT INTO competitor_snapshots (competitor_id, business_id, data) VALUES ($1, $2, $3)', [comp.id, ctx.business.id, JSON.stringify(data)]);
+      await pool.query(`DELETE FROM competitor_snapshots WHERE competitor_id = $1 AND id NOT IN (SELECT id FROM competitor_snapshots WHERE competitor_id = $1 ORDER BY taken_at DESC LIMIT ${CI.SNAPSHOTS_KEPT})`, [comp.id]);
+    }
+  }
+  const web = await searchCompetitorWeb(comp, ctx.business, ctx.markets); out.webItems = web.items; out.webSkipped = web.skipped || null; out.webFailed = web.error === 'search_failed' || web.error === 'unreadable';
+  const covered = new Set((await pool.query('SELECT unnest(evidence_keys) AS k FROM competitor_findings WHERE competitor_id = $1', [comp.id])).rows.map(r => r.k));
+  const evidence = ciBuildEvidence(out.signals, out.webItems, covered);
+  if (evidence.length) {
+    let recs; try { recs = await ciRecommend({ business: ctx.business, context: ctx.context, competitor: comp, evidence, language: ctx.language, userId: ctx.business.user_id }); out.dropped = recs.dropped; }
+    catch (e) { console.error('Competitor recommendations failed:', e.message); out.aiFailed = true; recs = { findings: ciFallbackFindings(evidence) }; }
+    for (const f of recs.findings) {
+      const row = (await pool.query(`INSERT INTO competitor_findings (business_id, competitor_id, run_id, kind, headline, detail, impact, priority, recommendation, sources, evidence_keys, language) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+        [ctx.business.id, comp.id, ctx.runId, f.kind, f.headline, f.detail, f.impact, f.priority, f.recommendation, JSON.stringify(f.sources), f.evidenceKeys, out.aiFailed ? 'en' : (ctx.language === 'fr' ? 'fr' : 'en')])).rows[0];
+      out.findings.push(row);
+    }
+  }
+  await pool.query('UPDATE tracked_competitors SET last_tracked_at = NOW(), tracking_status = $2 WHERE id = $1', [comp.id, !comp.website ? 'no_website' : out.siteReachable === false ? 'site_unreachable' : 'ok']);
+  return out;
+}
+
+const CI_ALERT_TEXT = { en: { title: n => `${n} new competitor finding${n === 1 ? '' : 's'}`, more: n => ` (and ${n} more)` }, fr: { title: n => `${n} nouvelle${n === 1 ? '' : 's'} information${n === 1 ? '' : 's'} sur vos concurrents`, more: n => ` (et ${n} autre${n === 1 ? '' : 's'})` } };
+// Checks the business's competitors (those due, or all if forced). One run at a time per business. Findings that matter raise ONE alert (which the daily digest emails).
+async function runCompetitorTracking(businessId, { triggeredBy = 'automatic', force = false, onlyUntracked = false } = {}) {
+  const business = (await pool.query(`SELECT b.id, b.name, b.industry, b.country, b.city, b.website, b.user_id, u.preferred_language AS language FROM businesses b JOIN users u ON u.id = b.user_id WHERE b.id = $1`, [businessId])).rows[0];
+  if (!business) return { status: 404, body: { error: 'Business not found' } };
+  if ((await pool.query(`SELECT 1 FROM competitor_tracking_runs WHERE business_id = $1 AND status = 'running' AND created_at > NOW() - INTERVAL '${CI.RUN_STALE_MINUTES} minutes'`, [businessId])).rows.length) return { status: 409, body: { error: 'A check is already running for this business.' } };
+  const comps = (await pool.query('SELECT id, name, website, last_tracked_at FROM tracked_competitors WHERE business_id = $1 ORDER BY created_at ASC LIMIT $2', [businessId, MAX_TRACKED_COMPETITORS])).rows;
+  const due = comps.filter(c => onlyUntracked ? !c.last_tracked_at : force || !c.last_tracked_at || Date.now() - new Date(c.last_tracked_at).getTime() > CI.RECHECK_HOURS * 3600e3);
+  if (!due.length) return { status: 200, body: { checked: 0, findings: 0 } };
+  const run = (await pool.query('INSERT INTO competitor_tracking_runs (business_id, triggered_by) VALUES ($1, $2) RETURNING id', [businessId, triggeredBy])).rows[0];
+  const language = business.language === 'fr' ? 'fr' : 'en'; let results = [];
+  try {
+    const context = await getBusinessContext(businessId, business.user_id).catch(() => null), markets = (await getBusinessMarkets(businessId, business)).markets, ctx = { business, language, context: context || {}, markets, runId: run.id };
+    for (const comp of due) { try { results.push(await trackCompetitor(ctx, comp)); } catch (e) { console.error('Tracking a competitor failed:', e.message); results.push({ id: comp.id, name: comp.name, error: true, findings: [] }); } }
+    const findings = results.flatMap(r => r.findings || []), failedAll = results.every(r => r.error);
+    await pool.query(`UPDATE competitor_tracking_runs SET status = $2, competitors_checked = $3, findings_count = $4, web_search_used = $5, completed_at = NOW(), error_message = $6 WHERE id = $1`,
+      [run.id, failedAll ? 'failed' : 'completed', results.length, findings.length, results.some(r => !r.webSkipped && !r.webFailed && !r.error), failedAll ? 'Every competitor check failed.' : null]);
+    const important = findings.filter(f => f.impact === 'threat' || f.priority <= 2);
+    if (triggeredBy !== 'manual' && important.length) {
+      const prefs = (await pool.query('SELECT competitor_alerts_enabled FROM monitoring_preferences WHERE owner_id = $1', [business.user_id])).rows[0];
+      if (!prefs || prefs.competitor_alerts_enabled !== false) {
+        const T = CI_ALERT_TEXT[language], top = important.slice(0, 3).map(f => `${results.find(r => r.id === f.competitor_id)?.name || ''}: ${f.headline}`).join(' · ');
+        await createAlert(business.user_id, business.id, 'competitor_activity', important.some(f => f.impact === 'threat') ? 'warning' : 'info', T.title(important.length), top + (important.length > 3 ? T.more(important.length - 3) : ''), { findingIds: important.map(f => f.id), runId: run.id });
+      }
+    }
+    return { status: 200, body: { runId: run.id, checked: results.length, findings: findings.length } };
+  } catch (e) {
+    console.error('Competitor tracking run failed:', e.message);
+    await pool.query(`UPDATE competitor_tracking_runs SET status = 'failed', completed_at = NOW(), error_message = $2 WHERE id = $1`, [run.id, String(e.message).slice(0, 300)]).catch(() => {});
+    return { status: 500, body: { error: 'The check could not be completed. Please try again later.' } };
+  }
+}
+// A competitor that has just been added is checked right away (in the background): it never waits for next week to be tracked.
+function trackNewCompetitorsSoon(businessId) {
+  setTimeout(async () => { try { await runCompetitorTracking(businessId, { triggeredBy: 'added', onlyUntracked: true }); } catch (e) { console.error('Tracking a new competitor failed:', e.message); } }, 50);
+}
+
+// ── periods (UTC) ──
+const ciYmd = d => d.toISOString().slice(0, 10);
+function ciLastCompletedPeriod(kind, now = new Date()) {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  if (kind === 'weekly') { const monday = new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 864e5); return { start: ciYmd(new Date(monday.getTime() - 7 * 864e5)), end: ciYmd(new Date(monday.getTime() - 864e5)) }; }
+  return { start: ciYmd(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1))), end: ciYmd(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 0))) };
+}
+const ciRollingPeriod = (kind, now = new Date()) => ({ start: ciYmd(new Date(now.getTime() - (kind === 'weekly' ? 6 : 29) * 864e5)), end: ciYmd(now) });
+const ciPeriodReady = (period, now = new Date()) => now.getTime() >= Date.parse(period.end + 'T00:00:00Z') + 864e5 + CI.REPORT_DELAY_HOURS * 3600e3;
+
+// ── the report ──
+const CI_TEXT = {
+  en: { weekly: 'Weekly', monthly: 'Monthly', title: 'Competitive Intelligence Report', summary: 'Summary', takeaways: 'Key takeaways', actions: 'Recommended actions', activity: 'Competitor activity', glance: 'Competitors at a glance', notSeen: 'What we could not see', threat: 'Threat', opportunity: 'Opportunity', info: 'For information', sources: 'Sources', nothing: 'No notable activity', generated: 'Generated', by: 'Arreyon Consult by G-DESIGNS LTD', pages: 'pages', recent: 'updated in 90 days', words: 'avg words', meta: 'with description', last: 'last checked', trend: 'Week by week', findingsWord: 'findings', yourSite: 'Your site', reco: 'Recommended action',
+    quiet: n => `No notable competitor activity was found this period. ${n} competitor${n === 1 ? ' was' : 's were'} checked.`, busy: (n, t, o) => `${n} finding${n === 1 ? '' : 's'} this period: ${t} threat${t === 1 ? '' : 's'} and ${o} opportunit${o === 1 ? 'y' : 'ies'}. The details and recommended actions are below.`,
+    notSeenList: ['Their advertising spend and results', 'Their website traffic and search rankings', 'Their social media follower numbers and engagement', 'Their private prices, contracts and customers'], noSite: n => `${n}: no website address is saved, so only web research could be used.`, siteDown: n => `${n}: the website could not be read at the last check.`, noWeb: 'Live web research was not available for this period, so only changes on the competitors\' websites were checked.' },
+  fr: { weekly: 'Hebdomadaire', monthly: 'Mensuel', title: 'Rapport de veille concurrentielle', summary: 'Résumé', takeaways: 'Points clés', actions: 'Actions recommandées', activity: 'Activité des concurrents', glance: 'Les concurrents en un coup d\'œil', notSeen: 'Ce que nous n\'avons pas pu voir', threat: 'Menace', opportunity: 'Opportunité', info: 'Pour information', sources: 'Sources', nothing: 'Aucune activité notable', generated: 'Généré le', by: 'Arreyon Consult par G-DESIGNS LTD', pages: 'pages', recent: 'mises à jour en 90 jours', words: 'mots en moyenne', meta: 'avec description', last: 'dernière vérification', trend: 'Semaine par semaine', findingsWord: 'constats', yourSite: 'Votre site', reco: 'Action recommandée',
+    quiet: n => `Aucune activité notable chez vos concurrents n'a été relevée sur cette période. ${n} concurrent${n === 1 ? ' a été vérifié' : 's ont été vérifiés'}.`, busy: (n, t, o) => `${n} constat${n === 1 ? '' : 's'} sur cette période : ${t} menace${t === 1 ? '' : 's'} et ${o} opportunité${o === 1 ? '' : 's'}. Les détails et les actions recommandées figurent ci-dessous.`,
+    notSeenList: ['Leurs dépenses publicitaires et leurs résultats', 'Le trafic de leur site et leur classement dans les moteurs de recherche', 'Le nombre d\'abonnés et l\'engagement sur leurs réseaux sociaux', 'Leurs prix privés, contrats et clients'], noSite: n => `${n} : aucune adresse de site n'est enregistrée, seule la recherche web a donc pu être utilisée.`, siteDown: n => `${n} : le site n'a pas pu être lu lors de la dernière vérification.`, noWeb: 'La recherche web en direct n\'était pas disponible sur cette période : seuls les changements sur les sites des concurrents ont été vérifiés.' },
+};
+const ciPeriodLabel = (p, lang) => { const f = d => new Date(d + 'T00:00:00Z').toLocaleDateString(lang === 'fr' ? 'fr-FR' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }); return `${f(p.start)} \u2013 ${f(p.end)}`; };
+
+async function ciLatestOwnMetrics(businessId) {
+  for (const [table, fk, conn] of [['website_competitor_analyses', 'website_connection_id', 'website_connections'], ['shopify_competitor_analyses', 'shopify_connection_id', 'shopify_connections']]) {
+    try {
+      const r = (await pool.query(`SELECT a.own FROM ${table} a JOIN ${conn} c ON c.id = a.${fk} WHERE c.business_id = $1 AND a.status = 'completed' ORDER BY a.created_at DESC LIMIT 1`, [businessId])).rows[0];
+      if (r && r.own) return { pages: (r.own.postCount || 0) + (r.own.pageCount || 0), avgWords: r.own.avgWords == null ? null : r.own.avgWords, pctWithMetaDescription: r.own.pctWithMetaDescription == null ? null : r.own.pctWithMetaDescription };
+    } catch (e) { /* that platform has no analysis table here: skipped */ }
+  }
+  return null;
+}
+async function ciNarrative({ business, context, kind, period, findings, weeklySummaries, language, userId }) {
+  const prompt = `You are a competitive intelligence analyst writing the ${kind} report for the owner of a business. Use ONLY the findings below: each was really observed and has an id.
+THE BUSINESS: ${(summarizeBusinessContextForAI(context) || ciPlain(business.name)).slice(0, 1200)}
+PERIOD: ${period.start} to ${period.end}
+FINDINGS:
+${findings.map(f => `[${f.id}] ${f.competitor} | ${f.impact} | priority ${f.priority} | ${f.headline}${f.detail ? ' | why: ' + f.detail : ''}${f.recommendation ? ' | suggested: ' + f.recommendation : ''}`).join('\n')}
+${weeklySummaries && weeklySummaries.length ? '\nTHE WEEKLY SUMMARIES OF THIS PERIOD:\n' + weeklySummaries.map(w => `- ${w}`).join('\n') : ''}
+
+Write: "summary" (2-4 sentences: what mattered most this period); "takeaways" (3-5 short points); "actions" (up to 5, most important first: each with the finding ids it rests on, and "why"). Never claim traffic, revenue, rankings or results. Never state anything the findings do not show.
+Return ONLY valid JSON, no markdown: {"summary":"...","takeaways":["..."],"actions":[{"priority":1,"action":"...","why":"...","finding_ids":["F1"]}]}`;
+  const raw = await callAI({ persona: prompt + frenchInstruction(language === 'fr' ? 'fr' : 'en', { jsonMode: true }), messages: [{ role: 'user', content: 'Write the report now, as JSON only.' }], complexity: 'complex', context: { feature: 'competitive_report', userId }, maxTokens: 2500 });
+  const p = extractJSON(raw), ids = new Set(findings.map(f => f.id)); const list = v => (Array.isArray(v) ? v.map(x => ciPlain(x).slice(0, 300)).filter(Boolean).slice(0, 5) : []);
+  const actions = (Array.isArray(p.actions) ? p.actions : []).map(a => { const fi = (Array.isArray(a && a.finding_ids) ? a.finding_ids : []).map(String).filter(i => ids.has(i)); return fi.length && ciPlain(a.action) ? { action: ciPlain(a.action).slice(0, 300), why: ciPlain(a.why).slice(0, 400), findingIds: fi } : null; }).filter(Boolean).slice(0, 5).map((a, i) => ({ ...a, priority: i + 1 }));
+  return { summary: ciPlain(p.summary).slice(0, 800), takeaways: list(p.takeaways), actions };
+}
+// Builds (and stores) the report for a period. Everything measured or counted is computed in code; the AI only writes the narrative, and only from the findings.
+async function buildCompetitiveReport(businessId, kind, period, { createdBy = 'automatic' } = {}) {
+  const business = (await pool.query(`SELECT b.id, b.name, b.user_id, u.preferred_language AS language FROM businesses b JOIN users u ON u.id = b.user_id WHERE b.id = $1`, [businessId])).rows[0]; if (!business) return null;
+  const language = business.language === 'fr' ? 'fr' : 'en', T = CI_TEXT[language];
+  const comps = (await pool.query('SELECT id, name, website, last_tracked_at, tracking_status FROM tracked_competitors WHERE business_id = $1 ORDER BY created_at ASC LIMIT $2', [businessId, MAX_TRACKED_COMPETITORS])).rows;
+  if (!comps.length) return null;
+  const rows = (await pool.query(`SELECT f.*, c.name AS competitor_name FROM competitor_findings f JOIN tracked_competitors c ON c.id = f.competitor_id WHERE f.business_id = $1 AND f.created_at >= $2::date AND f.created_at < ($3::date + 1) ORDER BY f.priority ASC, f.created_at DESC`, [businessId, period.start, period.end])).rows;
+  const findings = rows.map((f, i) => ({ id: 'F' + (i + 1), dbId: f.id, competitorId: f.competitor_id, competitor: f.competitor_name, impact: f.impact, priority: f.priority, kind: f.kind, headline: f.headline, detail: f.detail, recommendation: f.recommendation, sources: f.sources || [], at: f.created_at }));
+  const latest = (await pool.query(`SELECT DISTINCT ON (competitor_id) competitor_id, data FROM competitor_snapshots WHERE business_id = $1 AND taken_at < ($2::date + 1) ORDER BY competitor_id, taken_at DESC`, [businessId, period.end])).rows;
+  const earlier = (await pool.query(`SELECT DISTINCT ON (competitor_id) competitor_id, data FROM competitor_snapshots WHERE business_id = $1 AND taken_at < $2::date ORDER BY competitor_id, taken_at DESC`, [businessId, period.start])).rows;
+  const byC = (arr, id) => (arr.find(r => r.competitor_id === id) || {}).data || null;
+  const num = (a, b) => (Number.isFinite(a) && Number.isFinite(b) ? b - a : null);
+  const competitors = comps.map(c => { const now = ciSnapshotMetrics(byC(latest, c.id)), was = ciSnapshotMetrics(byC(earlier, c.id)); return { id: c.id, name: c.name, website: c.website, status: c.tracking_status, lastTrackedAt: c.last_tracked_at, metrics: now, deltas: now && was ? { totalUrls: num(was.totalUrls, now.totalUrls), urlsLast90Days: num(was.urlsLast90Days, now.urlsLast90Days) } : null, findingIds: findings.filter(f => f.competitorId === c.id).map(f => f.id) }; });
+  const runs = +(await pool.query(`SELECT count(*) FROM competitor_tracking_runs WHERE business_id = $1 AND status = 'completed' AND created_at >= $2::date AND created_at < ($3::date + 1)`, [businessId, period.start, period.end])).rows[0].count;
+  const stats = { competitorsTracked: comps.length, findings: findings.length, threats: findings.filter(f => f.impact === 'threat').length, opportunities: findings.filter(f => f.impact === 'opportunity').length, checks: runs };
+  let weeklySummaries = [];
+  if (kind === 'monthly') weeklySummaries = (await pool.query(`SELECT content FROM competitor_reports WHERE business_id = $1 AND kind = 'weekly' AND period_start >= $2::date AND period_end <= $3::date ORDER BY period_start`, [businessId, period.start, period.end])).rows.map(r => r.content && r.content.summary).filter(Boolean);
+  let narrative = null, aiFailed = false;
+  if (findings.length) { try { narrative = await ciNarrative({ business, context: (await getBusinessContext(businessId, business.user_id).catch(() => null)) || {}, kind, period, findings, weeklySummaries, language, userId: business.user_id }); } catch (e) { console.error('Report narrative failed:', e.message); aiFailed = true; } }
+  const fallbackActions = findings.filter(f => f.recommendation).slice(0, 5).map((f, i) => ({ priority: i + 1, action: f.recommendation, why: f.headline, findingIds: [f.id] }));
+  const summary = findings.length ? (narrative && narrative.summary) || T.busy(stats.findings, stats.threats, stats.opportunities) : T.quiet(comps.length);
+  const weeks = {}; for (const f of findings) { const k = ciWeekKey(new Date(f.at).getTime()); weeks[k] = (weeks[k] || 0) + 1; }
+  const notSeen = [...T.notSeenList, ...comps.filter(c => !c.website).map(c => T.noSite(c.name)), ...comps.filter(c => c.tracking_status === 'site_unreachable').map(c => T.siteDown(c.name)), ...(!process.env.PERPLEXITY_API_KEY ? [T.noWeb] : [])];
+  const content = { kind, period, language, generatedAt: new Date().toISOString(), summary, takeaways: (narrative && narrative.takeaways) || [], actions: narrative && narrative.actions.length ? narrative.actions : fallbackActions, aiNarrative: !!narrative, aiFailed, stats, competitors, findings, own: await ciLatestOwnMetrics(businessId), weeks: kind === 'monthly' ? Object.entries(weeks).sort().map(([week, n]) => ({ week, findings: n })) : [], notSeen };
+  const ins = await pool.query(`INSERT INTO competitor_reports (business_id, kind, period_start, period_end, language, content, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (business_id, kind, period_start) DO NOTHING RETURNING *`, [businessId, kind, period.start, period.end, language, JSON.stringify(content), createdBy]);
+  return ins.rows[0] || (await pool.query('SELECT * FROM competitor_reports WHERE business_id = $1 AND kind = $2 AND period_start = $3', [businessId, kind, period.start])).rows[0];
+}
+
+// The email: a short summary and the top actions, with a pointer to the Reports Center (where the full report, PDF and Word are).
+function ciReportEmailParams(report, businessName, lang) {
+  const c = report.content, T = CI_TEXT[lang === 'fr' ? 'fr' : 'en'];
+  const actionsHtml = (c.actions || []).slice(0, 3).map(a => `<div style="background:#f5f5f5;border-radius:8px;padding:10px 12px;margin-bottom:8px"><strong>${escapeHtmlText(a.action)}</strong>${a.why ? `<p style="margin:4px 0 0;font-size:13px;color:#555">${escapeHtmlText(a.why)}</p>` : ''}</div>`).join('');
+  return { businessName, kindLabel: T[c.kind], periodLabel: ciPeriodLabel(c.period, lang), summary: c.summary || '', findings: String(c.stats.findings), threats: String(c.stats.threats), opportunities: String(c.stats.opportunities), ciActionsHtml: actionsHtml, dashboardUrl: `${BASE_URL}/dashboard` };
+}
+async function emailCompetitiveReport(report) {
+  const owner = (await pool.query(`SELECT u.id, u.email, u.preferred_language AS language, b.name FROM businesses b JOIN users u ON u.id = b.user_id WHERE b.id = $1`, [report.business_id])).rows[0];
+  if (!owner || !owner.email) return false;
+  const prefs = (await pool.query('SELECT competitor_alerts_enabled, email_alerts_enabled FROM monitoring_preferences WHERE owner_id = $1', [owner.id])).rows[0];
+  if (prefs && (prefs.competitor_alerts_enabled === false || prefs.email_alerts_enabled === false)) return false;
+  const { subject, html } = buildEmail('competitiveReport', owner.language, ciReportEmailParams(report, owner.name || '', owner.language));
+  await sendEmail(owner.email, subject, html);
+  await pool.query('UPDATE competitor_reports SET emailed_at = NOW() WHERE id = $1', [report.id]);
+  return true;
+}
+
+// The hourly check: competitors that are due are checked, then any weekly or monthly report whose period has ended (and that was not made yet) is built and emailed.
+// It relies only on what is stored, so a restart loses nothing and a report is never made twice.
+const ciSweepState = { running: false };
+async function runCompetitiveIntelligenceSweep({ now = new Date() } = {}) {
+  if (ciSweepState.running) return { skipped: true }; ciSweepState.running = true; const summary = { tracked: 0, reports: 0, emailed: 0 };
+  try {
+    const due = (await pool.query(`SELECT b.id FROM businesses b WHERE b.is_active = true AND EXISTS (SELECT 1 FROM tracked_competitors c WHERE c.business_id = b.id AND (c.last_tracked_at IS NULL OR c.last_tracked_at < NOW() - INTERVAL '${CI.RECHECK_HOURS} hours'))
+      ORDER BY (SELECT MIN(COALESCE(c.last_tracked_at, 'epoch'::timestamptz)) FROM tracked_competitors c WHERE c.business_id = b.id) ASC LIMIT ${CI.SWEEP_BUSINESSES}`)).rows;
+    for (const b of due) { try { const r = await runCompetitorTracking(b.id, { triggeredBy: 'automatic' }); if (r.status === 200 && r.body.checked) summary.tracked++; } catch (e) { console.error('Sweep: tracking failed:', e.message); } }
+    for (const kind of ['weekly', 'monthly']) {
+      const period = ciLastCompletedPeriod(kind, now); if (!ciPeriodReady(period, now)) continue;
+      const todo = (await pool.query(`SELECT b.id FROM businesses b WHERE b.is_active = true AND EXISTS (SELECT 1 FROM tracked_competitors c WHERE c.business_id = b.id)
+        AND NOT EXISTS (SELECT 1 FROM competitor_reports r WHERE r.business_id = b.id AND r.kind = $1 AND r.period_start = $2::date)
+        AND (EXISTS (SELECT 1 FROM competitor_tracking_runs t WHERE t.business_id = b.id AND t.status = 'completed' AND t.created_at >= $2::date AND t.created_at < ($3::date + 1)) OR EXISTS (SELECT 1 FROM competitor_findings f WHERE f.business_id = b.id AND f.created_at >= $2::date AND f.created_at < ($3::date + 1))) LIMIT 50`, [kind, period.start, period.end])).rows;
+      for (const b of todo) {
+        try { const report = await buildCompetitiveReport(b.id, kind, period, { createdBy: 'automatic' }); if (report) { summary.reports++; if (await emailCompetitiveReport(report)) summary.emailed++; } }
+        catch (e) { console.error('Sweep: report failed:', e.message); }
+      }
+    }
+  } finally { ciSweepState.running = false; }
+  return summary;
+}
+function startCompetitiveIntelligenceScheduler() {
+  setInterval(async () => { try { await runCompetitiveIntelligenceSweep(); } catch (e) { console.error('Competitive intelligence sweep error:', e.message); } }, 60 * 60 * 1000);   // checked every hour
+}
+
+// ── PDF and Word downloads of a competitive report (the same libraries and look as the other reports) ──
+const ciDateLabel = (iso, lang) => new Date(iso).toLocaleDateString(lang === 'fr' ? 'fr-FR' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+function buildCompetitiveReportPDF(report, businessName) {
+  return new Promise((resolve, reject) => {
+    const c = report.content, lang = c.language === 'fr' ? 'fr' : 'en', T = CI_TEXT[lang], doc = new PDFDocument({ margin: 50, size: 'A4' }), chunks = [], purple = '#6C3Bff', M = 50, W = 495;
+    doc.on('data', d => chunks.push(d)); doc.on('end', () => resolve(Buffer.concat(chunks))); doc.on('error', reject);
+    const line = (text, { size = 10, color = '#222', bold = false, gap = 4, indent = 0 } = {}) => { if (doc.y > 760) doc.addPage(); doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size).fillColor(color).text(ciPlain(text), M + indent, doc.y, { width: W - indent }); doc.moveDown(gap / 10); };
+    const h2 = text => { if (doc.y > 700) doc.addPage(); doc.moveDown(0.6); line(String(text).toUpperCase(), { size: 12, color: purple, bold: true, gap: 3 }); };
+    doc.font('Helvetica-Bold').fontSize(20).fillColor('#111').text(ciPlain(businessName) || T.title, M, M, { width: W });
+    doc.moveTo(M, doc.y + 6).lineTo(M + W, doc.y + 6).strokeColor(purple).lineWidth(2).stroke(); doc.moveDown(0.8);
+    line(`${T[c.kind]} ${T.title} \u00b7 ${ciPeriodLabel(c.period, lang)}`, { size: 10.5, color: '#555', gap: 2 });
+    line(`${T.generated} ${ciDateLabel(c.generatedAt, lang)} \u00b7 ${T.by}`, { size: 8.5, color: '#888', gap: 6 });
+    h2(T.summary); line(c.summary, { size: 10.5 });
+    if ((c.takeaways || []).length) { h2(T.takeaways); c.takeaways.forEach(x => line('\u2022 ' + x, { indent: 8 })); }
+    if ((c.actions || []).length) { h2(T.actions); c.actions.forEach((a, i) => { line(`${i + 1}. ${a.action}`, { bold: true, gap: 1 }); if (a.why) line(a.why, { size: 9.5, color: '#555', indent: 14 }); }); }
+    h2(T.activity);
+    for (const comp of c.competitors || []) {
+      const fs = (c.findings || []).filter(f => (comp.findingIds || []).includes(f.id));
+      line(comp.name + (comp.website ? ' \u00b7 ' + comp.website : ''), { bold: true, size: 11, gap: 2 });
+      if (!fs.length) line(T.nothing, { size: 9.5, color: '#888', indent: 8 });
+      for (const f of fs) {
+        line(`[${T[f.impact] || T.info}] ${f.headline}`, { bold: true, indent: 8, gap: 1 });
+        if (f.detail) line(f.detail, { size: 9.5, indent: 14, gap: 1 });
+        if (f.recommendation) line(`${T.reco}: ${f.recommendation}`, { size: 9.5, color: purple, indent: 14, gap: 1 });
+        if ((f.sources || []).length) line(`${T.sources}: ${f.sources.join('   ')}`, { size: 8, color: '#666', indent: 14, gap: 4 });
+      }
+    }
+    h2(T.glance);
+    if (c.own) line(`${T.yourSite}: ${c.own.pages} ${T.pages}${c.own.avgWords != null ? ` \u00b7 ${c.own.avgWords} ${T.words}` : ''}${c.own.pctWithMetaDescription != null ? ` \u00b7 ${c.own.pctWithMetaDescription}% ${T.meta}` : ''}`, { bold: true, size: 9.5 });
+    for (const comp of c.competitors || []) { const m = comp.metrics; line(`${comp.name}: ${m ? [m.totalUrls != null ? `${m.totalUrls} ${T.pages}` : null, m.urlsLast90Days != null ? `${m.urlsLast90Days} ${T.recent}` : null, m.avgWords != null ? `${m.avgWords} ${T.words}` : null, m.pctWithMetaDescription != null ? `${m.pctWithMetaDescription}% ${T.meta}` : null].filter(Boolean).join(' \u00b7 ') : '-'}${comp.lastTrackedAt ? ` \u00b7 ${T.last} ${ciDateLabel(comp.lastTrackedAt, lang)}` : ''}`, { size: 9.5, gap: 2 }); }
+    if ((c.weeks || []).length) { h2(T.trend); c.weeks.forEach(w => line(`${w.week}: ${w.findings} ${T.findingsWord}`, { size: 9.5, gap: 2 })); }
+    h2(T.notSeen); (c.notSeen || []).forEach(x => line('\u2022 ' + x, { size: 9.5, indent: 8, gap: 2 }));
+    doc.end();
+  });
+}
+async function buildCompetitiveReportDOCX(report, businessName) {
+  const c = report.content, lang = c.language === 'fr' ? 'fr' : 'en', T = CI_TEXT[lang], children = [];
+  const heading = text => children.push(new Paragraph({ text: ciPlain(text), heading: HeadingLevel.HEADING_1 })), sub2 = text => children.push(new Paragraph({ text: ciPlain(text), heading: HeadingLevel.HEADING_2 }));
+  const para = (text, opts = {}) => children.push(new Paragraph({ children: [new TextRun({ text: ciPlain(text), bold: !!opts.bold, color: opts.color, size: opts.size })], spacing: { after: 120 }, indent: opts.indent ? { left: opts.indent } : undefined }));
+  const bullet = text => children.push(new Paragraph({ text: ciPlain(text), bullet: { level: 0 } }));
+  children.push(new Paragraph({ text: ciPlain(businessName) || T.title, heading: HeadingLevel.TITLE }));
+  para(`${T[c.kind]} ${T.title} \u00b7 ${ciPeriodLabel(c.period, lang)}`, { color: '555555' }); para(`${T.generated} ${ciDateLabel(c.generatedAt, lang)} \u00b7 ${T.by}`, { color: '888888', size: 17 });
+  heading(T.summary); para(c.summary);
+  if ((c.takeaways || []).length) { heading(T.takeaways); c.takeaways.forEach(bullet); }
+  if ((c.actions || []).length) { heading(T.actions); c.actions.forEach((a, i) => { para(`${i + 1}. ${a.action}`, { bold: true }); if (a.why) para(a.why, { color: '555555', indent: 360 }); }); }
+  heading(T.activity);
+  for (const comp of c.competitors || []) {
+    const fs = (c.findings || []).filter(f => (comp.findingIds || []).includes(f.id)); sub2(comp.name + (comp.website ? ' \u00b7 ' + comp.website : ''));
+    if (!fs.length) para(T.nothing, { color: '888888', indent: 360 });
+    for (const f of fs) { para(`[${T[f.impact] || T.info}] ${f.headline}`, { bold: true, indent: 360 }); if (f.detail) para(f.detail, { indent: 720 }); if (f.recommendation) para(`${T.reco}: ${f.recommendation}`, { color: '6C3BFF', indent: 720 }); if ((f.sources || []).length) para(`${T.sources}: ${f.sources.join('   ')}`, { color: '666666', size: 16, indent: 720 }); }
+  }
+  heading(T.glance);
+  const cell = (text, bold) => new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: ciPlain(text), bold: !!bold, size: 18 })] })] });
+  const rows = [new TableRow({ children: ['', T.pages, T.recent, T.words, T.meta, T.last].map(h => cell(h, true)) })];
+  if (c.own) rows.push(new TableRow({ children: [T.yourSite, c.own.pages, '-', c.own.avgWords == null ? '-' : c.own.avgWords, c.own.pctWithMetaDescription == null ? '-' : c.own.pctWithMetaDescription + '%', '-'].map(x => cell(String(x), x === T.yourSite)) }));
+  for (const comp of c.competitors || []) { const m = comp.metrics || {}, v = x => (x == null ? '-' : String(x)); rows.push(new TableRow({ children: [comp.name, v(m.totalUrls), v(m.urlsLast90Days), v(m.avgWords), m.pctWithMetaDescription == null ? '-' : m.pctWithMetaDescription + '%', comp.lastTrackedAt ? ciDateLabel(comp.lastTrackedAt, lang) : '-'].map(x => cell(String(x))) })); }
+  children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows }));
+  if ((c.weeks || []).length) { heading(T.trend); c.weeks.forEach(w => bullet(`${w.week}: ${w.findings} ${T.findingsWord}`)); }
+  heading(T.notSeen); (c.notSeen || []).forEach(bullet);
+  return Packer.toBuffer(new DocxDocument({ sections: [{ children }] }));
+}
+
+// ── routes ──
+async function ciOwnedBusiness(req) {
+  const account = await resolveAccount(req.userId);
+  const biz = (await pool.query('SELECT id, name FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id])).rows[0];
+  return biz ? { account, biz } : null;
+}
+const ciReportListSql = `SELECT id, kind, to_char(period_start, 'YYYY-MM-DD') AS period_start, to_char(period_end, 'YYYY-MM-DD') AS period_end, language, created_by, emailed_at, created_at, content->'stats' AS stats, content->>'summary' AS summary FROM competitor_reports`;
+app.get('/api/business/:id/competitor-activity', authRequired, async (req, res) => {
+  try {
+    const own = await ciOwnedBusiness(req); if (!own) return res.status(404).json({ error: 'Business not found' });
+    const id = req.params.id;
+    const competitors = (await pool.query(`SELECT c.id, c.name, c.website, c.last_tracked_at, c.tracking_status, (SELECT count(*)::int FROM competitor_findings f WHERE f.competitor_id = c.id) AS findings_count FROM tracked_competitors c WHERE c.business_id = $1 ORDER BY c.created_at ASC`, [id])).rows;
+    const findings = (await pool.query(`SELECT f.id, f.competitor_id, c.name AS competitor_name, f.kind, f.headline, f.detail, f.impact, f.priority, f.recommendation, f.sources, f.created_at FROM competitor_findings f JOIN tracked_competitors c ON c.id = f.competitor_id WHERE f.business_id = $1 ORDER BY f.created_at DESC, f.priority ASC LIMIT 30`, [id])).rows;
+    const latestRun = (await pool.query(`SELECT id, status, triggered_by, competitors_checked, findings_count, web_search_used, created_at, completed_at FROM competitor_tracking_runs WHERE business_id = $1 ORDER BY created_at DESC LIMIT 1`, [id])).rows[0] || null;
+    const lastManual = (await pool.query(`SELECT created_at FROM competitor_tracking_runs WHERE business_id = $1 AND triggered_by = 'manual' ORDER BY created_at DESC LIMIT 1`, [id])).rows[0];
+    const canAt = lastManual ? new Date(new Date(lastManual.created_at).getTime() + CI.MANUAL_COOLDOWN_HOURS * 3600e3) : null;
+    res.json({ competitors, findings, latestRun, running: !!(latestRun && latestRun.status === 'running' && Date.now() - new Date(latestRun.created_at).getTime() < CI.RUN_STALE_MINUTES * 60e3), searchAvailable: !!process.env.PERPLEXITY_API_KEY, trackedLimit: MAX_TRACKED_COMPETITORS, canCheckNowAt: canAt && canAt.getTime() > Date.now() ? canAt.toISOString() : null });
+  } catch (e) { console.error('Competitor activity error:', e.message); res.status(500).json({ error: 'Could not load the competitor activity.' }); }
+});
+// "Check now": checks every tracked competitor in the background (a few minutes), at most once every 3 hours per business (each check uses a web search per competitor).
+app.post('/api/business/:id/competitor-activity/check', authRequired, async (req, res) => {
+  try {
+    const own = await ciOwnedBusiness(req); if (!own) return res.status(404).json({ error: 'Business not found' });
+    if (!(await pool.query('SELECT 1 FROM tracked_competitors WHERE business_id = $1 LIMIT 1', [req.params.id])).rows.length) return res.status(400).json({ error: 'Add a competitor first: every competitor you add is tracked.' });
+    if ((await pool.query(`SELECT 1 FROM competitor_tracking_runs WHERE business_id = $1 AND status = 'running' AND created_at > NOW() - INTERVAL '${CI.RUN_STALE_MINUTES} minutes'`, [req.params.id])).rows.length) return res.status(409).json({ error: 'A check is already running for this business.' });
+    const last = (await pool.query(`SELECT EXTRACT(EPOCH FROM (NOW() - created_at))::int AS age FROM competitor_tracking_runs WHERE business_id = $1 AND triggered_by = 'manual' ORDER BY created_at DESC LIMIT 1`, [req.params.id])).rows[0];
+    if (last && last.age < CI.MANUAL_COOLDOWN_HOURS * 3600) return res.status(429).json({ error: `Competitors are checked automatically every week. You can also check by hand once every ${CI.MANUAL_COOLDOWN_HOURS} hours.`, retryAfterSeconds: CI.MANUAL_COOLDOWN_HOURS * 3600 - last.age });
+    res.status(202).json({ started: true });
+    runCompetitorTracking(req.params.id, { triggeredBy: 'manual', force: true }).catch(e => console.error('Manual competitor check failed:', e.message));
+  } catch (e) { console.error('Check competitors error:', e.message); res.status(500).json({ error: 'Could not start the check. Please try again.' }); }
+});
+app.get('/api/business/:id/competitive-reports', authRequired, async (req, res) => {
+  try {
+    const own = await ciOwnedBusiness(req); if (!own) return res.status(404).json({ error: 'Business not found' });
+    const reports = (await pool.query(`${ciReportListSql} WHERE business_id = $1 ORDER BY period_end DESC, created_at DESC LIMIT 60`, [req.params.id])).rows;
+    const hasCompetitors = (await pool.query('SELECT 1 FROM tracked_competitors WHERE business_id = $1 LIMIT 1', [req.params.id])).rows.length > 0;
+    res.json({ reports, hasCompetitors });
+  } catch (e) { console.error('List competitive reports error:', e.message); res.status(500).json({ error: 'Could not load the reports.' }); }
+});
+async function ciLoadReport(req) {
+  const own = await ciOwnedBusiness(req); if (!own) return { status: 404, body: { error: 'Business not found' } };
+  if (!ciIsUuid(req.params.reportId)) return { status: 404, body: { error: 'Report not found' } };
+  const r = (await pool.query('SELECT * FROM competitor_reports WHERE id = $1 AND business_id = $2', [req.params.reportId, req.params.id])).rows[0];
+  return r ? { report: r, business: own.biz } : { status: 404, body: { error: 'Report not found' } };
+}
+const ciIsUuid = v => /^[0-9a-f-]{36}$/i.test(String(v));
+app.get('/api/business/:id/competitive-reports/:reportId', authRequired, async (req, res) => {
+  try { const out = await ciLoadReport(req); if (!out.report) return res.status(out.status).json(out.body); const r = out.report; res.json({ report: { id: r.id, kind: r.kind, language: r.language, createdAt: r.created_at, emailedAt: r.emailed_at, createdBy: r.created_by, content: r.content } }); }
+  catch (e) { console.error('Get competitive report error:', e.message); res.status(500).json({ error: 'Could not load the report.' }); }
+});
+// "Generate now": a report for the last 7 days (weekly) or 30 days (monthly), for a person who added competitors mid-week. One per day per kind; 5 a day per business.
+app.post('/api/business/:id/competitive-reports/generate', authRequired, async (req, res) => {
+  try {
+    const own = await ciOwnedBusiness(req); if (!own) return res.status(404).json({ error: 'Business not found' });
+    const kind = req.body && req.body.kind; if (!['weekly', 'monthly'].includes(kind)) return res.status(400).json({ error: 'Choose a weekly or a monthly report.' });
+    if (!(await pool.query('SELECT 1 FROM tracked_competitors WHERE business_id = $1 LIMIT 1', [req.params.id])).rows.length) return res.status(400).json({ error: 'Add a competitor first: every competitor you add is tracked.' });
+    const period = ciRollingPeriod(kind), existing = (await pool.query(`${ciReportListSql} WHERE business_id = $1 AND kind = $2 AND period_start = $3::date`, [req.params.id, kind, period.start])).rows[0];
+    if (existing) return res.json({ report: existing, existing: true });
+    if (+(await pool.query(`SELECT count(*) FROM competitor_reports WHERE business_id = $1 AND created_by = 'manual' AND created_at > NOW() - INTERVAL '24 hours'`, [req.params.id])).rows[0].count >= CI.MANUAL_REPORTS_PER_DAY) return res.status(429).json({ error: `You can generate up to ${CI.MANUAL_REPORTS_PER_DAY} reports a day. The weekly and monthly reports are also made automatically.` });
+    const report = await buildCompetitiveReport(req.params.id, kind, period, { createdBy: 'manual' });
+    if (!report) return res.status(400).json({ error: 'Add a competitor first: every competitor you add is tracked.' });
+    res.json({ report: (await pool.query(`${ciReportListSql} WHERE id = $1`, [report.id])).rows[0], existing: false });
+  } catch (e) { console.error('Generate competitive report error:', e.message); res.status(500).json({ error: 'Could not generate the report. Please try again.' }); }
+});
+app.get('/api/business/:id/competitive-reports/:reportId/download', authRequired, async (req, res) => {
+  try {
+    const format = String(req.query.format || '').toLowerCase(); if (!['pdf', 'docx'].includes(format)) return res.status(400).json({ error: 'Choose pdf or docx.' });
+    const out = await ciLoadReport(req); if (!out.report) return res.status(out.status).json(out.body);
+    const r = { ...out.report, content: out.report.content }, base = `${imageSlug(out.business.name) || 'business'}-${r.kind}-competitive-report-${r.content.period.start}`;
+    if (format === 'pdf') { const buf = await buildCompetitiveReportPDF(r, out.business.name); res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${base}.pdf"`, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-store' }).send(buf); }
+    else { const buf = await buildCompetitiveReportDOCX(r, out.business.name); res.set({ 'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'Content-Disposition': `attachment; filename="${base}.docx"`, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-store' }).send(buf); }
+  } catch (e) { console.error('Download competitive report error:', e.message); res.status(500).json({ error: 'Could not prepare the download. Please try again.' }); }
+});
 
 // What the AI concludes from the MEASURED data and nothing else. Every content gap must cite competitor page URLs that were
 // really collected; a gap that cannot be traced to one is dropped here, in code, rather than trusted.
@@ -20794,5 +21305,6 @@ app.listen(PORT, async () => {
   await initDB();
   console.log(`Arreyon Consult running on port ${PORT}`);
   startMonitoringScheduler();
+  startCompetitiveIntelligenceScheduler();
   startContentAutomationScheduler();
 });
