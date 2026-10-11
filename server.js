@@ -506,6 +506,7 @@ const WEBSITE_ROUTES = [
   ['POST', routeRx(BIZ_PATH + '/website/generate-blog-post'), 'generate_post', { postQuota: true }],
   ['POST', routeRx(BIZ_PATH + '/shopify/generate-post'), 'generate_post', { postQuota: true }],
   ['POST', routeRx(BIZ_PATH + '/website/topic-suggestions'), 'generate_post'],
+  ['POST', routeRx(BIZ_PATH + '/shopify/topic-suggestions'), 'generate_post'],
   ['*',    routeRx(BIZ_PATH + '/website/generated-posts(/[^/]+(/(publish|log-entries))?)?'), 'posts_list'],
   ['GET',  routeRx(BIZ_PATH + '/shopify/generated-posts'), 'posts_list'],
   ['PUT',  routeRx(BIZ_PATH + '/shopify/generated-posts/[^/]+'), 'posts_list'],
@@ -534,6 +535,7 @@ const WEBSITE_ROUTES = [
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/actions(/[^/]+/(approve|execute|re-verify|confirm-manually|reject|undo|featured-image-preview))?'), 'proposed_changes'],
   ['POST', routeRx(BIZ_PATH + '/website/(seo-proposals|duplicate-title-proposals|taxonomy-proposals|featured-image-proposals)'), 'find_improve_seo'],
   ['POST', routeRx(BIZ_PATH + '/shopify/featured-image-proposals'), 'find_improve_seo'],
+  ['POST', routeRx(BIZ_PATH + '/shopify/(tag-proposals|duplicate-title-proposals)'), 'find_improve_seo'],
   ['GET',  routeRx(BIZ_PATH + '/(website|shopify)/featured-images'), 'find_improve_seo'],
   // partner network / backlinks
   ['*',    routeRx(BIZ_PATH + '/(backlinks|reciprocal-network)(/.*)?'), 'backlinks'],
@@ -7689,7 +7691,7 @@ async function runAiVisibilityCheck(connection, context) {
   return outcome;
 }
 
-async function suggestBlogPostTopics(context, existingPosts, count = 5) {
+async function suggestBlogPostTopics(context, existingPosts, count = 5, platformName = 'WordPress') {
   const contextSummary = summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.';
   const existingTitles = existingPosts.map(p => p.title).filter(Boolean);
   const industry = context?.business?.industry || '';
@@ -7707,7 +7709,7 @@ async function suggestBlogPostTopics(context, existingPosts, count = 5) {
     // research step fails for any reason.
   }
 
-  const prompt = `You are an SEO/AEO/GEO content strategist proposing real, currently valuable blog topic ideas for a real business's WordPress site.
+  const prompt = `You are an SEO/AEO/GEO content strategist proposing real, currently valuable blog topic ideas for a real business's ${platformName} site.
 ${contextSummary}
 ${researchNotes}
 REAL TITLES ALREADY PUBLISHED ON THIS SITE — do not propose something that substantially duplicates one of these:
@@ -10502,11 +10504,42 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 // replacement URL, never touching anything but the one real, dead
 // href, and a real re-fetch after saving to confirm it's genuinely
 // gone rather than trusting the write call succeeded.
+// Writes one SEO text field (title or description) on an article or page. If the field already has a value (as with a duplicate title) it is UPDATED; if not, it is created.
+async function upsertShopifyMetafield(connection, accessToken, resourceType, ownerId, mf, ownerResource) {
+  let existing = null;
+  try {
+    const list = await shopifyApiRequest(connection.shop_domain, accessToken, `/${resourceType}/${ownerId}/metafields.json`, { timeoutMs: 15000 });
+    if (list.ok) existing = ((await list.json()).metafields || []).find(m => m.namespace === mf.namespace && m.key === mf.key) || null;
+  } catch (e) { /* if the list cannot be read, creating it is the safe fallback */ }
+  return existing
+    ? shopifyApiRequest(connection.shop_domain, accessToken, `/metafields/${existing.id}.json`, { method: 'PUT', body: { metafield: { id: existing.id, value: mf.value, type: mf.type } }, timeoutMs: 15000 })
+    : shopifyApiRequest(connection.shop_domain, accessToken, `/${resourceType}/${ownerId}/metafields.json`, { method: 'POST', body: { metafield: { ...mf, owner_id: ownerId, owner_resource: ownerResource } }, timeoutMs: 15000 });
+}
+
 async function executeShopifyAction(action, connection, accessToken) {
   const resourceType = action.target_type === 'post' ? 'articles' : 'pages';
   const change = action.proposed_change;
 
   try {
+    if (action.action_type === 'add_tags') {
+      // Tags are only ever ADDED: whatever the article already has is kept, in the same order. Reads the live tags right before writing.
+      const articlePath = `/blogs/${connection.blog_id}/articles/${action.target_shopify_id}.json`;
+      const readRes = await shopifyApiRequest(connection.shop_domain, accessToken, `${articlePath.replace('.json', '')}.json?fields=id,tags`, { timeoutMs: 15000 });
+      if (!readRes.ok) return { executed: false, error: `Could not read this post's current tags (status ${readRes.status}).` };
+      const current = String(((await readRes.json()).article || {}).tags || '').split(',').map(x => x.trim()).filter(Boolean);
+      const wanted = (Array.isArray(change.tags) ? change.tags : []).map(x => String(x).trim()).filter(Boolean);
+      if (!wanted.length) return { executed: false, error: 'No change to apply.' };
+      const have = new Set(current.map(x => x.toLowerCase())), merged = [...current];
+      for (const tag of wanted) if (!have.has(tag.toLowerCase())) { have.add(tag.toLowerCase()); merged.push(tag); }
+      if (merged.length === current.length) return { executed: true, verified: true };   // they are all there already
+      await pool.query('UPDATE shopify_actions SET previous_state = $1 WHERE id = $2', [JSON.stringify({ tags: current }), action.id]);
+      const putRes = await shopifyApiRequest(connection.shop_domain, accessToken, articlePath, { method: 'PUT', body: { article: { id: action.target_shopify_id, tags: merged.join(', ') } }, timeoutMs: 15000 });
+      if (!putRes.ok) return { executed: false, error: `Shopify rejected saving these tags (status ${putRes.status}).` };
+      const check = await shopifyApiRequest(connection.shop_domain, accessToken, `${articlePath.replace('.json', '')}.json?fields=id,tags`, { timeoutMs: 15000 });
+      if (!check.ok) return { executed: true, verified: false, error: 'The tags were saved, but verification could not confirm them.' };
+      const now = new Set(String(((await check.json()).article || {}).tags || '').split(',').map(x => x.trim().toLowerCase()));
+      return wanted.every(tag => now.has(tag.toLowerCase())) ? { executed: true, verified: true } : { executed: true, verified: false, error: 'The tags were saved, but Shopify does not show them on the post yet.' };
+    }
     if (change.oldUrl && change.newUrl) {
       // Changes only the address of the one link, keeping its text and the rest of the tag. Reads the page's current content right before editing.
       const readRes = await shopifyApiRequest(connection.shop_domain, accessToken, `/${resourceType}/${action.target_shopify_id}.json?fields=body_html`);
@@ -10586,9 +10619,7 @@ async function executeShopifyAction(action, connection, accessToken) {
     if (!metafields.length) return { executed: false, error: 'No change to apply.' };
 
     for (const mf of metafields) {
-      const res = await shopifyApiRequest(connection.shop_domain, accessToken, `/${resourceType}/${action.target_shopify_id}/metafields.json`, {
-        method: 'POST', body: { metafield: { ...mf, owner_id: action.target_shopify_id, owner_resource: action.target_type === 'post' ? 'article' : 'page' } }, timeoutMs: 15000,
-      });
+      const res = await upsertShopifyMetafield(connection, accessToken, resourceType, action.target_shopify_id, mf, action.target_type === 'post' ? 'article' : 'page');
       if (!res.ok) return { executed: false, error: `Shopify rejected saving this change (status ${res.status}).` };
     }
     return { executed: true, verified: true };
@@ -11124,6 +11155,167 @@ app.get('/api/business/:id/shopify/generated-posts', authRequired, async (req, r
     console.error('Get Shopify generated posts error:', e.message);
     res.status(500).json({ error: 'Could not load generated posts.' });
   }
+});
+
+// ── Shopify: topic ideas, tag suggestions and duplicate-title fixes (the same three things WordPress has) ──────────────────────────────
+// Every suggestion is a PROPOSAL the owner approves (or, on a store set to Automatic, applied like the other low-risk fixes). Tags are only ever added, never removed.
+// Duplicate titles: every page or post whose title (or SEO title, if it has one) is shared with another gets a new, distinct SEO TITLE proposed; the first one keeps its own.
+const SHOPIFY_PROPOSAL_CAP = 15, SHOPIFY_LIST_LIMIT = 250, SHOPIFY_DUPLICATE_LOOKUPS = 40;
+async function shopifyListResources(connection, accessToken, kind, fields) {
+  const path = kind === 'articles' ? `/blogs/${connection.blog_id}/articles.json` : '/pages.json';
+  const res = await shopifyApiRequest(connection.shop_domain, accessToken, `${path}?limit=${SHOPIFY_LIST_LIMIT}&fields=${fields}`, { timeoutMs: 20000 });
+  if (res.status === 401 || res.status === 403) {
+    await pool.query(`UPDATE shopify_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);   // the store refused us: recorded, so the rest of the tool tells the truth
+    const e = new Error('Shopify no longer accepts the connection for this store. Please reconnect it first.'); e.code = 'auth_lost'; throw e;
+  }
+  if (!res.ok) throw new Error(`Shopify could not list the ${kind} of this store (status ${res.status}).`);
+  return (await res.json())[kind] || [];
+}
+const shopifyTagList = text => String(text || '').split(',').map(x => x.trim()).filter(Boolean);
+function cleanProposedTags(raw) {
+  const seen = new Set(), out = [];
+  for (const item of Array.isArray(raw) ? raw : []) for (const part of String(item == null ? '' : item).split(',')) { const tag = cleanContactText(part, 255); if (tag && !seen.has(tag.toLowerCase())) { seen.add(tag.toLowerCase()); out.push(tag); } }
+  return out.slice(0, 4);
+}
+// Saves the proposals the AI made and, on a store set to Automatic, applies the low-risk ones. A failed automatic apply stays pending so the owner sees it.
+async function saveShopifyProposals(connection, accessToken, rows) {
+  const proposals = []; let autoApplied = 0;
+  for (const r of rows) {
+    const saved = (await pool.query(`INSERT INTO shopify_actions (shopify_connection_id, action_type, target_type, target_shopify_id, target_url, target_title, previous_state, proposed_change, reasoning)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [connection.id, r.actionType, r.targetType, r.id, r.url, r.title, JSON.stringify(r.previous), JSON.stringify(r.change), r.reasoning || null])).rows[0];
+    if (SHOPIFY_AUTO_APPLY_ACTIONS.has(r.actionType) && await shopifyAutoApplyAllowed(connection)) {
+      const exec = await executeShopifyAction(saved, connection, accessToken);
+      if (exec.executed) { proposals.push((await pool.query(`UPDATE shopify_actions SET approval_status = 'approved', execution_status = 'executed', auto_applied = TRUE, reviewed_at = NOW() WHERE id = $1 RETURNING *`, [saved.id])).rows[0]); autoApplied++; continue; }
+    }
+    proposals.push(saved);
+  }
+  return { proposals, autoApplied };
+}
+async function readProposalJson(raw, what) {
+  try { return extractJSON(raw); }
+  catch (e) { const looksTruncated = !raw.trim().endsWith('}') && !raw.trim().endsWith('```'); console.error(`${what} JSON parse failed:`, e.message); throw new Error(`Could not generate ${what} ? the AI's response could not be read${looksTruncated ? ' (it appears to have been cut off before finishing; please try again)' : ' (please try again)'}.`.replace(' ? ', ': ')); }
+}
+async function shopifyTopicSuggestions(context, connection, accessToken) {
+  let posts = [];
+  try {
+    if (connection.blog_id) {
+      const res = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles.json?limit=50&fields=title`);
+      if (res.ok) posts = ((await res.json()).articles || []).map(a => ({ title: a.title }));
+    }
+  } catch (e) { /* topic ideas are still useful without the list of existing posts (a slightly higher chance of repeating one) */ }
+  return suggestBlogPostTopics(context, posts, 5, 'Shopify');
+}
+async function runShopifyTagProposalGeneration(connection, accessToken, context) {
+  if (!connection.blog_id) return { proposals: [], message: 'No blog was found on this Shopify store, so there are no posts to tag.' };
+  const articles = await shopifyListResources(connection, accessToken, 'articles', 'id,title,handle,tags,body_html');
+  if (!articles.length) return { proposals: [], message: 'This store has no blog posts yet, so there is nothing to tag.' };
+  const freq = new Map(); for (const a of articles) for (const tag of shopifyTagList(a.tags)) freq.set(tag, (freq.get(tag) || 0) + 1);
+  const existingTags = [...freq.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]).slice(0, 60);
+  const waiting = new Set((await pool.query(`SELECT target_shopify_id FROM shopify_actions WHERE shopify_connection_id = $1 AND action_type = 'add_tags' AND approval_status = 'pending'`, [connection.id])).rows.map(r => String(r.target_shopify_id)));
+  const untagged = articles.filter(a => !shopifyTagList(a.tags).length), candidates = untagged.filter(a => !waiting.has(String(a.id))).slice(0, SHOPIFY_PROPOSAL_CAP);
+  if (!untagged.length) return { proposals: [], message: 'Every post already has at least one tag: nothing to propose right now.' };
+  if (!candidates.length) return { proposals: [], message: 'Every post without tags already has a tag suggestion waiting for your review.' };
+  const storeUrl = await getShopifyStoreUrl(connection, accessToken), blogHandle = await getShopifyBlogHandle(connection, accessToken);
+  const summary = candidates.map((c, i) => `[${i}] "${c.title}" (${storeUrl}/blogs/${blogHandle}/${c.handle})\n  Starts: ${wpStripHtml(c.body_html || '').slice(0, 300) || '(no text)'}`).join('\n');
+  const prompt = `You are an SEO Agent adding tags to the blog posts of a real Shopify store. Every post below has NO tags yet. Suggest only what the post's own content supports; never invent details.
+${summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.'}
+
+THIS STORE'S REAL, EXISTING TAGS (strongly prefer reusing these; a new tag is fine when genuinely more specific and useful):
+${existingTags.length ? existingTags.join(', ') : '(none yet)'}
+
+POSTS WITHOUT TAGS:
+${summary}
+
+For EACH numbered post, suggest 2-4 short tags (existing ones preferred) based on its actual content.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{ "proposals": [ { "index": 0, "suggested_tags": ["tag1", "tag2"], "reasoning": "1 sentence on why these fit this post's actual content" } ] }`;
+  const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the tag proposals now, as JSON only.' }], complexity: 'complex', context: { feature: 'shopify_tag_proposals' }, maxTokens: 3000 });
+  const result = await readProposalJson(raw, 'tag proposals');
+  if (!Array.isArray(result.proposals)) throw new Error(`Could not generate tag proposals: the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
+  const rows = [], used = new Set();
+  for (const p of result.proposals) {
+    const c = candidates[p && p.index]; if (!c || used.has(c.id)) continue;
+    const tags = cleanProposedTags(p.suggested_tags); if (!tags.length) continue; used.add(c.id);
+    rows.push({ actionType: 'add_tags', targetType: 'post', id: c.id, url: `${storeUrl}/blogs/${blogHandle}/${c.handle}`, title: c.title, previous: { tags: [] }, change: { tags }, reasoning: cleanContactText(p.reasoning, 500) });
+  }
+  return saveShopifyProposals(connection, accessToken, rows);
+}
+async function shopifySeoMetafield(connection, accessToken, resourceType, id) {
+  try {
+    const res = await shopifyApiRequest(connection.shop_domain, accessToken, `/${resourceType}/${id}/metafields.json`, { timeoutMs: 15000 });
+    if (!res.ok) return null;
+    return ((await res.json()).metafields || []).find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || '';
+  } catch (e) { return null; }   // unknown: that page is left out rather than guessed about
+}
+async function runShopifyDuplicateTitleProposalGeneration(connection, accessToken, context) {
+  const articles = connection.blog_id ? await shopifyListResources(connection, accessToken, 'articles', 'id,title,handle') : [], pages = await shopifyListResources(connection, accessToken, 'pages', 'id,title,handle');
+  const items = [...pages.map(p => ({ type: 'page', id: p.id, title: p.title, handle: p.handle })), ...articles.map(a => ({ type: 'post', id: a.id, title: a.title, handle: a.handle }))];   // pages first: the first of a group keeps its title
+  const norm = x => String(x || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  // 1. cheap: pages and posts sharing a TITLE. 2. only those few are asked for their SEO title (it may already tell them apart).
+  const byTitle = new Map(); for (const it of items) { const k = norm(it.title); if (!k) continue; if (!byTitle.has(k)) byTitle.set(k, []); byTitle.get(k).push(it); }
+  const shared = [...byTitle.values()].filter(g => g.length > 1).flat().slice(0, SHOPIFY_DUPLICATE_LOOKUPS);
+  if (!shared.length) return { proposals: [], message: 'No duplicate page or post titles were found: nothing to propose right now.' };
+  for (const it of shared) { const meta = await shopifySeoMetafield(connection, accessToken, it.type === 'post' ? 'articles' : 'pages', it.id); it.metaTitle = meta; it.known = meta !== null; }
+  const groups = new Map(); for (const it of shared.filter(x => x.known)) { const k = norm(it.metaTitle || it.title); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(it); }
+  const waiting = new Set((await pool.query(`SELECT target_shopify_id FROM shopify_actions WHERE shopify_connection_id = $1 AND action_type = 'update_meta_title' AND approval_status = 'pending'`, [connection.id])).rows.map(r => String(r.target_shopify_id)));
+  const candidates = []; for (const g of groups.values()) if (g.length > 1) for (const it of g.slice(1)) if (!waiting.has(String(it.id))) candidates.push(it);
+  if (!candidates.length) return { proposals: [], message: groups.size && [...groups.values()].some(g => g.length > 1) ? 'Every duplicate title already has a fix waiting for your review.' : 'No duplicate titles were found: pages that share a name already have different SEO titles.' };
+  const taken = new Set([...items.map(i => norm(i.title)), ...shared.map(i => norm(i.metaTitle))]);   // a new title must not collide with any title on the store
+  const storeUrl = await getShopifyStoreUrl(connection, accessToken), blogHandle = await getShopifyBlogHandle(connection, accessToken);
+  const urlOf = it => it.type === 'page' ? `${storeUrl}/pages/${it.handle}` : `${storeUrl}/blogs/${blogHandle}/${it.handle}`, capped = candidates.slice(0, SHOPIFY_PROPOSAL_CAP);
+  const summary = capped.map((c, i) => `[${i}] ${c.type === 'post' ? 'POST' : 'PAGE'}: currently titled "${c.metaTitle || c.title}" (${urlOf(c)}); this exact title is also used by at least one other page or post on the store`).join('\n');
+  const prompt = `You are an SEO Agent fixing a real, measured technical SEO problem: several pages/posts on this Shopify store share the exact same page title, which hurts search visibility because search engines cannot tell them apart.
+${summarizeBusinessContextForAI(context) || 'No detailed context is available for this business yet.'}
+
+PAGES/POSTS SHARING A TITLE WITH ANOTHER PAGE ON THIS STORE:
+${summary}
+
+For EACH numbered item, write a new, genuinely distinct title of 50-60 characters, grounded in that item's own address and likely content, that no longer collides with the other page's title. Never invent details that are not supported by what you are told.
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{ "proposals": [ { "index": 0, "suggested_title": "specific, distinct title", "reasoning": "1 sentence on why this title is now distinct and still fits" } ] }`;
+  const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: 'Provide the duplicate-title fixes now, as JSON only.' }], complexity: 'complex', context: { feature: 'shopify_duplicate_title_proposals' }, maxTokens: 3000 });
+  const result = await readProposalJson(raw, 'duplicate-title fixes');
+  if (!Array.isArray(result.proposals)) throw new Error(`Could not generate duplicate-title fixes: the response was missing required data (got: ${Object.keys(result).join(', ') || 'nothing'}). Please try again.`);
+  const rows = [], used = new Set();
+  for (const p of result.proposals) {
+    const c = capped[p && p.index], title = cleanContactText(p && p.suggested_title, 255);
+    if (!c || !title || used.has(c.id) || taken.has(norm(title))) continue;   // no title, a repeat, or one that would collide with another page: skipped
+    used.add(c.id); taken.add(norm(title));
+    rows.push({ actionType: 'update_meta_title', targetType: c.type, id: c.id, url: urlOf(c), title: c.title, previous: { metaTitle: c.metaTitle || null, title: c.title }, change: { metaTitle: title }, reasoning: cleanContactText(p.reasoning, 500) });
+  }
+  return saveShopifyProposals(connection, accessToken, rows);
+}
+// The route preamble: the caller's business, a connected store, and the business context the AI works from.
+async function shopifyProposalRouteContext(req) {
+  const account = await resolveAccount(req.userId), context = await getBusinessContext(req.params.id, account.id);
+  if (!context) return { status: 404, error: 'Business not found' };
+  const connection = (await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id])).rows[0];
+  if (!connection) return { status: 404, error: 'No Shopify store connected' };
+  if (connection.connection_status !== 'connected') return { status: 400, error: 'This Shopify store is disconnected. Please reconnect it first.' };
+  return { context, connection, accessToken: decryptSecret(connection.access_token_encrypted) };
+}
+const SHOPIFY_PROPOSAL_ROUTES = [
+  { path: 'tag-proposals', kind: 'tags', run: runShopifyTagProposalGeneration, failure: 'Failed to generate tag suggestions. Please try again.' },
+  { path: 'duplicate-title-proposals', kind: 'duplicate_titles', run: runShopifyDuplicateTitleProposalGeneration, failure: 'Failed to generate duplicate-title fixes. Please try again.' },
+];
+for (const r of SHOPIFY_PROPOSAL_ROUTES) app.post(`/api/business/:id/shopify/${r.path}`, authRequired, async (req, res) => {
+  try {
+    const ctx = await shopifyProposalRouteContext(req); if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+    recordRunFrom(res, req.params.id, 'shopify', 'proposals_generated', b => ({ detail: { kind: r.kind, count: proposalCount(b) } }));
+    res.json(await r.run(ctx.connection, ctx.accessToken, ctx.context));
+  } catch (err) {
+    console.error(`Shopify ${r.kind} proposals error:`, err.message);
+    if (err.code === 'auth_lost') return res.status(400).json({ error: err.message, code: 'auth_lost' });
+    res.status(500).json({ error: safeErrorMessage(err, r.failure) });
+  }
+});
+app.post('/api/business/:id/shopify/topic-suggestions', authRequired, async (req, res) => {
+  try {
+    const ctx = await shopifyProposalRouteContext(req); if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+    res.json({ topics: await shopifyTopicSuggestions(ctx.context, ctx.connection, ctx.accessToken) });
+  } catch (err) { console.error('Shopify topic suggestions error:', err.message); res.status(500).json({ error: safeErrorMessage(err, 'Failed to generate topic suggestions. Please try again.') }); }
 });
 
 // ── Shopify generated posts: edit, publish, and delete a draft, inside the tool ──────────────────────────────────────────────────────
@@ -21243,7 +21435,7 @@ const wordpressAgent = {
 // ═══════════════════════════════════════════════════════════════════════════
 // The low-risk tier WordPress also auto-executes. This governs the meta-tag path only: broken-link removal
 // has no auto-apply path in runShopifyAudit at all, so widening this set would NOT make it auto-apply.
-const SHOPIFY_AUTO_APPLY_ACTIONS = new Set(['update_meta_title', 'update_meta_description']);
+const SHOPIFY_AUTO_APPLY_ACTIONS = new Set(['update_meta_title', 'update_meta_description', 'add_tags']);
 // ── Shopify store URL: the real one, never a guess ─────────────────────────
 const shopifyStoreInfoCache = new Map();
 const SHOPIFY_INFO_TTL_MS = 6 * 60 * 60 * 1000;
@@ -21312,6 +21504,7 @@ function shopifyAuditActivityDetail(audit) {
 function describeShopifyActionChange(action) {
   const c = action.proposed_change || {};
   if (c.brokenUrl) return `Remove broken link to ${c.brokenUrl}`;
+  if (Array.isArray(c.tags) && c.tags.length) return `Add tags: ${c.tags.join(', ')}`;
   const parts = [];
   if (c.metaTitle) parts.push(`Meta title: "${c.metaTitle}"`);
   if (c.metaDescription) parts.push(`Meta description: "${c.metaDescription}"`);
