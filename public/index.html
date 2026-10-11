@@ -98,12 +98,7 @@
       "priceCurrency": "USD",
       "description": "Unlimited consultations, all 29 directors, video reports"
     }
-  ],
-  "aggregateRating": {
-    "@type": "AggregateRating",
-    "ratingValue": "5",
-    "reviewCount": "3"
-  }
+  ]
 }
 </script>
 <script type="application/ld+json">
@@ -780,7 +775,7 @@ async function loadCMS() {
       if (p.headline) document.getElementById('pricingTitle').textContent = p.headline;
       if (p.subheadline) document.getElementById('pricingSubtitle').textContent = p.subheadline;
     }
-    if (content.testimonials) {
+    if (content.testimonials && !window.__realReviews) {   // real customer reviews, once there are 3, take this place
       const t = content.testimonials;
       if (t.headline) document.getElementById('testimonialsTitle').textContent = t.headline;
       [1,2,3].forEach(function(n) {
@@ -845,10 +840,44 @@ document.addEventListener('DOMContentLoaded', () => {
   loadPricing();
 });
 
+// Real customer reviews (approved by an admin). Until 3 qualify, the testimonials above stay as they are. Once they do, the 3 best replace them, and ONLY THEN
+// does this page tell search engines a rating: it comes from the real reviews, never a fixed number.
+let realReviews = null;
+function renderRealReviews() {
+  if (!realReviews || !realReviews.reviews || realReviews.reviews.length < 3) return;
+  window.__realReviews = true;
+  const stars = document.querySelectorAll('#testimonialsGrid .testimonial-stars');
+  realReviews.reviews.slice(0, 3).forEach(function(r, i) {
+    const n = i + 1, who = r.name || t('reviews.anonymous'), rating = Math.max(1, Math.min(5, r.rating | 0));
+    document.getElementById('t' + n + 'Text').textContent = '"' + r.comment + '"';
+    document.getElementById('t' + n + 'Name').textContent = who;
+    document.getElementById('t' + n + 'Av').textContent = who.charAt(0).toUpperCase();
+    document.getElementById('t' + n + 'Role').textContent = r.business || '';
+    if (stars[i]) stars[i].textContent = '\u2605'.repeat(rating) + '\u2606'.repeat(5 - rating);
+  });
+}
+function addRatingMarkup() {
+  const s = realReviews && realReviews.summary; if (!s || s.count < 3 || !(s.average >= 1 && s.average <= 5)) return;
+  document.querySelectorAll('script[type="application/ld+json"]').forEach(function(el) {
+    try {
+      const data = JSON.parse(el.textContent);
+      if (data['@type'] !== 'SoftwareApplication') return;
+      data.aggregateRating = { '@type': 'AggregateRating', ratingValue: String(s.average), reviewCount: String(s.count), bestRating: '5', worstRating: '1' };
+      el.textContent = JSON.stringify(data);
+    } catch (e) {}
+  });
+}
+async function loadReviews() {
+  try {
+    if (!realReviews) { const res = await fetch('/api/public/reviews'); if (!res.ok) return; realReviews = await res.json(); addRatingMarkup(); }
+    renderRealReviews();
+  } catch (e) {}
+}
+
 // Fetch CMS content in the current language — covers both the initial load
 // (triggered by i18n.js's first language-detection dispatch) and any manual
 // language switch afterward.
-document.addEventListener('arreyon:langchange', () => { loadCMS(); renderPrices(); });
+document.addEventListener('arreyon:langchange', () => { loadCMS(); loadReviews(); renderPrices(); });   // reviews before prices: a pricing hiccup must never stop them loading
 </script>
 </body>
 </html>
