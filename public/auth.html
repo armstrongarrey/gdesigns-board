@@ -285,7 +285,7 @@ document.addEventListener('arreyon:langchange', () => {
 
 // The server answers with a readable message AND a code. Known cases are shown in the language the person is using.
 function serverMsg(data, fallbackKey) {
-  const known = { rate_limited: 'auth.err_rate_limited', password_too_short: 'auth.err_password_length', password_too_long: 'auth.err_password_long', password_too_common: 'auth.err_password_common', wrong_password: 'auth.err_confirm_wrong', password_required: 'auth.err_password_required' };
+  const known = { rate_limited: 'auth.err_rate_limited', password_too_short: 'auth.err_password_length', password_too_long: 'auth.err_password_long', password_too_common: 'auth.err_password_common', wrong_password: 'auth.err_confirm_wrong', password_required: 'auth.err_password_required', email_registered: 'auth.err_email_registered', email_unverified: 'auth.err_email_unverified' };
   if (data && known[data.code]) return t(known[data.code]);
   return (data && data.error) || t(fallbackKey);
 }
@@ -325,10 +325,25 @@ async function doSignup() {
     const data = await res.json();
     if (data.success) {
       showVerifyNotice(email);
-    } else { showErr('signupError', serverMsg(data, 'auth.err_registration_failed')); }
+    } else if (data.code === 'email_registered' || data.code === 'email_unverified') { showSignupConflict(data.code, email); }
+    else { showErr('signupError', serverMsg(data, 'auth.err_registration_failed')); }
   } catch(e) { showErr('signupError', t('auth.err_connection')); }
   btn.disabled = false; btn.textContent = t('auth.tab_create');
 }
+
+// "This address already has an account." Two situations, explained differently, each with the way forward one click away. Everything shown is text set with
+// textContent (the address is only put into an input's value), so nothing typed can become markup.
+function showSignupConflict(code, email) {
+  showErr('signupError', t(code === 'email_unverified' ? 'auth.err_email_unverified' : 'auth.err_email_registered'));
+  const box = document.getElementById('signupError'), row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px';
+  const add = (key, fn, primary, href) => { const b = document.createElement(href ? 'a' : 'button'); if (href) b.href = href; else { b.type = 'button'; b.onclick = fn; } b.className = primary ? 'auth-btn' : 'auth-link'; if (primary) b.style.cssText = 'width:auto;padding:9px 16px;font-size:13px;margin-top:0'; b.textContent = t(key); row.appendChild(b); };
+  if (code === 'email_unverified') { add('auth.action_send_reset', () => startRecovery(email), true); add('auth.continue_google', null, false, '/auth/google'); }
+  else { add('auth.action_signin_instead', () => { switchTab('login'); document.getElementById('loginEmail').value = email; }, true); add('auth.forgot_password', () => { switchTab('forgot'); document.getElementById('forgotEmail').value = email; }, false); }
+  box.appendChild(row);
+}
+// One click: the reset link goes to the address (opening it proves the address is theirs, and replaces whoever signed up first).
+async function startRecovery(email) { switchTab('forgot'); document.getElementById('forgotEmail').value = email; await doForgot(); }
 
 async function doForgot() {
   hideErr('forgotError');
