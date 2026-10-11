@@ -8772,23 +8772,82 @@ async function loadShopifyGeneratedPosts() {
   }
 }
 
+// The posts last loaded, so an article that turns out to be gone from Shopify can be marked and offered for removal without another request.
+let currentShopifyPosts = [];
 function renderShopifyGeneratedPosts(posts) {
+  currentShopifyPosts = posts;
   const contentEl = document.getElementById('shopifyGeneratedPostsContent');
   if (!posts.length) {
     contentEl.innerHTML = `<div style="text-align:center;padding:16px;color:var(--muted);font-size:13px">${t('web.no_generated_posts')}</div>`;
     return;
   }
+  const field = (id, key, value, tag) => `<label style="font-size:11px;color:var(--muted)" data-i18n="${key}">${t(key)}</label>${tag === 'textarea' ? `<textarea id="${id}" rows="10" style="width:100%;font-family:monospace;font-size:11.5px;margin-bottom:10px">${escapeHtml(value)}</textarea>` : `<input type="text" id="${id}" value="${escapeHtml(value)}" style="width:100%;margin-bottom:8px">`}`;
   contentEl.innerHTML = renderCollapsibleItems(posts, (post) => {
-    const isDraft = post.status !== 'publish';
+    const isDraft = post.status !== 'publish', url = safeHttpUrl(post.article_url), id = escapeHtml(post.id);
     return `
     <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-        <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(post.title)}</div>
+        <div style="min-width:0"><div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(post.title)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">${timeAgo(post.created_at)}${url ? ` · <a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="color:var(--purple-light)">${t('web.view_on_site')}</a>` : ''}</div></div>
         <span style="font-size:9px;font-weight:700;color:${isDraft ? '#f59e0b' : '#22c55e'};background:${isDraft ? 'rgba(245,158,11,.15)' : 'rgba(34,197,94,.15)'};padding:2px 8px;border-radius:10px;white-space:nowrap;text-transform:uppercase">${t(isDraft ? 'web.status_draft' : 'web.status_published')}</span>
       </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:4px">${timeAgo(post.created_at)}${post.article_url ? ` · <a href="${escapeHtml(post.article_url)}" target="_blank" style="color:var(--purple-light)">${t('web.view_full_post_button')}</a>` : ''}</div>
+      ${post.tags ? `<div style="margin-top:8px;font-size:11.5px;color:var(--text2)"><span style="color:var(--muted)">${t('web.field_tags')}:</span> ${escapeHtml(post.tags)}</div>` : ''}
+      ${post._missing ? `<div style="margin-top:8px;font-size:11.5px;color:#ff8080">${t('web.article_missing_note')}</div>` : ''}
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        ${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="btn-ghost" style="font-size:11.5px;padding:5px 10px;text-decoration:none;display:inline-block">${t('web.view_full_post_button')}</a>` : ''}
+        ${post._missing ? `<button class="btn-ghost" data-id="${id}" onclick="deleteShopifyDraft(this.dataset.id)" style="font-size:11.5px;padding:5px 10px;color:#ef4444">${t('web.remove_from_list_button')}</button>` : `
+        <button class="btn-ghost" data-id="${id}" onclick="toggleEditShopifyPost(this.dataset.id)" style="font-size:11.5px;padding:5px 10px">${t('web.edit_button')}</button>
+        ${isDraft ? `<button class="btn-primary" data-id="${id}" onclick="publishShopifyPost(this.dataset.id)" style="font-size:11.5px;padding:5px 10px">${t('web.publish_button')}</button>` : ''}
+        ${isDraft ? `<button class="btn-ghost" data-id="${id}" onclick="deleteShopifyDraft(this.dataset.id)" style="font-size:11.5px;padding:5px 10px;color:#ef4444">${t('web.delete_draft_button')}</button>` : ''}`}
+      </div>
+      <div id="shEditForm-${id}" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        ${field(`shEdit-title-${id}`, 'web.field_title', post.title)}
+        ${field(`shEdit-metaTitle-${id}`, 'web.field_meta_title', post.meta_title || '')}
+        ${field(`shEdit-metaDescription-${id}`, 'web.field_meta_description', post.meta_description || '')}
+        <div style="font-size:10.5px;color:var(--muted);margin:-4px 0 8px">${t('web.leave_empty_keep')}</div>
+        ${field(`shEdit-tags-${id}`, 'web.field_tags', post.tags || '')}
+        ${field(`shEdit-bodyHtml-${id}`, 'web.field_body_html', post.body_html || '', 'textarea')}
+        <button class="btn-primary" data-id="${id}" onclick="saveShopifyPostEdit(this.dataset.id)" id="shSaveBtn-${id}">${t('web.save_changes_button')}</button>
+      </div>
     </div>`;
   }, 5, 'shopifyGeneratedPosts');
+}
+function toggleEditShopifyPost(postId) {
+  const form = document.getElementById(`shEditForm-${postId}`); if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+// A request to Shopify can come back saying the article is gone: then the post is marked, so it can be removed from the list.
+function shopifyPostFailed(postId, data) {
+  showToast((data && data.error) || t('board.connection_error'), 'error');
+  if (data && data.code === 'article_missing') { const p = currentShopifyPosts.find(x => x.id === postId); if (p) { p._missing = true; renderShopifyGeneratedPosts(currentShopifyPosts); } }
+}
+async function saveShopifyPostEdit(postId) {
+  const btn = document.getElementById(`shSaveBtn-${postId}`), val = k => document.getElementById(`shEdit-${k}-${postId}`).value;
+  btn.disabled = true; btn.textContent = t('web.saving');
+  try {
+    const payload = { title: val('title'), metaTitle: val('metaTitle'), metaDescription: val('metaDescription'), tags: val('tags').split(',').map(s => s.trim()).filter(Boolean), bodyHtml: val('bodyHtml') };
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/generated-posts/${encodeURIComponent(postId)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { shopifyPostFailed(postId, data); return; }
+    showToast(t('toast.saved'), 'success'); loadShopifyGeneratedPosts();
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+  finally { const b = document.getElementById(`shSaveBtn-${postId}`); if (b) { b.disabled = false; b.textContent = t('web.save_changes_button'); } }
+}
+async function publishShopifyPost(postId) {
+  if (!confirm(t('web.confirm_publish'))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/generated-posts/${encodeURIComponent(postId)}/publish`, { method: 'POST' }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { shopifyPostFailed(postId, data); return; }
+    showToast(t('web.published_toast'), 'success'); loadShopifyGeneratedPosts();
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+}
+async function deleteShopifyDraft(postId) {
+  const missing = (currentShopifyPosts.find(x => x.id === postId) || {})._missing;
+  if (!confirm(t(missing ? 'web.confirm_remove_from_list' : 'web.confirm_delete_draft'))) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/generated-posts/${encodeURIComponent(postId)}`, { method: 'DELETE' }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast((data && data.error) || t('board.connection_error'), 'error'); if (data && data.code === 'now_live') loadShopifyGeneratedPosts(); return; }
+    showToast(t(data.alreadyGone ? 'web.removed_from_list_toast' : 'web.draft_deleted_toast'), 'success'); loadShopifyGeneratedPosts();
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -9660,6 +9719,9 @@ function agentActivityText(e) {
       return base;
     }
     case 'content_failed': return t('web.activity_content_failed');
+    case 'content_edited': return tf('web.activity_post_edited', { title: d.title || '' });
+    case 'content_published': return tf('web.activity_post_published', { title: d.title || '' });
+    case 'content_deleted': return tf('web.activity_post_deleted', { title: d.title || '' });
     case 'ai_visibility_checked': return failed ? t('web.activity_ai_visibility_failed') : tf('web.activity_ai_visibility', { mentioned: d.mentionedCount || 0, total: d.checkedCount || 0 });
     case 'keyword_snapshot': return failed ? t('web.activity_keyword_snapshot_failed') : tf('web.activity_keyword_snapshot', { queries: d.queries || 0, opportunities: d.opportunities || 0 });
     case 'content_missed': return t('web.activity_content_missed');
