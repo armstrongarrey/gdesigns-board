@@ -171,6 +171,9 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
     <button class="nav-item" onclick="showSection('announcements')" id="nav-announcements">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3z"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span data-i18n="admin.nav_announcements">Announcements</span>
     </button>
+    <button class="nav-item" onclick="showSection('reviews')" id="nav-reviews">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><span data-i18n="admin.nav_reviews">Reviews</span><span id="reviewsBadge" style="display:none;margin-left:auto;background:var(--purple);color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700"></span>
+    </button>
     <button class="nav-item" onclick="showSection('coupons')" id="nav-coupons">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span data-i18n="admin.nav_coupons">Coupon Codes</span>
     </button>
@@ -359,6 +362,22 @@ textarea.cms-field-input{resize:vertical;min-height:70px;line-height:1.5}
 
 
     <!-- ANNOUNCEMENTS -->
+    <div class="section-view" id="section-reviews">
+      <div class="msg-box" id="reviewsMsg"></div>
+      <div class="form-card">
+        <div class="form-card-title" data-i18n="rev_admin.title">Customer reviews</div>
+        <div id="reviewsIntro" style="font-size:12px;color:var(--muted);line-height:1.6"></div>
+        <div id="reviewsFilters" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"></div>
+      </div>
+      <div class="table-card" style="margin-top:14px">
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th data-i18n="rev_admin.col_date">Date</th><th data-i18n="rev_admin.col_customer">Customer</th><th data-i18n="rev_admin.col_rating">Rating</th><th data-i18n="rev_admin.col_comment">Public comment</th><th data-i18n="rev_admin.col_private">What to improve (private)</th><th data-i18n="rev_admin.col_status">Status</th><th data-i18n="rev_admin.col_actions">Actions</th></tr></thead>
+          <tbody id="reviewsList"></tbody>
+        </table></div>
+        <div id="reviewsPager" style="display:flex;gap:10px;align-items:center;justify-content:center;padding:12px;font-size:12px;color:var(--muted)"></div>
+      </div>
+    </div>
+
     <div class="section-view" id="section-announcements">
       <div class="msg-box" id="annMsg"></div>
 
@@ -505,7 +524,7 @@ function showAdminDashboard() {
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appSidebar').style.display = 'flex';
   document.getElementById('appMain').style.display = 'flex';
-  loadOverview(); loadPayments(); loadUsers(); loadCMS(); loadAnnouncements(); loadCoupons(); refreshSecurityStatus();
+  loadOverview(); loadPayments(); loadUsers(); loadCMS(); loadAnnouncements(); loadCoupons(); refreshSecurityStatus(); refreshReviewBadge();
 }
 
 async function adminLogin() {
@@ -675,13 +694,69 @@ function showSection(name) {
   document.getElementById('section-' + name).classList.add('active');
   const nav = document.getElementById('nav-' + name);
   if (nav) nav.classList.add('active');
-  const titleKeys = {pricing:'admin.nav_pricing',overview:'admin.nav_overview',payments:'admin.nav_payments',users:'admin.nav_users','team-members':'admin.nav_team_members','partner-network':'admin.nav_partner_network',usage:'admin.nav_usage',cms:'admin.nav_cms',announcements:'admin.nav_announcements',coupons:'admin.nav_coupons',security:'admin.nav_security'};
+  const titleKeys = {reviews:'admin.nav_reviews',pricing:'admin.nav_pricing',overview:'admin.nav_overview',payments:'admin.nav_payments',users:'admin.nav_users','team-members':'admin.nav_team_members','partner-network':'admin.nav_partner_network',usage:'admin.nav_usage',cms:'admin.nav_cms',announcements:'admin.nav_announcements',coupons:'admin.nav_coupons',security:'admin.nav_security'};
   document.getElementById('topbarTitle').textContent = titleKeys[name] ? t(titleKeys[name]) : name;
   if (name === 'usage') loadUsageStats();
+  if (name === 'reviews') loadAdminReviews();
   if (name === 'security') refreshSecurityStatus();
   if (name === 'pricing') loadPlanPricingAdmin();
   if (name === 'team-members') loadAdminTeamMembers();
   if (name === 'partner-network') { loadPartnerNetworkOverview(); loadPartnerNetworkPlacements(); }
+}
+
+// ── CUSTOMER REVIEWS ─────────────────────────────────────────────────────────
+// Everything a customer wrote is shown as plain text (esc). The private "what to improve" text appears ONLY here, never on the website.
+const reviewsAdmin = { status: 'pending', page: 1, data: null };
+const reviewStarsText = n => '\u2605'.repeat(Math.max(0, Math.min(5, n | 0))) + '\u2606'.repeat(5 - Math.max(0, Math.min(5, n | 0)));
+const reviewDate = v => { const d = v ? new Date(v) : null; return d && !isNaN(d) ? d.toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''; };
+async function refreshReviewBadge() {
+  try {
+    const res = await fetch('/api/admin/reviews?status=pending&page=1'); if (!res.ok) return;
+    const d = await res.json(), b = document.getElementById('reviewsBadge'); if (!b) return;
+    b.textContent = String((d.counts || {}).pending || 0); b.style.display = ((d.counts || {}).pending || 0) ? 'inline-block' : 'none';
+  } catch (e) {}
+}
+function reviewRowHtml(r) {
+  const badge = (txt, color) => `<span style="display:inline-block;font-size:10px;font-weight:700;color:${color};border:1px solid ${color};border-radius:5px;padding:1px 6px;margin:2px 4px 0 0">${esc(txt)}</span>`;
+  const notes = (r.onHomepage ? badge(t('rev_admin.on_homepage'), 'var(--green)') : '') + (!r.longEnough ? badge(tf('rev_admin.too_short', { n: reviewsAdmin.data.minLength }), 'var(--gold)') : '') + badge(t(r.showName ? 'rev_admin.name_shown' : 'rev_admin.name_hidden'), 'var(--muted)');
+  const btn = (action, key, cls) => `<button class="${cls}" style="font-size:11px;padding:4px 10px" data-id="${esc(r.id)}" onclick="moderateReview(this.dataset.id,'${action}')">${esc(t(key))}</button>`;
+  return `<tr>
+    <td style="white-space:nowrap;font-size:12px">${esc(reviewDate(r.createdAt))}</td>
+    <td style="font-size:12px"><div style="font-weight:600">${esc(r.customer.name)}</div><div style="color:var(--muted)">${esc(r.customer.email)}</div><div style="color:var(--muted)">${esc(r.plan || '')}</div></td>
+    <td style="color:var(--gold);white-space:nowrap">${esc(reviewStarsText(r.rating))}</td>
+    <td style="font-size:12px;max-width:260px;white-space:pre-wrap;word-break:break-word">${esc(r.comment)}<div>${notes}</div></td>
+    <td style="font-size:12px;max-width:240px;white-space:pre-wrap;word-break:break-word;color:var(--text2)">${esc(r.improvement)}</td>
+    <td><span class="badge badge-${r.status === 'approved' ? 'success' : r.status === 'pending' ? 'warning' : 'info'}">${esc(t('rev_admin.status_' + r.status))}</span></td>
+    <td class="td-actions">${r.status !== 'approved' ? btn('approve', 'rev_admin.approve', 'btn-ghost') : ''}${r.status !== 'hidden' ? btn('hide', 'rev_admin.hide', 'btn-ghost') : ''}${btn('delete', 'rev_admin.delete', 'btn-danger')}</td>
+  </tr>`;
+}
+function renderAdminReviews() {
+  const d = reviewsAdmin.data; if (!d) return;
+  document.getElementById('reviewsIntro').textContent = tf('rev_admin.intro', { n: d.homeCount, min: d.minLength });
+  document.getElementById('reviewsFilters').innerHTML = ['pending', 'approved', 'hidden', 'all'].map(k => {
+    const on = d.status === k, n = k === 'all' ? d.counts.total : d.counts[k];
+    return `<button class="${on ? 'btn-primary' : 'btn-ghost'}" style="font-size:12px;padding:6px 14px" data-status="${k}" onclick="setReviewsFilter(this.dataset.status)">${esc(t('rev_admin.f_' + k))} (${n})</button>`;
+  }).join('');
+  document.getElementById('reviewsList').innerHTML = d.reviews.length ? d.reviews.map(reviewRowHtml).join('') : `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted)">${esc(t('rev_admin.empty'))}</td></tr>`;
+  document.getElementById('reviewsPager').innerHTML = d.pages > 1 ? `<button class="btn-ghost" style="font-size:12px;padding:4px 12px" onclick="setReviewsPage(${d.page - 1})"${d.page <= 1 ? ' disabled' : ''}>&larr;</button><span>${esc(tf('rev_admin.page', { page: d.page, pages: d.pages }))}</span><button class="btn-ghost" style="font-size:12px;padding:4px 12px" onclick="setReviewsPage(${d.page + 1})"${d.page >= d.pages ? ' disabled' : ''}>&rarr;</button>` : '';
+  const b = document.getElementById('reviewsBadge'); b.textContent = String(d.counts.pending); b.style.display = d.counts.pending ? 'inline-block' : 'none';
+}
+async function loadAdminReviews() {
+  try {
+    const res = await fetch(`/api/admin/reviews?status=${encodeURIComponent(reviewsAdmin.status)}&page=${reviewsAdmin.page}`), data = await res.json().catch(() => ({}));
+    if (!res.ok) { showMsg('reviewsMsg', data.error || t('rev_admin.failed'), 'error'); return; }
+    reviewsAdmin.data = data; reviewsAdmin.status = data.status; reviewsAdmin.page = data.page; renderAdminReviews();
+  } catch (e) { showMsg('reviewsMsg', t('rev_admin.failed'), 'error'); }
+}
+function setReviewsFilter(status) { reviewsAdmin.status = status; reviewsAdmin.page = 1; loadAdminReviews(); }
+function setReviewsPage(page) { reviewsAdmin.page = Math.max(1, page); loadAdminReviews(); }
+async function moderateReview(id, action) {
+  if (action === 'delete' && !confirm(t('rev_admin.delete_confirm'))) return;
+  try {
+    const res = await fetch(`/api/admin/reviews/${encodeURIComponent(id)}${action === 'delete' ? '' : '/' + action}`, { method: action === 'delete' ? 'DELETE' : 'POST' }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { showMsg('reviewsMsg', data.error || t('rev_admin.failed'), 'error'); return; }
+    showMsg('reviewsMsg', t('rev_admin.done'), 'success'); loadAdminReviews();
+  } catch (e) { showMsg('reviewsMsg', t('rev_admin.failed'), 'error'); }
 }
 
 // ── AI USAGE DASHBOARD ────────────────────────────────────────────────────
