@@ -2535,7 +2535,9 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
                 <option value="publish" data-i18n="web.content_automation_auto_publish">Publish immediately, no review</option>
               </select>
               <button class="btn-primary" onclick="generateShopifyPost()" id="shopifyGenerateBtn" data-i18n="web.generate_post_button">Generate &amp; Create</button>
+              <button class="btn-secondary" onclick="suggestShopifyTopics()" id="shopifySuggestTopicsBtn" data-i18n="web.suggest_topics_button" style="font-size:11.5px;padding:6px 12px">Suggest Topics</button>
             </div>
+            <div id="shopifyTopicSuggestions" style="margin-top:10px"></div>
           </div>
         </div>
         <div class="wt-card" id="shopifyIntelligenceSection">
@@ -2551,7 +2553,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div class="wt-card" id="shopifyAuditSection">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
               <div class="section-title" style="margin-bottom:0;font-size:14px" data-i18n="web.audit_run_title">Run Audit & Optimize</div>
-              <button class="btn-primary" onclick="runShopifyAudit()" id="shopifyRunAuditBtn" data-i18n="web.run_audit_button">Run Audit & Optimize</button>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn-secondary" onclick="generateShopifyTagProposals()" id="shopifyTagProposalsBtn" data-i18n="web.suggest_tags">Suggest Tags</button>
+                <button class="btn-secondary" onclick="generateShopifyDuplicateTitleProposals()" id="shopifyDuplicateTitleBtn" data-i18n="web.fix_duplicate_titles">Fix Duplicate Titles</button>
+                <button class="btn-primary" onclick="runShopifyAudit()" id="shopifyRunAuditBtn" data-i18n="web.run_audit_button">Run Audit & Optimize</button>
+              </div>
             </div>
             <div id="shopifyAuditRunContent"></div>
           </div>
@@ -3015,7 +3021,7 @@ function applyWebsitePlanLocks() {
   }
   // "Find & Improve SEO" lives inside Proposed Changes, which Pro can open — so only its buttons hide.
   const hasFind = webHas('find_improve_seo');
-  document.querySelectorAll('[onclick*="generateSeoProposals"],[onclick*="generateDuplicateTitleProposals"],[onclick*="generateTaxonomyProposals"],[onclick*="generateFeaturedImageProposals"]')
+  document.querySelectorAll('[onclick*="generateSeoProposals"],[onclick*="generateDuplicateTitleProposals"],[onclick*="generateTaxonomyProposals"],[onclick*="generateFeaturedImageProposals"],[onclick*="generateShopifyTagProposals"],[onclick*="generateShopifyDuplicateTitleProposals"]')
     .forEach(b => b.classList.toggle('plan-locked', !hasFind));
   if (!hasFind) lockedFeatures.push('find_improve_seo');
   renderLockedPanel(lockedFeatures);
@@ -9367,6 +9373,47 @@ async function generateShopifyIntelligence() {
   }
 }
 
+// ── Shopify: topic ideas, tag suggestions and duplicate-title fixes ──────────────────────────────────────────────────────────────────
+// Ideas come from the AI, so every part of them is escaped, and an idea is picked by its position in the list (never by putting its text in an attribute).
+let currentShopifyTopicSuggestions = [];
+async function suggestShopifyTopics() {
+  const btn = document.getElementById('shopifySuggestTopicsBtn'), contentEl = document.getElementById('shopifyTopicSuggestions');
+  btn.disabled = true; btn.textContent = t('web.suggesting_topics');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/topic-suggestions`, { method: 'POST' }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080;padding:8px 0">${escapeHtml(data.error || t('board.connection_error'))}</div>`; return; }
+    if (!Array.isArray(data.topics) || !data.topics.length) { contentEl.innerHTML = `<div style="font-size:12px;color:var(--muted);padding:8px 0">${t('web.no_topics_found')}</div>`; return; }
+    currentShopifyTopicSuggestions = data.topics;
+    contentEl.innerHTML = data.topics.map((topic, i) => `
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(topic.topic)}</div>
+          <span style="font-size:9px;font-weight:700;color:var(--purple-light);background:rgba(139,92,246,.15);padding:2px 6px;border-radius:4px;white-space:nowrap;text-transform:uppercase">${escapeHtml(topic.searchIntent || '')}</span>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">${t('web.focus_keyword')}: ${escapeHtml(topic.focusKeyword || '')}</div>
+        <div style="font-size:11.5px;color:var(--text2);margin-top:4px">${escapeHtml(topic.rationale || '')}</div>
+        <button class="btn-primary" onclick="useShopifyTopicSuggestion(${i})" style="font-size:11px;padding:5px 10px;margin-top:8px">${t('web.use_this_topic')}</button>
+      </div>`).join('');
+  } catch (e) { contentEl.innerHTML = `<div style="font-size:12px;color:#ff8080;padding:8px 0">${t('board.connection_error')}</div>`; }
+  finally { btn.disabled = false; btn.textContent = t('web.suggest_topics_button'); }
+}
+function useShopifyTopicSuggestion(index) {
+  const topic = currentShopifyTopicSuggestions[index]; if (!topic) return;
+  document.getElementById('shopifyBlogPostTopic').value = String(topic.topic || ''); document.getElementById('shopifyTopicSuggestions').innerHTML = '';
+}
+// One button, one request, one plain answer: what was found (and what was applied by itself), or why there is nothing to do.
+async function runShopifyProposals(btnId, idleKey, busyKey, path) {
+  const btn = document.getElementById(btnId); btn.disabled = true; btn.textContent = t(busyKey);
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/${path}`, { method: 'POST' }), data = await res.json().catch(() => ({}));
+    if (res.ok) { showToast(data.proposals && data.proposals.length ? describeProposalResults(data.proposals) : (data.message || t('web.no_proposals_found_toast')), 'success'); loadShopifyActions(); }
+    else showToast(data.error || t('board.connection_error'), 'error');
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+  finally { btn.disabled = false; btn.textContent = t(idleKey); }
+}
+function generateShopifyTagProposals() { return runShopifyProposals('shopifyTagProposalsBtn', 'web.suggest_tags', 'web.finding_tags', 'tag-proposals'); }
+function generateShopifyDuplicateTitleProposals() { return runShopifyProposals('shopifyDuplicateTitleBtn', 'web.fix_duplicate_titles', 'web.finding_duplicates', 'duplicate-title-proposals'); }
+
 // ── SHOPIFY AUDIT & PROPOSED CHANGES ─────────────────────────────────────
 async function runShopifyAudit() {
   const btn = document.getElementById('shopifyRunAuditBtn');
@@ -9435,12 +9482,15 @@ function renderShopifyActions(actions) {
     let changeDescription = '';
     if (change.metaTitle) changeDescription = `${t('web.new_meta_title_label')}: "${escapeHtml(change.metaTitle)}"`;
     else if (change.metaDescription) changeDescription = `${t('web.new_meta_description_label')}: "${escapeHtml(change.metaDescription)}"`;
+    else if (Array.isArray(change.tags) && change.tags.length) changeDescription = `${t('web.field_tags')}: ${change.tags.map(escapeHtml).join(', ')}`;
     else if (change.brokenUrl) changeDescription = tf('web.broken_link_description', { url: escapeHtml(change.brokenUrl) });
     else if (change.oldUrl && change.newUrl) changeDescription = tf('web.link_update_description', { old: escapeHtml(change.oldUrl), new: escapeHtml(change.newUrl) });
+    const prev = action.previous_state || {}, shared = action.action_type === 'update_meta_title' && (prev.metaTitle || prev.title) ? prev.metaTitle || prev.title : '';   // a duplicate-title fix shows the title that is shared
 
     return `
     <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px">
       <div style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(action.target_title || '')}</div>
+      ${shared ? `<div style="font-size:11.5px;color:var(--muted);margin-top:4px">${t('web.current_title_shared')}: "${escapeHtml(shared)}"</div>` : ''}
       <div style="font-size:11.5px;color:var(--text2);margin-top:4px">${changeDescription}</div>
       ${action.action_type === 'generate_featured_image' ? featuredPlanHtml(action, 'shopify') : ''}
       ${action.reasoning ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;font-style:italic">${escapeHtml(action.reasoning)}</div>` : ''}
@@ -11444,7 +11494,7 @@ async function undoWebsiteAction(actionId, api = 'website') {
   finally { if (btn) btn.disabled = false; }
 }
 
-const WEBSITE_ACTION_TYPE_LABELS = { update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description', assign_taxonomy: 'web.action_type_taxonomy', generate_featured_image: 'web.action_type_featured_image', remove_broken_link: 'web.action_type_broken_link', update_link_url: 'web.action_type_link_update' };
+const WEBSITE_ACTION_TYPE_LABELS = { add_tags: 'web.action_type_tags', update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description', assign_taxonomy: 'web.action_type_taxonomy', generate_featured_image: 'web.action_type_featured_image', remove_broken_link: 'web.action_type_broken_link', update_link_url: 'web.action_type_link_update' };
 
 // Renders each proposal with its real previous value alongside the AI's
 // suggestion (spec's explicit CURRENT/PROPOSED preview format), an
