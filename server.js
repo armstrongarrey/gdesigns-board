@@ -552,7 +552,7 @@ function featureForRoute(method, path) {
 // Account pages that stay reachable even when a plan has expired or is
 // website-only (billing, profile, sign-in).
 const ACCOUNT_PATHS = [
-  /^\/api\/auth\//, /^\/api\/user\/(profile|language)$/, /^\/api\/payments\//, /^\/api\/coupons\//,
+  /^\/api\/auth\//, /^\/api\/reviews(\/|$)/, /^\/api\/user\/(profile|language)$/, /^\/api\/payments\//, /^\/api\/coupons\//,
   /^\/api\/plans\//, /^\/api\/cms/, /^\/api\/announcements$/, /^\/api\/translate-messages$/
 ];
 // Beyond the website tool itself, what a website-only (Auto SEO) account needs
@@ -12651,6 +12651,67 @@ app.post('/api/auth/reset-password', async (req, res) => {
   } catch(e) { res.status(500).json({ error: 'Reset failed' }); }
 });
 
+// ── Customer reviews ─────────────────────────────────────────────────────────────
+// A customer is asked when they sign out: at most once every REVIEW_PROMPT_DAYS days (30), never in their first day, and the question never blocks signing out.
+// A review starts 'pending'. Only an admin makes it public. What the HOMEPAGE shows: the best 3 APPROVED reviews (highest rating first, then newest), one per
+// customer, and only ones with a public comment of at least 20 characters. The private "what could we improve" text is never public. Until 3 qualify, the
+// homepage keeps its current testimonials.
+const REVIEW_PROMPT_DAYS = () => { const v = Number(process.env.REVIEW_PROMPT_DAYS); return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 30; };
+const REVIEW_COMMENT_MAX = 600, REVIEW_IMPROVE_MAX = 1000, REVIEW_PUBLIC_MIN = 20, REVIEW_HOME_COUNT = 3, REVIEWS_PER_PAGE = 20, REVIEW_MIN_ACCOUNT_HOURS = 24;
+const REVIEW_STATUSES = ['pending', 'approved', 'hidden'];
+const cleanReviewText = (v, max) => String(v == null ? '' : v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, max);
+const REVIEW_ID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// The stamp is taken in the same statement that decides, so two quick sign-outs (or two tabs) ask exactly once.
+async function reviewShouldAsk(userId) {
+  const r = await pool.query(`UPDATE users SET review_prompted_at = NOW() WHERE id = $1 AND created_at < NOW() - INTERVAL '${REVIEW_MIN_ACCOUNT_HOURS} hours' AND (review_prompted_at IS NULL OR review_prompted_at < NOW() - ($2 || ' days')::interval) RETURNING id`, [userId, String(REVIEW_PROMPT_DAYS())]);
+  return { ask: r.rows.length > 0 };
+}
+async function reviewSubmit(userId, body) {
+  const b = body || {}, rating = Number(b.rating);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) return { status: 400, body: { error: 'Please choose a rating from 1 to 5 stars.' } };
+  const user = (await pool.query('SELECT id, first_name, preferred_language FROM users WHERE id = $1', [userId])).rows[0];
+  if (!user) return { status: 404, body: { error: 'Account not found.' } };
+  if ((await pool.query(`SELECT 1 FROM reviews WHERE user_id = $1 AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1`, [userId])).rows.length) return { status: 429, body: { error: 'Thank you, we already have your review from today.' } };
+  const account = await resolveAccount(userId), biz = account ? (await pool.query('SELECT name FROM businesses WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1', [account.id])).rows[0] : null;
+  await pool.query(`INSERT INTO reviews (user_id, rating, comment, improvement, show_name, display_name, display_business, language, plan) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [userId, rating, cleanReviewText(b.comment, REVIEW_COMMENT_MAX), cleanReviewText(b.improvement, REVIEW_IMPROVE_MAX), b.showName === true, cleanReviewText(user.first_name, 120) || null, biz ? cleanReviewText(biz.name, 160) || null : null, user.preferred_language === 'fr' ? 'fr' : 'en', account ? account.plan : null]);
+  await pool.query('UPDATE users SET review_prompted_at = NOW() WHERE id = $1', [userId]);   // answered: not asked again for a while
+  return { status: 200, body: { success: true } };
+}
+const REVIEW_ELIGIBLE_SQL = `SELECT DISTINCT ON (user_id) id, user_id, rating, comment, show_name, display_name, display_business, created_at FROM reviews WHERE status = 'approved' AND char_length(btrim(comment)) >= ${REVIEW_PUBLIC_MIN} ORDER BY user_id, created_at DESC`;
+// What the public may see, and nothing else: the rating, the public comment, and the name and business only if the customer agreed. No id, no email, no private feedback.
+async function reviewPublicList() {
+  const rows = (await pool.query(`WITH latest AS (${REVIEW_ELIGIBLE_SQL}) SELECT id, rating, comment, show_name, display_name, display_business FROM latest ORDER BY rating DESC, created_at DESC LIMIT ${REVIEW_HOME_COUNT}`)).rows;
+  const sum = (await pool.query(`WITH latest AS (${REVIEW_ELIGIBLE_SQL}) SELECT count(*)::int AS count, COALESCE(round(avg(rating)::numeric, 1), 0) AS average FROM latest`)).rows[0];
+  return { reviews: rows.map(r => ({ rating: r.rating, comment: r.comment, name: r.show_name ? r.display_name : null, business: r.show_name ? r.display_business : null })), summary: { count: sum.count, average: Number(sum.average) }, ids: rows.map(r => r.id) };
+}
+async function reviewAdminList(status, page) {
+  const st = ['pending', 'approved', 'hidden', 'all'].includes(status) ? status : 'pending', pg = Math.max(1, Math.floor(Number(page)) || 1);
+  const counts = { pending: 0, approved: 0, hidden: 0 }; (await pool.query('SELECT status, count(*)::int AS n FROM reviews GROUP BY status')).rows.forEach(r => { counts[r.status] = r.n; });
+  const total = st === 'all' ? counts.pending + counts.approved + counts.hidden : counts[st], pages = Math.max(1, Math.ceil(total / REVIEWS_PER_PAGE));
+  const rows = (await pool.query(`SELECT r.id, r.rating, r.comment, r.improvement, r.show_name, r.display_name, r.display_business, r.language, r.plan, r.status, r.created_at, r.moderated_at, u.email, u.first_name, u.last_name
+    FROM reviews r JOIN users u ON u.id = r.user_id WHERE ($1 = 'all' OR r.status = $1) ORDER BY r.created_at DESC LIMIT ${REVIEWS_PER_PAGE} OFFSET $2`, [st, (pg - 1) * REVIEWS_PER_PAGE])).rows;
+  const home = new Set((await reviewPublicList()).ids);
+  return { reviews: rows.map(r => ({ id: r.id, rating: r.rating, comment: r.comment, improvement: r.improvement, showName: r.show_name, displayName: r.display_name, displayBusiness: r.display_business, language: r.language, plan: r.plan, status: r.status, createdAt: r.created_at, moderatedAt: r.moderated_at,
+    customer: { name: [r.first_name, r.last_name].filter(Boolean).join(' '), email: r.email }, longEnough: r.comment.trim().length >= REVIEW_PUBLIC_MIN, onHomepage: home.has(r.id) })), counts: { ...counts, total: counts.pending + counts.approved + counts.hidden }, status: st, page: pg, pages, perPage: REVIEWS_PER_PAGE, minLength: REVIEW_PUBLIC_MIN, homeCount: REVIEW_HOME_COUNT };
+}
+async function reviewModerate(id, action) {
+  if (!REVIEW_ID_RX.test(String(id || ''))) return { status: 404, body: { error: 'Review not found.' } };
+  const r = action === 'delete' ? await pool.query('DELETE FROM reviews WHERE id = $1 RETURNING id', [id])
+    : await pool.query('UPDATE reviews SET status = $2, moderated_at = NOW() WHERE id = $1 RETURNING id', [id, action === 'approve' ? 'approved' : 'hidden']);
+  return r.rows.length ? { status: 200, body: { success: true } } : { status: 404, body: { error: 'Review not found.' } };
+}
+const REVIEW_ERROR = { error: 'Something went wrong. Please try again.' };
+app.post('/api/reviews/prompt', authRequired, async (req, res) => {
+  try { res.json(await reviewShouldAsk(req.userId)); } catch (e) { res.json({ ask: false }); }   // a failure here must never get in the way of signing out
+});
+app.post('/api/reviews', authRequired, async (req, res) => {
+  try { const out = await reviewSubmit(req.userId, req.body); res.status(out.status).json(out.body); } catch (e) { console.error('Review error:', e.message); res.status(500).json(REVIEW_ERROR); }
+});
+app.get('/api/public/reviews', async (req, res) => {
+  try { const out = await reviewPublicList(); res.set('Cache-Control', 'public, max-age=300'); res.json({ reviews: out.reviews, summary: out.summary }); } catch (e) { res.status(500).json(REVIEW_ERROR); }
+});
+
 // Logout
 app.post('/api/auth/logout', (req, res) => {
   res.clearCookie('arreyon_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
@@ -13567,6 +13628,17 @@ app.get('/api/admin/users', adminRequired, async (req, res) => {
     );
     res.json({ users: result.rows });
   } catch(e) { res.status(500).json({ error: 'Failed' }); }
+});
+
+    // ── Admin: customer reviews. Approve makes one public (subject to the homepage rule), Hide takes it off again, Delete removes it for good. ──
+app.get('/api/admin/reviews', adminRequired, async (req, res) => {
+  try { res.json(await reviewAdminList(req.query.status, req.query.page)); } catch (e) { res.status(500).json(REVIEW_ERROR); }
+});
+for (const action of ['approve', 'hide']) app.post(`/api/admin/reviews/:id/${action}`, adminRequired, async (req, res) => {
+  try { const out = await reviewModerate(req.params.id, action); res.status(out.status).json(out.body); } catch (e) { res.status(500).json(REVIEW_ERROR); }
+});
+app.delete('/api/admin/reviews/:id', adminRequired, async (req, res) => {
+  try { const out = await reviewModerate(req.params.id, 'delete'); res.status(out.status).json(out.body); } catch (e) { res.status(500).json(REVIEW_ERROR); }
 });
 
 // ── Admin: platform-wide oversight of the Partner Network — this is the
