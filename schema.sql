@@ -2015,3 +2015,75 @@ CREATE TABLE IF NOT EXISTS featured_image_generations (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_featured_image_generations_business ON featured_image_generations (business_id, created_at DESC);
+
+
+-- Markets: up to 3 places a business competes in (city optional, country required). Discovery searches each one, the first market first.
+CREATE TABLE IF NOT EXISTS business_markets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  country VARCHAR(80) NOT NULL,
+  city VARCHAR(80),
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_business_markets_business ON business_markets (business_id, position);
+ALTER TABLE competitor_suggestions ADD COLUMN IF NOT EXISTS market VARCHAR(170);
+
+
+-- Competitive intelligence: every competitor a business adds is tracked. A snapshot of its public website is kept each check (to see what changed), what the web
+-- said about it is gathered with its sources, and each finding comes with a recommendation. Reports (weekly, monthly) are built from the findings.
+ALTER TABLE tracked_competitors ADD COLUMN IF NOT EXISTS last_tracked_at TIMESTAMPTZ;
+ALTER TABLE tracked_competitors ADD COLUMN IF NOT EXISTS tracking_status VARCHAR(20);
+CREATE TABLE IF NOT EXISTS competitor_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  competitor_id UUID NOT NULL REFERENCES tracked_competitors(id) ON DELETE CASCADE,
+  business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  taken_at TIMESTAMPTZ DEFAULT NOW(),
+  data JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_competitor_snapshots_competitor ON competitor_snapshots (competitor_id, taken_at DESC);
+CREATE TABLE IF NOT EXISTS competitor_tracking_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  triggered_by VARCHAR(20) NOT NULL DEFAULT 'automatic',
+  status VARCHAR(20) NOT NULL DEFAULT 'running',
+  competitors_checked INTEGER DEFAULT 0,
+  findings_count INTEGER DEFAULT 0,
+  web_search_used BOOLEAN DEFAULT FALSE,
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_competitor_tracking_runs_business ON competitor_tracking_runs (business_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS competitor_findings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  competitor_id UUID NOT NULL REFERENCES tracked_competitors(id) ON DELETE CASCADE,
+  run_id UUID,
+  kind VARCHAR(30) NOT NULL,
+  headline TEXT NOT NULL,
+  detail TEXT,
+  impact VARCHAR(12) NOT NULL DEFAULT 'info',
+  priority INTEGER NOT NULL DEFAULT 3,
+  recommendation TEXT,
+  sources JSONB DEFAULT '[]',
+  evidence_keys TEXT[] DEFAULT '{}',
+  language VARCHAR(5) DEFAULT 'en',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_competitor_findings_business ON competitor_findings (business_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_competitor_findings_competitor ON competitor_findings (competitor_id);
+CREATE TABLE IF NOT EXISTS competitor_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  kind VARCHAR(10) NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  language VARCHAR(5) DEFAULT 'en',
+  content JSONB NOT NULL,
+  created_by VARCHAR(20) DEFAULT 'automatic',
+  emailed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (business_id, kind, period_start)
+);
+CREATE INDEX IF NOT EXISTS idx_competitor_reports_business ON competitor_reports (business_id, created_at DESC);
