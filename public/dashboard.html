@@ -2623,6 +2623,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             </div>
             <div style="font-size:11px;color:var(--muted);margin:8px 0 12px" data-i18n="web.shopify_sitemap_description">Finds your store's existing sitemap (generated automatically by Shopify) and submits it to Google Search Console.</div>
             <div id="shopifySitemapContent"></div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+            <div style="min-width:0;flex:1;font-size:11px;color:var(--muted)" data-i18n="shopify.sitemap.explain">Shopify builds your sitemap by itself and keeps it up to date, and it cannot be replaced. Check Sitemap shows whether it is working and lists everything you have published.</div>
+            <button class="btn-secondary" onclick="checkShopifySitemap()" id="shopifySitemapCheckBtn" data-i18n="shopify.sitemap.check">Check Sitemap</button>
+          </div>
+          <div id="shopifySitemapChecked" style="margin-top:12px"></div>
+        </div>
           </div>
         <div class="wt-card" id="shopifyCompetitorSection">
           <div style="display:flex;justify-content:space-between;align-items:center">
@@ -8790,6 +8797,40 @@ async function submitShopifySitemap() {
   }
 }
 
+// shopify-own:start
+// ── Shopify sitemap: check it against what is really published ──────────────────────────────────────────────────────────────────────
+// Shopify keeps its own sitemap and cannot replace it, so there is nothing to build: this shows whether it works and lists everything published. Shopify's own texts (shopify.*).
+const shopifyNote = (html, color) => `<div style="font-size:12px;color:${color || 'var(--text2)'};line-height:1.55;margin-top:6px">${html}</div>`;
+function renderShopifySitemapChecked(r) {
+  const el = document.getElementById('shopifySitemapChecked'); if (!el) return;
+  if (!r) { el.innerHTML = ''; return; }
+  const c = r.content || {}, counts = { total: c.total || 0, products: c.products || 0, pages: c.pages || 0, collections: c.collections || 0, articles: c.articles || 0 }, live = r.live || {}, button = (document.getElementById('shopifySitemapBtn') || {}).textContent || '';
+  let html = `<div style="font-size:11.5px;font-weight:600;color:var(--muted);margin:2px 0;text-transform:uppercase">${t('shopify.sitemap.title')}</div>`;
+  if (r.password) html += shopifyNote(escapeHtml(t('shopify.sitemap.password')), '#f59e0b');
+  else if (r.verdict === 'none') html += shopifyNote(escapeHtml(tf('shopify.sitemap.none', { url: live.url || '' })), '#f59e0b');
+  else if (r.verdict === 'complete') html += shopifyNote(escapeHtml(tf('shopify.sitemap.complete', { url: live.url, ...counts })), '#22c55e') + shopifyNote(escapeHtml(tf('shopify.sitemap.submit_next', { button: button.trim() })));
+  else {
+    html += shopifyNote(escapeHtml(tf('shopify.sitemap.incomplete', { url: live.url, missing: r.missingCount, ...counts })), '#f59e0b');
+    html += `<div style="font-size:11.5px;color:var(--muted);margin-top:6px">${t('shopify.sitemap.missing_list')}:</div>` + (r.missing || []).map(u => `<div style="font-size:11.5px;color:var(--text2);word-break:break-all">• ${escapeHtml(u)}</div>`).join('') + (r.missingCount > (r.missing || []).length ? `<div style="font-size:11.5px;color:var(--muted)">${escapeHtml(tf('shopify.sitemap.more', { n: r.missingCount - r.missing.length }))}</div>` : '') + shopifyNote(escapeHtml(t('shopify.sitemap.missing_hint')));
+  }
+  if (r.verdict !== 'none' && r.extraCount > 0) html += shopifyNote(escapeHtml(tf('shopify.sitemap.extra', { extra: r.extraCount }))) + `<div style="font-size:11.5px;color:var(--muted);margin-top:4px">${t('shopify.sitemap.extra_list')}:</div>` + (r.extra || []).map(u => `<div style="font-size:11.5px;color:var(--text2);word-break:break-all">• ${escapeHtml(u)}</div>`).join('');
+  if (!r.password && r.robots && r.robots.blocksEverything) html += shopifyNote('• ' + escapeHtml(t('shopify.sitemap.robots_blocks')), '#f59e0b');
+  if (!r.password && r.home && r.home.noindex) html += shopifyNote('• ' + escapeHtml(t('shopify.sitemap.home_noindex')), '#f59e0b');
+  if (!r.password && r.robots && r.robots.exists && !r.robots.listsSitemap && !r.robots.blocksEverything && live.url) html += shopifyNote(escapeHtml(tf('shopify.sitemap.robots_no_sitemap', { url: live.url })));
+  if (c.truncated) html += shopifyNote(escapeHtml(t('shopify.sitemap.truncated')), '#f59e0b');
+  el.innerHTML = html;
+}
+async function checkShopifySitemap() {
+  const btn = document.getElementById('shopifySitemapCheckBtn'), box = document.getElementById('shopifySitemapChecked'); btn.disabled = true; btn.textContent = t('shopify.sitemap.checking');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/sitemap/check`, { method: 'POST' }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { box.innerHTML = shopifyNote(escapeHtml(shopifyServerText(data) || t('board.connection_error')), '#ff8080'); return; }
+    renderShopifySitemapChecked(data);
+  } catch (e) { box.innerHTML = shopifyNote(escapeHtml(t('board.connection_error')), '#ff8080'); }
+  finally { btn.disabled = false; btn.textContent = t('shopify.sitemap.check'); }
+}
+// shopify-own:end
+
 async function loadShopifySitemapStatus() {
   const contentEl = document.getElementById('shopifySitemapContent');
   try {
@@ -8846,7 +8887,7 @@ function shopifyLogText(entry) {
   const key = 'shopify.log.' + type, probe = t(key); if (!probe || probe === key) return (entry && entry.description) || '';
   if (SHOPIFY_LOG_CHANGE_KINDS.includes(type) && !d.change) return (entry && entry.description) || '';   // the facts this sentence needs are missing: show the stored English sentence rather than half a sentence
   return tf(key, { title: d.title || '', change: shopifyChangeText(d.change, true), how: t(d.published ? 'shopify.log.word_published' : 'shopify.log.word_draft'), state: t(d.automationMode === 'automatic' ? 'shopify.log.state_on' : 'shopify.log.state_off'),
-    issuesFound: d.issuesFound || 0, autoFixed: d.autoFixed || 0, pendingApproval: d.pendingApproval || 0, brokenCount: d.brokenCount || 0, shop: d.shop || '' });
+    issuesFound: d.issuesFound || 0, autoFixed: d.autoFixed || 0, pendingApproval: d.pendingApproval || 0, brokenCount: d.brokenCount || 0, shop: d.shop || '', verdict: t('shopify.log.verdict_' + (d.verdict === 'complete' || d.verdict === 'incomplete' ? d.verdict : 'none')) });
 }
 const SHOPIFY_ACTIVITY_LOG_FEATURES = [
   { key: 'all', labelKey: 'shopify.log.feature.all' }, { key: 'seo_proposals', labelKey: 'shopify.log.feature.seo_proposals' }, { key: 'taxonomy', labelKey: 'shopify.log.feature.taxonomy' },
