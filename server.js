@@ -19559,6 +19559,27 @@ const ALERT_MESSAGES = {
     })
   }
 };
+// Website alerts: the owner's own language, a plain title, what it means, and what to do. A reminder (the problem is still there after a week) says so in the title.
+const WEBSITE_ALERT_MESSAGES = {
+  websiteConnectionLost: {
+    en: (biz, platform, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}Reconnect your ${platform} site: ${biz}`, message: `Arreyon Consult can no longer sign in to your ${platform} site. ${platform === 'WordPress' ? 'The Application Password was probably revoked or has expired.' : 'The store may have uninstalled the app or removed its access.'} Automatic checks and fixes are paused until you reconnect it in the Website Tool.` }),
+    fr: (biz, platform, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Reconnectez votre site ${platform} : ${biz}`, message: `Arreyon Consult ne peut plus se connecter à votre site ${platform}. ${platform === 'WordPress' ? "Le mot de passe d'application a probablement été révoqué ou a expiré." : "La boutique a peut-être désinstallé l'application ou retiré son accès."} Les vérifications et corrections automatiques sont suspendues jusqu'à la reconnexion dans l'outil Site Web.` })
+  },
+  websiteUnreachable: {
+    en: (biz, platform, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}We could not reach your website: ${biz}`, message: `Arreyon Consult could not connect to your ${platform} site on two checks in a row. If your site is down, your visitors cannot reach it either. Automatic checks and fixes cannot run until it is back. If the site is fine, check that nothing (a security plugin or a firewall) is blocking Arreyon Consult.` }),
+    fr: (biz, platform, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Impossible d'atteindre votre site : ${biz}`, message: `Arreyon Consult n'a pas pu se connecter à votre site ${platform} lors de deux vérifications de suite. Si votre site est en panne, vos visiteurs ne peuvent pas y accéder non plus. Les vérifications et corrections automatiques ne peuvent pas s'exécuter tant qu'il n'est pas de retour. Si le site fonctionne, vérifiez que rien (une extension de sécurité ou un pare-feu) ne bloque Arreyon Consult.` })
+  },
+  websiteRobotsBlocking: {
+    en: (biz, platform, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your website is hidden from Google: ${biz}`, message: `Your robots.txt tells search engines not to visit any page of your site, so your pages can drop out of Google. If this is not on purpose, remove the block. ${platform === 'WordPress' ? 'In WordPress, check Settings > Reading and untick "Discourage search engines from indexing this site", and check your SEO plugin.' : 'In Shopify, check that your robots.txt.liquid has not been edited to block everything.'}` }),
+    fr: (biz, platform, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Votre site est masqué pour Google : ${biz}`, message: `Votre fichier robots.txt demande aux moteurs de recherche de ne visiter aucune page de votre site : vos pages peuvent disparaître de Google. Si ce n'est pas voulu, supprimez ce blocage. ${platform === 'WordPress' ? 'Dans WordPress, vérifiez Réglages > Lecture et décochez « Demander aux moteurs de recherche de ne pas indexer ce site », et vérifiez votre extension SEO.' : 'Dans Shopify, vérifiez que votre fichier robots.txt.liquid n\'a pas été modifié pour tout bloquer.'}` })
+  },
+  websiteNotMobile: {
+    en: (biz, platform, remind) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your website is not set up for phones: ${biz}`, message: `Your site does not tell phones how to display it (there is no mobile viewport setting). Most visitors browse on a phone, and Google ranks the mobile version of a site first, so this can hurt your visibility. ${platform === 'WordPress' ? 'Ask your theme developer, or switch to a responsive theme.' : 'Use a current Shopify theme, or ask your developer to add the viewport tag to theme.liquid.'}` }),
+    fr: (biz, platform, remind) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Votre site n'est pas adapté aux téléphones : ${biz}`, message: `Votre site n'indique pas aux téléphones comment s'afficher (aucun paramètre d'affichage mobile). La plupart des visiteurs naviguent sur téléphone, et Google classe d'abord la version mobile d'un site : cela peut nuire à votre visibilité. ${platform === 'WordPress' ? 'Demandez à votre développeur de thème, ou passez à un thème adaptatif.' : 'Utilisez un thème Shopify récent, ou demandez à votre développeur d\'ajouter la balise viewport dans theme.liquid.'}` })
+  }
+};
+Object.assign(ALERT_MESSAGES, WEBSITE_ALERT_MESSAGES);
+
 function alertText(templateKey, language, ...args) {
   const lang = language === 'fr' ? 'fr' : 'en';
   return ALERT_MESSAGES[templateKey][lang](...args);
@@ -19873,6 +19894,104 @@ async function checkOpportunityRadar(ownerId, prefs, language) {
 // one digest email per owner covering everything new since the last run.
 // Each owner is processed independently: if one owner's data causes an
 // unexpected error, that must not stop the sweep for everyone else.
+// ── Website alerts ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Four problems a site owner needs to hear about, checked once a day with the other alerts (and emailed in the same daily digest):
+//   connection_lost   (critical) the connection was refused (WordPress: Application Password revoked/expired; Shopify: access removed). Nothing automatic can run.
+//   site_unreachable  (warning)  the site could not be reached on TWO checks in a row (one blip never raises an alarm)
+//   robots_blocking   (critical) robots.txt tells every search engine to stay away from the whole site
+//   not_mobile_ready  (warning)  the latest technical check found no mobile viewport setting
+// An alert is raised ONCE when a problem starts, and again as a reminder only if it is still there after 7 days (website_health_state remembers). When the problem
+// goes away the state is cleared quietly, so a problem that comes back is a new alert. WEBSITE_ALERTS_OFF=1 switches all of this off; the owner can switch it off
+// in alert preferences. Nothing is checked for an account whose plan has expired.
+const WEBSITE_REMIND_DAYS = 7, WEBSITE_UNREACHABLE_AFTER = 2, WEBSITE_PROBE_TIMEOUT_MS = 12000;
+async function websiteHealthCount(businessId, platform, kind, failed) {
+  const r = await pool.query(`INSERT INTO website_health_state (business_id, platform, kind, failures) VALUES ($1, $2, $3, $4)
+    ON CONFLICT (business_id, platform, kind) DO UPDATE SET failures = CASE WHEN $5 THEN website_health_state.failures + 1 ELSE 0 END, updated_at = NOW() RETURNING failures`, [businessId, platform, kind, failed ? 1 : 0, !!failed]);
+  return r.rows[0].failures;
+}
+async function websiteHealthStep(businessId, platform, kind, active, detail) {
+  const cur = (await pool.query('SELECT * FROM website_health_state WHERE business_id = $1 AND platform = $2 AND kind = $3', [businessId, platform, kind])).rows[0], json = JSON.stringify(detail || {});
+  if (!active) {
+    if (cur && cur.active) await pool.query(`UPDATE website_health_state SET active = false, since = NULL, detail = $4, updated_at = NOW() WHERE business_id = $1 AND platform = $2 AND kind = $3`, [businessId, platform, kind, json]);
+    return { raise: false, cleared: !!(cur && cur.active) };
+  }
+  if (!cur || !cur.active) {
+    await pool.query(`INSERT INTO website_health_state (business_id, platform, kind, active, since, last_alerted_at, detail) VALUES ($1, $2, $3, true, NOW(), NOW(), $4)
+      ON CONFLICT (business_id, platform, kind) DO UPDATE SET active = true, since = NOW(), last_alerted_at = NOW(), detail = $4, updated_at = NOW()`, [businessId, platform, kind, json]);
+    return { raise: true, reason: 'new' };
+  }
+  const due = !cur.last_alerted_at || Date.now() - new Date(cur.last_alerted_at).getTime() >= WEBSITE_REMIND_DAYS * 864e5;
+  await pool.query(`UPDATE website_health_state SET detail = $4, updated_at = NOW()${due ? ', last_alerted_at = NOW()' : ''} WHERE business_id = $1 AND platform = $2 AND kind = $3`, [businessId, platform, kind, json]);
+  return due ? { raise: true, reason: 'reminder' } : { raise: false };
+}
+// A live check that the connection still works (the same test the "Check connection" button makes). 401 = the credentials were refused for good; anything else that
+// fails (403, a server error, no answer) is "a problem", which only counts once it happens twice in a row.
+async function probeWordPressConnection(connection) {
+  try {
+    const res = await wpApiRequest(connection.site_url, connection.wp_username, decryptSecret(connection.wp_app_password_encrypted), '/wp/v2/pages?per_page=1&status=any&context=edit', { timeoutMs: WEBSITE_PROBE_TIMEOUT_MS });
+    if (res.status === 401) return { state: 'auth_lost', status: 401 };
+    return res.ok ? { state: 'ok' } : { state: 'problem', status: res.status };
+  } catch (e) { return { state: 'problem', error: safeErrorMessage(e, 'The site could not be reached.') }; }
+}
+async function probeShopifyConnection(connection) {
+  try {
+    const res = await shopifyApiRequest(connection.shop_domain, decryptSecret(connection.access_token_encrypted), '/shop.json', { timeoutMs: WEBSITE_PROBE_TIMEOUT_MS });
+    if (res.status === 401 || res.status === 403) return { state: 'auth_lost', status: res.status };
+    return res.ok ? { state: 'ok' } : { state: 'problem', status: res.status };
+  } catch (e) { return { state: 'problem', error: safeErrorMessage(e, 'The store could not be reached.') }; }
+}
+const WEBSITE_ALERT_PLATFORMS = {
+  wordpress: { table: 'website_connections', label: 'WordPress', probe: probeWordPressConnection, siteUrl: async c => c.site_url, hasCredentials: c => (c.connection_mode || 'push') !== 'poll' },
+  shopify: { table: 'shopify_connections', label: 'Shopify', probe: probeShopifyConnection, siteUrl: c => shopifyStoreUrlFor(c), hasCredentials: () => true },
+};
+const WEBSITE_ALERT_KINDS = {
+  connection_lost: { template: 'websiteConnectionLost', severity: 'critical' }, site_unreachable: { template: 'websiteUnreachable', severity: 'warning' },
+  robots_blocking: { template: 'websiteRobotsBlocking', severity: 'critical' }, not_mobile_ready: { template: 'websiteNotMobile', severity: 'warning' },
+};
+// One business, one platform. Returns how many alerts were raised.
+async function checkWebsiteHealth(ownerId, business, platform, lang) {
+  const cfg = WEBSITE_ALERT_PLATFORMS[platform], conn = (await pool.query(`SELECT * FROM ${cfg.table} WHERE business_id = $1`, [business.id])).rows[0], name = business.name || 'your website';
+  const step = (kind, active, detail) => websiteHealthStep(business.id, platform, kind, active, detail);
+  let raised = 0;
+  const raise = async (kind, result, extra) => {
+    if (!result.raise) return;
+    const k = WEBSITE_ALERT_KINDS[kind], text = alertText(k.template, lang, name, cfg.label, result.reason === 'reminder');
+    await createAlert(ownerId, business.id, 'website_' + kind, k.severity, text.title, text.message, { businessId: business.id, platform, kind, reason: result.reason, connectionId: conn.id, ...(extra || {}) }); raised++;
+  };
+  if (!conn || ['disconnected', 'pending'].includes(conn.connection_status)) { for (const kind of Object.keys(WEBSITE_ALERT_KINDS)) await step(kind, false); return 0; }   // not connected (or disconnected on purpose): nothing to alert about
+  // 1. is the connection working?
+  let lost = conn.connection_status === 'auth_expired', problems = 0;
+  if (!lost && cfg.hasCredentials(conn)) {
+    const probe = await cfg.probe(conn);
+    if (probe.state === 'auth_lost') { lost = true; await pool.query(`UPDATE ${cfg.table} SET connection_status = 'auth_expired'${platform === 'wordpress' ? ", last_error = 'Credentials no longer valid'" : ''} WHERE id = $1`, [conn.id]); }
+    else if (probe.state === 'problem') problems = await websiteHealthCount(business.id, platform, 'site_unreachable', true);
+    else {
+      await websiteHealthCount(business.id, platform, 'site_unreachable', false);
+      if (['needs_attention', 'error'].includes(conn.connection_status)) await pool.query(`UPDATE ${cfg.table} SET connection_status = 'connected', last_verified_at = NOW()${platform === 'wordpress' ? ', last_error = NULL' : ''} WHERE id = $1`, [conn.id]);   // it works again: say so
+    }
+  }
+  const unreachable = !lost && problems >= WEBSITE_UNREACHABLE_AFTER;
+  await raise('connection_lost', await step('connection_lost', lost, { status: conn.connection_status }));
+  await raise('site_unreachable', await step('site_unreachable', unreachable, { failures: problems }));
+  if (lost || unreachable) return raised;   // nothing else can be checked on a site that cannot be reached
+  // 2. does robots.txt shut everyone out? (a live look; if the file cannot be read, nothing changes: an unknown is never "fixed")
+  const siteUrl = await cfg.siteUrl(conn);
+  if (siteUrl) { const robots = await checkRobotsTxt(siteUrl); if (robots.exists) await raise('robots_blocking', await step('robots_blocking', !!robots.blocksEverything, { siteUrl }), { siteUrl }); }
+  // 3. is it set up for phones? (from the latest technical check; a check that could not tell, or no check yet, changes nothing)
+  const latest = (await pool.query(`SELECT mobile_friendly, checked_at FROM website_technical_seo_checks WHERE business_id = $1 AND platform = $2 ORDER BY checked_at DESC LIMIT 1`, [business.id, platform])).rows[0], overall = latest && latest.mobile_friendly && latest.mobile_friendly.overall;
+  if (overall && overall !== 'unknown') { const bad = overall === 'poor'; await raise('not_mobile_ready', await step('not_mobile_ready', bad, { overall, checkedAt: latest.checked_at }), { checkedAt: latest.checked_at }); }
+  return raised;
+}
+async function checkWebsiteAlerts(ownerId, prefs, language) {
+  if (process.env.WEBSITE_ALERTS_OFF === '1' || (prefs && prefs.website_alerts_enabled === false) || !(await ciOwnerActive(ownerId))) return { raised: 0 };
+  const lang = language === 'fr' ? 'fr' : 'en'; let raised = 0;
+  const businesses = (await pool.query('SELECT id, name FROM businesses WHERE user_id = $1 AND COALESCE(is_active, true)', [ownerId])).rows;
+  for (const b of businesses) for (const platform of Object.keys(WEBSITE_ALERT_PLATFORMS)) {
+    try { raised += await checkWebsiteHealth(ownerId, b, platform, lang); } catch (e) { console.error(`Website alert check failed (${b.id}, ${platform}):`, e.message); }   // one site failing never stops the others
+  }
+  return { raised };
+}
+
 async function runMonitoringSweep() {
   console.log('Monitoring sweep starting...');
   let ownersChecked = 0, alertsCreated = 0, emailsSent = 0;
@@ -19893,6 +20012,7 @@ async function runMonitoringSweep() {
         await checkOverdueLeadFollowUps(owner.id, prefs, owner.preferred_language);
         await checkMarketingAlerts(owner.id, prefs, owner.preferred_language);
         await checkGrowthAlerts(owner.id, prefs, owner.preferred_language);
+        await checkWebsiteAlerts(owner.id, prefs, owner.preferred_language);
         await checkOpportunityRadar(owner.id, prefs, owner.preferred_language);
         await checkSubscriptionExpiry(owner.id, prefs, owner.preferred_language);
         ownersChecked++;
@@ -21615,21 +21735,21 @@ app.get('/api/alerts/preferences', authRequired, async (req, res) => {
     const result = await pool.query('SELECT * FROM monitoring_preferences WHERE owner_id = $1', [account.id]);
     // No row yet means every alert type is on by default — matches the
     // column defaults, so this is safe to hand back as-is.
-    const prefs = result.rows[0] || { metrics_alerts_enabled: true, competitor_alerts_enabled: true, team_activity_alerts_enabled: true, email_alerts_enabled: true, lead_alerts_enabled: true, marketing_alerts_enabled: true, growth_alerts_enabled: true, opportunity_radar_enabled: true };
+    const prefs = result.rows[0] || { metrics_alerts_enabled: true, competitor_alerts_enabled: true, team_activity_alerts_enabled: true, email_alerts_enabled: true, lead_alerts_enabled: true, marketing_alerts_enabled: true, growth_alerts_enabled: true, opportunity_radar_enabled: true, website_alerts_enabled: true };
     res.json({ preferences: prefs });
   } catch (e) { res.status(500).json({ error: 'Failed to load preferences' }); }
 });
 
 app.put('/api/alerts/preferences', authRequired, async (req, res) => {
-  const { metricsAlertsEnabled, competitorAlertsEnabled, teamActivityAlertsEnabled, emailAlertsEnabled, leadAlertsEnabled, marketingAlertsEnabled, growthAlertsEnabled, opportunityRadarEnabled } = req.body;
+  const { metricsAlertsEnabled, competitorAlertsEnabled, teamActivityAlertsEnabled, emailAlertsEnabled, leadAlertsEnabled, marketingAlertsEnabled, growthAlertsEnabled, opportunityRadarEnabled, websiteAlertsEnabled } = req.body;
   try {
     const account = await resolveAccount(req.userId);
     if (account.id !== req.userId) return res.status(403).json({ error: 'Only the account owner can manage alert preferences' });
     await pool.query(
-      `INSERT INTO monitoring_preferences (owner_id, metrics_alerts_enabled, competitor_alerts_enabled, team_activity_alerts_enabled, email_alerts_enabled, lead_alerts_enabled, marketing_alerts_enabled, growth_alerts_enabled, opportunity_radar_enabled, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-       ON CONFLICT (owner_id) DO UPDATE SET metrics_alerts_enabled = $2, competitor_alerts_enabled = $3, team_activity_alerts_enabled = $4, email_alerts_enabled = $5, lead_alerts_enabled = $6, marketing_alerts_enabled = $7, growth_alerts_enabled = $8, opportunity_radar_enabled = $9, updated_at = NOW()`,
-      [account.id, metricsAlertsEnabled !== false, competitorAlertsEnabled !== false, teamActivityAlertsEnabled !== false, emailAlertsEnabled !== false, leadAlertsEnabled !== false, marketingAlertsEnabled !== false, growthAlertsEnabled !== false, opportunityRadarEnabled !== false]
+      `INSERT INTO monitoring_preferences (owner_id, metrics_alerts_enabled, competitor_alerts_enabled, team_activity_alerts_enabled, email_alerts_enabled, lead_alerts_enabled, marketing_alerts_enabled, growth_alerts_enabled, opportunity_radar_enabled, website_alerts_enabled, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10::boolean, TRUE), NOW())
+       ON CONFLICT (owner_id) DO UPDATE SET metrics_alerts_enabled = $2, competitor_alerts_enabled = $3, team_activity_alerts_enabled = $4, email_alerts_enabled = $5, lead_alerts_enabled = $6, marketing_alerts_enabled = $7, growth_alerts_enabled = $8, opportunity_radar_enabled = $9, website_alerts_enabled = COALESCE($10::boolean, monitoring_preferences.website_alerts_enabled, TRUE), updated_at = NOW()`,
+      [account.id, metricsAlertsEnabled !== false, competitorAlertsEnabled !== false, teamActivityAlertsEnabled !== false, emailAlertsEnabled !== false, leadAlertsEnabled !== false, marketingAlertsEnabled !== false, growthAlertsEnabled !== false, opportunityRadarEnabled !== false, typeof websiteAlertsEnabled === 'boolean' ? websiteAlertsEnabled : null]
     );
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Failed to save preferences' }); }
