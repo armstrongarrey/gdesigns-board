@@ -8637,6 +8637,7 @@ async function generateShopifyPost() {
       const fi = data.featuredImage;
       if (fi.status === 'added') showToast(t('web.image_added_toast_shopify'), 'success');
       else if (fi.status === 'failed') showToast(t('web.image_note_failed_shopify'), 'error');
+      else if (fi.status === 'skipped' && fi.reason === 'monthly_limit' && fi.message) showToast(fi.message, 'error');
       else if (fi.status === 'skipped' && fi.reason !== 'not_requested') showToast(t('web.image_note_unavailable'), 'error');
     }
     topicInput.value = '';
@@ -9620,6 +9621,7 @@ function agentActivityText(e) {
     case 'change_rejected': return t('web.activity_change_rejected');
     case 'change_undone': return t('web.activity_change_undone');
     case 'featured_image_previewed': return t('web.activity_featured_preview');
+    case 'featured_images_checked': return failed ? t('web.activity_fi_checked_failed') : tf('web.activity_fi_checked', { missing: d.missing || 0, planned: d.planned || 0, applied: d.applied || 0 });
     case 'cycle_failed': return t('web.activity_cycle_failed');
     case 'cycle_stopped': return t('web.activity_cycle_stopped');
     default: return e.task_type;
@@ -9943,6 +9945,7 @@ async function generateBlogPostNow() {
       const fi = data.featuredImage;
       if (fi.status === 'added') showToast(t('web.image_added_toast'), 'success');
       else if (fi.status === 'failed') showToast(t('web.image_note_failed'), 'error');
+      else if (fi.status === 'skipped' && fi.reason === 'monthly_limit' && fi.message) showToast(fi.message, 'error');
       else if (fi.status === 'skipped' && fi.reason !== 'not_requested') showToast(t('web.image_note_unavailable'), 'error');
     }
     topicInput.value = '';
@@ -10619,8 +10622,10 @@ function competitorDiscoveryHtml(prefix, data) {
     + `<div style="font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.5">${t('web.discover_intro')}</div>` + `<div id="${prefix}Markets" style="margin-top:8px"></div>`;
   if (sug.length) h += `<div style="font-size:11.5px;color:var(--gold);margin-top:10px;line-height:1.5">${t('web.discover_review_note')}</div>` + sug.map(s => competitorSuggestionHtml(prefix, s)).join('')
     + `<div style="margin-top:10px"><button class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="addSelectedCompetitors('${prefix}')">${t('web.discover_add_selected')}</button></div>`;
-  if (canSearch) h += `<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="${sug.length ? 'btn-secondary' : 'btn-primary'}" id="${prefix}CompetitorFindBtn" style="font-size:12px;padding:6px 14px" onclick="findCompetitors('${prefix}')">${t(hasAny ? 'web.discover_again_btn' : 'web.discover_btn')}</button>`
+  const du = data.usage && data.usage.discovery, noSearches = !!du && du.remaining <= 0;
+  if (canSearch) h += `<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="${sug.length ? 'btn-secondary' : 'btn-primary'}" id="${prefix}CompetitorFindBtn" style="font-size:12px;padding:6px 14px"${noSearches ? ' disabled' : ''} onclick="findCompetitors('${prefix}')">${t(hasAny ? 'web.discover_again_btn' : 'web.discover_btn')}</button>`
     + (data.lastSearchedAt ? `<span style="font-size:10.5px;color:var(--muted)">${escapeHtml(tf('web.discover_last', { time: formatTimestamp(data.lastSearchedAt) }))}</span>` : '') + `</div>`;
+  if (du && du.limit > 0) h += `<div style="font-size:10.5px;color:var(--muted);margin-top:6px">${escapeHtml(tf('web.ci_search_usage', { used: du.used, limit: du.limit }))}</div>` + (noSearches ? `<div style="font-size:11.5px;color:var(--gold);margin-top:4px;line-height:1.5">${escapeHtml(tf('web.ci_search_limit_reached', { date: ciDate(du.resetsOn) }))}</div>` : '');
   return h + '</div>';
 }
 // The card as it was, plus the search panel: at the top when there is something to decide (or nothing is tracked yet), otherwise at the bottom.
@@ -10684,6 +10689,9 @@ function featuredImagesBlockHtml(prefix) {
       else if (missing) h += note(t('web.fi_all_planned'));
       if (s.imagesAvailable === false) h += note(t(s.imagesUnavailableReason === 'turned_off' ? 'web.fi_unavailable_turned_off' : 'web.fi_unavailable_not_configured'), 'var(--gold)');
       if (s.previewsPerDay) h += `<div style="font-size:10.5px;color:var(--muted);margin-top:8px">${escapeHtml(tf('web.fi_previews_today', { used: s.previewsToday || 0, limit: s.previewsPerDay }))}</div>`;
+      const u = s.usage && s.usage.images;   // this month's allowance for pictures (counted for the whole account)
+      if (u) h += u.limit > 0 ? `<div style="font-size:10.5px;color:var(--muted);margin-top:4px">${escapeHtml(tf('web.fi_month_usage', { used: u.used, limit: u.limit }))}</div>` + (u.remaining <= 0 ? note(tf('web.fi_month_limit_reached', { date: ciDate(u.resetsOn) }), 'var(--gold)') : '') : note(t('web.fi_month_none'));
+      if (s.autoAdd && s.autoAdd.enabled) h += note(tf('web.fi_auto_note', { n: s.autoAdd.perRun }));
     }
   }
   return h + '</div>';
@@ -10760,11 +10768,13 @@ function ciFindingHtml(f) {
 // ── the tracking block ──
 function competitorActivityHtml(prefix, d) {
   if (!Array.isArray(d.competitors) || !d.competitors.length) return '';   // nothing tracked yet: nothing to show
+  const mu = d.usage && d.usage.manual_checks, noChecks = !!mu && mu.remaining <= 0;
   const st = ciState[prefix], busy = d.running || st.checking, wait = d.canCheckNowAt && new Date(d.canCheckNowAt) > new Date() ? d.canCheckNowAt : null;
   const status = c => (!c.last_tracked_at ? t('web.ci_not_checked_yet') : c.tracking_status === 'site_unreachable' ? t('web.ci_site_unreachable') : c.tracking_status === 'no_website' ? t('web.ci_web_only') : `${t('web.ci_last_checked')} ${ciDate(c.last_tracked_at)}`);
   let h = `<div style="margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:10px"><div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap"><div style="min-width:0;flex:1"><div style="font-size:12.5px;font-weight:700;color:var(--text)">${t('web.ci_title')}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5">${t('web.ci_intro')}</div></div>`
-    + `<button class="btn-secondary" id="${prefix}CiCheckBtn" style="font-size:12px;padding:6px 14px" onclick="checkCompetitorsNow('${prefix}')"${busy || wait ? ' disabled' : ''}>${t(busy ? 'web.ci_checking' : 'web.ci_check_now')}</button></div>`;
+    + `<button class="btn-secondary" id="${prefix}CiCheckBtn" style="font-size:12px;padding:6px 14px" onclick="checkCompetitorsNow('${prefix}')"${busy || wait || noChecks ? ' disabled' : ''}>${t(busy ? 'web.ci_checking' : 'web.ci_check_now')}</button></div>`;
   if (wait && !busy) h += ciNote(tf('web.ci_next_check', { time: ciDate(wait) }));
+  if (mu && mu.limit > 0) h += ciNote(tf('web.ci_manual_usage', { used: mu.used, limit: mu.limit })) + (noChecks ? ciNote(tf('web.ci_manual_limit_reached', { date: ciDate(mu.resetsOn) }), 'var(--gold)') : '');
   if (d.searchAvailable === false) h += ciNote(t('web.ci_no_search'), 'var(--gold)');
   h += d.competitors.map(c => `<div style="font-size:11.5px;color:var(--text2);margin-top:6px"><strong style="color:var(--text)">${escapeHtml(c.name || '')}</strong> \u00b7 ${escapeHtml(status(c))} \u00b7 ${escapeHtml(tf('web.ci_findings_count', { n: c.findings_count || 0 }))}</div>`).join('');
   h += (d.findings || []).length ? `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin:14px 0 2px">${t('web.ci_latest')}</div>` + d.findings.slice(0, 5).map(ciFindingHtml).join('') : ciNote(t('web.ci_no_findings'));
