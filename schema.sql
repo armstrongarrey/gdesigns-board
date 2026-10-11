@@ -2195,3 +2195,15 @@ CREATE TABLE IF NOT EXISTS shopify_audit_log (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_shopify_audit_log_connection ON shopify_audit_log(shopify_connection_id, created_at DESC);
+
+-- ── WordPress sitemap: the last one built from the site's content (WordPress's own table) ─────────────────────────────────────────────
+-- The sitemap files are kept so the owner can download them; one row per connected site, replaced each time a new one is built.
+CREATE TABLE IF NOT EXISTS wordpress_sitemaps (
+  website_connection_id UUID PRIMARY KEY REFERENCES website_connections(id) ON DELETE CASCADE,
+  base_url TEXT NOT NULL,
+  url_count INTEGER NOT NULL DEFAULT 0,
+  truncated BOOLEAN NOT NULL DEFAULT FALSE,
+  counts JSONB,
+  files JSONB,
+  generated_at TIMESTAMPTZ DEFAULT NOW()
+);
