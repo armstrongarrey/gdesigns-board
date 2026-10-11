@@ -530,6 +530,7 @@ const WEBSITE_ROUTES = [
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/technical-seo/(check|history)'), 'technical_seo'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/keyword-rankings(/check)?'), 'keyword_rankings'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/sitemap/(submit|status)'), 'sitemap'],
+  ['*',    routeRx(BIZ_PATH + '/website/sitemap/(generate|generated|download|verify)'), 'sitemap'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/broken-links'), 'broken_links'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/organization-schema'), 'schema'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/ai-visibility/(check|history)'), 'ai_visibility'],
@@ -8163,6 +8164,176 @@ app.get('/api/business/:id/website/sitemap/status', authRequired, async (req, re
   }
 });
 
+// wordpress-own:start
+// ── WordPress sitemap: build it from the site's real content, explain why there was none, and check it once it is live ───────────────────
+// A sitemap has to be served from the site's own address, and the WordPress connection cannot write files to a site's root. So the tool builds the file from the site's
+// real published content, tells the owner why the site had none, hands over the file with the steps to publish it, and afterwards COMPARES the live sitemap with the
+// real content (the existing "Find & Submit" then submits it). Nothing here is shared with Shopify.
+const WORDPRESS_SITEMAP_MAX_URLS = 50000, WORDPRESS_SITEMAP_MAX_BYTES = 45 * 1024 * 1024, WORDPRESS_SITEMAP_PAGE_SIZE = 100, WORDPRESS_SITEMAP_MAX_REQUESTS = 600, WORDPRESS_SITEMAP_FETCH_BYTES = 12 * 1024 * 1024;
+const WORDPRESS_TEXT = {
+  business_not_found: 'Business not found', no_site: 'No website connected',
+  poll_mode: 'Building a sitemap needs a WordPress connection that Arreyon can read directly. Sites connected in poll mode cannot be read from here.',
+  auth_lost: 'WordPress no longer accepts the login for this site. Please reconnect it first.',
+  read_pages_failed: "Could not read this site's pages (status {status}).", read_posts_failed: "Could not read this site's posts (status {status}).",
+  no_urls: 'No published pages were found on this site, so there is nothing to put in a sitemap.', generate_failed: 'Could not build the sitemap. Please try again.',
+  not_generated: 'Build a sitemap first.', file_unknown: 'That file does not exist.', verify_failed: 'Could not check the sitemap. Please try again.', status_failed: 'Could not load the sitemap.',
+};
+const wordpressFormat = (code, params) => String(WORDPRESS_TEXT[code] || code).replace(/\{(\w+)\}/g, (m, k) => (params && params[k] !== undefined ? String(params[k]) : m));
+const wordpressFail = (code, params) => ({ error: wordpressFormat(code, params), code, ...(params ? { params } : {}) });
+function wordpressThrow(code, params) { const e = new Error(wordpressFormat(code, params)); e.wordpressCode = code; e.wordpressParams = params || null; return e; }
+const wordpressXmlEscape = s => String(s == null ? '' : s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+const wordpressXmlUnescape = s => String(s).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10))).replace(/&amp;/g, '&');
+// Where this site's pages live: its address, with any folder it is installed in (https://example.com/blog), without a trailing slash.
+const wordpressSiteBase = siteUrl => String(siteUrl || '').trim().replace(/\/+$/, '');
+// An address is listed only if it is a web address on THIS site (same host, inside the install folder), not too long, with no fragment.
+function wordpressSitemapAddress(link, base) {
+  try {
+    const u = new URL(String(link)), b = new URL(base + '/'); if (!/^https?:$/.test(u.protocol) || u.host.toLowerCase() !== b.host.toLowerCase()) return null;
+    if (!(u.pathname === b.pathname.replace(/\/$/, '') || u.pathname.startsWith(b.pathname))) return null;
+    u.hash = ''; const out = u.toString(); return out.length <= 2048 ? out : null;
+  } catch (e) { return null; }
+}
+const wordpressSitemapKey = u => { try { const x = new URL(u); x.hash = ''; let p = x.pathname.replace(/\/+$/, '') || '/'; return `${x.protocol}//${x.host.toLowerCase()}${p}${x.search}`; } catch (e) { return String(u); } };
+function wordpressSitemapLastmod(modifiedGmt) {
+  if (!modifiedGmt) return null; const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(String(modifiedGmt)) ? String(modifiedGmt) : String(modifiedGmt) + 'Z');
+  return Number.isNaN(d.getTime()) || d.getTime() > Date.now() + 864e5 || d.getUTCFullYear() < 2000 ? null : d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+// One kind of content, all its pages of results. A refusal to read pages or posts stops the build; an optional kind (custom types, categories) that cannot be read is skipped.
+async function wordpressSitemapFetchList(connection, password, restBase, state, { required = null } = {}) {
+  const items = []; let page = 1, totalPages = 1;
+  while (page <= totalPages) {
+    if (state.requests >= WORDPRESS_SITEMAP_MAX_REQUESTS || state.count >= WORDPRESS_SITEMAP_MAX_URLS) { state.truncated = true; break; }
+    state.requests++;
+    const res = await wpApiRequest(connection.site_url, connection.wp_username, password, `/wp/v2/${restBase}?per_page=${WORDPRESS_SITEMAP_PAGE_SIZE}&page=${page}&_fields=link,modified_gmt${restBase === 'categories' ? '&hide_empty=true' : '&status=publish'}`, { timeoutMs: 20000 });
+    if (res.status === 401) throw wordpressThrow('auth_lost');
+    if (res.status === 400 && page > 1) break;   // asking beyond the last page: that is the end
+    if (!res.ok) { if (required) throw wordpressThrow(required, { status: res.status }); return items; }
+    totalPages = Math.max(1, parseInt(res.headers.get('x-wp-totalpages'), 10) || 1); let batch = []; try { batch = await res.json(); } catch (e) { batch = []; }
+    if (!Array.isArray(batch) || !batch.length) break;
+    for (const it of batch) { items.push(it); state.count++; }
+    page++;
+  }
+  return items;
+}
+// Every address that belongs in the sitemap: the home page, pages, posts, other public kinds of content, and categories that have posts.
+async function wordpressSitemapContent(connection, password) {
+  const base = wordpressSiteBase(connection.site_url), state = { requests: 0, count: 0, truncated: false }, seen = new Map(), counts = { home: 0, pages: 0, posts: 0, other: 0, categories: 0 };
+  const add = (link, modified, kind) => { const loc = wordpressSitemapAddress(link, base); if (!loc) return; const k = wordpressSitemapKey(loc); if (seen.has(k)) return; seen.set(k, { loc, lastmod: wordpressSitemapLastmod(modified) }); counts[kind]++; };
+  add(base + '/', null, 'home');
+  for (const it of await wordpressSitemapFetchList(connection, password, 'pages', state, { required: 'read_pages_failed' })) add(it && it.link, it && it.modified_gmt, 'pages');
+  for (const it of await wordpressSitemapFetchList(connection, password, 'posts', state, { required: 'read_posts_failed' })) add(it && it.link, it && it.modified_gmt, 'posts');
+  let types = {}; try { const r = await wpApiRequest(connection.site_url, connection.wp_username, password, '/wp/v2/types', { timeoutMs: 15000 }); if (r.ok) types = (await r.json()) || {}; } catch (e) { /* custom kinds of content are optional */ }
+  const skip = new Set(['page', 'post', 'attachment', 'nav_menu_item', 'wp_block', 'wp_template', 'wp_template_part', 'wp_navigation', 'wp_global_styles', 'wp_font_family', 'wp_font_face', 'revision']);
+  for (const [slug, t] of Object.entries(types)) { if (skip.has(slug) || !t || t.viewable === false || !t.rest_base) continue; for (const it of await wordpressSitemapFetchList(connection, password, String(t.rest_base).replace(/[^a-zA-Z0-9_-]/g, ''), state)) add(it && it.link, it && it.modified_gmt, 'other'); }
+  for (const it of await wordpressSitemapFetchList(connection, password, 'categories', state)) add(it && it.link, null, 'categories');
+  const urls = [...seen.values()]; urls.sort((a, b) => (a.loc === base + '/' ? -1 : b.loc === base + '/' ? 1 : a.loc < b.loc ? -1 : 1));
+  return { urls: urls.slice(0, WORDPRESS_SITEMAP_MAX_URLS), counts, truncated: state.truncated || urls.length > WORDPRESS_SITEMAP_MAX_URLS, base };
+}
+// The XML files (sitemaps.org). One file when it fits; otherwise parts of at most 50,000 addresses and 45 MB, plus an index that lists them.
+function wordpressSitemapBuild(urls, base) {
+  const head = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n', foot = '</urlset>\n', entry = u => `  <url><loc>${wordpressXmlEscape(u.loc)}</loc>${u.lastmod ? `<lastmod>${u.lastmod}</lastmod>` : ''}</url>\n`;
+  const parts = []; let cur = [], bytes = head.length + foot.length;
+  for (const u of urls) { const e = entry(u), n = Buffer.byteLength(e); if (cur.length && (cur.length >= WORDPRESS_SITEMAP_MAX_URLS || bytes + n > WORDPRESS_SITEMAP_MAX_BYTES)) { parts.push(cur); cur = []; bytes = head.length + foot.length; } cur.push(u); bytes += n; }
+  if (cur.length || !parts.length) parts.push(cur);
+  const xmlOf = list => head + list.map(entry).join('') + foot, fileOf = (name, list) => { const xml = xmlOf(list); return { name, xml, urlCount: list.length, bytes: Buffer.byteLength(xml) }; };
+  if (parts.length === 1) return [fileOf('sitemap.xml', parts[0])];
+  const files = parts.map((p, i) => fileOf(`sitemap-${i + 1}.xml`, p)), newest = list => list.map(u => u.lastmod).filter(Boolean).sort().pop();
+  const index = '<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + files.map((f, i) => `  <sitemap><loc>${wordpressXmlEscape(`${base}/${f.name}`)}</loc>${newest(parts[i]) ? `<lastmod>${newest(parts[i])}</lastmod>` : ''}</sitemap>\n`).join('') + '</sitemapindex>\n';
+  return [{ name: 'sitemap.xml', xml: index, urlCount: 0, bytes: Buffer.byteLength(index), isIndex: true }, ...files];
+}
+// A public page of the site (its sitemap, robots.txt, home page), read safely: only public hosts, a time limit, a size limit. Returns null when it cannot be read.
+async function wordpressPublicFetch(url, { timeoutMs = 8000, maxBytes = WORDPRESS_SITEMAP_FETCH_BYTES } = {}) {
+  try {
+    const parsed = new URL(url); if (!/^https?:$/.test(parsed.protocol)) return null; await assertPublicHost(parsed.hostname);
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: controller.signal, redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36', 'Accept': 'application/xml,text/xml,text/html,*/*;q=0.8' } });
+      const buf = Buffer.from(await res.arrayBuffer()); return { status: res.status, ok: res.ok, text: buf.length > maxBytes ? null : buf.toString('utf8'), tooLarge: buf.length > maxBytes };
+    } finally { clearTimeout(timer); }
+  } catch (e) { return null; }
+}
+const wordpressSitemapLocs = xml => [...String(xml).matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)].map(m => wordpressXmlUnescape(m[1]));
+// The sitemap the site serves today: the same places "Find & Submit" looks, in the same order. An index is followed into its parts.
+async function wordpressFindLiveSitemap(siteUrl, { withUrls = false } = {}) {
+  const base = wordpressSiteBase(siteUrl);
+  for (const path of ['/sitemap_index.xml', '/sitemap.xml', '/wp-sitemap.xml']) {
+    const r = await wordpressPublicFetch(base + path); if (!r || !r.ok || !r.text || !/<sitemapindex|<urlset/i.test(r.text)) continue;
+    const isIndex = /<sitemapindex/i.test(r.text); let locs = wordpressSitemapLocs(r.text), parts = 0, urls = isIndex ? [] : locs;
+    if (isIndex && withUrls) { for (const child of locs.slice(0, 20)) { const c = await wordpressPublicFetch(child); if (!c || !c.ok || !c.text || !/<urlset/i.test(c.text)) continue; parts++; urls = urls.concat(wordpressSitemapLocs(c.text)); if (urls.length >= WORDPRESS_SITEMAP_MAX_URLS) break; } }
+    return { url: base + path, kind: isIndex ? 'index' : 'urlset', urlCount: isIndex ? (withUrls ? urls.length : null) : locs.length, parts: isIndex ? (withUrls ? parts : locs.length) : 0, ...(withUrls ? { urls } : {}) };
+  }
+  return null;
+}
+// robots.txt, read the way crawlers read it: groups of rules per user-agent. "Everything is blocked" means the group for all crawlers (*) disallows "/" and does not allow it back.
+function wordpressRobotsBlocksAll(txt) {
+  let inStar = false, blocks = false, groupHasRule = false;
+  for (const raw of String(txt).split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, '').trim(); const m = line.match(/^([a-z-]+)\s*:\s*(.*)$/i); if (!m) continue; const key = m[1].toLowerCase(), val = m[2].trim();
+    if (key === 'user-agent') { if (groupHasRule) { inStar = false; groupHasRule = false; } if (val === '*') inStar = true; }
+    else { groupHasRule = true; if (inStar && key === 'disallow' && val === '/') blocks = true; if (inStar && key === 'allow' && val === '/') blocks = false; }
+  }
+  return blocks;
+}
+// Why a site may have no sitemap: facts the page turns into plain advice.
+async function wordpressSitemapDiagnosis(siteUrl) {
+  const base = wordpressSiteBase(siteUrl), out = { core: { checked: false, found: false, status: null }, robots: { exists: false, blocksEverything: false, listsSitemap: false }, home: { checked: false, noindex: false } };
+  const core = await wordpressPublicFetch(base + '/wp-sitemap.xml'); if (core) out.core = { checked: true, status: core.status, found: !!(core.ok && core.text && /<sitemapindex|<urlset/i.test(core.text)) };
+  const robots = await wordpressPublicFetch(base + '/robots.txt'); if (robots && robots.ok && robots.text !== null) out.robots = { exists: true, blocksEverything: wordpressRobotsBlocksAll(robots.text), listsSitemap: /(^|\n)\s*sitemap:\s*\S+/i.test(robots.text) };
+  const home = await wordpressPublicFetch(base + '/'); if (home && home.ok && home.text !== null) out.home = { checked: true, noindex: /<meta[^>]+name=["']robots["'][^>]*content=["'][^"']*noindex/i.test(home.text) || /<meta[^>]+content=["'][^"']*noindex[^"']*["'][^>]*name=["']robots["']/i.test(home.text) };
+  return out;
+}
+const wordpressSitemapSummary = row => row && ({ generatedAt: row.generated_at, baseUrl: row.base_url, sitemapUrl: row.base_url + '/sitemap.xml', urlCount: row.url_count, truncated: row.truncated, counts: row.counts, files: (row.files || []).map(f => ({ name: f.name, urlCount: f.urlCount, bytes: f.bytes, isIndex: !!f.isIndex })) });
+async function wordpressSitemapRouteContext(req) {
+  const { connection, error, status } = await getConnectionForBusiness(req);
+  if (error) return { status, failure: wordpressFail(status === 404 && error === 'Business not found' ? 'business_not_found' : 'no_site') };
+  if (connection.connection_mode === 'poll') return { status: 400, failure: wordpressFail('poll_mode') };
+  return { connection, password: decryptSecret(connection.wp_app_password_encrypted) };
+}
+const wordpressSitemapError = (err, fallback) => err && err.wordpressCode ? { status: err.wordpressCode === 'auth_lost' ? 400 : 502, body: wordpressFail(err.wordpressCode, err.wordpressParams || undefined) } : { status: 500, body: wordpressFail(fallback) };
+app.post('/api/business/:id/website/sitemap/generate', authRequired, async (req, res) => {
+  try {
+    const ctx = await wordpressSitemapRouteContext(req); if (ctx.failure) return res.status(ctx.status).json(ctx.failure);
+    const content = await wordpressSitemapContent(ctx.connection, ctx.password);
+    if (content.urls.length <= 1 && !content.counts.pages && !content.counts.posts && !content.counts.other) return res.status(422).json(wordpressFail('no_urls'));
+    const files = wordpressSitemapBuild(content.urls, content.base), total = content.urls.length;
+    const [live, diagnosis] = await Promise.all([wordpressFindLiveSitemap(ctx.connection.site_url), wordpressSitemapDiagnosis(ctx.connection.site_url)]);
+    const saved = (await pool.query(`INSERT INTO wordpress_sitemaps (website_connection_id, base_url, url_count, truncated, counts, files, generated_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      ON CONFLICT (website_connection_id) DO UPDATE SET base_url = $2, url_count = $3, truncated = $4, counts = $5, files = $6, generated_at = NOW() RETURNING *`, [ctx.connection.id, content.base, total, content.truncated, JSON.stringify(content.counts), JSON.stringify(files)])).rows[0];
+    await logWebsiteAudit(ctx.connection.id, 'user', req.userId, 'sitemap_generated', `Built a sitemap from the site's content: ${total} address(es)${files.length > 1 ? ` in ${files.length - 1} files` : ''}`, { urlCount: total, counts: content.counts, truncated: content.truncated, files: files.length }, 'general');
+    res.json({ success: true, sitemap: wordpressSitemapSummary(saved), live, diagnosis });
+  } catch (err) { console.error('WordPress sitemap generate error:', err.message); const out = wordpressSitemapError(err, 'generate_failed'); res.status(out.status).json(out.body); }
+});
+app.get('/api/business/:id/website/sitemap/generated', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req); if (error) return res.status(status).json(wordpressFail(error === 'Business not found' ? 'business_not_found' : 'no_site'));
+    const row = (await pool.query('SELECT * FROM wordpress_sitemaps WHERE website_connection_id = $1', [connection.id])).rows[0]; res.json({ sitemap: wordpressSitemapSummary(row) || null });
+  } catch (err) { console.error('WordPress sitemap status error:', err.message); res.status(500).json(wordpressFail('status_failed')); }
+});
+app.get('/api/business/:id/website/sitemap/download', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req); if (error) return res.status(status).json(wordpressFail(error === 'Business not found' ? 'business_not_found' : 'no_site'));
+    const row = (await pool.query('SELECT files FROM wordpress_sitemaps WHERE website_connection_id = $1', [connection.id])).rows[0]; if (!row) return res.status(404).json(wordpressFail('not_generated'));
+    const file = (row.files || []).find(f => f.name === String(req.query.file || 'sitemap.xml')); if (!file) return res.status(404).json(wordpressFail('file_unknown'));
+    res.set({ 'Content-Type': 'application/xml; charset=utf-8', 'Content-Disposition': `attachment; filename="${file.name}"`, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' }).send(file.xml);
+  } catch (err) { console.error('WordPress sitemap download error:', err.message); res.status(500).json(wordpressFail('status_failed')); }
+});
+// Is the sitemap that is live on the site complete? It is compared with the site's real content right now.
+app.post('/api/business/:id/website/sitemap/verify', authRequired, async (req, res) => {
+  try {
+    const ctx = await wordpressSitemapRouteContext(req); if (ctx.failure) return res.status(ctx.status).json(ctx.failure);
+    const [live, content] = await Promise.all([wordpressFindLiveSitemap(ctx.connection.site_url, { withUrls: true }), wordpressSitemapContent(ctx.connection, ctx.password)]);
+    const out = { live: live ? { url: live.url, kind: live.kind, urlCount: live.urlCount, parts: live.parts } : null, content: { urlCount: content.urls.length, truncated: content.truncated }, missingCount: 0, missing: [], extraCount: 0, extra: [], verdict: 'none' };
+    if (live) {
+      const inMap = new Set(live.urls.map(wordpressSitemapKey)), real = new Set(content.urls.map(u => wordpressSitemapKey(u.loc)));
+      const missing = content.urls.filter(u => !inMap.has(wordpressSitemapKey(u.loc))).map(u => u.loc), extra = live.urls.filter(u => !real.has(wordpressSitemapKey(u)));
+      Object.assign(out, { missingCount: missing.length, missing: missing.slice(0, 25), extraCount: extra.length, extra: extra.slice(0, 10), verdict: missing.length ? 'incomplete' : 'complete' });
+    }
+    await logWebsiteAudit(ctx.connection.id, 'user', req.userId, 'sitemap_checked', out.live ? `Checked the live sitemap: ${out.verdict}` : 'Checked for a live sitemap: none found', { verdict: out.verdict, url: out.live && out.live.url, missingCount: out.missingCount, extraCount: out.extraCount }, 'general');
+    res.json(out);
+  } catch (err) { console.error('WordPress sitemap verify error:', err.message); const out = wordpressSitemapError(err, 'verify_failed'); res.status(out.status).json(out.body); }
+});
+
+// wordpress-own:end
 app.post('/api/business/:id/website/ai-visibility/check', authRequired, async (req, res) => {
   let ran = false;
   try {
