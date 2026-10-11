@@ -12482,8 +12482,14 @@ app.post('/api/auth/register', async (req, res) => {
   const passwordProblem = checkPasswordPolicy(password, { email, firstName, lastName });
   if (passwordProblem) return res.status(400).json({ error: passwordProblem.message, code: passwordProblem.code });
   try {
-    const existing = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
-    if (existing.rows.length) return res.status(400).json({ error: 'Email already registered' });
+    const existing = await pool.query('SELECT id, email_verified FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    if (existing.rows.length) {
+      // Nothing about the existing account changes and nothing is emailed: a sign-up can never overwrite someone else's. But the person is told WHICH situation this is:
+      // a normal account (sign in), or a sign-up that was started and NEVER verified (possibly by someone typing an address that is not theirs). The real owner takes
+      // that one over by proving they own the inbox: "Forgot password?" or Google sign-in (both already discard whoever signed up first).
+      if (existing.rows[0].email_verified) return res.status(400).json({ error: 'Email already registered', code: 'email_registered' });
+      return res.status(400).json({ error: 'A sign-up was started with this email address but never verified. If this address is yours, use "Forgot password?" or Google sign-in to take it over.', code: 'email_unverified' });
+    }
 
     const hash = await bcrypt.hash(password, 10);
     const token = uuidv4();
