@@ -522,8 +522,8 @@ const WEBSITE_ROUTES = [
   // analysis
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/intelligence'), 'intelligence'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/run-audit'), 'audit'],
-  ['*',    routeRx(BIZ_PATH + '/website/audit-runs'), 'audit'],
-  ['*',    routeRx(BIZ_PATH + '/website/activity-log'), 'activity_log'],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/audit-runs'), 'audit'],
+  ['*',    routeRx(BIZ_PATH + '/(website|shopify)/activity-log'), 'activity_log'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/competitor-analysis'), 'competitor'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/technical-seo/(check|history)'), 'technical_seo'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/keyword-rankings(/check)?'), 'keyword_rankings'],
@@ -7619,6 +7619,7 @@ app.post('/api/business/:id/shopify/featured-image-proposals', authRequired, asy
       return r.ok ? wpStripHtml(((await r.json()).article || {}).body_html || '').slice(0, 500) : '';
     }, req.userId);
     if (!planned.proposals.length) return res.json({ proposals: [], scan: featuredScanSummary(scan, planned), message: 'The articles without a featured image already have a plan waiting, or were turned down recently.' });
+    await logShopifyProposalRun(connection, req.userId, 'featured_images', 'Looked for articles without a featured image', planned);
     res.json({ proposals: planned.proposals, scan: featuredScanSummary(scan, planned) });
   } catch (err) {
     console.error('Shopify featured image proposals error:', err.message);
@@ -9888,12 +9889,13 @@ app.get('/api/shopify/callback', async (req, res) => {
       const created = await pool.query('INSERT INTO businesses (user_id, name) VALUES ($1, $2) RETURNING id', [account.id, name.slice(0, 120)]);
       businessId = created.rows[0].id;
     }
-    await pool.query(
+    const savedConnection = await pool.query(
       `INSERT INTO shopify_connections (business_id, shop_domain, access_token_encrypted, scope, blog_id, connection_status, last_verified_at)
        VALUES ($1, $2, $3, $4, $5, 'connected', NOW())
-       ON CONFLICT (business_id) DO UPDATE SET shop_domain = $2, access_token_encrypted = $3, scope = $4, blog_id = $5, connection_status = 'connected', last_verified_at = NOW()`,
+       ON CONFLICT (business_id) DO UPDATE SET shop_domain = $2, access_token_encrypted = $3, scope = $4, blog_id = $5, connection_status = 'connected', last_verified_at = NOW() RETURNING id`,
       [businessId, shop, encryptSecret(tokenData.access_token), tokenData.scope || SHOPIFY_SCOPES, blogId]
     );
+    await logShopifyAudit(savedConnection.rows[0].id, 'user', decoded.userId || null, 'shopify_connected', `Connected the Shopify store ${shop}`, { shop }, 'connection');
 
     res.redirect(`/dashboard?section=website&connected=shopify&business=${encodeURIComponent(businessId)}`);
   } catch (e) {
@@ -9934,7 +9936,7 @@ app.post('/api/business/:id/shopify/run-audit', authRequired, async (req, res) =
     const connection = connResult.rows[0];
     const accessToken = decryptSecret(connection.access_token_encrypted);
 
-    const result = await runShopifyAudit(connection, accessToken, context, req.userId);
+    const result = await runShopifyAuditRecorded(connection, accessToken, context, req.userId, 'manual');
     await logManual(req.params.id, 'shopify', 'audit_completed', 'success', shopifyAuditActivityDetail(result));
     res.json({ success: true, ...result });
   } catch (err) {
@@ -9971,6 +9973,7 @@ app.post('/api/business/:id/shopify/actions/:actionId/undo', authRequired, async
     if (!action) return res.status(404).json({ error: 'Proposed change not found' });
     const out = action.action_type === 'generate_featured_image' ? await undoShopifyFeaturedImageAction(connection, action, decryptSecret(connection.access_token_encrypted)) : await undoShopifyLinkFixAction(connection, action, decryptSecret(connection.access_token_encrypted));
     if (!out.ok) return res.status(out.status).json({ error: out.error, code: out.code });
+    await logShopifyAudit(connection.id, 'user', req.userId, 'change_undone', `Undone: ${shopifyChangeLabel(action)}`, { actionId: action.id, actionType: action.action_type }, shopifyFeatureForActionType(action.action_type));
     res.json({ success: true });
   } catch (err) {
     console.error('Undo Shopify link fix error:', err.message);
@@ -10015,6 +10018,7 @@ app.post('/api/business/:id/shopify/actions/:actionId/approve', authRequired, as
       [execResult.executed ? 'executed' : 'execution_failed', action.id]
     );
 
+    await logShopifyChangeDecision(connection, action, req.userId, execResult);
     if (!execResult.executed) { await logManual(req.params.id, 'shopify', 'change_applied', 'failed', { error: String(execResult.error || 'Shopify rejected this change.').slice(0, 300) }); return res.status(400).json({ error: execResult.error || 'Shopify rejected this change.' }); }
     res.json({ success: true });
   } catch (err) {
@@ -10030,10 +10034,10 @@ app.post('/api/business/:id/shopify/actions/:actionId/reject', authRequired, asy
     const connResult = await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id]);
     if (!connResult.rows.length) return res.status(404).json({ error: 'No Shopify store connected' });
     const result = await pool.query(
-      `UPDATE shopify_actions SET approval_status = 'rejected', reviewed_at = NOW() WHERE id = $1 AND shopify_connection_id = $2 AND approval_status = 'pending' RETURNING id`,
+      `UPDATE shopify_actions SET approval_status = 'rejected', reviewed_at = NOW() WHERE id = $1 AND shopify_connection_id = $2 AND approval_status = 'pending' RETURNING id, action_type, target_title, proposed_change`,
       [req.params.actionId, connResult.rows[0].id]
     );
-    if (result.rows.length) await dropFeaturedPreview('shopify', req.params.actionId);
+    if (result.rows.length) { await dropFeaturedPreview('shopify', req.params.actionId); await logShopifyAudit(connResult.rows[0].id, 'user', req.userId, 'proposal_rejected', `Rejected: ${shopifyChangeLabel(result.rows[0])}`, { actionId: result.rows[0].id, actionType: result.rows[0].action_type }, shopifyFeatureForActionType(result.rows[0].action_type)); }
     if (!result.rows.length) return res.status(404).json({ error: 'Proposed change not found or already reviewed.' });
     res.json({ success: true });
   } catch (e) {
@@ -10059,6 +10063,7 @@ app.post('/api/business/:id/shopify/intelligence', authRequired, async (req, res
     if (!intelligence) return res.status(400).json({ error: 'No pages or articles were found to analyze yet.' });
 
     await logManual(req.params.id, 'shopify', 'intelligence_refreshed', 'success', {});
+    await logShopifyAudit(connection.id, 'user', req.userId, 'intelligence_refreshed', 'Website Intelligence refreshed', {}, 'intelligence');
     res.json({ success: true, intelligence });
   } catch (err) {
     console.error('Shopify intelligence error:', err.message);
@@ -10105,6 +10110,7 @@ app.put('/api/business/:id/shopify/automation', authRequired, async (req, res) =
     } else if (connection.automation_mode === 'manual' && before.rows[0].automation_mode === 'automatic') {
       agentRun = stopAgentOnSwitch('shopify', req.params.id);
     }
+    if (automationMode && automationMode !== before.rows[0].automation_mode) await logShopifyAudit(connection.id, 'user', req.userId, 'automation_changed', `Automatic mode turned ${automationMode === 'automatic' ? 'on' : 'off'}`, { automationMode }, 'connection');
     res.json({ success: true, connection, agentRun });
   } catch (e) {
     console.error('Update Shopify automation error:', e.message);
@@ -10322,6 +10328,123 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 // yet, so auto-execution would have no real, user-controlled gate to
 // check against. A disclosed, honest scope boundary for this first
 // real version, not a silent omission.
+// ── Shopify: audit history and activity log ──────────────────────────────────────────────────────────────────────────────────────────
+// The activity log says who did what to the store, in plain words, grouped by feature. A log write NEVER breaks the thing it describes: if it fails, the failure is noted
+// on the server and the action goes on. Only the LOG is ever cleared from the dashboard; the changes themselves, posts and saved results are never touched.
+const SHOPIFY_LOG_FEATURES = ['seo_proposals', 'taxonomy', 'duplicate_titles', 'broken_links', 'featured_images', 'content_generation', 'intelligence', 'connection', 'general'];
+async function logShopifyAudit(connectionId, actorType, actorId, actionType, description, details, feature = 'general') {
+  try {
+    await pool.query(`INSERT INTO shopify_audit_log (shopify_connection_id, actor_type, actor_id, action_type, description, details, feature) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [connectionId, actorType, actorId && REVIEW_ID_RX.test(String(actorId)) ? actorId : null, String(actionType).slice(0, 50), String(description || actionType).slice(0, 500), JSON.stringify(details || {}), SHOPIFY_LOG_FEATURES.includes(feature) ? feature : 'general']);
+  } catch (e) { console.error('Shopify activity log write failed:', e.message); }
+}
+function shopifyFeatureForActionType(type) {
+  if (type === 'update_meta_title' || type === 'update_meta_description') return 'seo_proposals';
+  if (type === 'add_tags') return 'taxonomy';
+  if (type === 'generate_featured_image') return 'featured_images';
+  if (type === 'remove_broken_link' || type === 'update_link_url') return 'broken_links';
+  return 'general';
+}
+function shopifyChangeLabel(action) {
+  const c = action.proposed_change || {};
+  const what = action.action_type === 'generate_featured_image' ? 'Featured image' : action.action_type === 'update_link_url' ? `Change link ${c.oldUrl || ''} to ${c.newUrl || ''}` : describeShopifyActionChange(action);
+  return `${what}${action.target_title ? ` on "${action.target_title}"` : ''}`;
+}
+// What happened when a person approved a change.
+async function logShopifyChangeDecision(connection, action, userId, exec) {
+  const label = shopifyChangeLabel(action), feature = shopifyFeatureForActionType(action.action_type), details = { actionId: action.id, actionType: action.action_type };
+  if (exec.executed) return logShopifyAudit(connection.id, 'user', userId, exec.verified === false ? 'change_applied_unverified' : 'change_applied', `${exec.verified === false ? 'Applied, but could not be verified' : 'Applied'}: ${label}`, details, feature);
+  return logShopifyAudit(connection.id, 'user', userId, 'change_failed', `Could not apply: ${label}`, { ...details, error: String(exec.error || '').slice(0, 300) }, feature);
+}
+// A suggestion run by a person (tags, duplicate titles, featured images): one line for the run, one for each change the store applied by itself.
+async function logShopifyProposalRun(connection, userId, feature, what, out) {
+  const proposals = Array.isArray(out && out.proposals) ? out.proposals : [], auto = proposals.filter(p => p.execution_status === 'executed');
+  await logShopifyAudit(connection.id, 'user', userId, 'proposals_generated', proposals.length ? `${what}: ${proposals.length} proposal(s) made${auto.length ? `, ${auto.length} applied automatically` : ''}` : `${what}: nothing to propose`, { count: proposals.length, autoApplied: auto.length }, feature);
+  for (const a of auto) await logShopifyAudit(connection.id, 'system', null, 'change_auto_applied', `Applied automatically: ${shopifyChangeLabel(a)}`, { actionId: a.id, actionType: a.action_type }, shopifyFeatureForActionType(a.action_type));
+}
+// The audit's result in the shape the history card shows: totals, a found/fixed/waiting line per kind of problem, and what happened to each page.
+function shopifyAuditSummary(result) {
+  const f = (result && result.foundIssues) || {}, fixed = (result && result.autoApplied) || [], pending = (result && result.proposalsCreated) || [];
+  const bucket = a => a.action_type === 'update_meta_title' ? 'metaTitle' : a.action_type === 'update_meta_description' ? 'metaDescription' : 'brokenLinks';
+  const findings = {};
+  for (const key of ['metaTitle', 'metaDescription', 'brokenLinks']) {
+    const fx = fixed.filter(a => bucket(a) === key).length, pd = pending.filter(a => bucket(a) === key).length, found = Number(f[key]) || 0;
+    if (found || fx || pd) findings[key] = { found, fixed: fx, pending: pd };
+  }
+  const pages = new Map(), add = (a, status) => { const k = `${a.target_type}:${a.target_shopify_id}`; if (!pages.has(k)) pages.set(k, { title: a.target_title || '', url: a.target_url || '', changes: [] }); pages.get(k).changes.push({ description: shopifyChangeLabel({ ...a, target_title: null }), status }); };
+  fixed.forEach(a => add(a, 'fixed')); pending.forEach(a => add(a, 'pending'));
+  return { issuesFound: Object.values(f).reduce((n, v) => n + (Number(v) || 0), 0), autoFixed: fixed.length, pending: pending.length, findings: { ...findings, byPage: [...pages.values()] } };
+}
+// Runs the audit and keeps a record of it (running, then completed or failed). The record is bookkeeping: if saving it fails, the audit itself is not affected.
+async function runShopifyAuditRecorded(connection, accessToken, context, userId, triggeredBy) {
+  let runId = null; const actor = triggeredBy === 'automatic' ? 'system' : 'user';
+  try { runId = (await pool.query(`INSERT INTO shopify_audit_runs (shopify_connection_id, triggered_by, status) VALUES ($1, $2, 'running') RETURNING id`, [connection.id, triggeredBy])).rows[0].id; }
+  catch (e) { console.error('Shopify audit run could not be recorded:', e.message); }
+  let result;
+  try { result = await runShopifyAudit(connection, accessToken, context, userId); }
+  catch (e) {
+    if (runId) await pool.query(`UPDATE shopify_audit_runs SET status = 'failed', error_message = $1, completed_at = NOW() WHERE id = $2`, [safeErrorMessage(e, 'The audit could not be completed.'), runId]).catch(() => {});
+    await logShopifyAudit(connection.id, actor, userId, 'audit_run_failed', 'Audit run failed', { runId }, 'general');
+    throw e;
+  }
+  try {
+    const sum = shopifyAuditSummary(result);
+    if (runId) await pool.query(`UPDATE shopify_audit_runs SET status = 'completed', issues_found_count = $1, auto_fixed_count = $2, pending_approval_count = $3, findings_summary = $4, completed_at = NOW() WHERE id = $5`, [sum.issuesFound, sum.autoFixed, sum.pending, JSON.stringify(sum.findings), runId]);
+    for (const a of result.autoApplied || []) await logShopifyAudit(connection.id, 'system', null, 'change_auto_applied', `Applied automatically: ${shopifyChangeLabel(a)}`, { actionId: a.id, actionType: a.action_type, runId }, shopifyFeatureForActionType(a.action_type));
+    await logShopifyAudit(connection.id, actor, userId, 'audit_run_completed', `Audit run completed: ${sum.issuesFound} issue(s) found, ${sum.autoFixed} auto-fixed, ${sum.pending} awaiting approval`, { runId, issuesFound: sum.issuesFound, autoFixed: sum.autoFixed, pendingApproval: sum.pending }, 'general');
+  } catch (e) {
+    console.error('Shopify audit record could not be completed:', e.message);
+    if (runId) await pool.query(`UPDATE shopify_audit_runs SET status = 'completed', error_message = 'The details of this run could not be recorded.', completed_at = NOW() WHERE id = $1 AND status = 'running'`, [runId]).catch(() => {});   // the audit itself worked: never leave it showing as running
+  }
+  return { ...result, runId };
+}
+// Routes: the list of audit runs, and clearing it; the activity log, and clearing it (selected entries, one feature, or everything).
+async function shopifyConnectionIdForRequest(req) {
+  if (!(await userOwnsBusiness(req))) return { status: 404, error: 'Business not found' };
+  const row = (await pool.query('SELECT id FROM shopify_connections WHERE business_id = $1', [req.params.id])).rows[0];
+  return row ? { id: row.id } : { id: null };
+}
+const validIds = list => Array.isArray(list) && list.length > 0 && list.length <= 500 && list.every(x => REVIEW_ID_RX.test(String(x)));
+app.get('/api/business/:id/shopify/audit-runs', authRequired, async (req, res) => {
+  try {
+    const c = await shopifyConnectionIdForRequest(req); if (c.error) return res.status(c.status).json({ error: c.error });
+    if (!c.id) return res.json({ runs: [] });
+    res.json({ runs: (await pool.query('SELECT * FROM shopify_audit_runs WHERE shopify_connection_id = $1 ORDER BY started_at DESC LIMIT 50', [c.id])).rows });
+  } catch (e) { console.error('Get Shopify audit runs error:', e.message); res.status(500).json({ error: 'Could not load audit history.' }); }
+});
+app.delete('/api/business/:id/shopify/audit-runs', authRequired, async (req, res) => {
+  try {
+    const c = await shopifyConnectionIdForRequest(req); if (c.error) return res.status(c.status).json({ error: c.error });
+    if (!c.id) return res.status(404).json({ error: 'No Shopify store connected' });
+    const { ids, all } = req.body || {};
+    if (ids !== undefined) { if (!validIds(ids)) return res.status(400).json({ error: 'Those are not valid audit runs.' }); return res.json({ success: true, clearedCount: (await pool.query('DELETE FROM shopify_audit_runs WHERE shopify_connection_id = $1 AND id = ANY($2::uuid[]) RETURNING id', [c.id, ids])).rows.length }); }
+    if (all === true) return res.json({ success: true, clearedCount: (await pool.query('DELETE FROM shopify_audit_runs WHERE shopify_connection_id = $1 RETURNING id', [c.id])).rows.length });
+    res.status(400).json({ error: 'Specify which runs to clear: ids or all.' });
+  } catch (e) { console.error('Clear Shopify audit runs error:', e.message); res.status(500).json({ error: 'Could not clear audit history.' }); }
+});
+app.get('/api/business/:id/shopify/activity-log', authRequired, async (req, res) => {
+  try {
+    const c = await shopifyConnectionIdForRequest(req); if (c.error) return res.status(c.status).json({ error: c.error });
+    const feature = req.query.feature && req.query.feature !== 'all' ? String(req.query.feature) : null;
+    if (feature && !SHOPIFY_LOG_FEATURES.includes(feature)) return res.status(400).json({ error: 'Unknown feature.' });
+    if (!c.id) return res.json({ entries: [], featureCounts: [] });
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 200), cols = 'id, actor_type, actor_id, action_type, description, details, feature, created_at';
+    const rows = feature ? await pool.query(`SELECT ${cols} FROM shopify_audit_log WHERE shopify_connection_id = $1 AND feature = $2 ORDER BY created_at DESC LIMIT $3`, [c.id, feature, limit]) : await pool.query(`SELECT ${cols} FROM shopify_audit_log WHERE shopify_connection_id = $1 ORDER BY created_at DESC LIMIT $2`, [c.id, limit]);
+    res.json({ entries: rows.rows, featureCounts: (await pool.query('SELECT feature, COUNT(*)::int AS count FROM shopify_audit_log WHERE shopify_connection_id = $1 GROUP BY feature', [c.id])).rows });
+  } catch (e) { console.error('Get Shopify activity log error:', e.message); res.status(500).json({ error: 'Could not load the activity log.' }); }
+});
+app.delete('/api/business/:id/shopify/activity-log', authRequired, async (req, res) => {
+  try {
+    const c = await shopifyConnectionIdForRequest(req); if (c.error) return res.status(c.status).json({ error: c.error });
+    if (!c.id) return res.status(404).json({ error: 'No Shopify store connected' });
+    const { ids, feature, all } = req.body || {};   // exactly one of three explicit modes, never an ambiguous default that could clear more than was asked
+    if (ids !== undefined) { if (!validIds(ids)) return res.status(400).json({ error: 'Those are not valid entries.' }); return res.json({ success: true, clearedCount: (await pool.query('DELETE FROM shopify_audit_log WHERE shopify_connection_id = $1 AND id = ANY($2::uuid[]) RETURNING id', [c.id, ids])).rows.length }); }
+    if (feature !== undefined && feature !== 'all') { if (!SHOPIFY_LOG_FEATURES.includes(feature)) return res.status(400).json({ error: 'Unknown feature.' }); return res.json({ success: true, clearedCount: (await pool.query('DELETE FROM shopify_audit_log WHERE shopify_connection_id = $1 AND feature = $2 RETURNING id', [c.id, feature])).rows.length }); }
+    if (all === true || feature === 'all') return res.json({ success: true, clearedCount: (await pool.query('DELETE FROM shopify_audit_log WHERE shopify_connection_id = $1 RETURNING id', [c.id])).rows.length });
+    res.status(400).json({ error: 'Specify which entries to clear: ids, feature, or all.' });
+  } catch (e) { console.error('Clear Shopify activity log error:', e.message); res.status(500).json({ error: 'Could not clear the activity log.' }); }
+});
+
 async function runShopifyAudit(connection, accessToken, context, userId = null) {
   const { items } = await getShopifyContentForIntelligence(connection, accessToken);
   const auditStoreUrl = await getShopifyStoreUrl(connection, accessToken);
@@ -11020,6 +11143,7 @@ app.post('/api/business/:id/shopify/broken-links', authRequired, async (req, res
     if (!connection) return res.status(404).json({ error: 'No Shopify store is connected for this business yet.' });
     const result = await runShopifyBrokenLinksCheck(connection, decryptSecret(connection.access_token_encrypted));
     await logManual(req.params.id, 'shopify', 'broken_links_checked', 'success', { checkedCount: result.checkedCount, totalUniqueLinks: result.totalUniqueLinks, brokenCount: result.brokenLinks.length, externalChecked: result.report && result.report.externalChecked, externalBroken: result.report && result.report.brokenExternal, redirected: result.report && result.report.redirected, uncertain: result.report && result.report.uncertain, fixed: result.report && result.report.fixed, proposedCount: result.proposals.length });
+    await logShopifyAudit(connection.id, 'user', req.userId, 'broken_links_checked', `Checked links: ${result.brokenLinks.length} broken`, { brokenCount: result.brokenLinks.length }, 'broken_links');
     res.json({ ...result, message: (result.brokenLinks.length || (result.report && (result.report.brokenExternal || result.report.redirected || result.report.uncertain))) ? null : (result.report ? 'No broken links were found among the ones checked.' : 'No broken internal links were found among the ones checked.') });
   } catch (err) {
     console.error('Shopify broken links check error:', err.message);
@@ -11068,6 +11192,7 @@ app.post('/api/business/:id/shopify/organization-schema', authRequired, async (r
     if (!schema) return res.status(400).json({ error: 'A business name is required before schema markup can be generated — add one on the business profile first.' });
     const result = await installOrganizationSchemaInTheme(connection, accessToken, schema);
     await logManual(req.params.id, 'shopify', 'schema_installed', 'success', { schemaType: schema['@type'], theme: result.themeName });
+    await logShopifyAudit(connection.id, 'user', req.userId, 'schema_installed', 'Organization schema installed in the theme', { theme: result.themeName }, 'general');
     res.json({ success: true, schema, themeName: result.themeName, layoutChanged: result.layoutChanged });
   } catch (err) {
     console.error('Shopify schema install error:', err.message);
@@ -11087,6 +11212,7 @@ app.delete('/api/business/:id/shopify/organization-schema', authRequired, async 
     if (!shopifyHasScope(connection, 'write_themes')) return res.status(409).json({ needsReauth: true, error: 'This store needs to be authorized once more before the schema can be removed for you.' });
     const result = await removeOrganizationSchemaFromTheme(connection, decryptSecret(connection.access_token_encrypted));
     await logManual(req.params.id, 'shopify', 'schema_removed', 'success', { theme: result.themeName });
+    await logShopifyAudit(connection.id, 'user', req.userId, 'schema_removed', 'Organization schema removed from the theme', { theme: result.themeName }, 'general');
     res.json({ success: true, themeName: result.themeName, removedTag: result.removedTag, removedSnippet: result.removedSnippet });
   } catch (err) {
     console.error('Shopify schema removal error:', err.message);
@@ -11166,6 +11292,7 @@ async function shopifyListResources(connection, accessToken, kind, fields) {
   const res = await shopifyApiRequest(connection.shop_domain, accessToken, `${path}?limit=${SHOPIFY_LIST_LIMIT}&fields=${fields}`, { timeoutMs: 20000 });
   if (res.status === 401 || res.status === 403) {
     await pool.query(`UPDATE shopify_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);   // the store refused us: recorded, so the rest of the tool tells the truth
+    await logShopifyAudit(connection.id, 'system', null, 'connection_lost', 'Shopify no longer accepts the connection: it needs to be reconnected', {}, 'connection');
     const e = new Error('Shopify no longer accepts the connection for this store. Please reconnect it first.'); e.code = 'auth_lost'; throw e;
   }
   if (!res.ok) throw new Error(`Shopify could not list the ${kind} of this store (status ${res.status}).`);
@@ -11297,14 +11424,16 @@ async function shopifyProposalRouteContext(req) {
   return { context, connection, accessToken: decryptSecret(connection.access_token_encrypted) };
 }
 const SHOPIFY_PROPOSAL_ROUTES = [
-  { path: 'tag-proposals', kind: 'tags', run: runShopifyTagProposalGeneration, failure: 'Failed to generate tag suggestions. Please try again.' },
-  { path: 'duplicate-title-proposals', kind: 'duplicate_titles', run: runShopifyDuplicateTitleProposalGeneration, failure: 'Failed to generate duplicate-title fixes. Please try again.' },
+  { path: 'tag-proposals', kind: 'tags', feature: 'taxonomy', what: 'Looked for posts without tags', run: runShopifyTagProposalGeneration, failure: 'Failed to generate tag suggestions. Please try again.' },
+  { path: 'duplicate-title-proposals', kind: 'duplicate_titles', feature: 'duplicate_titles', what: 'Looked for duplicate titles', run: runShopifyDuplicateTitleProposalGeneration, failure: 'Failed to generate duplicate-title fixes. Please try again.' },
 ];
 for (const r of SHOPIFY_PROPOSAL_ROUTES) app.post(`/api/business/:id/shopify/${r.path}`, authRequired, async (req, res) => {
   try {
     const ctx = await shopifyProposalRouteContext(req); if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
     recordRunFrom(res, req.params.id, 'shopify', 'proposals_generated', b => ({ detail: { kind: r.kind, count: proposalCount(b) } }));
-    res.json(await r.run(ctx.connection, ctx.accessToken, ctx.context));
+    const out = await r.run(ctx.connection, ctx.accessToken, ctx.context);
+    await logShopifyProposalRun(ctx.connection, req.userId, r.feature, r.what, out);
+    res.json(out);
   } catch (err) {
     console.error(`Shopify ${r.kind} proposals error:`, err.message);
     if (err.code === 'auth_lost') return res.status(400).json({ error: err.message, code: 'auth_lost' });
@@ -11358,17 +11487,19 @@ async function shopifyEditPost(connection, accessToken, post, body, actorId) {
   await pool.query(`UPDATE shopify_generated_posts SET title = $1, body_html = $2, meta_title = $3, meta_description = $4, tags = $5, status = $6, handle = COALESCE($7, handle), updated_at = NOW() WHERE id = $8`,
     [f.title, f.bodyHtml, f.metaTitle, f.metaDescription, f.tags.join(', '), status, article && article.handle ? article.handle : null, post.id]);
   await logManual(connection.business_id, 'shopify', 'content_edited', 'success', { title: f.title, postId: post.id });
+  await logShopifyAudit(connection.id, 'user', actorId, 'generated_post_edited', `Edited generated post: "${f.title}"`, { postId: post.id, articleId: post.shopify_article_id }, 'content_generation');
   return { status: 200, body: { success: true, status } };
 }
-async function shopifyPublishPost(connection, accessToken, post) {
+async function shopifyPublishPost(connection, accessToken, post, actorId) {
   if (post.status === 'publish') return { status: 200, body: { success: true, already: true } };
   const res = await shopifyApiRequest(connection.shop_domain, accessToken, shopifyArticlePath(connection, post), { method: 'PUT', timeoutMs: 15000, body: { article: { id: post.shopify_article_id, published: true } } });
   const fail = shopifyPostFailure(res, 'publishing this post'); if (fail) return fail;
   await pool.query(`UPDATE shopify_generated_posts SET status = 'publish', updated_at = NOW() WHERE id = $1`, [post.id]);
   await logManual(connection.business_id, 'shopify', 'content_published', 'success', { title: post.title, postId: post.id, url: post.article_url || null });
+  await logShopifyAudit(connection.id, 'user', actorId, 'generated_post_published', `Published: "${post.title}"`, { postId: post.id, articleId: post.shopify_article_id }, 'content_generation');
   return { status: 200, body: { success: true } };
 }
-async function shopifyDeleteDraft(connection, accessToken, post) {
+async function shopifyDeleteDraft(connection, accessToken, post, actorId) {
   // Ask Shopify first, whatever our copy says. If the article is already gone, our entry is simply removed. If it exists and is LIVE (it was published, here or in Shopify
   // admin), it is never deleted from here: deleting a live post is done in Shopify admin.
   const look = await shopifyApiRequest(connection.shop_domain, accessToken, `${shopifyArticlePath(connection, post).replace('.json', '')}.json?fields=id,published_at`, { timeoutMs: 15000 });
@@ -11381,6 +11512,7 @@ async function shopifyDeleteDraft(connection, accessToken, post) {
   if (!del.ok && del.status !== 404) { const f = shopifyPostFailure(del, 'deleting this draft'); return f || { status: 400, body: { error: `Shopify rejected deleting this draft (status ${del.status}).` } }; }
   await pool.query('DELETE FROM shopify_generated_posts WHERE id = $1', [post.id]);
   await logManual(connection.business_id, 'shopify', 'content_deleted', 'success', { title: post.title });
+  await logShopifyAudit(connection.id, 'user', actorId, 'generated_post_deleted', `Deleted draft: "${post.title}"`, { articleId: post.shopify_article_id }, 'content_generation');
   return { status: 200, body: { success: true } };
 }
 // The route preamble: the caller's business, a connected store, and a post that belongs to that store.
@@ -11395,7 +11527,7 @@ async function shopifyPostRouteContext(req) {
   if (!post) return { status: 404, error: 'Post not found.' };
   return { connection, post, accessToken: decryptSecret(connection.access_token_encrypted) };
 }
-const SHOPIFY_POST_ACTIONS = { edit: (c, t, p, req) => shopifyEditPost(c, t, p, req.body, req.userId), publish: (c, t, p) => shopifyPublishPost(c, t, p), delete: (c, t, p) => shopifyDeleteDraft(c, t, p) };
+const SHOPIFY_POST_ACTIONS = { edit: (c, t, p, req) => shopifyEditPost(c, t, p, req.body, req.userId), publish: (c, t, p, req) => shopifyPublishPost(c, t, p, req.userId), delete: (c, t, p, req) => shopifyDeleteDraft(c, t, p, req.userId) };
 for (const [method, path, action] of [['put', '', 'edit'], ['post', '/publish', 'publish'], ['delete', '', 'delete']]) app[method](`/api/business/:id/shopify/generated-posts/:postId${path}`, authRequired, async (req, res) => {
   try {
     const ctx = await shopifyPostRouteContext(req); if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
@@ -11460,6 +11592,7 @@ app.post('/api/business/:id/shopify/generate-post', authRequired, async (req, re
     }
 
     const featuredImage = req.body?.generateFeaturedImage === false ? { status: 'skipped', reason: 'not_requested' } : await addFeaturedImageToShopifyArticle(connection, accessToken, result.id, { imagePrompt: featuredImagePromptFor(generated.title, generated.focusKeyword), focusKeyword: generated.focusKeyword, title: generated.title });
+    await logShopifyAudit(connection.id, 'user', req.userId, 'generated_post', `Generated a post: "${generated.title}" (${result.status === 'publish' ? 'published' : 'saved as a draft'})`, { postId: savedPost.rows[0].id, articleId: result.id }, 'content_generation');
     await logManual(req.params.id, 'shopify', 'content_generated', 'success', { title: generated.title, status: result.status, url: result.url || null, postId: savedPost.rows[0].id, image: featuredImage.status, imageReason: featuredImage.reason });
     res.json({ success: true, title: generated.title, publishStatus: result.status, url: result.url, featuredImage });
   } catch (err) {
@@ -20243,7 +20376,7 @@ async function checkWebsiteHealth(ownerId, business, platform, lang) {
   let lost = conn.connection_status === 'auth_expired', problems = 0;
   if (!lost && cfg.hasCredentials(conn)) {
     const probe = await cfg.probe(conn);
-    if (probe.state === 'auth_lost') { lost = true; await pool.query(`UPDATE ${cfg.table} SET connection_status = 'auth_expired'${platform === 'wordpress' ? ", last_error = 'Credentials no longer valid'" : ''} WHERE id = $1`, [conn.id]); }
+    if (probe.state === 'auth_lost') { lost = true; await pool.query(`UPDATE ${cfg.table} SET connection_status = 'auth_expired'${platform === 'wordpress' ? ", last_error = 'Credentials no longer valid'" : ''} WHERE id = $1`, [conn.id]); if (platform === 'shopify') await logShopifyAudit(conn.id, 'system', null, 'connection_lost', 'Shopify no longer accepts the connection: it needs to be reconnected', {}, 'connection'); }
     else if (probe.state === 'problem') problems = await websiteHealthCount(business.id, platform, 'site_unreachable', true);
     else {
       await websiteHealthCount(business.id, platform, 'site_unreachable', false);
@@ -21820,13 +21953,14 @@ async function runShopifyMaintenanceCycle(connection, triggeredBy = 'automatic',
     try {
       await runShopifyWebsiteIntelligence(connection, accessToken, biz.name);
       await log('intelligence_refreshed', 'success', {});
+      await logShopifyAudit(connection.id, 'system', null, 'intelligence_refreshed', 'Website Intelligence refreshed', {}, 'intelligence');
     } catch (e) { await log('intelligence_refreshed', 'failed', errDetail(e)); }
   });
 
   await steps.run('audit', async () => {
     if (!context) { await log('audit_completed', 'failed', { error: 'Business details could not be loaded, so the audit was skipped.' }); return; }
     try {
-      const audit = await runShopifyAudit(connection, accessToken, context, null);
+      const audit = await runShopifyAuditRecorded(connection, accessToken, context, null, 'automatic');
       await log('audit_completed', 'success', shopifyAuditActivityDetail(audit));
     } catch (e) { await log('audit_completed', 'failed', errDetail(e)); }
   });
@@ -21898,6 +22032,7 @@ async function generateShopifyScheduledPost(entry, context, connection) {
       [connection.id, result.id, topic, generated.title, result.handle, generated.bodyHtml, generated.metaTitle, generated.metaDescription, generated.tags.join(', '), result.status, result.url]
     );
     postId = saved.rows[0].id;
+    await logShopifyAudit(connection.id, 'system', null, 'generated_post_scheduled', `Generated a scheduled post: "${generated.title}" (${result.status === 'publish' ? 'published' : 'saved as a draft'})`, { postId, articleId: result.id }, 'content_generation');
 
     // Recorded post by post: the cooldown and no-repeat checks read this
     // table, so each post must be visible to the next one generated.
