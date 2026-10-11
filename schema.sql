@@ -2087,3 +2087,26 @@ CREATE TABLE IF NOT EXISTS competitor_reports (
   UNIQUE (business_id, kind, period_start)
 );
 CREATE INDEX IF NOT EXISTS idx_competitor_reports_business ON competitor_reports (business_id, created_at DESC);
+
+-- ── Customer reviews ─────────────────────────────────────────────────────────
+-- Asked for when a customer signs out (at most once every 30 days, never blocking). Every review starts 'pending': only an admin makes one public.
+-- 'comment' is the PUBLIC part (shown only once approved, and only with the first name and business if the customer agreed). 'improvement' is PRIVATE:
+-- what could be better, seen by the admin only, never on the website. The name and business are copied at the time of the review.
+CREATE TABLE IF NOT EXISTS reviews (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  rating SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment TEXT NOT NULL DEFAULT '',
+  improvement TEXT NOT NULL DEFAULT '',
+  show_name BOOLEAN NOT NULL DEFAULT false,
+  display_name VARCHAR(120),
+  display_business VARCHAR(160),
+  language VARCHAR(5) NOT NULL DEFAULT 'en',
+  plan VARCHAR(30),
+  status VARCHAR(10) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'hidden')),
+  moderated_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_status ON reviews (status, rating DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reviews_user ON reviews (user_id, created_at DESC);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS review_prompted_at TIMESTAMPTZ;
