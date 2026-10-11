@@ -2137,13 +2137,12 @@ CREATE TABLE IF NOT EXISTS contact_messages (
 CREATE INDEX IF NOT EXISTS idx_contact_messages_status ON contact_messages (status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contact_messages_created ON contact_messages (created_at DESC);
 
--- ── Website alerts: what has already been alerted about ─────────────────────────────────────────────────────────────────────────────
--- One row per business, platform and kind of problem. It lets an alert be raised ONCE when a problem starts (and again as a reminder if it is still there
--- after a week), instead of every day, and it counts failed checks in a row so one blip never raises an alarm.
--- kind: 'connection_lost' | 'site_unreachable' | 'robots_blocking' | 'not_mobile_ready'
-CREATE TABLE IF NOT EXISTS website_health_state (
+-- ── Alerts about a site's health: what has already been alerted about ────────────────────────────────────────────────────────────────
+-- WordPress and Shopify each have their OWN table and their OWN setting; nothing is shared. One row per business and kind of problem. It lets an alert be raised
+-- ONCE when a problem starts (and again as a reminder if it is still there after a week), instead of every day, and counts failed checks in a row so one blip
+-- never raises an alarm. kind: 'connection_lost' | 'site_unreachable' | 'robots_blocking' | 'not_mobile_ready'
+CREATE TABLE IF NOT EXISTS wordpress_health_state (
   business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
-  platform VARCHAR(20) NOT NULL,
   kind VARCHAR(30) NOT NULL,
   active BOOLEAN NOT NULL DEFAULT FALSE,
   since TIMESTAMPTZ,
@@ -2151,9 +2150,21 @@ CREATE TABLE IF NOT EXISTS website_health_state (
   failures INTEGER NOT NULL DEFAULT 0,
   detail JSONB,
   updated_at TIMESTAMPTZ DEFAULT NOW(),
-  PRIMARY KEY (business_id, platform, kind)
+  PRIMARY KEY (business_id, kind)
 );
-ALTER TABLE monitoring_preferences ADD COLUMN IF NOT EXISTS website_alerts_enabled BOOLEAN DEFAULT TRUE;
+CREATE TABLE IF NOT EXISTS shopify_health_state (
+  business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  kind VARCHAR(30) NOT NULL,
+  active BOOLEAN NOT NULL DEFAULT FALSE,
+  since TIMESTAMPTZ,
+  last_alerted_at TIMESTAMPTZ,
+  failures INTEGER NOT NULL DEFAULT 0,
+  detail JSONB,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (business_id, kind)
+);
+ALTER TABLE monitoring_preferences ADD COLUMN IF NOT EXISTS wordpress_alerts_enabled BOOLEAN DEFAULT TRUE;
+ALTER TABLE monitoring_preferences ADD COLUMN IF NOT EXISTS shopify_alerts_enabled BOOLEAN DEFAULT TRUE;
 
 -- ── Shopify: audit history and activity log (the same two cards WordPress has) ─────────────────────────────────────────────────────────
 -- One row per audit run (manual or automatic): what was found, what was fixed by itself, what waits for approval, and the page-by-page breakdown.
