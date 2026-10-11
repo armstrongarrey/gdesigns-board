@@ -2271,6 +2271,18 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
         <div style="font-size:11px;color:var(--muted);margin:8px 0 12px" data-i18n="web.sitemap_description">Finds your site's existing sitemap (generated automatically by WordPress or your SEO plugin) and submits it to Google Search Console.</div>
         <div id="websiteSitemapContent"></div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+            <div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:600;color:var(--text)" data-i18n="wordpress.sitemap.build_title">Build a sitemap from your content</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="wordpress.sitemap.build_desc">If your site has no sitemap, Arreyon Consult can build one from your real published pages and posts. You then upload it to your site and check it here.</div></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn-secondary" onclick="checkWordPressSitemap()" id="wordpressSitemapCheckBtn" data-i18n="wordpress.sitemap.check">Check Sitemap</button>
+              <button class="btn-primary" onclick="generateWordPressSitemap()" id="wordpressSitemapBuildBtn" data-i18n="wordpress.sitemap.build">Build Sitemap</button>
+            </div>
+          </div>
+          <div id="wordpressSitemapBuilt" style="margin-top:12px"></div>
+          <div id="wordpressSitemapChecked"></div>
+        </div>
       </div>
 
       <!-- COMPETITOR ANALYSIS (WordPress) — measured on competitors' real public pages and compared with this site.
@@ -9113,6 +9125,7 @@ async function loadWebsiteSection() {
     if (webHas('ai_visibility')) loadAiVisibilityHistory('website');
     if (webHas('keyword_rankings')) loadKeywordRankings('website');
     if (webHas('sitemap')) loadWebsiteSitemapStatus();
+    if (webHas('sitemap')) loadWordPressSitemapBuild();
     if (webHas('competitor')) loadCompetitorAnalysis('website');
     if (webHas('technical_seo')) loadTechnicalSeoHistory('website');
     if (webHas('automation')) loadActiveRules('website');
@@ -11415,6 +11428,82 @@ function showShopifyConnectState() {
   document.getElementById('shopifyConnectedWrap').style.display = 'none';
   populateConnectBusinessChooser('shopify');
 }
+
+// wordpress-own:start
+// ── WordPress sitemap: build one from the site's content, see why there was none, and check it once it is live ────────────────────────
+// Nothing here is shared with Shopify: WordPress has its own texts (wordpress.*) and its own helpers. The server sends a code (and parameters) with every sentence;
+// the translation for that code is shown, and the server's English sentence is only the fallback.
+function wordpressServerText(data) {
+  const d = data || {}, code = d.code, params = d.params || {};
+  if (code) { const key = 'wordpress.msg.' + code, text = tf(key, params); if (text && text !== key) return text; }
+  return d.error || '';
+}
+function wordpressSitemapSize(bytes) { const n = Number(bytes) || 0; return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`; }
+function wordpressSitemapWhen(iso) { return new Date(iso).toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' }); }
+const wordpressNote = (html, color) => `<div style="font-size:12px;color:${color || 'var(--text2)'};line-height:1.55;margin-top:6px">${html}</div>`;
+// What was built: how much, the files to download, and the steps. diagnosis/live (only right after a build) say why there was none, and what is there now.
+function renderWordPressSitemapBuilt(sitemap, live, diagnosis) {
+  const el = document.getElementById('wordpressSitemapBuilt'); if (!el) return;
+  if (!sitemap) { el.innerHTML = ''; return; }
+  const c = sitemap.counts || {}, id = encodeURIComponent(currentWebsiteBusinessId), many = (sitemap.files || []).length > 1;
+  let html = `<div style="background:var(--bg3);border-radius:10px;padding:12px 14px">
+    <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(tf('wordpress.sitemap.ready', { total: sitemap.urlCount, pages: c.pages || 0, posts: c.posts || 0, other: c.other || 0, categories: c.categories || 0, when: wordpressSitemapWhen(sitemap.generatedAt) }))}</div>
+    ${sitemap.truncated ? wordpressNote(escapeHtml(tf('wordpress.sitemap.truncated', { max: '50,000' })), '#f59e0b') : ''}
+    <div style="font-size:11.5px;font-weight:600;color:var(--muted);margin:12px 0 6px;text-transform:uppercase">${t('wordpress.sitemap.files_title')}</div>
+    ${(sitemap.files || []).map(f => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 0;border-top:1px solid var(--border)"><div style="font-size:12px;color:var(--text)">${escapeHtml(f.name)}<span style="color:var(--muted)"> · ${f.isIndex ? t('wordpress.sitemap.index_note') : tf('wordpress.sitemap.file_line', { count: f.urlCount, size: wordpressSitemapSize(f.bytes) })}</span></div><a class="btn-ghost" style="font-size:11.5px;padding:5px 10px;text-decoration:none" href="/api/business/${id}/website/sitemap/download?file=${encodeURIComponent(f.name)}" download="${escapeHtml(f.name)}">${t('wordpress.sitemap.download')}</a></div>`).join('')}
+    <div style="font-size:11.5px;font-weight:600;color:var(--muted);margin:12px 0 4px;text-transform:uppercase">${t('wordpress.sitemap.steps_title')}</div>
+    <ol style="margin:0;padding-left:18px;font-size:12px;color:var(--text2);line-height:1.6">
+      <li>${t(many ? 'wordpress.sitemap.step1_many' : 'wordpress.sitemap.step1_one')}</li><li>${escapeHtml(tf('wordpress.sitemap.step2', { url: sitemap.sitemapUrl }))}</li><li>${t('wordpress.sitemap.step3')}</li><li>${escapeHtml(tf('wordpress.sitemap.step4', { button: t('web.submit_sitemap_button') }))}</li>
+    </ol></div>`;
+  if (live) html += wordpressNote(escapeHtml(live.urlCount ? tf('wordpress.sitemap.live_found', { url: live.url, count: live.urlCount }) : tf('wordpress.sitemap.live_found_index', { url: live.url })), 'var(--text2)');
+  if (diagnosis) {
+    const why = []; if (diagnosis.core && diagnosis.core.checked && !diagnosis.core.found) why.push('wordpress.sitemap.why_core_missing'); if (diagnosis.home && diagnosis.home.noindex) why.push('wordpress.sitemap.why_noindex'); if (diagnosis.robots && diagnosis.robots.blocksEverything) why.push('wordpress.sitemap.why_robots_blocks');
+    html += `<div style="font-size:11.5px;font-weight:600;color:var(--muted);margin:14px 0 2px;text-transform:uppercase">${t('wordpress.sitemap.why_title')}</div>` + (why.length ? why.map(k => wordpressNote('• ' + escapeHtml(t(k)), '#f59e0b')).join('') : wordpressNote(escapeHtml(t('wordpress.sitemap.no_issue'))));
+    if (diagnosis.robots && diagnosis.robots.exists && !diagnosis.robots.listsSitemap && !diagnosis.robots.blocksEverything) html += wordpressNote(escapeHtml(tf('wordpress.sitemap.tip_robots_line', { url: sitemap.sitemapUrl })));
+  }
+  el.innerHTML = html;
+}
+// The result of comparing the live sitemap with the site's real content.
+function renderWordPressSitemapChecked(r) {
+  const el = document.getElementById('wordpressSitemapChecked'); if (!el) return;
+  if (!r) { el.innerHTML = ''; return; }
+  let html = `<div style="font-size:11.5px;font-weight:600;color:var(--muted);margin:14px 0 2px;text-transform:uppercase">${t('wordpress.sitemap.verify_title')}</div>`, total = (r.content && r.content.urlCount) || 0;
+  if (r.verdict === 'none') html += wordpressNote(escapeHtml(t('wordpress.sitemap.verify_none')), '#f59e0b');
+  else if (r.verdict === 'complete') html += wordpressNote(escapeHtml(tf('wordpress.sitemap.verify_complete', { url: r.live.url, count: total })), '#22c55e');
+  else {
+    html += wordpressNote(escapeHtml(tf('wordpress.sitemap.verify_incomplete', { url: r.live.url, missing: r.missingCount, count: total })), '#f59e0b');
+    html += `<div style="font-size:11.5px;color:var(--muted);margin-top:6px">${t('wordpress.sitemap.verify_missing_list')}:</div>` + (r.missing || []).map(u => `<div style="font-size:11.5px;color:var(--text2);word-break:break-all">• ${escapeHtml(u)}</div>`).join('') + (r.missingCount > (r.missing || []).length ? `<div style="font-size:11.5px;color:var(--muted)">${escapeHtml(tf('wordpress.sitemap.verify_more', { n: r.missingCount - r.missing.length }))}</div>` : '') + wordpressNote(escapeHtml(t('wordpress.sitemap.verify_fix')));
+  }
+  if (r.live && r.extraCount > 0) html += wordpressNote(escapeHtml(tf('wordpress.sitemap.verify_extra', { extra: r.extraCount })), 'var(--text2)') + `<div style="font-size:11.5px;color:var(--muted);margin-top:4px">${t('wordpress.sitemap.verify_extra_list')}:</div>` + (r.extra || []).map(u => `<div style="font-size:11.5px;color:var(--text2);word-break:break-all">• ${escapeHtml(u)}</div>`).join('');
+  if (r.content && r.content.truncated) html += wordpressNote(escapeHtml(t('wordpress.sitemap.content_truncated_note')), '#f59e0b');
+  el.innerHTML = html;
+}
+async function loadWordPressSitemapBuild() {
+  if (!document.getElementById('wordpressSitemapBuilt')) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/sitemap/generated`), data = await res.json().catch(() => ({}));
+    if (res.ok) renderWordPressSitemapBuilt(data.sitemap || null, null, null);
+  } catch (e) { /* the earlier build is simply not shown; the buttons still work */ }
+}
+async function generateWordPressSitemap() {
+  const btn = document.getElementById('wordpressSitemapBuildBtn'), box = document.getElementById('wordpressSitemapBuilt'); btn.disabled = true; btn.textContent = t('wordpress.sitemap.building');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/sitemap/generate`, { method: 'POST' }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { box.innerHTML = wordpressNote(escapeHtml(wordpressServerText(data) || t('board.connection_error')), '#ff8080'); return; }
+    renderWordPressSitemapBuilt(data.sitemap, data.live, data.diagnosis); renderWordPressSitemapChecked(null);
+  } catch (e) { box.innerHTML = wordpressNote(escapeHtml(t('board.connection_error')), '#ff8080'); }
+  finally { btn.disabled = false; btn.textContent = t('wordpress.sitemap.build'); }
+}
+async function checkWordPressSitemap() {
+  const btn = document.getElementById('wordpressSitemapCheckBtn'), box = document.getElementById('wordpressSitemapChecked'); btn.disabled = true; btn.textContent = t('wordpress.sitemap.checking');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/sitemap/verify`, { method: 'POST' }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { box.innerHTML = wordpressNote(escapeHtml(wordpressServerText(data) || t('board.connection_error')), '#ff8080'); return; }
+    renderWordPressSitemapChecked(data);
+  } catch (e) { box.innerHTML = wordpressNote(escapeHtml(t('board.connection_error')), '#ff8080'); }
+  finally { btn.disabled = false; btn.textContent = t('wordpress.sitemap.check'); }
+}
+// wordpress-own:end
 
 async function loadWebsiteSitemapStatus() {
   const contentEl = document.getElementById('websiteSitemapContent');
