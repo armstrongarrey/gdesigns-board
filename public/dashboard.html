@@ -1792,6 +1792,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <textarea class="form-input" id="newCompetitorNotes" data-i18n-placeholder="market.competitor_notes_placeholder" placeholder="Notes (optional) — anything you already know about them" rows="2" style="width:100%;margin-top:8px;resize:vertical"></textarea>
       </div>
 
+      <div id="consultDiscoveryMount"></div>
+      <div id="consultCompetitorActivity"></div>
       <div id="competitorsList"></div>
     </div>
   </div>
@@ -1886,6 +1888,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     </div>
 
     <div id="reportsGrid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:14px;max-width:900px"></div>
+    <div id="ciReports" style="max-width:900px;margin-top:22px"></div>
   </div>
 
   <!-- WEBSITE CONTROL CENTER — Phase 8 / Increment 1 (connection + read-only intelligence) -->
@@ -6315,6 +6318,7 @@ async function loadCompetitors() {
   try { localStorage.setItem('arreyon_market_business_id', currentMarketBusinessId); } catch (e) {}
 
   loadMarketContext();
+  mountConsultCompetitorTools();
 
   const listEl = document.getElementById('competitorsList');
   listEl.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">${t('bi.loading')}</div>`;
@@ -7204,6 +7208,7 @@ async function loadReportsCenter() {
       return;
     }
     renderReportsGrid(data.reports || []);
+    loadCompetitiveReports();
   } catch (e) {
     grid.innerHTML = `<div style="text-align:center;padding:24px;color:#ff8080;font-size:13px;grid-column:1/-1">${t('board.connection_error')}</div>`;
   }
@@ -10603,6 +10608,7 @@ function competitorSuggestionHtml(prefix, s) {
     + `<button class="btn-ghost" style="font-size:11px;padding:2px 8px" data-id="${escapeHtml(s.id)}" onclick="dismissCompetitorSuggestion('${prefix}', this.dataset.id)">${t('web.discover_dismiss')}</button></div>`
     + (url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="font-size:11.5px;color:var(--purple-light)">${escapeHtml(url.replace(/^https?:\/\//, ''))}</a>` : '')
     + (s.reason ? `<div style="font-size:11.5px;color:var(--text2);margin-top:3px;line-height:1.5">${escapeHtml(s.reason)}</div>` : '')
+    + (s.market ? `<div style="font-size:10.5px;color:var(--muted);margin-top:3px">${escapeHtml(tf('web.ci_from_market', { market: s.market }))}</div>` : '')
     + (s.grounded ? `<div style="font-size:10.5px;color:var(--green);margin-top:3px">✓ ${t('web.discover_grounded')}</div>` : '') + `</div></div>`;
 }
 function competitorDiscoveryHtml(prefix, data) {
@@ -10610,7 +10616,7 @@ function competitorDiscoveryHtml(prefix, data) {
   if (!canSearch && !sug.length) return '';
   const hasAny = data.competitorsWithWebsite > 0 || sug.length > 0 || !!data.lastSearchedAt;
   let h = `<div id="${prefix}CompetitorDiscovery" style="margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:10px"><div style="font-size:12.5px;font-weight:700;color:var(--text)">${t('web.discover_title')}</div>`
-    + `<div style="font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.5">${t('web.discover_intro')}</div>`;
+    + `<div style="font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.5">${t('web.discover_intro')}</div>` + `<div id="${prefix}Markets" style="margin-top:8px"></div>`;
   if (sug.length) h += `<div style="font-size:11.5px;color:var(--gold);margin-top:10px;line-height:1.5">${t('web.discover_review_note')}</div>` + sug.map(s => competitorSuggestionHtml(prefix, s)).join('')
     + `<div style="margin-top:10px"><button class="btn-primary" style="font-size:12px;padding:6px 14px" onclick="addSelectedCompetitors('${prefix}')">${t('web.discover_add_selected')}</button></div>`;
   if (canSearch) h += `<div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="${sug.length ? 'btn-secondary' : 'btn-primary'}" id="${prefix}CompetitorFindBtn" style="font-size:12px;padding:6px 14px" onclick="findCompetitors('${prefix}')">${t(hasAny ? 'web.discover_again_btn' : 'web.discover_btn')}</button>`
@@ -10620,36 +10626,39 @@ function competitorDiscoveryHtml(prefix, data) {
 // The card as it was, plus the search panel: at the top when there is something to decide (or nothing is tracked yet), otherwise at the bottom.
 function renderCompetitorAnalysis(el, data, prefix = 'website') {
   renderCompetitorAnalysisCore(el, data, prefix);
-  const html = competitorDiscoveryHtml(prefix, data); if (!html) return;
-  el.insertAdjacentHTML(!data.competitorsWithWebsite || (data.suggestions && data.suggestions.length) ? 'afterbegin' : 'beforeend', html);
+  const html = competitorDiscoveryHtml(prefix, data);
+  if (html) el.insertAdjacentHTML(!data.competitorsWithWebsite || (data.suggestions && data.suggestions.length) ? 'afterbegin' : 'beforeend', html);
+  el.insertAdjacentHTML('beforeend', `<div id="${prefix}CompetitorActivity"></div>`);
+  if (html) loadMarkets(prefix);
+  loadCompetitorActivity(prefix);
 }
 async function findCompetitors(prefix) {
   const btn = document.getElementById(`${prefix}CompetitorFindBtn`); if (btn) { btn.disabled = true; btn.textContent = t('web.discover_running'); }
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/competitors/discover`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform: prefix === 'shopify' ? 'shopify' : 'wordpress' }) });
+    const res = await fetch(`/api/business/${ciBiz(prefix)}/competitors/discover`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform: prefix === 'shopify' ? 'shopify' : prefix === 'website' ? 'wordpress' : undefined }) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); if (btn) { btn.disabled = false; btn.textContent = t('web.discover_again_btn'); } return; }
     showToast(data.found ? tf('web.discover_found', { n: data.found }) : t('web.discover_none'));
-    await loadCompetitorAnalysis(prefix); loadAgentActivity(prefix);
+    await ciReload(prefix); if (prefix !== 'consult') loadAgentActivity(prefix);
   } catch (e) { showToast(t('board.connection_error'), 'error'); if (btn) { btn.disabled = false; btn.textContent = t('web.discover_again_btn'); } }
 }
 async function addSelectedCompetitors(prefix) {
   const ids = [...document.querySelectorAll(`.${prefix}SuggestionPick:checked`)].map(x => x.dataset.id);
   if (!ids.length) { showToast(t('web.discover_pick_one'), 'error'); return; }
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/competitors/suggestions/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+    const res = await fetch(`/api/business/${ciBiz(prefix)}/competitors/suggestions/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
     if ((data.added || []).length) showToast(tf('web.discover_added_toast', { n: data.added.length }));
     if ((data.skipped || []).some(x => x.reason === 'limit')) showToast(tf('web.discover_limit_note', { n: data.trackedLimit }), 'error');
-    loadCompetitorAnalysis(prefix);
+    ciReload(prefix);
   } catch (e) { showToast(t('board.connection_error'), 'error'); }
 }
 async function dismissCompetitorSuggestion(prefix, suggestionId) {
   try {
-    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/competitors/suggestions/${encodeURIComponent(suggestionId)}/dismiss`, { method: 'POST' });
+    const res = await fetch(`/api/business/${ciBiz(prefix)}/competitors/suggestions/${encodeURIComponent(suggestionId)}/dismiss`, { method: 'POST' });
     if (!res.ok) { const data = await res.json().catch(() => ({})); showToast(data.error || t('board.connection_error'), 'error'); return; }
-    showToast(t('web.discover_dismissed_toast')); loadCompetitorAnalysis(prefix);
+    showToast(t('web.discover_dismissed_toast')); ciReload(prefix);
   } catch (e) { showToast(t('board.connection_error'), 'error'); }
 }
 
@@ -10726,6 +10735,167 @@ async function previewFeaturedImage(prefix, actionId) {
     const st = featuredState[prefix]; if (st.status && st.status.previewsPerDay) { st.status.previewsToday = (st.status.previewsToday || 0) + 1; mountFeaturedImagesBlock(prefix); }
     if (prefix === 'shopify') loadShopifyActions(); else loadWebsiteActions();
   } catch (e) { showToast(t('board.connection_error'), 'error'); if (btn) { btn.disabled = false; btn.textContent = t('web.fi_preview_btn'); } }
+}
+
+// ── Competitive intelligence: every competitor that is added is tracked; findings come with recommendations; weekly and monthly reports ──────────
+// Everything here comes from the web or an AI, so all of it is escaped and every link goes through safeHttpUrl. No value is put inside script text.
+const ciBiz = prefix => (prefix === 'consult' ? currentMarketBusinessId : currentWebsiteBusinessId);
+const ciReload = prefix => (prefix === 'consult' ? loadCompetitors() : loadCompetitorAnalysis(prefix));
+const ciState = { website: {}, shopify: {}, consult: {} };
+let CI_POLL_MS = 5000;
+const CI_IMPACT = { threat: ['web.ci_threat', '#ff6b6b'], opportunity: ['web.ci_opportunity', 'var(--green)'], info: ['web.ci_info', 'var(--muted)'] };
+const ciDate = v => { const x = v ? new Date(v) : null; return x && !isNaN(x) ? x.toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''; };
+const ciNote = (txt, color) => `<div style="font-size:11.5px;color:${color || 'var(--muted)'};margin-top:6px;line-height:1.5">${escapeHtml(txt)}</div>`;
+function ciSourcesHtml(sources) {
+  return (Array.isArray(sources) ? sources : []).slice(0, 5).map(u => { const h = safeHttpUrl(u); return h ? `<a href="${escapeHtml(h)}" target="_blank" rel="noopener noreferrer" style="color:var(--purple-light);word-break:break-all">${escapeHtml(h.replace(/^https?:\/\//, '').slice(0, 70))}</a>` : ''; }).filter(Boolean).join(' \u00b7 ');
+}
+function ciFindingHtml(f) {
+  const imp = CI_IMPACT[f.impact] || CI_IMPACT.info, src = ciSourcesHtml(f.sources), who = f.competitor_name || f.competitor || '';
+  return `<div style="margin-top:8px;padding:10px 12px;background:var(--bg3);border-radius:8px">`
+    + `<div style="display:flex;gap:8px;align-items:flex-start"><span style="font-size:9.5px;font-weight:700;color:${imp[1]};text-transform:uppercase;white-space:nowrap;margin-top:2px">${t(imp[0])}</span><div style="flex:1;min-width:0;font-size:12.5px;font-weight:600;color:var(--text)">${who ? escapeHtml(who) + ': ' : ''}${escapeHtml(f.headline || '')}</div></div>`
+    + (f.detail ? `<div style="font-size:11.5px;color:var(--text2);margin-top:4px;line-height:1.5">${escapeHtml(f.detail)}</div>` : '')
+    + (f.recommendation ? `<div style="font-size:11.5px;color:var(--purple-light);margin-top:4px;line-height:1.5"><strong>${t('web.ci_recommendation')}:</strong> ${escapeHtml(f.recommendation)}</div>` : '')
+    + `<div style="font-size:10.5px;color:var(--muted);margin-top:5px;line-height:1.5">${escapeHtml(ciDate(f.created_at || f.at))}${src ? ` \u00b7 ${t('web.ci_sources')}: ${src}` : ''}</div></div>`;
+}
+// ── the tracking block ──
+function competitorActivityHtml(prefix, d) {
+  if (!Array.isArray(d.competitors) || !d.competitors.length) return '';   // nothing tracked yet: nothing to show
+  const st = ciState[prefix], busy = d.running || st.checking, wait = d.canCheckNowAt && new Date(d.canCheckNowAt) > new Date() ? d.canCheckNowAt : null;
+  const status = c => (!c.last_tracked_at ? t('web.ci_not_checked_yet') : c.tracking_status === 'site_unreachable' ? t('web.ci_site_unreachable') : c.tracking_status === 'no_website' ? t('web.ci_web_only') : `${t('web.ci_last_checked')} ${ciDate(c.last_tracked_at)}`);
+  let h = `<div style="margin-top:14px;padding:12px 14px;border:1px solid var(--border);border-radius:10px"><div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap"><div style="min-width:0;flex:1"><div style="font-size:12.5px;font-weight:700;color:var(--text)">${t('web.ci_title')}</div><div style="font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5">${t('web.ci_intro')}</div></div>`
+    + `<button class="btn-secondary" id="${prefix}CiCheckBtn" style="font-size:12px;padding:6px 14px" onclick="checkCompetitorsNow('${prefix}')"${busy || wait ? ' disabled' : ''}>${t(busy ? 'web.ci_checking' : 'web.ci_check_now')}</button></div>`;
+  if (wait && !busy) h += ciNote(tf('web.ci_next_check', { time: ciDate(wait) }));
+  if (d.searchAvailable === false) h += ciNote(t('web.ci_no_search'), 'var(--gold)');
+  h += d.competitors.map(c => `<div style="font-size:11.5px;color:var(--text2);margin-top:6px"><strong style="color:var(--text)">${escapeHtml(c.name || '')}</strong> \u00b7 ${escapeHtml(status(c))} \u00b7 ${escapeHtml(tf('web.ci_findings_count', { n: c.findings_count || 0 }))}</div>`).join('');
+  h += (d.findings || []).length ? `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin:14px 0 2px">${t('web.ci_latest')}</div>` + d.findings.slice(0, 5).map(ciFindingHtml).join('') : ciNote(t('web.ci_no_findings'));
+  return h + `<div style="font-size:11px;color:var(--muted);margin-top:10px">${t('web.ci_reports_hint')}</div></div>`;
+}
+async function loadCompetitorActivity(prefix) {
+  const el = document.getElementById(`${prefix}CompetitorActivity`); if (!el) return;
+  try {
+    const res = await fetch(`/api/business/${ciBiz(prefix)}/competitor-activity`);
+    if (!res.ok) { el.innerHTML = ''; return; }   // not available on this plan, or an error: shown as nothing
+    const d = await res.json(); ciState[prefix].activity = d; el.innerHTML = competitorActivityHtml(prefix, d);
+    if (d.running && !ciState[prefix].polling) ciPoll(prefix);
+  } catch (e) { el.innerHTML = ''; }
+}
+function ciPoll(prefix, tries = 0) {
+  const st = ciState[prefix]; st.polling = true;
+  setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/business/${ciBiz(prefix)}/competitor-activity`), d = res.ok ? await res.json() : null, el = document.getElementById(`${prefix}CompetitorActivity`);
+      if (d && d.running && tries < 40) { st.activity = d; if (el) el.innerHTML = competitorActivityHtml(prefix, d); return ciPoll(prefix, tries + 1); }
+      st.polling = false; if (st.checking) { st.checking = false; showToast(t('web.ci_check_finished')); }
+      if (d && el) { st.activity = d; el.innerHTML = competitorActivityHtml(prefix, d); }
+    } catch (e) { st.polling = false; st.checking = false; }
+  }, CI_POLL_MS);
+}
+async function checkCompetitorsNow(prefix) {
+  const st = ciState[prefix]; if (st.checking) return; st.checking = true;
+  const el = document.getElementById(`${prefix}CompetitorActivity`); if (el && st.activity) el.innerHTML = competitorActivityHtml(prefix, st.activity);
+  try {
+    const res = await fetch(`/api/business/${ciBiz(prefix)}/competitor-activity/check`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const data = await res.json().catch(() => ({}));
+    if (res.status !== 202) { st.checking = false; showToast(data.error || t('board.connection_error'), 'error'); loadCompetitorActivity(prefix); return; }
+    showToast(t('web.ci_checking_toast')); ciPoll(prefix);
+  } catch (e) { st.checking = false; showToast(t('board.connection_error'), 'error'); loadCompetitorActivity(prefix); }
+}
+// ── markets (up to 3 places, searched local first) ──
+async function loadMarkets(prefix) {
+  const el = document.getElementById(`${prefix}Markets`); if (!el) return;
+  try { const res = await fetch(`/api/business/${ciBiz(prefix)}/markets`); if (!res.ok) { el.innerHTML = ''; return; } ciState[prefix].markets = await res.json(); ciState[prefix].editing = false; renderMarkets(prefix); }
+  catch (e) { el.innerHTML = ''; }
+}
+function renderMarkets(prefix) {
+  const el = document.getElementById(`${prefix}Markets`), st = ciState[prefix], m = st.markets; if (!el) return;
+  if (!m || !Array.isArray(m.markets)) { el.innerHTML = ''; return; }
+  const label = x => [x.city, x.country].filter(Boolean).join(', ');
+  if (!st.editing) {
+    const txt = m.saved ? m.markets.map(label).join(' \u00b7 ') : '';
+    el.innerHTML = `<div style="font-size:11.5px;color:var(--text2);line-height:1.5"><strong style="color:var(--text)">${t('web.ci_markets_title')}:</strong> ${m.saved ? escapeHtml(txt) : escapeHtml(m.fallback ? tf('web.ci_markets_default', { place: label(m.fallback) }) : t('web.ci_markets_none'))} <button class="btn-ghost" style="font-size:11px;padding:2px 8px" onclick="editMarkets('${prefix}')">${t('web.ci_markets_edit')}</button></div>`;
+    return;
+  }
+  const rows = st.rows || [];
+  el.innerHTML = `<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">${t('web.ci_markets_first')}</div>`
+    + rows.map((r, i) => `<div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap"><input class="form-input" id="${prefix}MktCity${i}" placeholder="${escapeHtml(t('web.ci_markets_city'))}" value="${escapeHtml(r.city || '')}" style="flex:1;min-width:120px" maxlength="80"><input class="form-input" id="${prefix}MktCountry${i}" placeholder="${escapeHtml(t('web.ci_markets_country'))}" value="${escapeHtml(r.country || '')}" style="flex:1;min-width:120px" maxlength="80"><button class="btn-ghost" style="font-size:11px" onclick="removeMarketRow('${prefix}', ${i})">${t('web.ci_markets_remove')}</button></div>`).join('')
+    + `<div style="display:flex;gap:8px;flex-wrap:wrap">${rows.length < (m.max || 3) ? `<button class="btn-secondary" style="font-size:11.5px;padding:5px 12px" onclick="addMarketRow('${prefix}')">${t('web.ci_markets_add')}</button>` : ''}<button class="btn-primary" style="font-size:11.5px;padding:5px 12px" onclick="saveMarkets('${prefix}')">${t('web.ci_markets_save')}</button><button class="btn-ghost" style="font-size:11.5px" onclick="cancelMarkets('${prefix}')">${t('web.ci_markets_cancel')}</button></div>`;
+}
+function ciSyncMarketRows(prefix) { const st = ciState[prefix]; st.rows = (st.rows || []).map((r, i) => { const c = document.getElementById(`${prefix}MktCity${i}`), k = document.getElementById(`${prefix}MktCountry${i}`); return { city: c ? c.value : r.city, country: k ? k.value : r.country }; }); }
+function editMarkets(prefix) { const st = ciState[prefix]; st.editing = true; st.rows = (st.markets && st.markets.saved ? st.markets.markets : (st.markets && st.markets.fallback ? [st.markets.fallback] : [])).map(x => ({ city: x.city || '', country: x.country || '' })); if (!st.rows.length) st.rows = [{ city: '', country: '' }]; renderMarkets(prefix); }
+function addMarketRow(prefix) { ciSyncMarketRows(prefix); const st = ciState[prefix]; if ((st.rows || []).length < ((st.markets && st.markets.max) || 3)) st.rows.push({ city: '', country: '' }); renderMarkets(prefix); }
+function removeMarketRow(prefix, i) { ciSyncMarketRows(prefix); const st = ciState[prefix]; st.rows.splice(i, 1); renderMarkets(prefix); }
+function cancelMarkets(prefix) { ciState[prefix].editing = false; renderMarkets(prefix); }
+async function saveMarkets(prefix) {
+  ciSyncMarketRows(prefix); const st = ciState[prefix], list = st.rows.filter(r => (r.city || '').trim() || (r.country || '').trim()).map(r => ({ city: (r.city || '').trim(), country: (r.country || '').trim() }));
+  try {
+    const res = await fetch(`/api/business/${ciBiz(prefix)}/markets`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ markets: list }) }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
+    showToast(t('web.ci_markets_saved')); await loadMarkets(prefix);
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+}
+// ── the Competitors tab: discovery and tracking (the website cards already had discovery) ──
+async function mountConsultCompetitorTools() {
+  const m = document.getElementById('consultDiscoveryMount'); if (!m) return;
+  try {
+    const res = await fetch(`/api/business/${currentMarketBusinessId}/competitors/suggestions`), d = res.ok ? await res.json() : null;
+    m.innerHTML = d ? competitorDiscoveryHtml('consult', { ...d, competitorsWithWebsite: (currentCompetitorsForTasks || []).filter(c => c.website).length }) : '';
+    if (d) loadMarkets('consult');
+  } catch (e) { m.innerHTML = ''; }
+  loadCompetitorActivity('consult');
+}
+// ── the Reports Center: weekly and monthly reports ──
+const ciReports = { list: [], hasCompetitors: false, open: null, generating: null };
+function ciReportsBiz() { return currentReportsBusinessId; }
+function competitiveReportsHtml() {
+  const s = ciReports; const dl = (r, fmt) => `/api/business/${encodeURIComponent(ciReportsBiz())}/competitive-reports/${encodeURIComponent(r.id)}/download?format=${fmt}`;
+  let h = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px"><div style="font-size:14px;font-weight:700;color:var(--text)">${t('web.ci_reports_title')}</div><div style="font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.5">${t('web.ci_reports_intro')}</div>`;
+  h += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">` + ['weekly', 'monthly'].map(k => `<button class="btn-secondary" id="ciGen-${k}" style="font-size:12px;padding:6px 14px" onclick="generateCompetitiveReport('${k}')"${s.hasCompetitors && !s.generating ? '' : ' disabled'}>${t(s.generating === k ? 'web.ci_generating' : 'web.ci_generate_' + k)}</button>`).join('') + `</div>`;
+  if (!s.hasCompetitors) h += ciNote(t('web.ci_reports_need_competitor'));
+  else if (!s.list.length) h += ciNote(t('web.ci_reports_none'));
+  h += s.list.map(r => {
+    const st = r.stats || {}, open = s.open && s.open.id === r.id;
+    return `<div style="margin-top:10px;padding:10px 12px;background:var(--bg3);border-radius:8px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap"><div style="min-width:0"><span style="font-size:9.5px;font-weight:700;color:var(--gold);text-transform:uppercase;margin-right:6px">${t(r.kind === 'monthly' ? 'web.ci_monthly' : 'web.ci_weekly')}</span><span style="font-size:12.5px;font-weight:600;color:var(--text)">${escapeHtml(ciDate(r.period_start))} \u2013 ${escapeHtml(ciDate(r.period_end))}</span><div style="font-size:10.5px;color:var(--muted);margin-top:2px">${escapeHtml(tf('web.ci_findings_stat', { n: st.findings || 0 }))}${st.threats ? ' \u00b7 ' + escapeHtml(tf('web.ci_threats_stat', { n: st.threats })) : ''}${r.emailed_at ? ' \u00b7 ' + t('web.ci_emailed') : ''}</div></div>`
+      + `<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn-secondary" style="font-size:11.5px;padding:4px 12px" data-id="${escapeHtml(r.id)}" onclick="viewCompetitiveReport(this.dataset.id)">${t(open ? 'web.ci_hide' : 'web.ci_view')}</button><a class="btn-secondary" style="font-size:11.5px;padding:4px 12px;text-decoration:none" href="${escapeHtml(dl(r, 'pdf'))}">${t('web.ci_download_pdf')}</a><a class="btn-secondary" style="font-size:11.5px;padding:4px 12px;text-decoration:none" href="${escapeHtml(dl(r, 'docx'))}">${t('web.ci_download_word')}</a></div></div>`
+      + (open ? competitiveReportViewHtml(s.open) : '') + `</div>`;
+  }).join('');
+  return h + '</div>';
+}
+function competitiveReportViewHtml(r) {
+  const c = r.content || {}, sec = (key, body) => (body ? `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin:14px 0 4px">${t(key)}</div>${body}` : '');
+  const byC = (id) => (c.findings || []).filter(f => (id || []).includes(f.id));
+  const glance = (c.competitors || []).map(x => { const m = x.metrics; const bits = m ? [m.totalUrls != null ? `${m.totalUrls} ${t('web.ci_pages')}` : null, m.urlsLast90Days != null ? `${m.urlsLast90Days} ${t('web.ci_recent')}` : null, m.avgWords != null ? `${m.avgWords} ${t('web.ci_words')}` : null].filter(Boolean).join(' \u00b7 ') : ''; return `<div style="font-size:11.5px;color:var(--text2);margin-top:3px"><strong style="color:var(--text)">${escapeHtml(x.name || '')}</strong>${bits ? ' \u00b7 ' + escapeHtml(bits) : ''}</div>`; }).join('');
+  return `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">`
+    + sec('web.ci_summary', `<div style="font-size:12.5px;color:var(--text);line-height:1.6">${escapeHtml(c.summary || '')}</div>`)
+    + sec('web.ci_takeaways', (c.takeaways || []).length ? '<ul style="margin:0;padding-left:18px">' + c.takeaways.map(x => `<li style="font-size:12px;color:var(--text2);line-height:1.6">${escapeHtml(x)}</li>`).join('') + '</ul>' : '')
+    + sec('web.ci_actions', (c.actions || []).map((a, i) => `<div style="margin-top:6px;padding:8px 10px;background:var(--bg2);border-radius:8px"><div style="font-size:12.5px;font-weight:600;color:var(--text)">${i + 1}. ${escapeHtml(a.action || '')}</div>${a.why ? `<div style="font-size:11.5px;color:var(--text2);margin-top:3px;line-height:1.5">${escapeHtml(a.why)}</div>` : ''}</div>`).join(''))
+    + sec('web.ci_activity', (c.competitors || []).map(x => { const fs = byC(x.findingIds); return `<div style="margin-top:8px"><div style="font-size:12.5px;font-weight:700;color:var(--text)">${escapeHtml(x.name || '')}</div>${fs.length ? fs.map(ciFindingHtml).join('') : ciNote(t('web.ci_nothing'))}</div>`; }).join(''))
+    + sec('web.ci_glance', glance)
+    + sec('web.ci_not_seen', (c.notSeen || []).length ? '<ul style="margin:0;padding-left:18px">' + c.notSeen.map(x => `<li style="font-size:11.5px;color:var(--muted);line-height:1.6">${escapeHtml(x)}</li>`).join('') + '</ul>' : '') + '</div>';
+}
+function mountCompetitiveReports() { const el = document.getElementById('ciReports'); if (el) el.innerHTML = ciReports.hidden ? '' : competitiveReportsHtml(); }
+async function loadCompetitiveReports() {
+  const el = document.getElementById('ciReports'); if (!el || !ciReportsBiz()) return;
+  try {
+    const res = await fetch(`/api/business/${encodeURIComponent(ciReportsBiz())}/competitive-reports`);
+    if (!res.ok) { ciReports.hidden = true; el.innerHTML = ''; return; }   // not available on this plan, or an error: shown as nothing
+    const d = await res.json(); ciReports.hidden = false; ciReports.list = d.reports || []; ciReports.hasCompetitors = !!d.hasCompetitors; ciReports.open = null; mountCompetitiveReports();
+  } catch (e) { el.innerHTML = ''; }
+}
+async function generateCompetitiveReport(kind) {
+  if (ciReports.generating) return; ciReports.generating = kind; mountCompetitiveReports();
+  try {
+    const res = await fetch(`/api/business/${encodeURIComponent(ciReportsBiz())}/competitive-reports/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind }) }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); } else { showToast(t('web.ci_generated_toast')); ciReports.generating = null; await loadCompetitiveReports(); if (data.report) viewCompetitiveReport(data.report.id); return; }
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+  ciReports.generating = null; mountCompetitiveReports();
+}
+async function viewCompetitiveReport(id) {
+  if (ciReports.open && ciReports.open.id === id) { ciReports.open = null; mountCompetitiveReports(); return; }
+  try {
+    const res = await fetch(`/api/business/${encodeURIComponent(ciReportsBiz())}/competitive-reports/${encodeURIComponent(id)}`), data = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
+    ciReports.open = { id, content: data.report.content }; mountCompetitiveReports();
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
 }
 
 // Puts a suggested topic into this platform's blog post generator. Only the index travels through the page, never the text.
