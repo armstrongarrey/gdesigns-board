@@ -5706,8 +5706,11 @@ async function addFeaturedImageToWordPressPost(connection, decryptedPassword, po
   if (!process.env.OPENAI_API_KEY) { console.warn('Featured image skipped: OPENAI_API_KEY is not set.'); return { status: 'skipped', reason: 'not_configured' }; }
   const texts = buildFeaturedImageTexts(focusKeyword, title);
   let buffer;
+  const allow = await usageAllowance(await businessOwnerId(connection.business_id), 'images');
+  if (!allow.ok) return { status: 'skipped', reason: 'monthly_limit', message: allow.message };   // the post is still made: only its picture is skipped
   try { buffer = await generateAIImage(imagePrompt); }
   catch (e) { console.error('Featured image generation failed:', e.message); return { status: 'failed', reason: 'generation_failed' }; }
+  await logFeaturedGeneration(connection.business_id, 'wordpress', 'post');
   try {
     const uploadRes = await wpApiRequestBinary(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/media', { buffer, contentType: 'image/png', filename: `${texts.fileBase}.png` });
     if (!uploadRes.ok) { console.error(`Featured image upload was refused (status ${uploadRes.status}).`); return { status: 'failed', reason: 'upload_failed' }; }
@@ -5727,8 +5730,11 @@ async function addFeaturedImageToShopifyArticle(connection, accessToken, article
   if (!process.env.OPENAI_API_KEY) { console.warn('Featured image skipped: OPENAI_API_KEY is not set.'); return { status: 'skipped', reason: 'not_configured' }; }
   const texts = buildFeaturedImageTexts(focusKeyword, title);
   let buffer;
+  const allow = await usageAllowance(await businessOwnerId(connection.business_id), 'images');
+  if (!allow.ok) return { status: 'skipped', reason: 'monthly_limit', message: allow.message };   // the post is still made: only its picture is skipped
   try { buffer = await generateAIImage(imagePrompt); }
   catch (e) { console.error('Featured image generation failed:', e.message); return { status: 'failed', reason: 'generation_failed' }; }
+  await logFeaturedGeneration(connection.business_id, 'shopify', 'post');
   try {
     const res = await shopifyApiRequest(connection.shop_domain, accessToken, `/blogs/${connection.blog_id}/articles/${articleId}.json`, { method: 'PUT', body: { article: { id: articleId, image: { attachment: buffer.toString('base64'), alt: texts.altText } } }, timeoutMs: 60000 });
     if (!res.ok) { console.error(`Shopify refused the article image (status ${res.status}).`); return { status: 'failed', reason: 'attach_failed' }; }
@@ -5755,6 +5761,45 @@ async function generateAIImage(prompt) {
   const b64 = data?.data?.[0]?.b64_json;
   if (!b64) throw new Error('OpenAI returned no image data.');
   return Buffer.from(b64, 'base64');
+}
+
+// ── Usage limits for the paid features added after the plans were defined ────────────────
+// The plans themselves are not touched: these are separate monthly allowances for what costs real money each time (a picture, a web search for competitors,
+// a manual competitor check). They are counted per ACCOUNT (the owner, across all of their businesses, so cost cannot multiply by adding businesses) and per
+// calendar month. Any number can be changed without a code change: LIMIT_<FEATURE>_<PLAN>=n, for example LIMIT_IMAGES_BUSINESS=250 (0 switches it off).
+const USAGE_LIMITS = {
+  images:        { free: 3, starter: 15, pro: 40, business: 150, auto_seo: 80, expired: 0 },    // pictures made: previews, pictures added when a plan is approved, pictures for generated posts
+  discovery:     { free: 3, starter: 5, pro: 15, business: 40, auto_seo: 10, expired: 0 },      // "Find my competitors" searches (each can search up to 3 markets)
+  manual_checks: { free: 2, starter: 4, pro: 10, business: 30, auto_seo: 0, expired: 0 },       // "Check now" on the competitor tracking block (the weekly check is automatic and not counted)
+};
+const USAGE_WORDS = { images: 'pictures', discovery: 'competitor searches', manual_checks: 'manual competitor checks' };
+const USAGE_SQL = {
+  images: `SELECT count(*) FROM featured_image_generations g JOIN businesses b ON b.id = g.business_id WHERE b.user_id = $1 AND g.created_at >= date_trunc('month', NOW())`,
+  discovery: `SELECT count(*) FROM competitor_discovery_runs r JOIN businesses b ON b.id = r.business_id WHERE b.user_id = $1 AND r.created_at >= date_trunc('month', NOW())`,
+  manual_checks: `SELECT count(*) FROM competitor_tracking_runs r JOIN businesses b ON b.id = r.business_id WHERE b.user_id = $1 AND r.triggered_by = 'manual' AND r.created_at >= date_trunc('month', NOW())`,
+};
+const usageResetsOn = (now = new Date()) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
+function usageLimitFor(feature, plan) {
+  const raw = process.env[`LIMIT_${String(feature).toUpperCase()}_${String(plan).toUpperCase()}`], env = raw === undefined ? '' : String(raw).trim();   // blank or spaces is NOT zero
+  if (env !== '' && Number.isFinite(Number(env)) && Number(env) >= 0) return Math.floor(Number(env));
+  const t = USAGE_LIMITS[feature]; if (!t) return 0;
+  return Object.prototype.hasOwnProperty.call(t, plan) ? t[plan] : t.starter;   // a plan that is not listed gets the Starter number, never unlimited
+}
+async function usageStatus(accountId, plan, feature) {
+  const used = +(await pool.query(USAGE_SQL[feature], [accountId])).rows[0].count, limit = usageLimitFor(feature, plan);
+  return { used, limit, remaining: Math.max(0, limit - used), resetsOn: usageResetsOn() };
+}
+// May this account use one more? (and if not, the plain sentence to show). A team member uses the owner's allowance, since the account is the owner.
+async function usageAllowance(ownerId, feature) {
+  const account = await resolveAccount(ownerId);
+  if (!account) return { ok: false, message: 'Account not found.' };
+  if (account.plan === 'expired') return { ok: false, plan: 'expired', used: 0, limit: 0, remaining: 0, message: 'Your plan has expired. Renew or upgrade to continue.' };
+  const st = await usageStatus(account.id, account.plan, feature), word = USAGE_WORDS[feature], name = PLAN_NAMES[account.plan] || 'your plan';
+  if (st.remaining > 0) return { ok: true, plan: account.plan, ...st };
+  return { ok: false, plan: account.plan, ...st, message: st.limit === 0 ? `${word.charAt(0).toUpperCase() + word.slice(1)} are not included in ${name}.` : `You have used all ${st.limit} ${word} included in ${name} this month. The count starts again on ${st.resetsOn}.` };
+}
+async function businessOwnerId(businessId) {
+  const r = await pool.query('SELECT user_id FROM businesses WHERE id = $1', [businessId]); return r.rows[0] ? r.rows[0].user_id : null;
 }
 
 // ── Featured images for EXISTING pages and posts ────────────────────
@@ -5810,6 +5855,8 @@ async function createFeaturedPreview(platform, businessId, accountId, actionId) 
   const avail = featuredImagesAvailability();
   if (!avail.ok) return { status: 503, body: { error: avail.reason === 'turned_off' ? 'Featured images are turned off on this server right now.' : 'Image generation is not set up on this server yet. Please contact support.' } };
   const change = a.edited_change || a.proposed_change || {}; if (!change.imagePrompt) return { status: 400, body: { error: 'This plan has no picture idea to preview.' } };
+  const allow = await usageAllowance(accountId, 'images');
+  if (!allow.ok) return { status: 429, body: { error: allow.message, code: 'plan_limit' } };
   const existing = await loadFeaturedPreview(platform, actionId);
   if (existing && existing.regenerations >= FEATURED_REGENERATIONS_MAX) return { status: 400, body: { error: 'You have reached the limit of previews for this image. Approve it, or reject it and ask for a new plan.', code: 'preview_limit' } };
   if ((await featuredPreviewsToday(businessId)) >= featuredPreviewsPerDay()) return { status: 429, body: { error: `You can preview up to ${featuredPreviewsPerDay()} images a day. Please try again tomorrow, or approve plans without previewing them.` } };
@@ -6760,7 +6807,10 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
       // auto-execute in the proposal-generation route above).
       try {
         let imageBuffer; const storedPreview = await loadFeaturedPreview('wordpress', action.id);   // approving uses exactly the picture the person saw: no second charge
-        if (storedPreview) imageBuffer = storedPreview.png; else { imageBuffer = await generateAIImage(change.imagePrompt); await logFeaturedGeneration(connection.business_id, 'wordpress', 'apply'); }
+        if (storedPreview) imageBuffer = storedPreview.png; else {
+          const allow = await usageAllowance(await businessOwnerId(connection.business_id), 'images'); if (!allow.ok) return { executed: false, verified: false, error: allow.message };   // the picture cost is only incurred within the monthly allowance
+          imageBuffer = await generateAIImage(change.imagePrompt); await logFeaturedGeneration(connection.business_id, 'wordpress', 'apply');
+        }
         const uploadRes = await wpApiRequestBinary(connection.site_url, connection.wp_username, decryptedPassword, '/wp/v2/media', {
           buffer: imageBuffer, contentType: 'image/png', filename: `${change.fileBase || imageSlug(change.imageTitle) || 'featured-image'}.png`,
         });
@@ -7514,7 +7564,8 @@ async function featuredStatusFor(platform, req, res) {
   const excluded = await featuredPlanExclusions(spec, connection.id), avail = featuredImagesAvailability();
   const pending = +(await pool.query(`SELECT count(*) FROM ${spec.table} WHERE ${spec.fk} = $1 AND action_type = 'generate_featured_image' AND approval_status = 'pending'`, [connection.id])).rows[0].count;
   res.json({ ...featuredScanSummary(scan), noBlog: !!scan.noBlog, pagesSupported: platform === 'wordpress', waitingForPlan: scan.items.filter(c => !excluded.has(`${c.isPost ? 'post' : 'page'}:${c.id}`)).length, pendingPlans: pending,
-    items: scan.items.slice(0, 20).map(c => ({ id: c.id, title: c.title, url: c.url, type: c.isPost ? 'post' : 'page' })), imagesAvailable: avail.ok, imagesUnavailableReason: avail.ok ? null : avail.reason, previewsToday: await featuredPreviewsToday(req.params.id), previewsPerDay: featuredPreviewsPerDay() });
+    items: scan.items.slice(0, 20).map(c => ({ id: c.id, title: c.title, url: c.url, type: c.isPost ? 'post' : 'page' })), imagesAvailable: avail.ok, imagesUnavailableReason: avail.ok ? null : avail.reason, previewsToday: await featuredPreviewsToday(req.params.id), previewsPerDay: featuredPreviewsPerDay(),
+    usage: { images: await usageStatus(account.id, account.plan, 'images') }, autoAdd: { enabled: process.env.AUTO_FEATURED_IMAGES_OFF !== '1' && !!(await (platform === 'shopify' ? SHOPIFY_LINK_SPEC : WORDPRESS_LINK_SPEC).autoAllowed(connection)), perRun: featuredAutoPerRun() } });
 }
 app.get('/api/business/:id/website/featured-images', authRequired, async (req, res) => {
   try { await featuredStatusFor('wordpress', req, res); } catch (e) { console.error('Featured images status error:', e.message); res.status(500).json({ error: safeErrorMessage(e, 'Could not check for missing featured images. Please try again.') }); }
@@ -8847,9 +8898,9 @@ const WORDPRESS_LINK_SPEC = {
   insert: async (c, ref, type, actionType, change, reasoning) => (await pool.query(
     `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning)
      VALUES ($1, 'seo_agent', $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`, [c.id, actionType, type, ref.id, ref.url, ref.title, JSON.stringify({}), JSON.stringify(change), reasoning])).rows[0],
-  beforeApply: async (c, action, label) => {
+  beforeApply: async (c, action, label, feature = 'broken_links') => {
     await pool.query(`UPDATE website_actions SET approval_status = 'approved', reviewed_at = NOW() WHERE id = $1`, [action.id]);
-    await logWebsiteAudit(c.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: ${label}`, { actionId: action.id }, 'broken_links');
+    await logWebsiteAudit(c.id, 'system', null, 'proposal_auto_approved', `Auto-approved under Managed/Automatic settings: ${label}`, { actionId: action.id }, feature);
   },
   execute: (action, c, secret) => executeWebsiteAction({ ...action, approval_status: 'approved' }, c, secret),
   record: async (action, exec) => (await pool.query(`UPDATE website_actions SET approval_status = 'approved', execution_status = $1, verification_status = $2, error_message = $3 WHERE id = $4 RETURNING *`,
@@ -8919,11 +8970,11 @@ async function noteRepeatedLinkFixFailure(connection, row, spec = WORDPRESS_LINK
       fr ? `Une correction de lien sur « ${row.target_title || 'une page'} » a été refusée par votre site à plusieurs reprises. Vérifiez les autorisations de la connexion.` : `A link fix on "${row.target_title || 'a page'}" has been refused by your site more than once. Check the connection's permissions.`, { actionId: row.id });
   } catch (e) { console.error('Could not raise the link-fix alert:', e.message); }
 }
-async function autoApplyLinkFix(connection, secret, action, label, spec = WORDPRESS_LINK_SPEC) {
-  if (spec.beforeApply) await spec.beforeApply(connection, action, label);
+async function autoApplyLinkFix(connection, secret, action, label, spec = WORDPRESS_LINK_SPEC, feature = 'broken_links') {
+  if (spec.beforeApply) await spec.beforeApply(connection, action, label, feature);
   const exec = await spec.execute(action, connection, secret);
   const row = await spec.record(action, exec);
-  if (!exec.executed) await noteRepeatedLinkFixFailure(connection, row, spec);
+  if (!exec.executed && feature === 'broken_links') await noteRepeatedLinkFixFailure(connection, row, spec);
   return row;
 }
 // Tells the customer what was changed on their site by itself, and that it can be undone.
@@ -9520,7 +9571,10 @@ app.post('/api/business/:id/website/actions/:actionId/execute', authRequired, as
         const change = action.edited_change || action.proposed_change;
         try {
           let imageBuffer; const storedPreview = await loadFeaturedPreview('wordpress', action.id);
-          if (storedPreview) imageBuffer = storedPreview.png; else { imageBuffer = await generateAIImage(change.imagePrompt); await logFeaturedGeneration(connection.business_id, 'wordpress', 'apply'); }
+          if (storedPreview) imageBuffer = storedPreview.png; else {
+            const allow = await usageAllowance(await businessOwnerId(connection.business_id), 'images'); if (!allow.ok) return res.status(429).json({ error: allow.message, code: 'plan_limit' });
+            imageBuffer = await generateAIImage(change.imagePrompt); await logFeaturedGeneration(connection.business_id, 'wordpress', 'apply');
+          }
           const augmentedChange = { ...change, imageBase64: imageBuffer.toString('base64') };
           await pool.query(`UPDATE website_actions SET edited_change = $1 WHERE id = $2`, [JSON.stringify(augmentedChange), action.id]);
         } catch (e) {
@@ -10499,6 +10553,7 @@ async function executeShopifyAction(action, connection, accessToken) {
       const stored = await loadFeaturedPreview('shopify', action.id); let buffer;
       if (stored) buffer = stored.png;
       else {
+        const allow = await usageAllowance(await businessOwnerId(connection.business_id), 'images'); if (!allow.ok) return { executed: false, error: allow.message };
         try { buffer = await generateAIImage(change.imagePrompt); }
         catch (e) { console.error('Featured image generation failed:', e.message); return { executed: false, error: 'The image service could not create the picture right now. Please try again in a moment.' }; }
         await logFeaturedGeneration(connection.business_id, 'shopify', 'apply');
@@ -17157,7 +17212,8 @@ async function competitorDiscoveryState(businessId) {
   try {
     const suggestions = (await pool.query(`SELECT id, name, website, domain, reason, scope, grounded, source_urls, page_title, market, discovered_at FROM competitor_suggestions WHERE business_id = $1 AND status = 'suggested' ORDER BY grounded DESC, discovered_at DESC LIMIT 14`, [businessId])).rows;
     const last = (await pool.query(`SELECT created_at FROM competitor_discovery_runs WHERE business_id = $1 AND outcome = 'success' ORDER BY created_at DESC LIMIT 1`, [businessId])).rows[0];
-    return { suggestions, lastSearchedAt: last ? last.created_at : null, searchAvailable: !!process.env.PERPLEXITY_API_KEY, trackedLimit: MAX_TRACKED_COMPETITORS };
+    let usage = null; try { const owner = await businessOwnerId(businessId), acct = owner ? await resolveAccount(owner) : null; if (acct) usage = { discovery: await usageStatus(acct.id, acct.plan, 'discovery') }; } catch (e) { /* the card just shows no figure */ }
+    return { suggestions, lastSearchedAt: last ? last.created_at : null, searchAvailable: !!process.env.PERPLEXITY_API_KEY, trackedLimit: MAX_TRACKED_COMPETITORS, usage };
   } catch (e) { console.error('Competitor discovery state error:', e.message); return { suggestions: [], lastSearchedAt: null, searchAvailable: false, trackedLimit: MAX_TRACKED_COMPETITORS }; }
 }
 
@@ -17166,6 +17222,7 @@ async function runCompetitorDiscovery(businessId, accountId) {
   const business = (await pool.query('SELECT id, name, industry, country, city, website FROM businesses WHERE id = $1 AND user_id = $2', [businessId, accountId])).rows[0];
   if (!business) return { status: 404, body: { error: 'Business not found' } };
   if (!process.env.PERPLEXITY_API_KEY) return { status: 503, body: { error: 'Competitor search is not set up on this server yet. Please contact support.' } };
+  const allow = await usageAllowance(accountId, 'discovery'); if (!allow.ok) return { status: 429, body: { error: allow.message, code: 'plan_limit' } };
   const recent = (await pool.query(`SELECT outcome, EXTRACT(EPOCH FROM (NOW() - created_at))::int AS age FROM competitor_discovery_runs WHERE business_id = $1 ORDER BY created_at DESC LIMIT 1`, [businessId])).rows[0];
   if (recent && recent.outcome === 'running' && recent.age < 120) return { status: 409, body: { error: 'A search is already running for this business.' } };
   if (recent && recent.age < COMPETITOR_SEARCH_COOLDOWN_SECONDS) return { status: 429, body: { error: 'Please wait a couple of minutes before searching again.', retryAfterSeconds: COMPETITOR_SEARCH_COOLDOWN_SECONDS - recent.age } };
@@ -17352,6 +17409,7 @@ const CI_ALERT_TEXT = { en: { title: n => `${n} new competitor finding${n === 1 
 async function runCompetitorTracking(businessId, { triggeredBy = 'automatic', force = false, onlyUntracked = false } = {}) {
   const business = (await pool.query(`SELECT b.id, b.name, b.industry, b.country, b.city, b.website, b.user_id, u.preferred_language AS language FROM businesses b JOIN users u ON u.id = b.user_id WHERE b.id = $1`, [businessId])).rows[0];
   if (!business) return { status: 404, body: { error: 'Business not found' } };
+  if (triggeredBy !== 'manual' && (process.env.COMPETITIVE_INTELLIGENCE_OFF === '1' || !(await ciOwnerActive(business.user_id)))) return { status: 200, body: { checked: 0, findings: 0, skipped: 'not_active' } };   // nothing is spent on an account whose plan has expired
   if ((await pool.query(`SELECT 1 FROM competitor_tracking_runs WHERE business_id = $1 AND status = 'running' AND created_at > NOW() - INTERVAL '${CI.RUN_STALE_MINUTES} minutes'`, [businessId])).rows.length) return { status: 409, body: { error: 'A check is already running for this business.' } };
   const comps = (await pool.query('SELECT id, name, website, last_tracked_at FROM tracked_competitors WHERE business_id = $1 ORDER BY created_at ASC LIMIT $2', [businessId, MAX_TRACKED_COMPETITORS])).rows;
   const due = comps.filter(c => onlyUntracked ? !c.last_tracked_at : force || !c.last_tracked_at || Date.now() - new Date(c.last_tracked_at).getTime() > CI.RECHECK_HOURS * 3600e3);
@@ -17379,6 +17437,7 @@ async function runCompetitorTracking(businessId, { triggeredBy = 'automatic', fo
     return { status: 500, body: { error: 'The check could not be completed. Please try again later.' } };
   }
 }
+async function ciOwnerActive(ownerId) { const a = await resolveAccount(ownerId); return !!a && a.plan !== 'expired'; }
 // A competitor that has just been added is checked right away (in the background): it never waits for next week to be tracked.
 function trackNewCompetitorsSoon(businessId) {
   setTimeout(async () => { try { await runCompetitorTracking(businessId, { triggeredBy: 'added', onlyUntracked: true }); } catch (e) { console.error('Tracking a new competitor failed:', e.message); } }, 50);
@@ -17478,6 +17537,7 @@ async function emailCompetitiveReport(report) {
 // It relies only on what is stored, so a restart loses nothing and a report is never made twice.
 const ciSweepState = { running: false };
 async function runCompetitiveIntelligenceSweep({ now = new Date() } = {}) {
+  if (process.env.COMPETITIVE_INTELLIGENCE_OFF === '1') return { disabled: true };
   if (ciSweepState.running) return { skipped: true }; ciSweepState.running = true; const summary = { tracked: 0, reports: 0, emailed: 0 };
   try {
     const due = (await pool.query(`SELECT b.id FROM businesses b WHERE b.is_active = true AND EXISTS (SELECT 1 FROM tracked_competitors c WHERE c.business_id = b.id AND (c.last_tracked_at IS NULL OR c.last_tracked_at < NOW() - INTERVAL '${CI.RECHECK_HOURS} hours'))
@@ -17489,6 +17549,7 @@ async function runCompetitiveIntelligenceSweep({ now = new Date() } = {}) {
         AND NOT EXISTS (SELECT 1 FROM competitor_reports r WHERE r.business_id = b.id AND r.kind = $1 AND r.period_start = $2::date)
         AND (EXISTS (SELECT 1 FROM competitor_tracking_runs t WHERE t.business_id = b.id AND t.status = 'completed' AND t.created_at >= $2::date AND t.created_at < ($3::date + 1)) OR EXISTS (SELECT 1 FROM competitor_findings f WHERE f.business_id = b.id AND f.created_at >= $2::date AND f.created_at < ($3::date + 1))) LIMIT 50`, [kind, period.start, period.end])).rows;
       for (const b of todo) {
+        if (!(await ciOwnerActive(await businessOwnerId(b.id)))) continue;   // no report (and no email) for an account whose plan has expired
         try { const report = await buildCompetitiveReport(b.id, kind, period, { createdBy: 'automatic' }); if (report) { summary.reports++; if (await emailCompetitiveReport(report)) summary.emailed++; } }
         catch (e) { console.error('Sweep: report failed:', e.message); }
       }
@@ -17578,7 +17639,7 @@ app.get('/api/business/:id/competitor-activity', authRequired, async (req, res) 
     const latestRun = (await pool.query(`SELECT id, status, triggered_by, competitors_checked, findings_count, web_search_used, created_at, completed_at FROM competitor_tracking_runs WHERE business_id = $1 ORDER BY created_at DESC LIMIT 1`, [id])).rows[0] || null;
     const lastManual = (await pool.query(`SELECT created_at FROM competitor_tracking_runs WHERE business_id = $1 AND triggered_by = 'manual' ORDER BY created_at DESC LIMIT 1`, [id])).rows[0];
     const canAt = lastManual ? new Date(new Date(lastManual.created_at).getTime() + CI.MANUAL_COOLDOWN_HOURS * 3600e3) : null;
-    res.json({ competitors, findings, latestRun, running: !!(latestRun && latestRun.status === 'running' && Date.now() - new Date(latestRun.created_at).getTime() < CI.RUN_STALE_MINUTES * 60e3), searchAvailable: !!process.env.PERPLEXITY_API_KEY, trackedLimit: MAX_TRACKED_COMPETITORS, canCheckNowAt: canAt && canAt.getTime() > Date.now() ? canAt.toISOString() : null });
+    res.json({ competitors, findings, latestRun, running: !!(latestRun && latestRun.status === 'running' && Date.now() - new Date(latestRun.created_at).getTime() < CI.RUN_STALE_MINUTES * 60e3), searchAvailable: !!process.env.PERPLEXITY_API_KEY, trackedLimit: MAX_TRACKED_COMPETITORS, canCheckNowAt: canAt && canAt.getTime() > Date.now() ? canAt.toISOString() : null, usage: { manual_checks: await usageStatus(own.account.id, own.account.plan, 'manual_checks') } });
   } catch (e) { console.error('Competitor activity error:', e.message); res.status(500).json({ error: 'Could not load the competitor activity.' }); }
 });
 // "Check now": checks every tracked competitor in the background (a few minutes), at most once every 3 hours per business (each check uses a web search per competitor).
@@ -17587,6 +17648,8 @@ app.post('/api/business/:id/competitor-activity/check', authRequired, async (req
     const own = await ciOwnedBusiness(req); if (!own) return res.status(404).json({ error: 'Business not found' });
     if (!(await pool.query('SELECT 1 FROM tracked_competitors WHERE business_id = $1 LIMIT 1', [req.params.id])).rows.length) return res.status(400).json({ error: 'Add a competitor first: every competitor you add is tracked.' });
     if ((await pool.query(`SELECT 1 FROM competitor_tracking_runs WHERE business_id = $1 AND status = 'running' AND created_at > NOW() - INTERVAL '${CI.RUN_STALE_MINUTES} minutes'`, [req.params.id])).rows.length) return res.status(409).json({ error: 'A check is already running for this business.' });
+    if (process.env.COMPETITIVE_INTELLIGENCE_OFF === '1') return res.status(503).json({ error: 'Competitor tracking is switched off on this server right now.' });
+    const allow = await usageAllowance(own.account.id, 'manual_checks'); if (!allow.ok) return res.status(429).json({ error: allow.message, code: 'plan_limit' });
     const last = (await pool.query(`SELECT EXTRACT(EPOCH FROM (NOW() - created_at))::int AS age FROM competitor_tracking_runs WHERE business_id = $1 AND triggered_by = 'manual' ORDER BY created_at DESC LIMIT 1`, [req.params.id])).rows[0];
     if (last && last.age < CI.MANUAL_COOLDOWN_HOURS * 3600) return res.status(429).json({ error: `Competitors are checked automatically every week. You can also check by hand once every ${CI.MANUAL_COOLDOWN_HOURS} hours.`, retryAfterSeconds: CI.MANUAL_COOLDOWN_HOURS * 3600 - last.age });
     res.status(202).json({ started: true });
@@ -20126,6 +20189,62 @@ async function runAutomaticBrokenLinksStep(log, runScan) {
   } catch (e) { await log('broken_links_checked', 'failed', errDetail(e)); }
 }
 
+// ── Featured images for existing posts, in Automatic mode ────────────────────────
+// About once a WEEK (like the other paid or slow tasks). It looks for pages and posts with no featured image and plans the next ones (a text call). Only on a
+// site where fixes may be applied by themselves (Managed + Automatic on WordPress; Automatic on Shopify) it then ADDS a few of them: at most
+// FEATURED_AUTO_PER_RUN a week (3), and never beyond the account's monthly picture allowance. Each one can be undone, and the owner gets one alert.
+// AUTO_FEATURED_IMAGES_OFF=1 switches this step off. Sites on plans whose cycle does not include the step (the cycle's step list) never reach it.
+const featuredAutoPerRun = () => { const v = process.env.FEATURED_AUTO_PER_RUN; return v !== undefined && v !== '' && Number.isFinite(Number(v)) && Number(v) >= 0 ? Math.floor(Number(v)) : 3; };
+async function featuredImagesStepDue(businessId, platform) {
+  const r = await pool.query(`SELECT 1 FROM website_agent_activity WHERE business_id = $1 AND platform = $2 AND task_type = 'featured_images_checked' AND outcome IN ('success', 'attention') AND created_at > NOW() - INTERVAL '6 days 12 hours' LIMIT 1`, [businessId, platform]);
+  return r.rows.length === 0;
+}
+function featuredExcerptFetcher(platform, connection, secret) {
+  return async c => {
+    if (platform === 'shopify') { const r = await shopifyApiRequest(connection.shop_domain, secret, `/blogs/${connection.blog_id}/articles/${c.id}.json?fields=id,body_html`); return r.ok ? wpStripHtml(((await r.json()).article || {}).body_html || '').slice(0, 500) : ''; }
+    const r = await wpApiRequest(connection.site_url, connection.wp_username, secret, `/wp/v2/${c.isPost ? 'posts' : 'pages'}/${c.id}?_fields=content`, { timeoutMs: 15000 });
+    return r.ok ? wpStripHtml(((await r.json()).content || {}).rendered || '').slice(0, 500) : '';
+  };
+}
+async function notifyFeaturedImagesAdded(connection, biz, rows) {
+  try {
+    if (!rows.length) return;
+    const owner = await linkAlertOwner(connection.business_id); if (!owner) return; const n = rows.length, fr = owner.language === 'fr';
+    await createAlert(owner.id, connection.business_id, 'website_images_added', 'info', fr ? 'Images \u00e0 la une ajout\u00e9es automatiquement' : 'Featured images added automatically',
+      fr ? `Arreyon a ajout\u00e9 ${n} image${n === 1 ? '' : 's'} \u00e0 la une sur votre site. Vous pouvez annuler chacune dans Modifications propos\u00e9es.` : `Arreyon added ${n} featured image${n === 1 ? '' : 's'} to your site. You can undo any of them under Proposed Changes.`, { count: n, actionIds: rows.map(r => r.id) });
+  } catch (e) { console.error('Could not raise the featured-images alert:', e.message); }
+}
+// Never throws: a failure is recorded in Agent Activity and the cycle carries on.
+async function runAutomaticFeaturedImagesStep({ platform, connection, secret, biz, context, log }) {
+  if (process.env.AUTO_FEATURED_IMAGES_OFF === '1') return;
+  const spec = FEATURED_SPECS[platform], linkSpec = platform === 'shopify' ? SHOPIFY_LINK_SPEC : WORDPRESS_LINK_SPEC;
+  try {
+    const scan = platform === 'shopify' ? await scanMissingFeaturedImagesShopify(connection, secret) : await scanMissingFeaturedImagesWP(connection, secret);
+    const detail = { missing: scan.items.length, planned: 0, applied: 0, failed: 0, complete: scan.complete };
+    if (scan.noBlog || !scan.items.length) { await log('featured_images_checked', 'success', { ...detail, noBlog: !!scan.noBlog }); return; }
+    const pending = +(await pool.query(`SELECT count(*) FROM ${spec.table} WHERE ${spec.fk} = $1 AND action_type = 'generate_featured_image' AND approval_status = 'pending'`, [connection.id])).rows[0].count;
+    if (pending < FEATURED_PLANS_PER_RUN) {   // plans nobody has looked at are not piled up without end
+      try { detail.planned = (await planFeaturedImages(platform, connection, context, scan.items, featuredExcerptFetcher(platform, connection, secret), biz.user_id)).proposals.length; }
+      catch (e) { detail.planError = errDetail(e).error; }
+    }
+    const avail = featuredImagesAvailability();
+    if (!avail.ok) detail.imagesUnavailable = avail.reason;
+    else if (await linkSpec.autoAllowed(connection)) {
+      const allow = await usageAllowance(biz.user_id, 'images'); detail.allowanceLeft = allow.ok ? allow.remaining : 0; if (!allow.ok) detail.limitReached = true;
+      const n = Math.min(featuredAutoPerRun(), allow.ok ? allow.remaining : 0);
+      const rows = n > 0 ? (await pool.query(`SELECT * FROM ${spec.table} WHERE ${spec.fk} = $1 AND action_type = 'generate_featured_image' AND approval_status = 'pending' ORDER BY created_at ASC LIMIT $2`, [connection.id, n])).rows : [];
+      const done = [];
+      for (const row of rows) {
+        if (!(await linkSpec.autoAllowed(connection))) break;   // switched back to Manual while this ran: nothing more is changed
+        const out = await autoApplyLinkFix(connection, secret, row, `added a featured image to "${row.target_title}"`, linkSpec, 'featured_images');
+        done.push(out); if (out.execution_status === 'executed') detail.applied++; else detail.failed++;
+      }
+      if (detail.applied) await notifyFeaturedImagesAdded(connection, biz, done.filter(r => r.execution_status === 'executed'));
+    }
+    await log('featured_images_checked', detail.failed || detail.planError || detail.limitReached || detail.imagesUnavailable ? 'attention' : 'success', detail);
+  } catch (e) { await log('featured_images_checked', 'failed', errDetail(e)); }
+}
+
 // ── Runs in progress, and stopping them ──────────────────────────────────────
 // One entry per site while its cycle is running. 'cancelled' is how a run is stopped: the cycle checks it
 // between steps and skips what is left, and the code that applies fixes re-reads the live mode, so once a
@@ -20142,7 +20261,7 @@ const ACTIVITY_FEATURES = {
   intelligence: ['intelligence_refreshed'], audit: ['audit_completed'], ai_visibility: ['ai_visibility_checked'], keyword_rankings: ['keyword_snapshot'],
   sitemap: ['sitemap_submitted', 'sitemap_missing'], competitor: ['competitor_analysis', 'competitor_discovery'], technical_seo: ['technical_check'], broken_links: ['broken_links_checked'],
   schema: ['schema_installed', 'schema_removed'], content: ['content_generated', 'content_failed', 'content_missed'],
-  improvements: ['proposals_generated', 'change_applied', 'change_verified', 'change_rejected', 'change_undone', 'featured_image_previewed'],
+  improvements: ['proposals_generated', 'change_applied', 'change_verified', 'change_rejected', 'change_undone', 'featured_image_previewed', 'featured_images_checked'],
 };
 const isActivityFeature = f => typeof f === 'string' && Object.prototype.hasOwnProperty.call(ACTIVITY_FEATURES, f);
 const ACTIVITY_FEATURE_SQL = 'CASE ' + Object.entries(ACTIVITY_FEATURES).map(([f, types]) => `WHEN task_type IN (${types.map(t => `'${t}'`).join(',')}) THEN '${f}'`).join(' ') + ' END';   // built from the constants above only
@@ -20568,6 +20687,7 @@ async function runWordPressMaintenanceCycle(connection, triggeredBy = 'automatic
   let aiVisibilityIsDue = false, snapshotDue = false;
   try { aiVisibilityIsDue = !!context && !!context.business.name && await aiVisibilityDue(wordpressAiVisibilitySpec, connection.id); } catch (e) { /* not due if it cannot be checked */ }
   try { snapshotDue = await keywordSnapshotDue(wordpressKeywordSpec, connection.id, biz.user_id, connection.site_url); } catch (e) { /* not due if it cannot be checked */ }
+  let imagesDue = false; try { imagesDue = !!context && planHasWebsiteFeature(cyclePlan, 'find_improve_seo') && await featuredImagesStepDue(businessId, 'wordpress'); } catch (e) { /* not due if it cannot be checked */ }
 
   await steps.run('intelligence', async () => {
     try {
@@ -20610,6 +20730,7 @@ async function runWordPressMaintenanceCycle(connection, triggeredBy = 'automatic
 
   if (aiVisibilityIsDue) await steps.run('ai visibility', () => runAutomaticAiVisibilityStep(log, () => runAiVisibilityCheck(connection, context)));
   if (snapshotDue) await steps.run('keyword snapshot', () => runAutomaticKeywordSnapshotStep(log, wordpressKeywordSpec, biz.user_id, connection, connection.site_url));
+  if (imagesDue) await steps.run('featured images', () => runAutomaticFeaturedImagesStep({ platform: 'wordpress', connection, secret: decryptedPassword, biz, context, log }));
 
   await steps.finish(log);
 }
@@ -21078,6 +21199,7 @@ async function runShopifyMaintenanceCycle(connection, triggeredBy = 'automatic',
   try { aiVisibilityIsDue = !!context && !!context.business.name && await aiVisibilityDue(shopifyAiVisibilitySpec, connection.id); } catch (e) { /* not due if it cannot be checked */ }
   try { snapshotDue = await keywordSnapshotDue(shopifyKeywordSpec, connection.id, biz.user_id, siteUrl); } catch (e) { /* not due if it cannot be checked */ }
   try { linksDue = await brokenLinksScanDue(businessId, 'shopify'); } catch (e) { /* not due if it cannot be checked */ }
+  let imagesDue = false; try { imagesDue = !!context && planHasWebsiteFeature(cyclePlan, 'find_improve_seo') && await featuredImagesStepDue(businessId, 'shopify'); } catch (e) { /* not due if it cannot be checked */ }
 
   await steps.run('intelligence', async () => {
     try {
@@ -21118,6 +21240,7 @@ async function runShopifyMaintenanceCycle(connection, triggeredBy = 'automatic',
   if (aiVisibilityIsDue) await steps.run('ai visibility', () => runAutomaticAiVisibilityStep(log, () => runShopifyAiVisibilityCheck(connection, context)));
   if (snapshotDue) await steps.run('keyword snapshot', () => runAutomaticKeywordSnapshotStep(log, shopifyKeywordSpec, biz.user_id, connection, siteUrl));
   if (linksDue) await steps.run('broken links', () => runAutomaticBrokenLinksStep(log, () => runShopifyBrokenLinksCheck(connection, accessToken)));
+  if (imagesDue) await steps.run('featured images', () => runAutomaticFeaturedImagesStep({ platform: 'shopify', connection, secret: accessToken, biz, context, log }));
 
   await steps.finish(log);
 }
