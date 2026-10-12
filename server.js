@@ -528,6 +528,7 @@ const WEBSITE_ROUTES = [
   ['*',    routeRx(BIZ_PATH + '/shopify/activity-log'), 'activity_log'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/competitor-analysis'), 'competitor'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/technical-seo/(check|history)'), 'technical_seo'],
+  ['*',    routeRx(BIZ_PATH + '/website/indexing/(check|latest)'), 'technical_seo'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/keyword-rankings(/check)?'), 'keyword_rankings'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/sitemap/(submit|status)'), 'sitemap'],
   ['*',    routeRx(BIZ_PATH + '/website/sitemap/(generate|generated|download|verify)'), 'sitemap'],
@@ -8178,6 +8179,8 @@ const WORDPRESS_TEXT = {
   read_pages_failed: "Could not read this site's pages (status {status}).", read_posts_failed: "Could not read this site's posts (status {status}).",
   no_urls: 'No published pages were found on this site, so there is nothing to put in a sitemap.', generate_failed: 'Could not build the sitemap. Please try again.',
   not_generated: 'Build a sitemap first.', file_unknown: 'That file does not exist.', verify_failed: 'Could not check the sitemap. Please try again.', status_failed: 'Could not load the sitemap.',
+  poll_mode_indexing: 'This check needs a WordPress connection that Arreyon can read directly. Sites connected in poll mode cannot be read from here.',
+  indexing_failed: 'Could not run the check. Please try again.', indexing_no_pages: 'No published pages were found on this site, so there is nothing to check.', indexing_load_failed: 'Could not load the check results.', indexing_running: 'A check is already running for this site. Please wait for it to finish.',
 };
 const wordpressFormat = (code, params) => String(WORDPRESS_TEXT[code] || code).replace(/\{(\w+)\}/g, (m, k) => (params && params[k] !== undefined ? String(params[k]) : m));
 const wordpressFail = (code, params) => ({ error: wordpressFormat(code, params), code, ...(params ? { params } : {}) });
@@ -8332,6 +8335,196 @@ app.post('/api/business/:id/website/sitemap/verify', authRequired, async (req, r
     await logWebsiteAudit(ctx.connection.id, 'user', req.userId, 'sitemap_checked', out.live ? `Checked the live sitemap: ${out.verdict}` : 'Checked for a live sitemap: none found', { verdict: out.verdict, url: out.live && out.live.url, missingCount: out.missingCount, extraCount: out.extraCount }, 'general');
     res.json(out);
   } catch (err) { console.error('WordPress sitemap verify error:', err.message); const out = wordpressSitemapError(err, 'verify_failed'); res.status(out.status).json(out.body); }
+});
+
+// wordpress-own:end
+// wordpress-own:start
+// ── WordPress indexing check: redirects, "noindex" and canonical tags, page by page ─────────────────────────────────────────────────────
+// Looks at the home page and the most recently changed pages and posts the way a search engine does: follows every redirect, reads the robots meta tag and the X-Robots-Tag header,
+// robots.txt and the canonical tag, and reports what could keep a page out of Google or split it into copies. It only READS: nothing on the site is changed. Nothing here is shared with Shopify.
+const WORDPRESS_INDEXING_MAX_PAGES = 150, WORDPRESS_INDEXING_MAX_FETCHES = 700, WORDPRESS_INDEXING_CONCURRENCY = 5, WORDPRESS_INDEXING_MAX_HOPS = 5, WORDPRESS_INDEXING_DEADLINE_MS = 45000, WORDPRESS_INDEXING_PAGE_BYTES = 1024 * 1024, WORDPRESS_INDEXING_FETCH_MS = 6000, WORDPRESS_INDEXING_MAX_ISSUES = 300, WORDPRESS_INDEXING_KEEP = 10, WORDPRESS_INDEXING_MAX_TARGETS = 30;
+// Every kind of finding: [group, severity]. A noindex or robots.txt block on the HOME page is raised to "high".
+const WORDPRESS_INDEXING_ISSUES = {
+  http_not_redirected: ['site', 'high'], http_redirect_temporary: ['site', 'medium'], www_both_serve: ['site', 'medium'],
+  status_error: ['redirect', 'high'], unreachable: ['redirect', 'medium'], redirect_loop: ['redirect', 'high'], redirect_chain: ['redirect', 'medium'], redirect_temporary: ['redirect', 'medium'], redirect_permanent: ['redirect', 'low'], redirect_other_host: ['redirect', 'medium'],
+  noindex_meta: ['noindex', 'medium'], blocked_robots: ['noindex', 'medium'], noindex_canonical_conflict: ['noindex', 'high'],
+  canonical_missing: ['canonical', 'low'], canonical_other_page: ['canonical', 'medium'], canonical_other_host: ['canonical', 'high'], canonical_multiple: ['canonical', 'high'], canonical_not_https: ['canonical', 'medium'], canonical_target_error: ['canonical', 'high'], canonical_target_unreachable: ['canonical', 'high'], canonical_chain: ['canonical', 'medium'],
+};
+const wordpressIndexingHost = u => { try { return new URL(u).host.toLowerCase().replace(/^www\./, ''); } catch (e) { return ''; } };
+// Two addresses are "the same page" when only the case of the host, a closing slash or a fragment differs; the scheme and the query still count.
+const wordpressIndexingKey = u => { try { const x = new URL(u); return `${x.protocol}//${x.host.toLowerCase()}${x.pathname.replace(/\/+$/, '') || '/'}${x.search}`; } catch (e) { return String(u); } };
+// One request, redirects NOT followed (a redirect is the thing being measured). Only public hosts, a time limit, a limit on the number of requests, and the page body only when it is an HTML page that opened.
+async function wordpressIndexingFetchOnce(url, budget) {
+  if (budget.fetches >= WORDPRESS_INDEXING_MAX_FETCHES || Date.now() >= budget.deadline) return { budgetOut: true };
+  budget.fetches++;
+  try {
+    const parsed = new URL(url); if (!/^https?:$/.test(parsed.protocol)) return null; await assertPublicHost(parsed.hostname);
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), WORDPRESS_INDEXING_FETCH_MS);
+    try {
+      const res = await fetch(url, { signal: controller.signal, redirect: 'manual', headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36', 'Accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8' } });
+      const header = n => res.headers.get(n), out = { status: res.status, location: header('location'), xRobots: header('x-robots-tag'), link: header('link'), contentType: String(header('content-type') || '').toLowerCase(), text: null };
+      if (res.status === 200 && /html/.test(out.contentType || 'text/html')) out.text = Buffer.from(await res.arrayBuffer()).subarray(0, WORDPRESS_INDEXING_PAGE_BYTES).toString('utf8');
+      return out;
+    } finally { clearTimeout(timer); }
+  } catch (e) { return null; }
+}
+// Follows an address through its redirects, one step at a time (at most 5). Says where it ended, how it got there, or why it never did.
+async function wordpressIndexingChase(startUrl, budget) {
+  const hops = [], seen = new Set(); let cur = startUrl;
+  for (let i = 0; i <= WORDPRESS_INDEXING_MAX_HOPS; i++) {
+    if (seen.has(cur)) return { hops, final: null, loop: true };
+    seen.add(cur);
+    const r = await wordpressIndexingFetchOnce(cur, budget);
+    if (r && r.budgetOut) return { hops, final: null, budgetOut: true };
+    if (!r) return { hops, final: null, unreachable: true };
+    if (r.status >= 300 && r.status < 400 && r.location) {
+      let next; try { next = new URL(r.location, cur); next.hash = ''; } catch (e) { return { hops, final: { url: cur, ...r } }; }
+      if (!/^https?:$/.test(next.protocol)) return { hops, final: { url: cur, ...r } };
+      hops.push({ status: r.status, from: cur, to: next.href }); cur = next.href; continue;
+    }
+    return { hops, final: { url: cur, ...r } };
+  }
+  return { hops, final: null, tooMany: true, last: cur };
+}
+const wordpressHtmlUnescape = s => String(s).replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10))).replace(/&amp;/g, '&');
+// A tag's attribute, whichever way it is quoted (or not), in any order.
+const wordpressTagAttr = (tag, name) => { const m = String(tag).match(new RegExp(`[\\s"'/]${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>"']+))`, 'i')); return m ? wordpressHtmlUnescape(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]) : null; };
+// "noindex" in the X-Robots-Tag header: for everyone or for Google; a rule aimed at another named crawler does not count.
+function wordpressXRobotsNoindex(value) {
+  if (!value) return false; let agent = null;
+  for (const part of String(value).split(',')) {
+    const m = part.trim().match(/^([a-z0-9_-]+)\s*:\s*(.*)$/i); let directive = part.trim().toLowerCase();
+    if (m && !/^(unavailable_after|max-snippet|max-image-preview|max-video-preview)$/i.test(m[1])) { agent = m[1].toLowerCase(); directive = m[2].trim().toLowerCase(); }
+    if ((agent === null || agent === 'googlebot') && (directive === 'noindex' || directive === 'none')) return true;
+  }
+  return false;
+}
+// What a page says about itself: "noindex" (meta tag and/or header) and its canonical address(es), resolved against the page's own address.
+function wordpressIndexingParse(html, headers, pageUrl) {
+  const head = html ? (html.search(/<\/head>/i) > 0 ? html.slice(0, html.search(/<\/head>/i)) : html.slice(0, 100000)) : '', out = { noindexMeta: false, noindexHeader: wordpressXRobotsNoindex(headers && headers.xRobots), canonicals: [] };
+  for (const tag of head.match(/<meta\b[^>]*>/gi) || []) { const name = String(wordpressTagAttr(tag, 'name') || '').toLowerCase(); if (name === 'robots' || name === 'googlebot') { const tokens = String(wordpressTagAttr(tag, 'content') || '').toLowerCase().split(',').map(x => x.trim()); if (tokens.includes('noindex') || tokens.includes('none')) out.noindexMeta = true; } }
+  const add = href => { try { const u = new URL(String(href).trim(), pageUrl); u.hash = ''; if (/^https?:$/.test(u.protocol) && !out.canonicals.includes(u.href)) out.canonicals.push(u.href); } catch (e) { /* not an address */ } };
+  for (const tag of head.match(/<link\b[^>]*>/gi) || []) { if (String(wordpressTagAttr(tag, 'rel') || '').toLowerCase().split(/\s+/).includes('canonical')) { const href = wordpressTagAttr(tag, 'href'); if (href) add(href); } }
+  if (headers && headers.link) for (const m of String(headers.link).matchAll(/<([^>]+)>\s*;[^,]*\brel\s*=\s*"?canonical"?/gi)) add(m[1]);
+  return out;
+}
+// robots.txt for one crawler (Google's own group if there is one, otherwise the group for everyone), the way search engines apply it: the longest matching rule wins, and "allow" wins a tie; * and $ work.
+function wordpressRobotsRules(txt) {
+  const groups = []; let cur = null, lastWasAgent = false;
+  for (const raw of String(txt).split(/\r?\n/)) {
+    const m = raw.replace(/#.*$/, '').trim().match(/^([a-z-]+)\s*:\s*(.*)$/i); if (!m) continue; const key = m[1].toLowerCase(), val = m[2].trim();
+    if (key === 'user-agent') { if (!cur || !lastWasAgent) { cur = { agents: [], rules: [] }; groups.push(cur); } cur.agents.push(val.toLowerCase()); lastWasAgent = true; }
+    else { lastWasAgent = false; if (cur && (key === 'allow' || key === 'disallow')) cur.rules.push({ allow: key === 'allow', pattern: val }); }
+  }
+  const pick = name => groups.filter(g => g.agents.includes(name)).flatMap(g => g.rules); const google = pick('googlebot'); return google.length || groups.some(g => g.agents.includes('googlebot')) ? google : pick('*');
+}
+function wordpressRobotsAllows(rules, pathAndQuery) {
+  let best = null;
+  for (const r of rules) { if (!r.pattern) continue; const anchored = r.pattern.endsWith('$'), body = anchored ? r.pattern.slice(0, -1) : r.pattern, rx = new RegExp('^' + body.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + (anchored ? '$' : '')); if (!rx.test(pathAndQuery)) continue; const len = r.pattern.length; if (!best || len > best.len || (len === best.len && r.allow)) best = { len, allow: r.allow }; }
+  return best ? best.allow : true;
+}
+// The pages to look at: the home page, then the most recently changed pages, posts and other public content (100 of each kind at most), then categories. Also how many there are in all.
+async function wordpressIndexingPages(connection, password) {
+  const base = wordpressSiteBase(connection.site_url), seen = new Map(), counts = { total: 0 }, add = (link, modified) => { const loc = wordpressSitemapAddress(link, base); if (!loc) return; const k = wordpressIndexingKey(loc); if (!seen.has(k)) seen.set(k, { url: loc, lastmod: wordpressSitemapLastmod(modified) }); };
+  const list = async (restBase, { required = null, published = true, limit = 100 } = {}) => {
+    const res = await wpApiRequest(connection.site_url, connection.wp_username, password, `/wp/v2/${restBase}?per_page=${limit}&page=1&${published ? 'orderby=modified&order=desc&status=publish' : 'orderby=count&order=desc&hide_empty=true'}&_fields=link,modified_gmt`, { timeoutMs: 20000 });
+    if (res.status === 401) throw wordpressThrow('auth_lost'); if (!res.ok) { if (required) throw wordpressThrow(required, { status: res.status }); return []; }
+    counts.total += parseInt(res.headers.get('x-wp-total'), 10) || 0; let items = []; try { items = await res.json(); } catch (e) { items = []; } return Array.isArray(items) ? items : [];
+  };
+  add(base + '/', null); counts.total += 1; const content = [];
+  for (const it of await list('pages', { required: 'read_pages_failed' })) content.push(it); for (const it of await list('posts', { required: 'read_posts_failed' })) content.push(it);
+  let types = {}; try { const r = await wpApiRequest(connection.site_url, connection.wp_username, password, '/wp/v2/types', { timeoutMs: 15000 }); if (r.ok) types = (await r.json()) || {}; } catch (e) { /* custom kinds are optional */ }
+  const skip = new Set(['page', 'post', 'attachment', 'nav_menu_item', 'wp_block', 'wp_template', 'wp_template_part', 'wp_navigation', 'wp_global_styles', 'wp_font_family', 'wp_font_face', 'revision']);
+  for (const [slug, t] of Object.entries(types).slice(0, 12)) { if (skip.has(slug) || !t || t.viewable === false || !t.rest_base) continue; for (const it of await list(String(t.rest_base).replace(/[^a-zA-Z0-9_-]/g, ''))) content.push(it); }
+  content.sort((a, b) => String((b && b.modified_gmt) || '').localeCompare(String((a && a.modified_gmt) || ''))); for (const it of content) add(it && it.link, it && it.modified_gmt);
+  for (const it of await list('categories', { published: false, limit: 20 })) add(it && it.link, null);
+  const urls = [...seen.values()]; return { base, urls: urls.slice(0, WORDPRESS_INDEXING_MAX_PAGES), candidates: urls.length, total: Math.max(counts.total, urls.length) };
+}
+// Problems that concern the whole site: does http:// lead to https://, and do www and non-www both open instead of one leading to the other?
+async function wordpressIndexingSiteChecks(base, budget) {
+  const issues = [], origin = new URL(base).origin;
+  const http = await wordpressIndexingChase(origin.replace(/^https:/, 'http:') + '/', budget);
+  if (http.final && http.final.status === 200 && http.final.url.startsWith('http:')) issues.push({ type: 'http_not_redirected', url: origin + '/', params: {} });
+  else if (http.hops.length && [302, 303, 307].includes(http.hops[0].status) && http.final && http.final.url.startsWith('https:')) issues.push({ type: 'http_redirect_temporary', url: origin + '/', params: { status: http.hops[0].status } });
+  const host = new URL(origin).host, other = host.startsWith('www.') ? host.slice(4) : 'www.' + host, alt = await wordpressIndexingChase(`https://${other}/`, budget);
+  if (alt.final && alt.final.status === 200 && new URL(alt.final.url).host === other) issues.push({ type: 'www_both_serve', url: origin + '/', params: { host, other } });
+  return issues;
+}
+// One page: follow its redirects, then read what it says about itself.
+async function wordpressIndexingCheckPage(url, ctx) {
+  const issues = [], add = (type, params = {}) => issues.push({ type, url, params }), isHome = wordpressIndexingKey(url) === wordpressIndexingKey(ctx.base + '/'), c = await wordpressIndexingChase(url, ctx.budget);
+  const out = { url, issues, finalUrl: null, canonical: null, noindex: false };
+  if (c.budgetOut) { out.skipped = true; return out; }
+  if (c.unreachable) { add('unreachable'); return out; } if (c.loop) { add('redirect_loop'); return out; } if (c.tooMany) { add('redirect_chain', { hops: c.hops.length, to: c.last }); return out; }
+  const fin = c.final; out.finalUrl = fin.url;
+  if (c.hops.length >= 2) add('redirect_chain', { hops: c.hops.length, to: fin.url });
+  else if (c.hops.length === 1) { const to = c.hops[0].to; if (wordpressIndexingHost(to) !== wordpressIndexingHost(url)) add('redirect_other_host', { to }); else if ([302, 303, 307].includes(c.hops[0].status)) add('redirect_temporary', { status: c.hops[0].status, to }); else add('redirect_permanent', { status: c.hops[0].status, to }); }
+  if (fin.status !== 200) { add('status_error', { status: fin.status }); return out; }
+  const page = wordpressIndexingParse(fin.text, fin, fin.url); out.noindex = page.noindexMeta || page.noindexHeader;
+  if (out.noindex) add('noindex_meta', { where: page.noindexMeta && page.noindexHeader ? 'both' : page.noindexMeta ? 'meta' : 'header' });
+  try { const u = new URL(url); if (ctx.robots && !wordpressRobotsAllows(ctx.robots, u.pathname + u.search)) add('blocked_robots'); } catch (e) { /* not an address */ }
+  if (fin.text !== null) {
+    if (page.canonicals.length > 1) add('canonical_multiple', { count: page.canonicals.length });
+    else if (!page.canonicals.length) add('canonical_missing');
+    else {
+      const target = page.canonicals[0]; out.canonical = target;
+      if (wordpressIndexingKey(target) === wordpressIndexingKey(fin.url)) { out.canonicalSelf = true; }
+      else if (new URL(target).protocol === 'http:' && new URL(fin.url).protocol === 'https:' && wordpressIndexingKey(target.replace(/^http:/, 'https:')) === wordpressIndexingKey(fin.url)) { add('canonical_not_https', { to: target }); out.canonicalSelf = true; }
+      else if (wordpressIndexingHost(target) !== wordpressIndexingHost(fin.url)) add('canonical_other_host', { to: target });
+      else add('canonical_other_page', { to: target });
+      if (out.noindex && !out.canonicalSelf) add('noindex_canonical_conflict', { to: target });
+    }
+  }
+  return out;
+}
+// The whole check: pages, robots.txt, the site-wide checks, every page (5 at a time, within the time and request limits), then the pages that canonical tags point to.
+async function wordpressIndexingRun(connection, password) {
+  const pages = await wordpressIndexingPages(connection, password); if (!pages.urls.length) throw wordpressThrow('indexing_no_pages');
+  const budget = { fetches: 0, deadline: Date.now() + WORDPRESS_INDEXING_DEADLINE_MS }, base = pages.base, robotsRes = await wordpressPublicFetch(base + '/robots.txt'); budget.fetches++;
+  const robots = robotsRes && robotsRes.ok && robotsRes.text !== null ? wordpressRobotsRules(robotsRes.text) : null, ctx = { base, budget, robots };
+  const issues = [...await wordpressIndexingSiteChecks(base, budget)], results = []; let next = 0;
+  await Promise.all(Array.from({ length: WORDPRESS_INDEXING_CONCURRENCY }, async () => { while (next < pages.urls.length) { const p = pages.urls[next++]; if (budget.fetches >= WORDPRESS_INDEXING_MAX_FETCHES || Date.now() >= budget.deadline) return; results.push(await wordpressIndexingCheckPage(p.url, ctx)); } }));
+  const checked = results.filter(r => !r.skipped), byKey = new Map(checked.map(r => [wordpressIndexingKey(r.finalUrl || r.url), r])), targets = new Map();
+  for (const r of checked) { if (r.canonical && !r.canonicalSelf && wordpressIndexingHost(r.canonical) === wordpressIndexingHost(base)) { const k = wordpressIndexingKey(r.canonical), known = byKey.get(k);
+    if (known) { if (known.canonical && !known.canonicalSelf) r.issues.push({ type: 'canonical_chain', url: r.url, params: { to: r.canonical } }); } else if (!targets.has(k)) targets.set(k, r.canonical); } }
+  const verdict = new Map(); let t = 0; for (const [k, target] of targets) { if (t++ >= WORDPRESS_INDEXING_MAX_TARGETS) break; const c = await wordpressIndexingChase(target, budget); if (c.budgetOut) break; verdict.set(k, c.unreachable || c.loop || c.tooMany ? { unreachable: true } : c.hops.length ? { status: c.hops[0].status } : c.final.status !== 200 ? { status: c.final.status } : null); }
+  for (const r of checked) if (r.canonical && !r.canonicalSelf) { const v = verdict.get(wordpressIndexingKey(r.canonical)); if (v) r.issues.push(v.unreachable ? { type: 'canonical_target_unreachable', url: r.url, params: { to: r.canonical } } : { type: 'canonical_target_error', url: r.url, params: { to: r.canonical, status: v.status } }); }
+  for (const r of checked) issues.push(...r.issues);
+  const home = wordpressIndexingKey(base + '/'), rank = { high: 0, medium: 1, low: 2 }, groupRank = { site: 0, redirect: 1, noindex: 2, canonical: 3 };
+  const found = issues.map(i => { const [group, sev] = WORDPRESS_INDEXING_ISSUES[i.type] || ['redirect', 'low']; return { type: i.type, group, severity: (i.type === 'noindex_meta' || i.type === 'blocked_robots') && wordpressIndexingKey(i.url) === home ? 'high' : sev, url: i.url, params: i.params || {} }; });
+  found.sort((a, b) => rank[a.severity] - rank[b.severity] || groupRank[a.group] - groupRank[b.group] || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0));
+  const sev = { high: 0, medium: 0, low: 0 }, groups = { site: 0, redirect: 0, noindex: 0, canonical: 0 }; for (const i of found) { sev[i.severity]++; groups[i.group]++; }
+  const withIssue = new Set(found.filter(i => i.group !== 'site').map(i => wordpressIndexingKey(i.url)));
+  return { pagesTotal: pages.total, pagesChecked: checked.length, partial: checked.length < pages.urls.length || pages.candidates > pages.urls.length, counts: { severity: sev, groups, ok: checked.filter(r => !withIssue.has(wordpressIndexingKey(r.url))).length, noindexPages: checked.filter(r => r.noindex).length, total: found.length }, issues: found.slice(0, WORDPRESS_INDEXING_MAX_ISSUES), issuesTruncated: found.length > WORDPRESS_INDEXING_MAX_ISSUES };
+}
+const wordpressIndexingRunning = new Set();
+const wordpressIndexingSummary = row => row && ({ id: row.id, checkedAt: row.checked_at, pagesTotal: row.pages_total, pagesChecked: row.pages_checked, partial: row.partial, counts: row.counts });
+const wordpressIndexingFull = row => row && ({ ...wordpressIndexingSummary(row), issues: row.issues || [], issuesTruncated: !!(row.counts && row.counts.total > (row.issues || []).length) });
+async function wordpressIndexingRouteContext(req) {
+  const { connection, error, status } = await getConnectionForBusiness(req);
+  if (error) return { status, failure: wordpressFail(status === 404 && error === 'Business not found' ? 'business_not_found' : 'no_site') };
+  if (connection.connection_mode === 'poll') return { status: 400, failure: wordpressFail('poll_mode_indexing') };
+  return { connection, password: decryptSecret(connection.wp_app_password_encrypted) };
+}
+app.post('/api/business/:id/website/indexing/check', authRequired, async (req, res) => {
+  let lockId = null;
+  try {
+    const ctx = await wordpressIndexingRouteContext(req); if (ctx.failure) return res.status(ctx.status).json(ctx.failure);
+    if (wordpressIndexingRunning.has(ctx.connection.id)) return res.status(409).json(wordpressFail('indexing_running')); wordpressIndexingRunning.add(lockId = ctx.connection.id);
+    const run = await wordpressIndexingRun(ctx.connection, ctx.password);
+    const row = (await pool.query(`INSERT INTO wordpress_indexing_checks (website_connection_id, pages_total, pages_checked, partial, counts, issues, checked_at) VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`, [ctx.connection.id, run.pagesTotal, run.pagesChecked, run.partial, JSON.stringify(run.counts), JSON.stringify(run.issues)])).rows[0];
+    await pool.query(`DELETE FROM wordpress_indexing_checks WHERE website_connection_id = $1 AND id NOT IN (SELECT id FROM wordpress_indexing_checks WHERE website_connection_id = $1 ORDER BY checked_at DESC LIMIT ${WORDPRESS_INDEXING_KEEP})`, [ctx.connection.id]);
+    await logWebsiteAudit(ctx.connection.id, 'user', req.userId, 'indexing_checked', `Checked indexing and redirects: ${run.pagesChecked} of ${run.pagesTotal} pages, ${run.counts.total} issue(s) found`, { pagesChecked: run.pagesChecked, pagesTotal: run.pagesTotal, issuesFound: run.counts.total, high: run.counts.severity.high, partial: run.partial }, 'general');
+    res.json({ success: true, check: wordpressIndexingFull(row) });
+  } catch (err) { console.error('WordPress indexing check error:', err.message); const out = wordpressSitemapError(err, err && err.wordpressCode ? err.wordpressCode : 'indexing_failed'); res.status(err && err.wordpressCode === 'indexing_no_pages' ? 422 : out.status).json(out.body); }
+  finally { if (lockId) wordpressIndexingRunning.delete(lockId); }
+});
+app.get('/api/business/:id/website/indexing/latest', authRequired, async (req, res) => {
+  try {
+    const { connection, error, status } = await getConnectionForBusiness(req); if (error) return res.status(status).json(wordpressFail(error === 'Business not found' ? 'business_not_found' : 'no_site'));
+    const rows = (await pool.query('SELECT * FROM wordpress_indexing_checks WHERE website_connection_id = $1 ORDER BY checked_at DESC LIMIT $2', [connection.id, WORDPRESS_INDEXING_KEEP])).rows;
+    res.json({ check: wordpressIndexingFull(rows[0]) || null, history: rows.map(wordpressIndexingSummary) });
+  } catch (err) { console.error('WordPress indexing history error:', err.message); res.status(500).json(wordpressFail('indexing_load_failed')); }
 });
 
 // wordpress-own:end
