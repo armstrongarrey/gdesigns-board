@@ -2221,3 +2221,17 @@ CREATE TABLE IF NOT EXISTS wordpress_indexing_checks (
   checked_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_wordpress_indexing_checks_site ON wordpress_indexing_checks(website_connection_id, checked_at DESC);
+
+-- ── Shopify indexing check: the last results (Shopify's own table) ───────────────────────────────────────────────────────────────
+-- Each run (redirects, "noindex", canonical and URL-redirect-table findings) is kept; only the 10 newest per store are kept.
+CREATE TABLE IF NOT EXISTS shopify_indexing_checks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  shopify_connection_id UUID NOT NULL REFERENCES shopify_connections(id) ON DELETE CASCADE,
+  pages_total INTEGER NOT NULL DEFAULT 0,
+  pages_checked INTEGER NOT NULL DEFAULT 0,
+  partial BOOLEAN NOT NULL DEFAULT FALSE,
+  counts JSONB,
+  issues JSONB,
+  checked_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_shopify_indexing_checks_store ON shopify_indexing_checks(shopify_connection_id, checked_at DESC);
