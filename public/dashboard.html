@@ -2307,6 +2307,14 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
         <div style="font-size:11px;color:var(--muted);margin:8px 0 12px" data-i18n="web.technical_seo_description">Real Core Web Vitals from Google's own Lighthouse engine, plus a robots.txt check for anything blocking search engines. Can take up to a minute to run.</div>
         <div id="websiteTechnicalSeoContent"></div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+            <div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:600;color:var(--text)" data-i18n="wordpress.indexing.title">Indexing &amp; redirects check</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="wordpress.indexing.desc">Looks at your home page and your most recently changed pages the way a search engine does: redirects, "noindex" settings and canonical tags. It only reads your site and changes nothing.</div></div>
+            <button class="btn-primary" onclick="runWordPressIndexingCheck()" id="wordpressIndexingBtn" data-i18n="wordpress.indexing.run">Run Indexing Check</button>
+          </div>
+          <div id="wordpressIndexingContent" style="margin-top:10px"></div>
+        </div>
       </div>
 
       <!-- BROKEN INTERNAL LINKS — pure detection, not a proposal. Fixing a
@@ -9169,6 +9177,7 @@ async function loadWebsiteSection() {
     if (webHas('sitemap')) loadWordPressSitemapBuild();
     if (webHas('competitor')) loadCompetitorAnalysis('website');
     if (webHas('technical_seo')) loadTechnicalSeoHistory('website');
+    if (webHas('technical_seo')) loadWordPressIndexing();
     if (webHas('automation')) loadActiveRules('website');
     if (webHas('calendar')) loadContentCalendar('website');
     if (webHas('agent_activity')) loadAgentActivity('website');
@@ -11546,6 +11555,63 @@ async function checkWordPressSitemap() {
 }
 // wordpress-own:end
 
+// wordpress-own:start
+// ── WordPress indexing check: redirects, "noindex" and canonical tags, page by page ─────────────────────────────────────────────────────
+// WordPress's own texts (wordpress.*). Every finding arrives as a kind and its facts; the sentence (with the fix) is written here, in the reader's language.
+const WORDPRESS_INDEXING_GROUPS = ['site', 'redirect', 'noindex', 'canonical'], WORDPRESS_SEVERITY_COLOR = { high: '#ff6b6b', medium: '#f59e0b', low: '#94a3b8' };
+function wordpressIndexingIssueText(issue) {
+  const p = { ...(issue.params || {}) }; if (p.where) p.where = t('wordpress.indexing.where.' + p.where);
+  const key = 'wordpress.indexing.issue.' + issue.type, text = tf(key, p);
+  return text && text !== key ? text : tf('wordpress.indexing.issue.unknown', { type: issue.type });
+}
+// The Activity Log shows an entry in the reader's language when this page knows its kind and the entry carries its facts; any other entry shows the sentence the server stored.
+function wordpressLogText(entry) {
+  const d = (entry && entry.details) || {}, fallback = (entry && entry.description) || '';
+  switch (entry && entry.action_type) {
+    case 'sitemap_generated': return d.urlCount === undefined ? fallback : tf(d.files > 1 ? 'wordpress.log.sitemap_generated_files' : 'wordpress.log.sitemap_generated', { count: d.urlCount, files: (d.files || 1) - 1 });
+    case 'sitemap_checked': return ['none', 'complete', 'incomplete'].includes(d.verdict) ? t('wordpress.log.sitemap_checked_' + d.verdict) : fallback;
+    case 'indexing_checked': return d.pagesChecked === undefined ? fallback : tf('wordpress.log.indexing_checked', { checked: d.pagesChecked, total: d.pagesTotal, issues: d.issuesFound || 0 });
+    default: return fallback;
+  }
+}
+function renderWordPressIndexing(check, history) {
+  const el = document.getElementById('wordpressIndexingContent'); if (!el) return;
+  if (!check) { el.innerHTML = wordpressNote(escapeHtml(t('wordpress.indexing.none_yet')), 'var(--muted)'); return; }
+  const c = check.counts || {}, sev = c.severity || {}, groups = c.groups || {}, when = wordpressSitemapWhen(check.checkedAt), issues = check.issues || [];
+  let html = wordpressNote(escapeHtml(tf('wordpress.indexing.summary', { checked: check.pagesChecked, total: check.pagesTotal, when })), 'var(--text)');
+  if (check.partial) html += wordpressNote(escapeHtml(t('wordpress.indexing.partial')), '#f59e0b');
+  if (!c.total) html += wordpressNote(escapeHtml(tf('wordpress.indexing.all_ok', { checked: check.pagesChecked })), '#22c55e');
+  else {
+    html += wordpressNote(escapeHtml(tf('wordpress.indexing.totals', { high: sev.high || 0, medium: sev.medium || 0, low: sev.low || 0 })), 'var(--text2)');
+    for (const g of WORDPRESS_INDEXING_GROUPS) {
+      const list = issues.filter(i => i.group === g); if (!list.length && !groups[g]) continue;
+      html += `<div style="font-size:11.5px;font-weight:600;color:var(--muted);margin:14px 0 4px;text-transform:uppercase">${t('wordpress.indexing.group.' + g)} (${groups[g] || list.length})</div>` + list.map(i => `<div style="padding:8px 0;border-top:1px solid var(--border)"><div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap"><span style="font-size:10px;font-weight:700;color:${WORDPRESS_SEVERITY_COLOR[i.severity] || '#94a3b8'};border:1px solid ${WORDPRESS_SEVERITY_COLOR[i.severity] || '#94a3b8'};border-radius:10px;padding:1px 7px;text-transform:uppercase">${escapeHtml(t('wordpress.indexing.severity.' + i.severity))}</span><span style="font-size:12px;color:var(--text);word-break:break-all;flex:1;min-width:0">${escapeHtml(i.url)}</span></div><div style="font-size:11.5px;color:var(--text2);line-height:1.55;margin-top:4px">${escapeHtml(wordpressIndexingIssueText(i))}</div></div>`).join('');
+    }
+    if (check.issuesTruncated) html += wordpressNote(escapeHtml(tf('wordpress.indexing.truncated', { shown: issues.length, total: c.total })), '#f59e0b');
+  }
+  const earlier = (history || []).filter(h => h.id !== check.id).slice(0, 4);
+  if (earlier.length) html += `<div style="font-size:11.5px;font-weight:600;color:var(--muted);margin:14px 0 4px;text-transform:uppercase">${t('wordpress.indexing.history_title')}</div>` + earlier.map(h => `<div style="font-size:11.5px;color:var(--text2)">${escapeHtml(tf('wordpress.indexing.history_line', { when: wordpressSitemapWhen(h.checkedAt), issues: (h.counts && h.counts.total) || 0 }))}</div>`).join('');
+  el.innerHTML = html;
+}
+async function loadWordPressIndexing(afterRun) {
+  if (!document.getElementById('wordpressIndexingContent')) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/indexing/latest`), data = await res.json().catch(() => ({}));
+    if (res.ok && !(afterRun && !data.check)) renderWordPressIndexing(data.check || null, data.history || []);   // a refresh after a run only adds the history: it never replaces the result just shown with "nothing"
+  } catch (e) { /* the earlier result is simply not shown; the button still works */ }
+}
+async function runWordPressIndexingCheck() {
+  const btn = document.getElementById('wordpressIndexingBtn'), box = document.getElementById('wordpressIndexingContent'); btn.disabled = true; btn.textContent = t('wordpress.indexing.running_btn');
+  box.innerHTML = wordpressNote(escapeHtml(t('wordpress.indexing.running_note')), 'var(--muted)');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/indexing/check`, { method: 'POST' }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { box.innerHTML = wordpressNote(escapeHtml(wordpressServerText(data) || t('board.connection_error')), '#ff8080'); return; }
+    renderWordPressIndexing(data.check, []); loadWordPressIndexing(true);
+  } catch (e) { box.innerHTML = wordpressNote(escapeHtml(t('board.connection_error')), '#ff8080'); }
+  finally { btn.disabled = false; btn.textContent = t('wordpress.indexing.run'); }
+}
+// wordpress-own:end
+
 async function loadWebsiteSitemapStatus() {
   const contentEl = document.getElementById('websiteSitemapContent');
   try {
@@ -12555,7 +12621,7 @@ function renderActivityLogList() {
     <div style="display:flex;gap:10px;padding:10px 12px;border-radius:8px;background:var(--bg2);margin-bottom:6px;align-items:flex-start">
       <input type="checkbox" class="activity-log-checkbox" data-id="${entry.id}" style="width:auto;margin-top:3px">
       <div style="flex:1;min-width:0">
-        <div style="font-size:12.5px;color:var(--text)">${escapeHtml(entry.description)}</div>
+        <div style="font-size:12.5px;color:var(--text)">${escapeHtml(wordpressLogText(entry))}</div>
         <div style="font-size:11px;color:var(--muted);margin-top:3px" title="${escapeHtml(fullTimestamp)}">${timeAgo(entry.created_at)} · ${escapeHtml(fullTimestamp)}</div>
       </div>
     </div>`;
