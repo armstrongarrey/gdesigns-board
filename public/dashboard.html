@@ -1656,6 +1656,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         <div class="form-group"><label data-i18n="growth.unit">Unit <span style="color:var(--muted);font-weight:400" data-i18n="ent.optional">(optional)</span></label><input class="form-input" id="goalUnit" placeholder="FCFA"></div>
         <div class="form-group"><label data-i18n="growth.target_date">Target Date <span style="color:var(--muted);font-weight:400" data-i18n="ent.optional">(optional)</span></label><input class="form-input" type="date" id="goalTargetDate"></div>
       </div>
+      <div class="form-group" id="goalWebsiteTrackWrap" style="display:none"><label data-i18n="growth.track_website">Track automatically from my website (optional)</label><select class="form-input" id="goalWebsiteMetric" onchange="onGrowthWebsiteMetricChosen()"></select><div id="goalWebsiteHint" style="font-size:11px;color:var(--muted);margin-top:4px"></div></div>
       <div id="growthError" style="display:none;color:#ff8080;font-size:13px;margin-bottom:10px"></div>
       <button class="btn-primary" style="width:100%;padding:12px" onclick="createGrowthObjective()" id="growthCreateBtn" data-i18n="growth.set_goal_btn">Set This Goal</button>
     </div>
@@ -1673,6 +1674,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
           <span id="growthProgressLabel" style="font-size:12.5px;color:var(--muted)"></span>
           <span id="growthAchievedBadge" style="display:none;font-size:11px;font-weight:700;color:var(--green);background:rgba(16,185,129,.15);padding:3px 8px;border-radius:4px" data-i18n="growth.achieved">🎉 Achieved!</span>
         </div>
+        <div id="growthWebsiteLinkInfo" style="display:none;margin-top:12px;font-size:12px;color:var(--text2)"></div>
         <div style="display:flex;gap:8px;margin-top:14px">
           <input class="form-input" type="number" id="growthUpdateValue" data-i18n-placeholder="growth.update_placeholder" placeholder="Update current value..." style="flex:1">
           <button class="btn-ghost" onclick="updateGrowthProgress()" data-i18n="growth.update_btn">Update</button>
@@ -1895,6 +1897,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
     <div id="reportsGrid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:14px;max-width:900px"></div>
     <div id="ciReports" style="max-width:900px;margin-top:22px"></div>
+      <div id="wordpressReports" style="max-width:900px;margin-top:22px"></div>
   </div>
 
   <!-- WEBSITE CONTROL CENTER — Phase 8 / Increment 1 (connection + read-only intelligence) -->
@@ -5854,6 +5857,7 @@ async function loadGrowthObjective() {
   if (!currentGrowthBusinessId || !currentGrowthObjectiveId) return;
 
   try {
+    await syncWebsiteGoals();
     const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${currentGrowthObjectiveId}?lang=${window.currentLang || 'en'}`);
     const data = await res.json();
 
@@ -5868,6 +5872,7 @@ async function loadGrowthObjective() {
     document.getElementById('growthGoalsListWrap').style.display = 'none';
     document.getElementById('growthActiveWrap').style.display = 'block';
     renderGrowthObjective(data.objective, data.progress);
+    renderGrowthGoalWebsiteLink(data.objective.id);
     loadGrowthProgressChart();
     renderMilestones(data.milestones || []);
     loadGrowthActivity();
@@ -5915,6 +5920,7 @@ async function loadGrowthGoalsList() {
   document.getElementById('growthActiveWrap').style.display = 'none';
 
   try {
+    await syncWebsiteGoals();
     const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objectives`);
     const data = await res.json();
     const objectives = data.objectives || [];
@@ -5966,6 +5972,7 @@ function showNewGoalForm() {
   // Only offer a way back to the list if there's actually something to go
   // back to — a business with zero goals has no list yet to return to.
   document.getElementById('growthBackToListWrap').style.display = currentBusinessHasGoals ? 'block' : 'none';
+  loadGrowthWebsiteChoices();
 }
 
 async function createGrowthObjective() {
@@ -5996,6 +6003,7 @@ async function createGrowthObjective() {
       document.getElementById('growthError').style.display = 'block';
       return;
     }
+    await linkNewGoalToWebsite(data.objective.id);
     ['goalMetricName', 'goalStartingValue', 'goalTargetValue', 'goalUnit', 'goalTargetDate'].forEach(id => document.getElementById(id).value = '');
     openGrowthGoal(data.objective.id);
   } catch (e) {
@@ -6021,6 +6029,7 @@ async function updateGrowthProgress() {
       // especially now that a progress update can auto-achieve milestones.
       loadGrowthObjective();
     } else {
+      if (res.status === 409 && data.code === 'goal_linked') { showToast(t('growth.goal_linked'), 'error'); loadGrowthObjective(); return; }
       showToast(t('board.connection_error'), 'error');
     }
   } catch (e) {
@@ -6049,7 +6058,7 @@ async function loadGrowthProgressChart() {
 
 const GROWTH_ACTIVITY_LABELS = {
   goal_set: (d) => `${t('growth.activity_goal_set')}: ${escapeHtml(d.metricName)} (${d.startingValue} → ${d.targetValue})`,
-  progress_update: (d) => `${t('growth.activity_progress_update')}: ${d.value}`,
+  progress_update: (d) => `${t('growth.activity_progress_update')}: ${d.value}${d.source === 'website' ? ' (' + t('growth.from_website') + ')' : ''}`,
   milestone_added: (d) => `${t('growth.activity_milestone_added')}: ${escapeHtml(d.label)}`,
   milestone_achieved: (d) => `🎉 ${t('growth.activity_milestone_achieved')}: ${escapeHtml(d.label)}`,
   plan_generated: () => t('growth.activity_plan_generated'),
@@ -7349,6 +7358,7 @@ async function loadReportsCenter() {
     }
     renderReportsGrid(data.reports || []);
     loadCompetitiveReports();
+    loadWordPressReports();
   } catch (e) {
     grid.innerHTML = `<div style="text-align:center;padding:24px;color:#ff8080;font-size:13px;grid-column:1/-1">${t('board.connection_error')}</div>`;
   }
@@ -11631,6 +11641,7 @@ function wordpressLogText(entry) {
   switch (entry && entry.action_type) {
     case 'sitemap_generated': return d.urlCount === undefined ? fallback : tf(d.files > 1 ? 'wordpress.log.sitemap_generated_files' : 'wordpress.log.sitemap_generated', { count: d.urlCount, files: (d.files || 1) - 1 });
     case 'sitemap_checked': return ['none', 'complete', 'incomplete'].includes(d.verdict) ? t('wordpress.log.sitemap_checked_' + d.verdict) : fallback;
+    case 'report_generated': return d.kind === 'weekly' || d.kind === 'monthly' ? tf('wordpress.log.report_generated', { kind: t('wordpress.log.report_' + d.kind) }) : fallback;
     case 'indexing_checked': return d.pagesChecked === undefined ? fallback : tf('wordpress.log.indexing_checked', { checked: d.pagesChecked, total: d.pagesTotal, issues: d.issuesFound || 0 });
     default: return fallback;
   }
@@ -11672,6 +11683,133 @@ async function runWordPressIndexingCheck() {
   finally { btn.disabled = false; btn.textContent = t('wordpress.indexing.run'); }
 }
 // wordpress-own:end
+
+// wordpress-own:start
+// ── WordPress website report (Reports Center) and the WordPress measures a goal can follow ───────────────────────────────────────────────
+// WordPress's own texts (wordpress.*). The server sends facts; every sentence is written here, in the reader's language (the PDF and Word files use the same words on the server).
+const WORDPRESS_DIRECTION_COLOR = { improved: '#22c55e', worse: '#ff6b6b', same: 'var(--muted)', new: '#60a5fa', none: 'var(--muted)' };
+const wordpressReportDate = day => new Date(day + 'T00:00:00Z').toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
+const wordpressReportMetric = k => t('wordpress.report.metric_' + k);
+const wordpressReportValueText = m => (m.value === null || m.value === undefined ? '-' : `${m.value}${m.unit === '%' ? '%' : ''}`);
+function wordpressReportChangeText(m) {
+  if (m.direction === 'same' || m.direction === 'new' || m.direction === 'none') return t('wordpress.report.dir_' + m.direction);
+  return `${m.change > 0 ? '+' : ''}${m.change}${m.unit === '%' ? '%' : ''} (${t('wordpress.report.dir_' + m.direction)})`;
+}
+function renderWordPressReportView(report) {
+  const el = document.getElementById('wordpressReportView'); if (!el) return;
+  if (!report) { el.innerHTML = ''; return; }
+  const c = report.content, id = encodeURIComponent(currentReportsBusinessId), dl = fmt => `/api/business/${id}/website/reports/${encodeURIComponent(report.id)}/download?format=${fmt}&lang=${window.currentLang === 'fr' ? 'fr' : 'en'}`;
+  const h = (key) => `<div style="font-size:11.5px;font-weight:600;color:var(--muted);margin:16px 0 6px;text-transform:uppercase">${t('wordpress.report.' + key)}</div>`, li = txt => `<div style="font-size:12.5px;color:var(--text2);line-height:1.55;margin:3px 0">• ${escapeHtml(txt)}</div>`;
+  const hl = []; if (c.highlights.quiet) hl.push(t('wordpress.report.highlight_quiet')); if ((c.highlights.improved || []).length) hl.push(tf('wordpress.report.highlight_improved', { list: c.highlights.improved.map(wordpressReportMetric).join(', ') })); if ((c.highlights.worse || []).length) hl.push(tf('wordpress.report.highlight_worse', { list: c.highlights.worse.map(wordpressReportMetric).join(', ') })); if (c.highlights.stable) hl.push(t('wordpress.report.highlight_stable'));
+  const a = c.activity, acts = [['act_technical', a.technical], ['act_audit', a.audit], ['act_indexing', a.indexing], ['act_links', a.links], ['act_keywords', a.keywords], ['act_ai', a.ai], ['act_approved', a.approved], ['act_auto', a.auto], ['act_rejected', a.rejected], ['act_undone', a.undone], ['act_posts', a.posts], ['act_pending', a.pending]];
+  el.innerHTML = `<div style="background:var(--bg3);border-radius:12px;padding:16px 18px;margin-top:14px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap"><div><div style="font-size:14px;font-weight:700;color:var(--text)">${escapeHtml(t('wordpress.report.' + c.kind))} · ${t('wordpress.report.title')}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:3px">${escapeHtml(tf('wordpress.report.period', { start: wordpressReportDate(c.period.start), end: wordpressReportDate(c.period.end) }))} · ${escapeHtml(tf('wordpress.report.generated', { date: wordpressReportDate(c.generatedAt.slice(0, 10)) }))}</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn-ghost" style="font-size:11.5px;padding:6px 12px;text-decoration:none" href="${dl('pdf')}" download>${t('wordpress.report.download_pdf')}</a><a class="btn-ghost" style="font-size:11.5px;padding:6px 12px;text-decoration:none" href="${dl('docx')}" download>${t('wordpress.report.download_word')}</a></div></div>
+    ${h('section_highlights')}${hl.map(li).join('')}${h('section_priorities')}${(c.priorities || []).map(p => li(tf('wordpress.report.priority_' + p.code, p.params || {}))).join('')}
+    ${h('section_metrics')}<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="text-align:left;color:var(--muted)"><th style="padding:5px 6px">${t('wordpress.report.col_measure')}</th><th style="padding:5px 6px">${t('wordpress.report.col_now')}</th><th style="padding:5px 6px">${t('wordpress.report.col_before')}</th><th style="padding:5px 6px">${t('wordpress.report.col_change')}</th></tr></thead><tbody>${(c.metrics || []).map(m => `<tr style="border-top:1px solid var(--border)"><td style="padding:6px;color:var(--text)">${escapeHtml(wordpressReportMetric(m.key))}</td><td style="padding:6px;color:var(--text)">${escapeHtml(wordpressReportValueText(m))}</td><td style="padding:6px;color:var(--text2)">${m.previous === null || m.previous === undefined ? '-' : escapeHtml(String(m.previous) + (m.unit === '%' ? '%' : ''))}</td><td style="padding:6px;color:${WORDPRESS_DIRECTION_COLOR[m.direction] || 'var(--muted)'}">${escapeHtml(wordpressReportChangeText(m))}</td></tr>`).join('')}</tbody></table></div>
+    ${(c.noData || []).length ? `<div style="font-size:11.5px;color:var(--muted);margin-top:6px">${escapeHtml(tf('wordpress.report.note_no_data', { list: c.noData.map(wordpressReportMetric).join(', ') }))}</div>` : ''}
+    ${h('section_activity')}${acts.map(([k, n]) => li(tf('wordpress.report.act_line', { label: t('wordpress.report.' + k), n }))).join('')}
+    ${h('section_goals')}${(c.goals || []).length ? c.goals.map(g => li(tf('wordpress.report.goal_line', { name: g.name, current: g.current, unit: g.unit, target: g.target, pct: g.pct }) + (g.achieved ? ' - ' + t('wordpress.report.goal_achieved') : g.behind ? ' - ' + t('wordpress.report.goal_behind') : ''))).join('') : li(t('wordpress.report.goal_none'))}</div>`;
+}
+function renderWordPressReportsPanel(reports) {
+  const el = document.getElementById('wordpressReports'); if (!el) return;
+  if (reports === null) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px 20px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap"><div style="min-width:0;flex:1"><div style="font-size:14px;font-weight:700;color:var(--text)">${t('wordpress.report.panel_title')}</div><div style="font-size:11.5px;color:var(--muted);margin-top:4px">${t('wordpress.report.panel_desc')}</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn-secondary" id="wordpressReportWeeklyBtn" onclick="generateWordPressReport('weekly')">${t('wordpress.report.build_weekly')}</button><button class="btn-primary" id="wordpressReportMonthlyBtn" onclick="generateWordPressReport('monthly')">${t('wordpress.report.build_monthly')}</button></div></div>
+    <div id="wordpressReportError" style="font-size:12px;color:#ff8080;margin-top:8px"></div>
+    <div style="font-size:11.5px;font-weight:600;color:var(--muted);margin:14px 0 4px;text-transform:uppercase">${t('wordpress.report.list_title')}</div>
+    ${reports.length ? reports.map(r => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--border);flex-wrap:wrap"><div style="font-size:12.5px;color:var(--text)">${escapeHtml(t('wordpress.report.' + r.kind))} · <span style="color:var(--muted)">${escapeHtml(tf('wordpress.report.period', { start: wordpressReportDate(r.periodStart), end: wordpressReportDate(r.periodEnd) }))}</span></div><div style="display:flex;gap:8px"><button class="btn-ghost" style="font-size:11.5px;padding:5px 10px" onclick="viewWordPressReport('${escapeHtml(r.id)}')">${t('wordpress.report.view')}</button></div></div>`).join('') : `<div style="font-size:12px;color:var(--muted)">${t('wordpress.report.none_yet')}</div>`}
+    <div id="wordpressReportView"></div></div>`;
+}
+async function loadWordPressReports(openId) {
+  if (!document.getElementById('wordpressReports') || !currentReportsBusinessId) return;
+  try {
+    const res = await fetch(`/api/business/${currentReportsBusinessId}/website/reports`), data = await res.json().catch(() => ({}));
+    if (!res.ok) { renderWordPressReportsPanel(null); return; }   // no WordPress site on this business, or a plan without it: no panel
+    renderWordPressReportsPanel(data.reports || []); if (openId) viewWordPressReport(openId);
+  } catch (e) { renderWordPressReportsPanel(null); }
+}
+async function viewWordPressReport(id) {
+  const box = document.getElementById('wordpressReportView'); if (!box) return;
+  try {
+    const res = await fetch(`/api/business/${currentReportsBusinessId}/website/reports/${encodeURIComponent(id)}`), data = await res.json().catch(() => ({}));
+    if (!res.ok) { box.innerHTML = `<div style="font-size:12px;color:#ff8080;margin-top:10px">${escapeHtml(wordpressServerText(data) || t('board.connection_error'))}</div>`; return; }
+    renderWordPressReportView(data.report);
+  } catch (e) { box.innerHTML = `<div style="font-size:12px;color:#ff8080;margin-top:10px">${t('board.connection_error')}</div>`; }
+}
+async function generateWordPressReport(kind) {
+  const btns = ['wordpressReportWeeklyBtn', 'wordpressReportMonthlyBtn'].map(i => document.getElementById(i)), err = document.getElementById('wordpressReportError'), btn = document.getElementById(kind === 'monthly' ? 'wordpressReportMonthlyBtn' : 'wordpressReportWeeklyBtn');
+  const label = btn.textContent; btns.forEach(b => { b.disabled = true; }); btn.textContent = t('wordpress.report.building'); err.textContent = '';
+  try {
+    const res = await fetch(`/api/business/${currentReportsBusinessId}/website/reports/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind }) }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { err.textContent = wordpressServerText(data) || t('board.connection_error'); return; }
+    await loadWordPressReports(data.report.id);
+  } catch (e) { err.textContent = t('board.connection_error'); }
+  finally { btns.forEach(b => { if (b) b.disabled = false; }); if (btn && btn.isConnected) btn.textContent = label; }
+}
+// The WordPress measures a goal can follow: what they are, their value right now (or none yet). Returns null when this business has no WordPress site or the plan does not include it.
+async function loadWordPressGoalMetrics() {
+  try {
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/website/goal-metrics`), data = await res.json().catch(() => ({})); if (!res.ok) return null;
+    return (data.metrics || []).map(m => ({ platform: 'wordpress', key: m.key, unit: m.unit || '', value: m.value, measuredAt: m.measuredAt }));
+  } catch (e) { return null; }
+}
+// wordpress-own:end
+
+// growth-website:start
+// ── Goals that follow a website measure ─────────────────────────────────────────────────────────────────────────────────────────────────
+// Each kind of website says how to list its measures and what to call them; this part only shows them in the goal form, links a new goal, and tells a goal that follows one.
+const GROWTH_WEBSITE_PLATFORMS = [
+  { platform: 'wordpress', load: () => loadWordPressGoalMetrics(), groupKey: 'wordpress.goal.group', platformKey: 'wordpress.goal.platform', metricKey: k => 'wordpress.report.metric_' + k },
+];
+let currentGrowthWebsiteLinks = {};
+const growthWebsitePlatform = p => GROWTH_WEBSITE_PLATFORMS.find(x => x.platform === p);
+async function syncWebsiteGoals() {
+  if (!currentGrowthBusinessId) return;
+  try { const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objectives/website-sync`, { method: 'POST' }), data = await res.json().catch(() => ({})); currentGrowthWebsiteLinks = {}; if (res.ok) (data.links || []).forEach(l => { currentGrowthWebsiteLinks[l.objectiveId] = l; }); }
+  catch (e) { /* the goals simply show their last values */ }
+}
+// The "track automatically" choice in the new-goal form: one drop-down, grouped by kind of website, listing each measure with its value now.
+async function loadGrowthWebsiteChoices() {
+  const wrap = document.getElementById('goalWebsiteTrackWrap'), select = document.getElementById('goalWebsiteMetric'); if (!wrap || !select) return;
+  const groups = []; for (const p of GROWTH_WEBSITE_PLATFORMS) { const list = await p.load(); if (list && list.length) groups.push({ p, list }); }
+  if (!groups.length) { wrap.style.display = 'none'; select.innerHTML = ''; return; }
+  select.innerHTML = `<option value="">${escapeHtml(t('growth.track_none'))}</option>` + groups.map(({ p, list }) => `<optgroup label="${escapeHtml(t(p.groupKey))}">` + list.map(m => { const label = t(p.metricKey(m.key)); return `<option value="${escapeHtml(p.platform + '|' + m.key)}" data-value="${m.value === null ? '' : escapeHtml(String(m.value))}" data-unit="${escapeHtml(m.unit === '%' ? '%' : '')}" data-label="${escapeHtml(label)}"${m.value === null ? ' disabled' : ''}>${escapeHtml(m.value === null ? tf('growth.track_no_data', { label }) : tf('growth.track_option', { label, value: m.value + (m.unit === '%' ? '%' : '') }))}</option>`; }).join('') + '</optgroup>').join('');
+  wrap.style.display = 'block'; onGrowthWebsiteMetricChosen();
+}
+function onGrowthWebsiteMetricChosen() {
+  const select = document.getElementById('goalWebsiteMetric'), start = document.getElementById('goalStartingValue'), hint = document.getElementById('goalWebsiteHint'); if (!select) return;
+  const opt = select.selectedOptions && select.selectedOptions[0], chosen = !!(opt && opt.value);
+  start.readOnly = chosen; hint.textContent = chosen ? t('growth.track_hint') : '';
+  if (chosen) { start.value = opt.dataset.value; const name = document.getElementById('goalMetricName'), unit = document.getElementById('goalUnit'); if (!name.value.trim()) name.value = opt.dataset.label; if (!unit.value.trim() && opt.dataset.unit) unit.value = opt.dataset.unit; }
+}
+// After a goal is created: if a measure was chosen, link the goal to it. The goal exists either way; if linking fails the person is told why.
+async function linkNewGoalToWebsite(objectiveId) {
+  const select = document.getElementById('goalWebsiteMetric'); const choice = select && select.value; const start = document.getElementById('goalStartingValue'); if (start) start.readOnly = false;
+  if (select) select.value = ''; const hint = document.getElementById('goalWebsiteHint'); if (hint) hint.textContent = '';
+  if (!choice) return;
+  const [platform, metric] = choice.split('|');
+  try {
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${objectiveId}/website-link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ platform, metric }) }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { const key = 'growth.err_' + (data.code || 'link_failed'), reason = tf(key, {}); showToast(tf('growth.link_failed_toast', { reason: reason && reason !== key ? reason : t('growth.err_link_failed') }), 'error'); }
+  } catch (e) { showToast(tf('growth.link_failed_toast', { reason: t('board.connection_error') }), 'error'); }
+}
+// On an open goal: if it follows a website measure, say so (what, and when it was last measured), hide the box for typing a value, and offer to stop.
+function renderGrowthGoalWebsiteLink(objectiveId) {
+  const info = document.getElementById('growthWebsiteLinkInfo'), row = (document.getElementById('growthUpdateValue') || {}).parentElement; if (!info) return;
+  const link = currentGrowthWebsiteLinks[objectiveId], p = link && growthWebsitePlatform(link.platform);
+  if (!link || !p) { info.style.display = 'none'; info.innerHTML = ''; if (row) row.style.display = 'flex'; return; }
+  const when = link.measuredAt ? new Date(link.measuredAt).toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' }) : null;
+  info.innerHTML = `<div>${escapeHtml(tf(when ? 'growth.linked_info' : 'growth.linked_info_never', { platform: t(p.platformKey), measure: t(p.metricKey(link.metric)), when }))}</div><div style="margin-top:8px"><button class="btn-ghost" style="font-size:11.5px;padding:5px 10px" onclick="unlinkGrowthGoal('${escapeHtml(objectiveId)}')">${t('growth.stop_tracking')}</button></div>`;
+  info.style.display = 'block'; if (row) row.style.display = 'none';
+}
+async function unlinkGrowthGoal(objectiveId) {
+  try { const res = await fetch(`/api/business/${currentGrowthBusinessId}/growth-objective/${objectiveId}/website-link`, { method: 'DELETE' }); if (!res.ok) { showToast(t('growth.err_link_failed'), 'error'); return; } delete currentGrowthWebsiteLinks[objectiveId]; renderGrowthGoalWebsiteLink(objectiveId); }
+  catch (e) { showToast(t('board.connection_error'), 'error'); }
+}
+// growth-website:end
 
 async function loadWebsiteSitemapStatus() {
   const contentEl = document.getElementById('websiteSitemapContent');
