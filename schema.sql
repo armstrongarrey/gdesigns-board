@@ -2235,3 +2235,28 @@ CREATE TABLE IF NOT EXISTS shopify_indexing_checks (
   checked_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_shopify_indexing_checks_store ON shopify_indexing_checks(shopify_connection_id, checked_at DESC);
+
+-- ── Goals that follow a website measure, and the WordPress website report ─────────────────────────────────────────────────────────
+-- Where each value in a goal's history came from ('manual' = typed in, 'website' = taken from a measure of the connected site).
+ALTER TABLE growth_progress_history ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'manual';
+-- A goal that follows one measure of a connected website (one row per goal). last_measured_at is the moment of the measurement last recorded, so each new measurement is recorded once.
+CREATE TABLE IF NOT EXISTS growth_objective_links (
+  objective_id UUID PRIMARY KEY REFERENCES growth_objectives(id) ON DELETE CASCADE,
+  platform VARCHAR(20) NOT NULL,
+  metric_key VARCHAR(40) NOT NULL,
+  linked_at TIMESTAMPTZ DEFAULT NOW(),
+  last_measured_at TIMESTAMPTZ,
+  last_synced_at TIMESTAMPTZ
+);
+-- The WordPress website reports shown in the Reports Center (WordPress's own table): the 12 newest of each kind per site are kept.
+CREATE TABLE IF NOT EXISTS wordpress_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  website_connection_id UUID NOT NULL REFERENCES website_connections(id) ON DELETE CASCADE,
+  kind VARCHAR(10) NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  content JSONB NOT NULL,
+  created_by UUID,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (website_connection_id, kind, period_end)
+);
