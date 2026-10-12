@@ -529,6 +529,8 @@ const WEBSITE_ROUTES = [
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/competitor-analysis'), 'competitor'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/technical-seo/(check|history)'), 'technical_seo'],
   ['*',    routeRx(BIZ_PATH + '/website/indexing/(check|latest)'), 'technical_seo'],
+  ['*',    routeRx(BIZ_PATH + '/website/goal-metrics'), 'audit'],
+  ['*',    routeRx(BIZ_PATH + '/website/reports(?:/generate|/[^/]+(?:/download)?)?'), 'audit'],
   ['*',    routeRx(BIZ_PATH + '/shopify/indexing/(check|latest)'), 'technical_seo'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/keyword-rankings(/check)?'), 'keyword_rankings'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/sitemap/(submit|status)'), 'sitemap'],
@@ -1721,6 +1723,7 @@ app.put('/api/business/:id/growth-objective/:objectiveId/progress', authRequired
     );
     if (!objResult.rows.length) return res.status(404).json({ error: 'Growth objective not found' });
     const obj = objResult.rows[0];
+    if ((await pool.query('SELECT 1 FROM growth_objective_links WHERE objective_id = $1', [obj.id])).rows.length) return res.status(409).json({ error: 'This goal is updated automatically from your website. Stop the automatic tracking to enter values yourself.', code: 'goal_linked' });
 
     const progress = computeGrowthProgress(parseFloat(obj.starting_value), currentNum, parseFloat(obj.target_value));
     // Auto-detect achievement rather than requiring the user to remember to
@@ -1808,10 +1811,10 @@ app.get('/api/business/:id/growth-objective/:objectiveId/activity', authRequired
     const events = [];
     events.push({ type: 'goal_set', timestamp: obj.created_at, detail: { metricName: obj.metric_name, startingValue: obj.starting_value, targetValue: obj.target_value } });
 
-    const progressRows = await pool.query('SELECT value, recorded_at FROM growth_progress_history WHERE objective_id = $1 ORDER BY recorded_at ASC', [obj.id]);
+    const progressRows = await pool.query('SELECT value, recorded_at, source FROM growth_progress_history WHERE objective_id = $1 ORDER BY recorded_at ASC', [obj.id]);
     // Skip the very first entry — it's the seed value recorded at creation,
     // already represented by the goal_set event above.
-    progressRows.rows.slice(1).forEach(p => events.push({ type: 'progress_update', timestamp: p.recorded_at, detail: { value: p.value } }));
+    progressRows.rows.slice(1).forEach(p => events.push({ type: 'progress_update', timestamp: p.recorded_at, detail: { value: p.value, source: p.source || 'manual' } }));
 
     const milestoneRows = await pool.query('SELECT * FROM growth_milestones WHERE objective_id = $1', [obj.id]);
     milestoneRows.rows.forEach(m => {
@@ -8181,6 +8184,7 @@ const WORDPRESS_TEXT = {
   no_urls: 'No published pages were found on this site, so there is nothing to put in a sitemap.', generate_failed: 'Could not build the sitemap. Please try again.',
   not_generated: 'Build a sitemap first.', file_unknown: 'That file does not exist.', verify_failed: 'Could not check the sitemap. Please try again.', status_failed: 'Could not load the sitemap.',
   poll_mode_indexing: 'This check needs a WordPress connection that Arreyon can read directly. Sites connected in poll mode cannot be read from here.',
+  goal_metrics_failed: 'Could not load the website measures.', reports_failed: 'Could not build the report. Please try again.', reports_load_failed: 'Could not load the reports.', report_not_found: 'That report does not exist.', report_kind_invalid: 'Choose a weekly or a monthly report.', report_format_invalid: 'Choose pdf or docx.', report_export_failed: 'Could not prepare the download. Please try again.',
   indexing_failed: 'Could not run the check. Please try again.', indexing_no_pages: 'No published pages were found on this site, so there is nothing to check.', indexing_load_failed: 'Could not load the check results.', indexing_running: 'A check is already running for this site. Please wait for it to finish.',
 };
 const wordpressFormat = (code, params) => String(WORDPRESS_TEXT[code] || code).replace(/\{(\w+)\}/g, (m, k) => (params && params[k] !== undefined ? String(params[k]) : m));
@@ -8529,6 +8533,260 @@ app.get('/api/business/:id/website/indexing/latest', authRequired, async (req, r
 });
 
 // wordpress-own:end
+// wordpress-own:start
+// ── WordPress website data for Goals/KPIs and the Reports Center ────────────────────────────────────────────────────────────────────────
+// The site's own measurements, read from what is already stored (nothing is requested from the site here): a goal can follow one of them automatically, and the Reports Center can show a
+// period report built from them. Every figure is a stored measurement; every sentence is written from facts, in the reader's language. Nothing here is shared with Shopify.
+const WORDPRESS_GOAL_METRICS = {
+  performance_score: { unit: 'points', better: 'higher' }, seo_score: { unit: 'points', better: 'higher' },
+  indexing_issues: { unit: '', better: 'lower' }, indexing_high: { unit: '', better: 'lower' }, broken_links: { unit: '', better: 'lower' }, audit_open_issues: { unit: '', better: 'lower' },
+  search_position: { unit: '', better: 'lower' }, search_clicks: { unit: '', better: 'higher' }, search_impressions: { unit: '', better: 'higher' },
+  ai_mention_rate: { unit: '%', better: 'higher' }, posts_published: { unit: '', better: 'higher' },
+};
+const WORDPRESS_REPORT_KINDS = { weekly: 7, monthly: 30 }, WORDPRESS_REPORT_KEEP = 12;
+const wordpressRound = (n, d = 0) => { const f = Math.pow(10, d); return Math.round(Number(n) * f) / f; };
+// The latest stored value of one measure (as it was at a given moment when "at" is given), and when it was measured. null when there is no measurement yet.
+async function wordpressMetricValue(businessId, key, { at = null } = {}) {
+  if (!WORDPRESS_GOAL_METRICS[key]) return null;
+  const atTs = at ? new Date(at) : null, siteRow = (await pool.query('SELECT id FROM website_connections WHERE business_id = $1 ORDER BY created_at ASC LIMIT 1', [businessId])).rows[0], site = siteRow && siteRow.id, num = v => (v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
+  const done = (value, when) => (value === null ? null : { value, measuredAt: when ? new Date(when).toISOString() : null });
+  if (key === 'performance_score' || key === 'seo_score') {
+    const r = (await pool.query(`SELECT performance_score, seo_score, checked_at FROM website_technical_seo_checks WHERE business_id = $1 AND platform = 'wordpress' AND ($2::timestamptz IS NULL OR checked_at <= $2) ORDER BY checked_at DESC LIMIT 1`, [businessId, atTs])).rows[0];
+    return r ? done(num(key === 'performance_score' ? r.performance_score : r.seo_score), r.checked_at) : null;
+  }
+  if (!site) return null;
+  if (key === 'indexing_issues' || key === 'indexing_high') {
+    const r = (await pool.query(`SELECT counts, checked_at FROM wordpress_indexing_checks WHERE website_connection_id = $1 AND ($2::timestamptz IS NULL OR checked_at <= $2) ORDER BY checked_at DESC LIMIT 1`, [site, atTs])).rows[0];
+    return r && r.counts ? done(num(key === 'indexing_issues' ? r.counts.total : r.counts.severity && r.counts.severity.high), r.checked_at) : null;
+  }
+  if (key === 'broken_links' || key === 'ai_mention_rate') {
+    const type = key === 'broken_links' ? 'broken_links_checked' : 'ai_visibility_checked';
+    const r = (await pool.query(`SELECT detail, created_at FROM website_agent_activity WHERE business_id = $1 AND platform = 'wordpress' AND task_type = $2 AND outcome = 'success' AND ($3::timestamptz IS NULL OR created_at <= $3) ORDER BY created_at DESC LIMIT 1`, [businessId, type, atTs])).rows[0]; if (!r || !r.detail) return null;
+    if (key === 'broken_links') return done(num(r.detail.brokenCount), r.created_at);
+    const checked = num(r.detail.checkedCount), mentioned = num(r.detail.mentionedCount); return checked && mentioned !== null ? done(wordpressRound(mentioned / checked * 100, 1), r.created_at) : null;
+  }
+  if (key === 'audit_open_issues') {
+    const r = (await pool.query(`SELECT issues_found_count, auto_fixed_count, completed_at FROM website_audit_runs WHERE website_connection_id = $1 AND status = 'completed' AND ($2::timestamptz IS NULL OR completed_at <= $2) ORDER BY completed_at DESC LIMIT 1`, [site, atTs])).rows[0];
+    return r ? done(Math.max(0, (num(r.issues_found_count) || 0) - (num(r.auto_fixed_count) || 0)), r.completed_at) : null;
+  }
+  if (key === 'search_position' || key === 'search_clicks' || key === 'search_impressions') {
+    const day = (await pool.query(`SELECT MAX(snapshot_date)::text AS d FROM website_keyword_rankings WHERE website_connection_id = $1 AND ($2::timestamptz IS NULL OR snapshot_date <= $2::date)`, [site, atTs])).rows[0]; if (!day || !day.d) return null;
+    const r = (await pool.query(`SELECT SUM(clicks) AS clicks, SUM(impressions) AS impressions, SUM(avg_position * impressions) AS weighted, AVG(avg_position) AS plain FROM website_keyword_rankings WHERE website_connection_id = $1 AND snapshot_date = $2`, [site, day.d])).rows[0];
+    const when = new Date(day.d + 'T00:00:00Z').toISOString(); if (key === 'search_clicks') return done(num(r.clicks) || 0, when); if (key === 'search_impressions') return done(num(r.impressions) || 0, when);
+    const imp = num(r.impressions); return done(imp ? wordpressRound(num(r.weighted) / imp, 1) : num(r.plain) === null ? null : wordpressRound(num(r.plain), 1), when);
+  }
+  if (key === 'posts_published') {
+    const r = (await pool.query(`SELECT COUNT(*) AS n, MAX(updated_at) AS last FROM website_generated_posts WHERE website_connection_id = $1 AND status = 'published' AND ($2::timestamptz IS NULL OR updated_at <= $2)`, [site, atTs])).rows[0];
+    return done(num(r.n) || 0, r.last || new Date(0));
+  }
+  return null;
+}
+// Better or worse? "Lower is better" measures (problems, broken links, a position) improve when they go down.
+function wordpressMetricDirection(key, before, now) {
+  const def = WORDPRESS_GOAL_METRICS[key]; if (now === null || now === undefined) return 'none'; if (before === null || before === undefined) return 'new';
+  if (wordpressRound(now, 1) === wordpressRound(before, 1)) return 'same'; const up = now > before; return (def.better === 'higher') === up ? 'improved' : 'worse';
+}
+// The report's own words. The page uses the same sentences under "wordpress.report.<key>"; the PDF and Word files use these, in the language asked for.
+const WORDPRESS_REPORT_TEXT = {
+  en: { title: 'Website report', weekly: 'Weekly', monthly: 'Monthly', generated: 'Generated on {date}', period: '{start} to {end}', section_highlights: 'Highlights', section_priorities: 'What to do next', section_metrics: 'Key measures', section_activity: 'What was done', section_goals: 'Your website goals',
+    col_measure: 'Measure', col_now: 'Now', col_before: 'Before', col_change: 'Change', dir_improved: 'improved', dir_worse: 'worse', dir_same: 'no change', dir_new: 'first measurement', dir_none: 'no data yet',
+    highlight_improved: 'Improved: {list}.', highlight_worse: 'Got worse: {list}.', highlight_quiet: 'No checks were run on your site in this period.', highlight_stable: 'Nothing changed in the key measures in this period.',
+    metric_performance_score: 'Speed score (0-100)', metric_seo_score: 'Technical SEO score (0-100)', metric_indexing_issues: 'Indexing and redirect problems', metric_indexing_high: 'High-severity indexing problems', metric_broken_links: 'Broken links', metric_audit_open_issues: 'SEO issues still open (last audit)', metric_search_position: 'Average position in Google', metric_search_clicks: 'Clicks from Google', metric_search_impressions: 'Appearances in Google', metric_ai_mention_rate: 'Mentioned by AI assistants', metric_posts_published: 'Blog posts published by Arreyon',
+    act_technical: 'Speed checks', act_audit: 'SEO audits', act_indexing: 'Indexing checks', act_links: 'Broken link checks', act_keywords: 'Search ranking snapshots', act_ai: 'AI visibility checks', act_approved: 'Changes you approved', act_auto: 'Changes applied automatically', act_rejected: 'Suggestions you rejected', act_undone: 'Changes undone', act_posts: 'Blog posts generated', act_pending: 'Suggestions waiting for your review',
+    act_line: '{label}: {n}', goal_line: '{name}: {current}{unit} of {target}{unit} ({pct}%)', goal_behind: 'behind schedule', goal_achieved: 'achieved', goal_none: 'No goal follows this site automatically yet.',
+    priority_fix_indexing_high: 'Fix the {n} high-severity indexing problem(s) (Technical SEO > Indexing & redirects check).', priority_improve_speed: 'Your speed score is {score} out of 100: look at the top issues in the Technical SEO card.', priority_fix_broken_links: 'Fix the {n} broken link(s) found on your site.', priority_review_approvals: '{n} suggested change(s) are waiting for your review.', priority_open_audit_issues: 'The last audit left {n} issue(s) open.', priority_improve_rankings: 'Your average position in Google is {position}: pages beyond the first page get very few visitors.',
+    priority_run_technical_check: 'Run a speed and technical check: the last one was {days} days ago.', priority_run_technical_never: 'Run a speed and technical check: none has been run yet.', priority_run_indexing_check: 'Run an indexing check: the last one was {days} days ago.', priority_run_indexing_never: 'Run an indexing check: none has been run yet.', priority_improve_ai_visibility: 'AI assistants mention your business in {rate}% of the questions checked: add clear, factual content about what you offer.', priority_all_good: 'Nothing urgent: keep your checks running regularly.',
+    note_no_data: 'No data yet for: {list}. Run the matching checks to fill them in.' },
+  fr: { title: 'Rapport du site web', weekly: 'Hebdomadaire', monthly: 'Mensuel', generated: 'Généré le {date}', period: 'Du {start} au {end}', section_highlights: 'Points marquants', section_priorities: 'À faire ensuite', section_metrics: 'Mesures clés', section_activity: 'Ce qui a été fait', section_goals: 'Vos objectifs liés au site',
+    col_measure: 'Mesure', col_now: 'Maintenant', col_before: 'Avant', col_change: 'Évolution', dir_improved: 'amélioré', dir_worse: 'dégradé', dir_same: 'inchangé', dir_new: 'première mesure', dir_none: 'pas encore de données',
+    highlight_improved: 'Amélioré : {list}.', highlight_worse: 'Dégradé : {list}.', highlight_quiet: "Aucune vérification n'a été lancée sur votre site pendant cette période.", highlight_stable: "Aucune des mesures clés n'a changé pendant cette période.",
+    metric_performance_score: 'Score de vitesse (0-100)', metric_seo_score: 'Score SEO technique (0-100)', metric_indexing_issues: "Problèmes d'indexation et de redirection", metric_indexing_high: "Problèmes d'indexation de gravité élevée", metric_broken_links: 'Liens cassés', metric_audit_open_issues: 'Problèmes SEO encore ouverts (dernier audit)', metric_search_position: 'Position moyenne dans Google', metric_search_clicks: 'Clics depuis Google', metric_search_impressions: 'Apparitions dans Google', metric_ai_mention_rate: 'Mentionné par les assistants IA', metric_posts_published: 'Articles publiés par Arreyon',
+    act_technical: 'Vérifications de vitesse', act_audit: 'Audits SEO', act_indexing: "Vérifications d'indexation", act_links: 'Vérifications des liens cassés', act_keywords: 'Relevés de positionnement', act_ai: 'Vérifications de visibilité IA', act_approved: 'Modifications que vous avez approuvées', act_auto: 'Modifications appliquées automatiquement', act_rejected: 'Suggestions que vous avez refusées', act_undone: 'Modifications annulées', act_posts: 'Articles générés', act_pending: 'Suggestions en attente de votre validation',
+    act_line: '{label} : {n}', goal_line: '{name} : {current}{unit} sur {target}{unit} ({pct} %)', goal_behind: 'en retard', goal_achieved: 'atteint', goal_none: "Aucun objectif ne suit encore ce site automatiquement.",
+    priority_fix_indexing_high: "Corrigez les {n} problème(s) d'indexation de gravité élevée (SEO technique > Vérification de l'indexation et des redirections).", priority_improve_speed: 'Votre score de vitesse est de {score} sur 100 : consultez les principaux problèmes dans la carte SEO technique.', priority_fix_broken_links: 'Corrigez les {n} lien(s) cassé(s) trouvé(s) sur votre site.', priority_review_approvals: '{n} modification(s) suggérée(s) attendent votre validation.', priority_open_audit_issues: 'Le dernier audit a laissé {n} problème(s) ouvert(s).', priority_improve_rankings: 'Votre position moyenne dans Google est {position} : les pages au-delà de la première page reçoivent très peu de visiteurs.',
+    priority_run_technical_check: 'Lancez une vérification de vitesse et technique : la dernière date de {days} jours.', priority_run_technical_never: "Lancez une vérification de vitesse et technique : aucune n'a encore été lancée.", priority_run_indexing_check: "Lancez une vérification d'indexation : la dernière date de {days} jours.", priority_run_indexing_never: "Lancez une vérification d'indexation : aucune n'a encore été lancée.", priority_improve_ai_visibility: "Les assistants IA mentionnent votre entreprise dans {rate} % des questions vérifiées : ajoutez un contenu clair et factuel sur ce que vous proposez.", priority_all_good: "Rien d'urgent : continuez à lancer vos vérifications régulièrement.",
+    note_no_data: 'Pas encore de données pour : {list}. Lancez les vérifications correspondantes pour les renseigner.' },
+};
+const wordpressReportWords = (lang, key, params) => String((WORDPRESS_REPORT_TEXT[lang === 'fr' ? 'fr' : 'en'][key]) || key).replace(/\{(\w+)\}/g, (m, k) => (params && params[k] !== undefined ? String(params[k]) : m));
+// The report: the measures now and at the start of the period, what was done in it, what to do next, and the goals that follow this site. Pure facts; "now" can be given for repeatable results.
+async function wordpressReportBuild(connection, kind, endDate = new Date()) {
+  const days = WORDPRESS_REPORT_KINDS[kind], businessId = connection.business_id, end = new Date(endDate), endDay = end.toISOString().slice(0, 10), endTs = new Date(endDay + 'T23:59:59.999Z'), startDay = new Date(new Date(endDay + 'T00:00:00Z').getTime() - days * 864e5).toISOString().slice(0, 10), startTs = new Date(startDay + 'T00:00:00Z');
+  const metrics = []; for (const key of Object.keys(WORDPRESS_GOAL_METRICS)) { const [now, before] = [await wordpressMetricValue(businessId, key, { at: endTs }), await wordpressMetricValue(businessId, key, { at: startTs })]; const change = now && before ? wordpressRound(now.value - before.value, 1) : null; metrics.push({ key, unit: WORDPRESS_GOAL_METRICS[key].unit, better: WORDPRESS_GOAL_METRICS[key].better, value: now ? now.value : null, measuredAt: now ? now.measuredAt : null, previous: before ? before.value : null, change, direction: wordpressMetricDirection(key, before ? before.value : null, now ? now.value : null) }); }
+  const count = async (sql, params) => Number((await pool.query(sql, params)).rows[0].n) || 0, act = type => count(`SELECT COUNT(*) AS n FROM website_agent_activity WHERE business_id = $1 AND platform = 'wordpress' AND task_type = $2 AND outcome = 'success' AND created_at BETWEEN $3 AND $4`, [businessId, type, startTs, endTs]), logged = type => count(`SELECT COUNT(*) AS n FROM website_audit_log WHERE website_connection_id = $1 AND action_type = $2 AND created_at BETWEEN $3 AND $4`, [connection.id, type, startTs, endTs]);
+  const activity = { technical: await act('technical_check'), audit: await act('audit_completed'), indexing: await count(`SELECT COUNT(*) AS n FROM wordpress_indexing_checks WHERE website_connection_id = $1 AND checked_at BETWEEN $2 AND $3`, [connection.id, startTs, endTs]), links: await act('broken_links_checked'), keywords: await act('keyword_snapshot'), ai: await act('ai_visibility_checked'),
+    approved: await logged('proposal_approved'), auto: await logged('proposal_auto_approved'), rejected: await logged('proposal_rejected'), undone: await logged('proposal_undone'), posts: await count(`SELECT COUNT(*) AS n FROM website_generated_posts WHERE website_connection_id = $1 AND created_at BETWEEN $2 AND $3`, [connection.id, startTs, endTs]), pending: await count(`SELECT COUNT(*) AS n FROM website_actions WHERE website_connection_id = $1 AND approval_status = 'pending'`, [connection.id]) };
+  const goalRows = (await pool.query(`SELECT go.*, l.metric_key FROM growth_objectives go JOIN growth_objective_links l ON l.objective_id = go.id WHERE go.business_id = $1 AND l.platform = 'wordpress' AND go.status IN ('active', 'achieved') ORDER BY go.created_at DESC LIMIT 10`, [businessId])).rows;
+  const goals = goalRows.map(g => { const p = computeGrowthProgress(parseFloat(g.starting_value), parseFloat(g.current_value), parseFloat(g.target_value)); return { name: g.metric_name, unit: g.unit || '', metric: g.metric_key, start: parseFloat(g.starting_value), current: parseFloat(g.current_value), target: parseFloat(g.target_value), pct: p ? p.pct : 0, achieved: g.status === 'achieved', behind: g.status === 'active' && isGrowthObjectiveBehindSchedule({ startingValue: parseFloat(g.starting_value), currentValue: parseFloat(g.current_value), targetValue: parseFloat(g.target_value), targetDate: g.target_date, createdAt: g.created_at, now: new Date() }) }; });
+  const rel = m => Math.abs(m.change) / Math.max(Math.abs(m.previous), 1), top = dir => metrics.filter(m => m.direction === dir).sort((a, b) => rel(b) - rel(a)).slice(0, 3).map(m => m.key);
+  const ranChecks = activity.technical + activity.audit + activity.indexing + activity.links + activity.keywords + activity.ai;
+  const highlights = { improved: top('improved'), worse: top('worse'), quiet: ranChecks === 0, stable: ranChecks > 0 && !top('improved').length && !top('worse').length };
+  const m = key => metrics.find(x => x.key === key), val = key => (m(key) ? m(key).value : null), ageDays = key => (m(key) && m(key).measuredAt ? Math.floor((endTs - new Date(m(key).measuredAt)) / 864e5) : null), priorities = [];
+  if (val('indexing_high') > 0) priorities.push({ code: 'fix_indexing_high', params: { n: val('indexing_high') } });
+  if (val('performance_score') !== null && val('performance_score') < 50) priorities.push({ code: 'improve_speed', params: { score: val('performance_score') } });
+  if (val('broken_links') > 0) priorities.push({ code: 'fix_broken_links', params: { n: val('broken_links') } });
+  if (activity.pending > 0) priorities.push({ code: 'review_approvals', params: { n: activity.pending } });
+  if (val('audit_open_issues') > 0) priorities.push({ code: 'open_audit_issues', params: { n: val('audit_open_issues') } });
+  if (val('search_position') !== null && val('search_position') > 20) priorities.push({ code: 'improve_rankings', params: { position: val('search_position') } });
+  if (val('performance_score') === null && val('seo_score') === null) priorities.push({ code: 'run_technical_never', params: {} }); else if (ageDays('performance_score') !== null && ageDays('performance_score') > 30) priorities.push({ code: 'run_technical_check', params: { days: ageDays('performance_score') } });
+  if (val('indexing_issues') === null) priorities.push({ code: 'run_indexing_never', params: {} }); else if (ageDays('indexing_issues') !== null && ageDays('indexing_issues') > 30) priorities.push({ code: 'run_indexing_check', params: { days: ageDays('indexing_issues') } });
+  if (val('ai_mention_rate') !== null && val('ai_mention_rate') < 20) priorities.push({ code: 'improve_ai_visibility', params: { rate: val('ai_mention_rate') } });
+  if (!priorities.length) priorities.push({ code: 'all_good', params: {} });
+  return { kind, period: { start: startDay, end: endDay }, generatedAt: new Date().toISOString(), site: { url: connection.site_url, name: connection.site_name || null }, metrics, activity, goals, highlights, priorities: priorities.slice(0, 6), noData: metrics.filter(x => x.value === null).map(x => x.key) };
+}
+const wordpressReportSummary = row => row && ({ id: row.id, kind: row.kind, periodStart: String(row.period_start).slice(0, 10), periodEnd: String(row.period_end).slice(0, 10), createdAt: row.created_at });
+const wordpressReportFull = row => row && ({ ...wordpressReportSummary(row), content: row.content });
+const wordpressReportPlain = s => String(s == null ? '' : s).replace(/[^\x20-\x7E\u00A0-\u00FF\u0152\u0153\u20AC\u2022\u00B7]/g, ' ').replace(/\s+/g, ' ').trim();
+function wordpressReportValue(m) { if (m.value === null || m.value === undefined) return '-'; return `${m.value}${m.unit === '%' ? '%' : ''}`; }
+function wordpressReportChange(lang, m) { if (m.direction === 'same') return wordpressReportWords(lang, 'dir_same'); if (m.direction === 'new') return wordpressReportWords(lang, 'dir_new'); if (m.direction === 'none') return wordpressReportWords(lang, 'dir_none'); return `${m.change > 0 ? '+' : ''}${m.change}${m.unit === '%' ? '%' : ''} (${wordpressReportWords(lang, 'dir_' + m.direction)})`; }
+// The report as plain lines, in one language: used by the PDF and Word files (the page builds the same sentences from the same words).
+function wordpressReportLines(content, lang, siteName) {
+  const W = (k, p) => wordpressReportWords(lang, k, p), label = k => W('metric_' + k), c = content, dateLabel = iso => new Date(iso).toLocaleDateString(lang === 'fr' ? 'fr-FR' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
+  const out = { title: wordpressReportPlain(siteName || c.site.name || c.site.url) || W('title'), subtitle: `${W(c.kind)} - ${W('title')} - ${W('period', { start: dateLabel(c.period.start), end: dateLabel(c.period.end) })}`, generated: W('generated', { date: dateLabel(c.generatedAt) }), sections: [] };
+  const hl = []; if (c.highlights.quiet) hl.push(W('highlight_quiet')); if (c.highlights.improved.length) hl.push(W('highlight_improved', { list: c.highlights.improved.map(label).join(', ') })); if (c.highlights.worse.length) hl.push(W('highlight_worse', { list: c.highlights.worse.map(label).join(', ') })); if (c.highlights.stable) hl.push(W('highlight_stable'));
+  out.sections.push({ heading: W('section_highlights'), bullets: hl }, { heading: W('section_priorities'), bullets: c.priorities.map(p => W('priority_' + p.code, p.params)) });
+  out.sections.push({ heading: W('section_metrics'), table: { head: [W('col_measure'), W('col_now'), W('col_before'), W('col_change')], rows: c.metrics.map(m => [label(m.key), wordpressReportValue(m), m.previous === null || m.previous === undefined ? '-' : `${m.previous}${m.unit === '%' ? '%' : ''}`, wordpressReportChange(lang, m)]) }, note: c.noData.length ? W('note_no_data', { list: c.noData.map(label).join(', ') }) : null });
+  const a = c.activity; out.sections.push({ heading: W('section_activity'), bullets: [['act_technical', a.technical], ['act_audit', a.audit], ['act_indexing', a.indexing], ['act_links', a.links], ['act_keywords', a.keywords], ['act_ai', a.ai], ['act_approved', a.approved], ['act_auto', a.auto], ['act_rejected', a.rejected], ['act_undone', a.undone], ['act_posts', a.posts], ['act_pending', a.pending]].map(([k, n]) => W('act_line', { label: W(k), n })) });
+  out.sections.push({ heading: W('section_goals'), bullets: c.goals.length ? c.goals.map(g => `${W('goal_line', { name: g.name, current: g.current, unit: g.unit, target: g.target, pct: g.pct })}${g.achieved ? ' - ' + W('goal_achieved') : g.behind ? ' - ' + W('goal_behind') : ''}`) : [W('goal_none')] });
+  return out;
+}
+function wordpressReportPDF(content, lang, siteName) {
+  return new Promise((resolve, reject) => {
+    const L = wordpressReportLines(content, lang, siteName), doc = new PDFDocument({ margin: 50, size: 'A4' }), chunks = [], purple = '#6C3Bff', M = 50, W = 495;
+    doc.on('data', d => chunks.push(d)); doc.on('end', () => resolve(Buffer.concat(chunks))); doc.on('error', reject);
+    const line = (text, { size = 10, color = '#222', bold = false, gap = 4, indent = 0 } = {}) => { if (doc.y > 760) doc.addPage(); doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size).fillColor(color).text(wordpressReportPlain(text), M + indent, doc.y, { width: W - indent }); doc.moveDown(gap / 10); };
+    doc.font('Helvetica-Bold').fontSize(20).fillColor('#111').text(L.title, M, M, { width: W }); doc.moveTo(M, doc.y + 6).lineTo(M + W, doc.y + 6).strokeColor(purple).lineWidth(2).stroke(); doc.moveDown(0.8);
+    line(L.subtitle, { size: 10.5, color: '#555', gap: 2 }); line(L.generated, { size: 8.5, color: '#888', gap: 6 });
+    for (const s of L.sections) {
+      if (doc.y > 700) doc.addPage(); doc.moveDown(0.6); line(String(s.heading).toUpperCase(), { size: 12, color: purple, bold: true, gap: 3 });
+      (s.bullets || []).forEach(b => line('\u2022 ' + b, { indent: 8, gap: 2 }));
+      if (s.table) { const cols = [190, 80, 80, 145]; let y = doc.y; const row = (cells, bold) => { if (doc.y > 750) { doc.addPage(); y = doc.y; } y = doc.y; let x = M; cells.forEach((cell, i) => { doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor('#222').text(wordpressReportPlain(cell), x, y, { width: cols[i] - 6 }); x += cols[i]; }); doc.y = Math.max(...cells.map((cell, i) => y + doc.heightOfString(wordpressReportPlain(cell), { width: cols[i] - 6 }))) + 3; }; row(s.table.head, true); s.table.rows.forEach(r => row(r, false)); if (s.note) { doc.moveDown(0.3); line(s.note, { size: 9, color: '#888' }); } }
+    }
+    doc.end();
+  });
+}
+async function wordpressReportDOCX(content, lang, siteName) {
+  const L = wordpressReportLines(content, lang, siteName), children = [], para = (text, o = {}) => children.push(new Paragraph({ children: [new TextRun({ text: wordpressReportPlain(text), bold: !!o.bold, color: o.color, size: o.size })], spacing: { after: 120 } })), cell = (text, bold) => new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: wordpressReportPlain(text), bold: !!bold, size: 18 })] })] });
+  children.push(new Paragraph({ text: L.title, heading: HeadingLevel.TITLE })); para(L.subtitle, { color: '555555' }); para(L.generated, { color: '888888', size: 17 });
+  for (const s of L.sections) { children.push(new Paragraph({ text: wordpressReportPlain(s.heading), heading: HeadingLevel.HEADING_1 })); (s.bullets || []).forEach(b => children.push(new Paragraph({ text: wordpressReportPlain(b), bullet: { level: 0 } })));
+    if (s.table) { children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [new TableRow({ children: s.table.head.map(h => cell(h, true)) }), ...s.table.rows.map(r => new TableRow({ children: r.map(c => cell(c, false)) }))] })); if (s.note) para(s.note, { color: '888888' }); } }
+  return Packer.toBuffer(new DocxDocument({ sections: [{ children }] }));
+}
+async function wordpressReportRouteContext(req) {
+  const { connection, error, status } = await getConnectionForBusiness(req);
+  if (error) return { status, failure: wordpressFail(status === 404 && error === 'Business not found' ? 'business_not_found' : 'no_site') };
+  return { connection };
+}
+const WORDPRESS_UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+app.get('/api/business/:id/website/goal-metrics', authRequired, async (req, res) => {
+  try {
+    const ctx = await wordpressReportRouteContext(req); if (ctx.failure) return res.status(ctx.status).json(ctx.failure); const metrics = [];
+    for (const [key, def] of Object.entries(WORDPRESS_GOAL_METRICS)) { const v = await wordpressMetricValue(ctx.connection.business_id, key); metrics.push({ key, unit: def.unit, better: def.better, value: v ? v.value : null, measuredAt: v ? v.measuredAt : null }); }
+    res.json({ metrics, site: { url: ctx.connection.site_url } });
+  } catch (err) { console.error('WordPress goal metrics error:', err.message); res.status(500).json(wordpressFail('goal_metrics_failed')); }
+});
+app.post('/api/business/:id/website/reports/generate', authRequired, async (req, res) => {
+  try {
+    const ctx = await wordpressReportRouteContext(req); if (ctx.failure) return res.status(ctx.status).json(ctx.failure);
+    const kind = String((req.body && req.body.kind) || ''); if (!WORDPRESS_REPORT_KINDS[kind]) return res.status(400).json(wordpressFail('report_kind_invalid'));
+    const content = await wordpressReportBuild(ctx.connection, kind), row = (await pool.query(`INSERT INTO wordpress_reports (website_connection_id, kind, period_start, period_end, content, created_by) VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (website_connection_id, kind, period_end) DO UPDATE SET period_start = $3, content = $5, created_by = $6, created_at = NOW() RETURNING id, kind, period_start::text AS period_start, period_end::text AS period_end, content, created_at`, [ctx.connection.id, kind, content.period.start, content.period.end, JSON.stringify(content), req.userId])).rows[0];
+    await pool.query(`DELETE FROM wordpress_reports WHERE website_connection_id = $1 AND kind = $2 AND id NOT IN (SELECT id FROM wordpress_reports WHERE website_connection_id = $1 AND kind = $2 ORDER BY period_end DESC LIMIT ${WORDPRESS_REPORT_KEEP})`, [ctx.connection.id, kind]);
+    await logWebsiteAudit(ctx.connection.id, 'user', req.userId, 'report_generated', `Generated a ${kind} website report`, { kind, periodStart: content.period.start, periodEnd: content.period.end }, 'general');
+    res.json({ success: true, report: wordpressReportFull(row) });
+  } catch (err) { console.error('WordPress report error:', err.message); res.status(500).json(wordpressFail('reports_failed')); }
+});
+app.get('/api/business/:id/website/reports', authRequired, async (req, res) => {
+  try { const ctx = await wordpressReportRouteContext(req); if (ctx.failure) return res.status(ctx.status).json(ctx.failure); const rows = (await pool.query('SELECT id, kind, period_start::text AS period_start, period_end::text AS period_end, created_at FROM wordpress_reports WHERE website_connection_id = $1 ORDER BY period_end DESC, created_at DESC LIMIT 24', [ctx.connection.id])).rows; res.json({ reports: rows.map(wordpressReportSummary) }); }
+  catch (err) { console.error('WordPress reports list error:', err.message); res.status(500).json(wordpressFail('reports_load_failed')); }
+});
+async function wordpressLoadReport(req) {
+  const ctx = await wordpressReportRouteContext(req); if (ctx.failure) return { status: ctx.status, body: ctx.failure };
+  if (!WORDPRESS_UUID_RX.test(req.params.reportId)) return { status: 404, body: wordpressFail('report_not_found') };
+  const row = (await pool.query('SELECT id, kind, period_start::text AS period_start, period_end::text AS period_end, content, created_at FROM wordpress_reports WHERE id = $1 AND website_connection_id = $2', [req.params.reportId, ctx.connection.id])).rows[0]; return row ? { row, connection: ctx.connection } : { status: 404, body: wordpressFail('report_not_found') };
+}
+app.get('/api/business/:id/website/reports/:reportId', authRequired, async (req, res) => {
+  try { const out = await wordpressLoadReport(req); if (!out.row) return res.status(out.status).json(out.body); res.json({ report: wordpressReportFull(out.row) }); }
+  catch (err) { console.error('WordPress report load error:', err.message); res.status(500).json(wordpressFail('reports_load_failed')); }
+});
+app.get('/api/business/:id/website/reports/:reportId/download', authRequired, async (req, res) => {
+  try {
+    const format = String(req.query.format || '').toLowerCase(); if (!['pdf', 'docx'].includes(format)) return res.status(400).json(wordpressFail('report_format_invalid'));
+    const out = await wordpressLoadReport(req); if (!out.row) return res.status(out.status).json(out.body); const lang = req.query.lang === 'fr' ? 'fr' : 'en', content = out.row.content, name = out.connection.site_name || out.connection.site_url, base = `${String(name).toLowerCase().replace(/^https?:\/\//, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'website'}-${content.kind}-report-${content.period.end}`;
+    if (format === 'pdf') res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${base}.pdf"`, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' }).send(await wordpressReportPDF(content, lang, name));
+    else res.set({ 'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'Content-Disposition': `attachment; filename="${base}.docx"`, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' }).send(await wordpressReportDOCX(content, lang, name));
+  } catch (err) { console.error('WordPress report download error:', err.message); res.status(500).json(wordpressFail('report_export_failed')); }
+});
+
+// wordpress-own:end
+// growth-website:start
+// ── Goals that follow a website measure ─────────────────────────────────────────────────────────────────────────────────────────────────
+// A goal can be linked to one measure of a connected website; its current value then follows that measure by itself, through the SAME rules as a value typed in (achievement, milestones,
+// history). Each platform registers its own measures below; nothing platform-specific is decided here. A linked goal cannot also be updated by hand.
+const GROWTH_WEBSITE_SOURCES = {
+  wordpress: { metrics: WORDPRESS_GOAL_METRICS, value: wordpressMetricValue, feature: 'audit' },
+};
+const growthFail = (status, error, code) => ({ status, body: { error, code } });
+const GROWTH_UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// One new value for a goal, exactly as the progress route records it: the new status (achieved at 100%), the history point, and the numeric milestones just crossed.
+async function recordGrowthProgress(obj, currentNum, source = 'manual') {
+  const progress = computeGrowthProgress(parseFloat(obj.starting_value), currentNum, parseFloat(obj.target_value));
+  const newStatus = (progress && progress.rawPct >= 100) ? 'achieved' : obj.status;
+  const updated = await pool.query(`UPDATE growth_objectives SET current_value = $1, status = $2, updated_at = NOW() WHERE id = $3 RETURNING *`, [currentNum, newStatus, obj.id]);
+  await pool.query('INSERT INTO growth_progress_history (objective_id, value, source) VALUES ($1, $2, $3)', [obj.id, currentNum, source]);
+  const pending = await pool.query('SELECT * FROM growth_milestones WHERE objective_id = $1 AND achieved_at IS NULL AND target_value IS NOT NULL', [obj.id]), newlyAchieved = [];
+  for (const m of pending.rows) { const mp = computeGrowthProgress(parseFloat(obj.starting_value), currentNum, parseFloat(m.target_value)); if (mp && mp.rawPct >= 100) newlyAchieved.push((await pool.query('UPDATE growth_milestones SET achieved_at = NOW() WHERE id = $1 RETURNING *', [m.id])).rows[0]); }
+  return { updated: updated.rows[0], progress, newlyAchieved };
+}
+// Brings a linked goal up to date: if its measure has been measured again since the last time, that value is recorded (even when the number is the same: it is a new check-in). Never throws.
+async function syncGrowthObjectiveFromWebsite(obj) {
+  try {
+    if (!obj || obj.status !== 'active') return obj;
+    const link = (await pool.query('SELECT * FROM growth_objective_links WHERE objective_id = $1', [obj.id])).rows[0]; if (!link) return obj;
+    const source = GROWTH_WEBSITE_SOURCES[link.platform]; if (!source || !source.metrics[link.metric_key]) return obj;
+    const m = await source.value(obj.business_id, link.metric_key); if (!m || m.value === null || m.value === undefined) return obj;
+    const measured = m.measuredAt ? new Date(m.measuredAt) : new Date(0);
+    const claimed = await pool.query(`UPDATE growth_objective_links SET last_measured_at = $2, last_synced_at = NOW() WHERE objective_id = $1 AND (last_measured_at IS NULL OR last_measured_at < $2) RETURNING objective_id`, [obj.id, measured]);
+    if (!claimed.rows.length) return obj;   // already recorded (also when two pages open at once: only one of them records it)
+    return (await recordGrowthProgress(obj, m.value, 'website')).updated;
+  } catch (err) { console.error('Goal sync error (the goal keeps its last value):', err.message); return obj; }
+}
+async function growthOwnedObjective(req) {
+  const account = await resolveAccount(req.userId);
+  if (!GROWTH_UUID_RX.test(req.params.objectiveId)) return { account, failure: growthFail(404, 'Growth objective not found', 'objective_not_found') };
+  const r = await pool.query(`SELECT go.* FROM growth_objectives go JOIN businesses b ON b.id = go.business_id WHERE go.id = $1 AND go.business_id = $2 AND b.user_id = $3`, [req.params.objectiveId, req.params.id, account.id]);
+  return r.rows.length ? { account, obj: r.rows[0] } : { account, failure: growthFail(404, 'Growth objective not found', 'objective_not_found') };
+}
+app.post('/api/business/:id/growth-objective/:objectiveId/website-link', authRequired, async (req, res) => {
+  try {
+    const own = await growthOwnedObjective(req); if (own.failure) return res.status(own.failure.status).json(own.failure.body); const { obj, account } = own;
+    if (obj.status !== 'active') return res.status(409).json({ error: 'Only an active goal can follow a website measure.', code: 'goal_not_active' });
+    const platform = String((req.body && req.body.platform) || ''), metric = String((req.body && req.body.metric) || ''), source = GROWTH_WEBSITE_SOURCES[platform];
+    if (!source) return res.status(400).json({ error: 'That kind of website is not supported yet.', code: 'link_unsupported' });
+    if (!source.metrics[metric]) return res.status(400).json({ error: 'That measure does not exist.', code: 'link_metric_unknown' });
+    if (!planHasWebsiteFeature((req.planAccount || account).plan, source.feature)) return res.status(403).json({ error: 'Following a website measure automatically needs a plan that includes the website audit.', code: 'link_plan_required' });
+    const m = await source.value(obj.business_id, metric); if (!m) return res.status(422).json({ error: 'There is no measurement for this yet. Run the matching check on your website first.', code: 'link_no_data' });
+    const measured = m.measuredAt ? new Date(m.measuredAt) : new Date(0);
+    await pool.query(`INSERT INTO growth_objective_links (objective_id, platform, metric_key, linked_at, last_measured_at, last_synced_at) VALUES ($1, $2, $3, NOW(), $4, NOW()) ON CONFLICT (objective_id) DO UPDATE SET platform = $2, metric_key = $3, linked_at = NOW(), last_measured_at = $4, last_synced_at = NOW()`, [obj.id, platform, metric, measured]);
+    let current = obj; if (parseFloat(obj.current_value) !== m.value) current = (await recordGrowthProgress(obj, m.value, 'website')).updated;
+    res.json({ success: true, link: { objectiveId: obj.id, platform, metric, measuredAt: m.measuredAt }, objective: current, progress: computeGrowthProgress(parseFloat(current.starting_value), parseFloat(current.current_value), parseFloat(current.target_value)) });
+  } catch (e) { console.error('Link goal error:', e.message); res.status(500).json({ error: 'Could not link this goal. Please try again.', code: 'link_failed' }); }
+});
+app.delete('/api/business/:id/growth-objective/:objectiveId/website-link', authRequired, async (req, res) => {
+  try { const own = await growthOwnedObjective(req); if (own.failure) return res.status(own.failure.status).json(own.failure.body); await pool.query('DELETE FROM growth_objective_links WHERE objective_id = $1', [own.obj.id]); res.json({ success: true }); }
+  catch (e) { console.error('Unlink goal error:', e.message); res.status(500).json({ error: 'Could not stop the automatic tracking. Please try again.', code: 'link_failed' }); }
+});
+// Called when the Goals page opens: brings every linked goal of the business up to date, and says which goals follow a website measure.
+app.post('/api/business/:id/growth-objectives/website-sync', authRequired, async (req, res) => {
+  try {
+    const account = await resolveAccount(req.userId); if (!(await pool.query('SELECT 1 FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id])).rows.length) return res.status(404).json({ error: 'Business not found', code: 'business_not_found' });
+    const goals = (await pool.query(`SELECT go.* FROM growth_objectives go JOIN growth_objective_links l ON l.objective_id = go.id WHERE go.business_id = $1 AND go.status = 'active'`, [req.params.id])).rows;
+    for (const g of goals) await syncGrowthObjectiveFromWebsite(g);
+    const links = (await pool.query(`SELECT l.objective_id, l.platform, l.metric_key, l.last_measured_at, l.last_synced_at FROM growth_objective_links l JOIN growth_objectives go ON go.id = l.objective_id WHERE go.business_id = $1`, [req.params.id])).rows;
+    res.json({ links: links.map(l => ({ objectiveId: l.objective_id, platform: l.platform, metric: l.metric_key, measuredAt: l.last_measured_at, syncedAt: l.last_synced_at })) });
+  } catch (e) { console.error('Goal sync route error:', e.message); res.status(500).json({ error: 'Could not update the goals. Please try again.', code: 'link_failed' }); }
+});
+
+// growth-website:end
 app.post('/api/business/:id/website/ai-visibility/check', authRequired, async (req, res) => {
   let ran = false;
   try {
@@ -21072,6 +21330,7 @@ async function checkGrowthAlerts(ownerId, prefs, language) {
 
   const now = new Date();
   for (const obj of objectives.rows) {
+    const fresh = await syncGrowthObjectiveFromWebsite(obj); if (fresh !== obj) { Object.assign(obj, fresh); obj.last_checkin_at = new Date(); }   // a goal that follows a website measure is brought up to date first
     const canAlertBehind = !obj.behind_schedule_alert_sent_at || (now - new Date(obj.behind_schedule_alert_sent_at)) > 14 * 24 * 60 * 60 * 1000;
     if (canAlertBehind && obj.target_date && isGrowthObjectiveBehindSchedule({
       startingValue: parseFloat(obj.starting_value), currentValue: parseFloat(obj.current_value),
@@ -21131,6 +21390,7 @@ async function checkOpportunityRadar(ownerId, prefs, language) {
 
   const now = new Date();
   for (const obj of objectives.rows) {
+    const fresh = await syncGrowthObjectiveFromWebsite(obj); if (fresh !== obj) Object.assign(obj, fresh);   // a goal that follows a website measure is brought up to date first
     const canAlert = !obj.ahead_schedule_alert_sent_at || (now - new Date(obj.ahead_schedule_alert_sent_at)) > 14 * 24 * 60 * 60 * 1000;
     if (canAlert && isGrowthObjectiveAheadOfSchedule({
       startingValue: parseFloat(obj.starting_value), currentValue: parseFloat(obj.current_value),
