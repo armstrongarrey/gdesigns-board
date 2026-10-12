@@ -2207,3 +2207,17 @@ CREATE TABLE IF NOT EXISTS wordpress_sitemaps (
   files JSONB,
   generated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ── WordPress indexing check: the last results (WordPress's own table) ─────────────────────────────────────────────────────────────
+-- Each run (redirects, "noindex" and canonical findings) is kept; only the 10 newest per site are kept.
+CREATE TABLE IF NOT EXISTS wordpress_indexing_checks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  website_connection_id UUID NOT NULL REFERENCES website_connections(id) ON DELETE CASCADE,
+  pages_total INTEGER NOT NULL DEFAULT 0,
+  pages_checked INTEGER NOT NULL DEFAULT 0,
+  partial BOOLEAN NOT NULL DEFAULT FALSE,
+  counts JSONB,
+  issues JSONB,
+  checked_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_wordpress_indexing_checks_site ON wordpress_indexing_checks(website_connection_id, checked_at DESC);
