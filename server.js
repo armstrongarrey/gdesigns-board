@@ -529,6 +529,7 @@ const WEBSITE_ROUTES = [
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/competitor-analysis'), 'competitor'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/technical-seo/(check|history)'), 'technical_seo'],
   ['*',    routeRx(BIZ_PATH + '/website/indexing/(check|latest)'), 'technical_seo'],
+  ['*',    routeRx(BIZ_PATH + '/shopify/indexing/(check|latest)'), 'technical_seo'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/keyword-rankings(/check)?'), 'keyword_rankings'],
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/sitemap/(submit|status)'), 'sitemap'],
   ['*',    routeRx(BIZ_PATH + '/website/sitemap/(generate|generated|download|verify)'), 'sitemap'],
@@ -11698,6 +11699,7 @@ const SHOPIFY_TEXT = {
   tags_verify_unconfirmed: 'The tags were saved, but verification could not confirm them.', tags_verify_missing: 'The tags were saved, but Shopify does not show them on the post yet.',
   meta_save_rejected: 'Shopify rejected saving this change (status {status}).',
   read_products_failed: 'Shopify could not list the products of this store (status {status}).', read_collections_failed: 'Shopify could not list the collections of this store (status {status}).', sitemap_check_failed: 'Could not check the sitemap. Please try again.',
+  indexing_failed: 'Could not run the check. Please try again.', indexing_running: 'A check is already running for this store. Please wait for it to finish.', indexing_load_failed: 'Could not load the check results.',
   runs_load_failed: 'Could not load audit history.', runs_clear_failed: 'Could not clear audit history.', runs_invalid: 'Those are not valid audit runs.', runs_specify: 'Specify which runs to clear: ids or all.',
   log_load_failed: 'Could not load the activity log.', log_clear_failed: 'Could not clear the activity log.', log_invalid: 'Those are not valid entries.', log_unknown_feature: 'Unknown feature.',
   log_specify: 'Specify which entries to clear: ids, feature, or all.',
@@ -12114,6 +12116,283 @@ app.post('/api/business/:id/shopify/sitemap/check', authRequired, async (req, re
     if (err.shopifyCode) return res.status(err.shopifyCode === 'auth_lost' ? 400 : 502).json(shopifyFail(err.shopifyCode, err.shopifyParams || undefined));
     res.status(500).json(shopifyFail('sitemap_check_failed'));
   }
+});
+
+// shopify-own:end
+// shopify-own:start
+// ── Shopify indexing check: redirects, "noindex" and canonical tags, and the store's own redirect table ──────────────────────────────────
+// Looks at the home page and the most recently updated products, pages, collections and articles the way a search engine does: follows every redirect, reads the robots meta tag and
+// the X-Robots-Tag header, robots.txt and the canonical tag. It also reads the store's URL redirects table (Online Store > Navigation > URL redirects) and looks for loops, chains,
+// dead destinations and redirects that can never work. It only READS: nothing in the store is changed. Nothing here is shared with WordPress.
+const SHOPIFY_INDEXING_MAX_PAGES = 150, SHOPIFY_INDEXING_MAX_FETCHES = 700, SHOPIFY_INDEXING_CONCURRENCY = 5, SHOPIFY_INDEXING_MAX_HOPS = 5, SHOPIFY_INDEXING_DEADLINE_MS = 45000, SHOPIFY_INDEXING_PAGE_BYTES = 1024 * 1024, SHOPIFY_INDEXING_FETCH_MS = 6000, SHOPIFY_INDEXING_MAX_ISSUES = 300, SHOPIFY_INDEXING_KEEP = 10, SHOPIFY_INDEXING_MAX_TARGETS = 30, SHOPIFY_INDEXING_LIST_PAGES = 8, SHOPIFY_INDEXING_LIST_SIZE = 250, SHOPIFY_INDEXING_MAX_REDIRECTS = 2000, SHOPIFY_INDEXING_MAX_API = 120;
+// Every kind of finding: [group, severity]. A noindex or robots.txt block on the HOME page is raised to "high".
+const SHOPIFY_INDEXING_ISSUES = {
+  http_not_redirected: ['site', 'high'], http_redirect_temporary: ['site', 'medium'], www_both_serve: ['site', 'medium'], myshopify_not_redirected: ['site', 'medium'], store_password: ['site', 'high'],
+  status_error: ['redirect', 'high'], unreachable: ['redirect', 'medium'], redirect_loop: ['redirect', 'high'], redirect_chain: ['redirect', 'medium'], redirect_temporary: ['redirect', 'medium'], redirect_permanent: ['redirect', 'low'], redirect_other_host: ['redirect', 'medium'],
+  noindex_meta: ['noindex', 'medium'], blocked_robots: ['noindex', 'medium'], noindex_canonical_conflict: ['noindex', 'high'],
+  canonical_missing: ['canonical', 'low'], canonical_other_page: ['canonical', 'medium'], canonical_other_host: ['canonical', 'high'], canonical_multiple: ['canonical', 'high'], canonical_not_https: ['canonical', 'medium'], canonical_target_error: ['canonical', 'high'], canonical_target_unreachable: ['canonical', 'high'], canonical_chain: ['canonical', 'medium'],
+  store_redirect_loop: ['table', 'high'], store_redirect_chain: ['table', 'medium'], store_redirect_target_error: ['table', 'high'], store_redirect_shadowed: ['table', 'low'],
+};
+const shopifyIndexingHost = u => { try { return new URL(u).host.toLowerCase().replace(/^www\./, ''); } catch (e) { return ''; } };
+// Two addresses are "the same page" when only the case of the host, a closing slash or a fragment differs; the scheme and the query still count.
+const shopifyIndexingKey = u => { try { const x = new URL(u); return `${x.protocol}//${x.host.toLowerCase()}${x.pathname.replace(/\/+$/, '') || '/'}${x.search}`; } catch (e) { return String(u); } };
+// One request, redirects NOT followed (a redirect is the thing being measured). Only public hosts, a time limit, a limit on the number of requests, and the page body only when it is an HTML page that opened.
+async function shopifyIndexingFetchOnce(url, budget) {
+  if (budget.fetches >= SHOPIFY_INDEXING_MAX_FETCHES || Date.now() >= budget.deadline) return { budgetOut: true };
+  budget.fetches++;
+  try {
+    const parsed = new URL(url); if (!/^https?:$/.test(parsed.protocol)) return null; await assertPublicHost(parsed.hostname);
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), SHOPIFY_INDEXING_FETCH_MS);
+    try {
+      const res = await fetch(url, { signal: controller.signal, redirect: 'manual', headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36', 'Accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8' } });
+      const header = n => res.headers.get(n), out = { status: res.status, location: header('location'), xRobots: header('x-robots-tag'), link: header('link'), contentType: String(header('content-type') || '').toLowerCase(), text: null };
+      if (res.status === 200 && /html/.test(out.contentType || 'text/html')) out.text = Buffer.from(await res.arrayBuffer()).subarray(0, SHOPIFY_INDEXING_PAGE_BYTES).toString('utf8');
+      return out;
+    } finally { clearTimeout(timer); }
+  } catch (e) { return null; }
+}
+// Follows an address through its redirects, one step at a time (at most 5). Says where it ended, how it got there, or why it never did.
+async function shopifyIndexingChase(startUrl, budget) {
+  const hops = [], seen = new Set(); let cur = startUrl;
+  for (let i = 0; i <= SHOPIFY_INDEXING_MAX_HOPS; i++) {
+    if (seen.has(cur)) return { hops, final: null, loop: true };
+    seen.add(cur);
+    const r = await shopifyIndexingFetchOnce(cur, budget);
+    if (r && r.budgetOut) return { hops, final: null, budgetOut: true };
+    if (!r) return { hops, final: null, unreachable: true };
+    if (r.status >= 300 && r.status < 400 && r.location) {
+      let next; try { next = new URL(r.location, cur); next.hash = ''; } catch (e) { return { hops, final: { url: cur, ...r } }; }
+      if (!/^https?:$/.test(next.protocol)) return { hops, final: { url: cur, ...r } };
+      hops.push({ status: r.status, from: cur, to: next.href }); cur = next.href; continue;
+    }
+    return { hops, final: { url: cur, ...r } };
+  }
+  return { hops, final: null, tooMany: true, last: cur };
+}
+const shopifyHtmlUnescape = s => String(s).replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10))).replace(/&amp;/g, '&');
+// A tag's attribute, whichever way it is quoted (or not), in any order.
+const shopifyTagAttr = (tag, name) => { const m = String(tag).match(new RegExp(`[\\s"'/]${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>"']+))`, 'i')); return m ? shopifyHtmlUnescape(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]) : null; };
+// "noindex" in the X-Robots-Tag header: for everyone or for Google; a rule aimed at another named crawler does not count.
+function shopifyXRobotsNoindex(value) {
+  if (!value) return false; let agent = null;
+  for (const part of String(value).split(',')) {
+    const m = part.trim().match(/^([a-z0-9_-]+)\s*:\s*(.*)$/i); let directive = part.trim().toLowerCase();
+    if (m && !/^(unavailable_after|max-snippet|max-image-preview|max-video-preview)$/i.test(m[1])) { agent = m[1].toLowerCase(); directive = m[2].trim().toLowerCase(); }
+    if ((agent === null || agent === 'googlebot') && (directive === 'noindex' || directive === 'none')) return true;
+  }
+  return false;
+}
+// What a page says about itself: "noindex" (meta tag and/or header) and its canonical address(es), resolved against the page's own address.
+function shopifyIndexingParse(html, headers, pageUrl) {
+  const head = html ? (html.search(/<\/head>/i) > 0 ? html.slice(0, html.search(/<\/head>/i)) : html.slice(0, 100000)) : '', out = { noindexMeta: false, noindexHeader: shopifyXRobotsNoindex(headers && headers.xRobots), canonicals: [] };
+  for (const tag of head.match(/<meta\b[^>]*>/gi) || []) { const name = String(shopifyTagAttr(tag, 'name') || '').toLowerCase(); if (name === 'robots' || name === 'googlebot') { const tokens = String(shopifyTagAttr(tag, 'content') || '').toLowerCase().split(',').map(x => x.trim()); if (tokens.includes('noindex') || tokens.includes('none')) out.noindexMeta = true; } }
+  const add = href => { try { const u = new URL(String(href).trim(), pageUrl); u.hash = ''; if (/^https?:$/.test(u.protocol) && !out.canonicals.includes(u.href)) out.canonicals.push(u.href); } catch (e) { /* not an address */ } };
+  for (const tag of head.match(/<link\b[^>]*>/gi) || []) { if (String(shopifyTagAttr(tag, 'rel') || '').toLowerCase().split(/\s+/).includes('canonical')) { const href = shopifyTagAttr(tag, 'href'); if (href) add(href); } }
+  if (headers && headers.link) for (const m of String(headers.link).matchAll(/<([^>]+)>\s*;[^,]*\brel\s*=\s*"?canonical"?/gi)) add(m[1]);
+  return out;
+}
+// robots.txt for one crawler (Google's own group if there is one, otherwise the group for everyone), the way search engines apply it: the longest matching rule wins, and "allow" wins a tie; * and $ work.
+function shopifyRobotsRules(txt) {
+  const groups = []; let cur = null, lastWasAgent = false;
+  for (const raw of String(txt).split(/\r?\n/)) {
+    const m = raw.replace(/#.*$/, '').trim().match(/^([a-z-]+)\s*:\s*(.*)$/i); if (!m) continue; const key = m[1].toLowerCase(), val = m[2].trim();
+    if (key === 'user-agent') { if (!cur || !lastWasAgent) { cur = { agents: [], rules: [] }; groups.push(cur); } cur.agents.push(val.toLowerCase()); lastWasAgent = true; }
+    else { lastWasAgent = false; if (cur && (key === 'allow' || key === 'disallow')) cur.rules.push({ allow: key === 'allow', pattern: val }); }
+  }
+  const pick = name => groups.filter(g => g.agents.includes(name)).flatMap(g => g.rules); const google = pick('googlebot'); return google.length || groups.some(g => g.agents.includes('googlebot')) ? google : pick('*');
+}
+function shopifyRobotsAllows(rules, pathAndQuery) {
+  let best = null;
+  for (const r of rules) { if (!r.pattern) continue; const anchored = r.pattern.endsWith('$'), body = anchored ? r.pattern.slice(0, -1) : r.pattern, rx = new RegExp('^' + body.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + (anchored ? '$' : '')); if (!rx.test(pathAndQuery)) continue; const len = r.pattern.length; if (!best || len > best.len || (len === best.len && r.allow)) best = { len, allow: r.allow }; }
+  return best ? best.allow : true;
+}
+// One page: follow its redirects, then read what it says about itself.
+async function shopifyIndexingCheckPage(url, ctx) {
+  const issues = [], add = (type, params = {}) => issues.push({ type, url, params }), isHome = shopifyIndexingKey(url) === shopifyIndexingKey(ctx.base + '/'), c = await shopifyIndexingChase(url, ctx.budget);
+  const out = { url, issues, finalUrl: null, canonical: null, noindex: false };
+  if (c.budgetOut) { out.skipped = true; return out; }
+  if (c.unreachable) { add('unreachable'); return out; } if (c.loop) { add('redirect_loop'); return out; } if (c.tooMany) { add('redirect_chain', { hops: c.hops.length, to: c.last }); return out; }
+  const fin = c.final; out.finalUrl = fin.url;
+  if (c.hops.length >= 2) add('redirect_chain', { hops: c.hops.length, to: fin.url });
+  else if (c.hops.length === 1) { const to = c.hops[0].to; if (shopifyIndexingHost(to) !== shopifyIndexingHost(url)) add('redirect_other_host', { to }); else if ([302, 303, 307].includes(c.hops[0].status)) add('redirect_temporary', { status: c.hops[0].status, to }); else add('redirect_permanent', { status: c.hops[0].status, to }); }
+  if (fin.status !== 200) { add('status_error', { status: fin.status }); return out; }
+  const page = shopifyIndexingParse(fin.text, fin, fin.url); out.noindex = page.noindexMeta || page.noindexHeader;
+  if (out.noindex) add('noindex_meta', { where: page.noindexMeta && page.noindexHeader ? 'both' : page.noindexMeta ? 'meta' : 'header' });
+  try { const u = new URL(url); if (ctx.robots && !shopifyRobotsAllows(ctx.robots, u.pathname + u.search)) add('blocked_robots'); } catch (e) { /* not an address */ }
+  if (fin.text !== null) {
+    if (page.canonicals.length > 1) add('canonical_multiple', { count: page.canonicals.length });
+    else if (!page.canonicals.length) add('canonical_missing');
+    else {
+      const target = page.canonicals[0]; out.canonical = target;
+      if (shopifyIndexingKey(target) === shopifyIndexingKey(fin.url)) { out.canonicalSelf = true; }
+      else if (new URL(target).protocol === 'http:' && new URL(fin.url).protocol === 'https:' && shopifyIndexingKey(target.replace(/^http:/, 'https:')) === shopifyIndexingKey(fin.url)) { add('canonical_not_https', { to: target }); out.canonicalSelf = true; }
+      else if (shopifyIndexingHost(target) !== shopifyIndexingHost(fin.url)) add('canonical_other_host', { to: target });
+      else add('canonical_other_page', { to: target });
+      if (out.noindex && !out.canonicalSelf) add('noindex_canonical_conflict', { to: target });
+    }
+  }
+  return out;
+}
+// One kind of content, published only, as much of it as the limits allow (250 at a time, by id). A store refusing the connection is recorded like everywhere else; a kind that cannot be read stops the check.
+async function shopifyIndexingList(connection, accessToken, path, extra, state, failCode) {
+  const items = []; let since = 0;
+  for (let n = 0; n < SHOPIFY_INDEXING_LIST_PAGES; n++) {
+    if (state.requests >= SHOPIFY_INDEXING_MAX_API) break; state.requests++;
+    const res = await shopifyApiRequest(connection.shop_domain, accessToken, `${path}?limit=${SHOPIFY_INDEXING_LIST_SIZE}&since_id=${since}&published_status=published&fields=id,handle,updated_at${extra}`, { timeoutMs: 20000 });
+    if (res.status === 401 || res.status === 403) {
+      await pool.query(`UPDATE shopify_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]);
+      await logShopifyAudit(connection.id, 'system', null, 'connection_lost', 'Shopify no longer accepts the connection: it needs to be reconnected', {}, 'connection'); throw shopifyThrow('auth_lost');
+    }
+    if (!res.ok) throw shopifyThrow(failCode, { status: res.status });
+    let batch = []; try { const body = await res.json(); batch = Object.values(body || {}).find(Array.isArray) || []; } catch (e) { batch = []; }
+    for (const it of batch) if (it && it.handle && it.id) { items.push(it); since = Math.max(since, it.id); }
+    if (batch.length < SHOPIFY_INDEXING_LIST_SIZE) break;
+  }
+  return items;
+}
+async function shopifyIndexingCount(connection, accessToken, path, state) {
+  if (state.requests >= SHOPIFY_INDEXING_MAX_API) return null; state.requests++;
+  try { const res = await shopifyApiRequest(connection.shop_domain, accessToken, `${path}?published_status=published`, { timeoutMs: 15000 }); if (!res.ok) return null; const n = (await res.json()).count; return Number.isFinite(n) ? n : null; } catch (e) { return null; }
+}
+// The pages to look at: the home page, then products, articles, collections and pages in turn (most recently updated first within each kind, so the sample covers every kind of page and the
+// templates behind them), up to 150. Also how many published items there are in all, and the path of every published item (to spot redirects that a live page makes useless).
+async function shopifyIndexingPages(connection, accessToken, storeUrl) {
+  const base = storeUrl.replace(/\/+$/, ''), state = { requests: 0 }, lists = { products: [], articles: [], collections: [], pages: [] }, totals = { products: 0, articles: 0, collections: 0, pages: 0 }, live = new Set();
+  const take = (kind, path, handle, updated) => { const url = base + path + encodeURIComponent(handle); lists[kind].push({ url, updated: String(updated || ''), kind }); live.add(shopifyIndexingKey(url)); };
+  for (const p of await shopifyIndexingList(connection, accessToken, '/products.json', '&status=active', state, 'read_products_failed')) take('products', '/products/', p.handle, p.updated_at);
+  for (const p of await shopifyIndexingList(connection, accessToken, '/pages.json', '', state, 'list_pages_failed')) take('pages', '/pages/', p.handle, p.updated_at);
+  for (const path of ['/custom_collections.json', '/smart_collections.json']) for (const c of await shopifyIndexingList(connection, accessToken, path, '', state, 'read_collections_failed')) take('collections', '/collections/', c.handle, c.updated_at);
+  let blogs = []; try { state.requests++; const r = await shopifyApiRequest(connection.shop_domain, accessToken, '/blogs.json?limit=50&fields=id,handle', { timeoutMs: 20000 }); if (r.status === 401 || r.status === 403) throw shopifyThrow('auth_lost'); blogs = r.ok ? ((await r.json().catch(() => ({}))).blogs || []).slice(0, 20) : []; } catch (e) { if (e.shopifyCode) throw e; }
+  for (const b of blogs) for (const a of await shopifyIndexingList(connection, accessToken, `/blogs/${Number(b.id)}/articles.json`, '', state, 'list_articles_failed')) take('articles', `/blogs/${encodeURIComponent(b.handle)}/`, a.handle, a.updated_at);
+  for (const kind of Object.keys(lists)) lists[kind].sort((x, y) => y.updated.localeCompare(x.updated));
+  const counted = { products: await shopifyIndexingCount(connection, accessToken, '/products/count.json', state), pages: await shopifyIndexingCount(connection, accessToken, '/pages/count.json', state) };
+  const cc = [await shopifyIndexingCount(connection, accessToken, '/custom_collections/count.json', state), await shopifyIndexingCount(connection, accessToken, '/smart_collections/count.json', state)]; counted.collections = cc.every(x => x !== null) ? cc[0] + cc[1] : null;
+  let art = 0, artKnown = true; for (const b of blogs) { const n = await shopifyIndexingCount(connection, accessToken, `/blogs/${Number(b.id)}/articles/count.json`, state); if (n === null) artKnown = false; else art += n; } counted.articles = artKnown ? art : null;
+  for (const kind of Object.keys(totals)) totals[kind] = Math.max(counted[kind] === null || counted[kind] === undefined ? 0 : counted[kind], lists[kind].length);
+  const urls = [{ url: base + '/', kind: 'home' }], order = ['products', 'articles', 'collections', 'pages'], cursor = { products: 0, articles: 0, collections: 0, pages: 0 }; let progressed = true;
+  while (urls.length < SHOPIFY_INDEXING_MAX_PAGES && progressed) { progressed = false; for (const kind of order) { if (urls.length >= SHOPIFY_INDEXING_MAX_PAGES) break; const it = lists[kind][cursor[kind]]; if (it) { cursor[kind]++; urls.push(it); progressed = true; } } }
+  const candidates = 1 + Object.values(lists).reduce((n, l) => n + l.length, 0);
+  return { base, urls, candidates, total: 1 + Object.values(totals).reduce((n, v) => n + v, 0), live, counts: { products: lists.products.length, articles: lists.articles.length, collections: lists.collections.length, pages: lists.pages.length } };
+}
+// The store's URL redirects table (path -> target), up to 2,000. If it cannot be read (the connection may not be allowed to read content) the table is simply not checked, and the answer says so.
+async function shopifyIndexingRedirects(connection, accessToken) {
+  const rows = []; let since = 0, truncated = false;
+  try {
+    for (let n = 0; n < Math.ceil(SHOPIFY_INDEXING_MAX_REDIRECTS / SHOPIFY_INDEXING_LIST_SIZE); n++) {
+      const res = await shopifyApiRequest(connection.shop_domain, accessToken, `/redirects.json?limit=${SHOPIFY_INDEXING_LIST_SIZE}&since_id=${since}&fields=id,path,target`, { timeoutMs: 20000 }); if (!res.ok) return { rows: [], skipped: true, truncated: false };
+      const batch = (await res.json().catch(() => ({}))).redirects; if (!Array.isArray(batch)) return { rows: [], skipped: true, truncated: false };
+      for (const r of batch) if (r && r.id && typeof r.path === 'string' && typeof r.target === 'string') { rows.push(r); since = Math.max(since, r.id); }
+      if (batch.length < SHOPIFY_INDEXING_LIST_SIZE) return { rows, skipped: false, truncated };
+    }
+    truncated = true;
+  } catch (e) { return { rows: [], skipped: true, truncated: false }; }
+  return { rows, skipped: false, truncated };
+}
+// What the redirects table says by itself: loops, chains (a redirect whose destination is itself redirected), redirects a live page makes useless (Shopify shows the page and ignores the redirect),
+// and destinations that do not open. Every redirect is followed to its end once; a chain is reported once, at its start, and a loop once, however many redirects are in it.
+async function shopifyIndexingTableChecks(base, rows, live, budget) {
+  const issues = [], baseHost = shopifyIndexingHost(base), at = p => base + p, map = new Map();
+  for (const r of rows) {
+    const path = r.path.startsWith('/') ? r.path : '/' + r.path, key = shopifyIndexingKey(at(path)); if (map.has(key)) continue;   // the first redirect for an address is the one Shopify uses
+    let tu; try { tu = new URL(r.target.trim(), base + '/'); } catch (e) { continue; }
+    const internal = shopifyIndexingHost(tu.href) === baseHost; map.set(key, { path, internal, targetKey: internal ? shopifyIndexingKey(tu.href) : null, targetUrl: tu.href });
+  }
+  const follow = start => {
+    const seen = [start]; let cur = start;
+    for (;;) {
+      const v = map.get(cur); if (!v.internal) return { seen, end: 'external', finalUrl: v.targetUrl };
+      if (seen.includes(v.targetKey)) return { seen, end: 'loop', cycleStart: v.targetKey };
+      if (!map.has(v.targetKey)) return { seen, end: 'page', finalUrl: v.targetUrl };
+      if (seen.length >= 12) return { seen, end: 'long', finalUrl: v.targetUrl };
+      seen.push(v.targetKey); cur = v.targetKey;
+    }
+  };
+  const targetedBy = new Set([...map.values()].filter(v => v.internal).map(v => v.targetKey)), reported = new Set(), finals = new Map();
+  for (const key of map.keys()) {
+    const v = map.get(key), r = follow(key);
+    if (live.has(key)) issues.push({ type: 'store_redirect_shadowed', url: at(v.path), params: { from: v.path } });
+    if (r.end === 'loop') { const cycle = r.seen.slice(r.seen.indexOf(r.cycleStart)).sort(), id = cycle.join('|'); if (!reported.has(id)) { reported.add(id); const first = cycle.map(k => map.get(k).path).sort()[0]; issues.push({ type: 'store_redirect_loop', url: at(first), params: { from: first } }); } continue; }
+    if (r.seen.length >= 2 && !targetedBy.has(key)) issues.push({ type: 'store_redirect_chain', url: at(v.path), params: { from: v.path, hops: r.seen.length, to: r.finalUrl } });
+    if (r.end === 'page') { const fk = shopifyIndexingKey(r.finalUrl); if (!finals.has(fk)) finals.set(fk, { url: r.finalUrl, key: fk, sources: [] }); finals.get(fk).sources.push(v.path); }
+  }
+  let looked = 0;
+  for (const f of finals.values()) {
+    if (looked >= SHOPIFY_INDEXING_MAX_TARGETS) break; if (live.has(f.key)) continue; looked++;   // an address that is a published page is known to open
+    const c = await shopifyIndexingChase(f.url, budget); if (c.budgetOut) break;
+    if (c.final && c.final.status >= 400) issues.push({ type: 'store_redirect_target_error', url: at(f.sources[0]), params: { to: f.url, status: c.final.status, count: f.sources.length } });
+  }
+  return issues;
+}
+// Problems that concern the whole store: does http:// lead to https://, do www and non-www both open, and does the store's own myshopify.com address lead to the main address?
+async function shopifyIndexingSiteChecks(base, shopDomain, budget) {
+  const issues = [], origin = new URL(base).origin, host = new URL(origin).host;
+  const http = await shopifyIndexingChase(origin.replace(/^https:/, 'http:') + '/', budget);
+  if (http.final && http.final.status === 200 && http.final.url.startsWith('http:')) issues.push({ type: 'http_not_redirected', url: origin + '/', params: {} });
+  else if (http.hops.length && [302, 303, 307].includes(http.hops[0].status) && http.final && http.final.url.startsWith('https:')) issues.push({ type: 'http_redirect_temporary', url: origin + '/', params: { status: http.hops[0].status } });
+  const other = host.startsWith('www.') ? host.slice(4) : 'www.' + host, alt = await shopifyIndexingChase(`https://${other}/`, budget);
+  if (alt.final && alt.final.status === 200 && new URL(alt.final.url).host === other) issues.push({ type: 'www_both_serve', url: origin + '/', params: { host, other } });
+  if (shopDomain && shopDomain.toLowerCase() !== host) { const my = await shopifyIndexingChase(`https://${shopDomain}/`, budget); if (my.final && my.final.status === 200 && new URL(my.final.url).host.toLowerCase() === shopDomain.toLowerCase()) issues.push({ type: 'myshopify_not_redirected', url: `https://${shopDomain}/`, params: { shop: shopDomain, host } }); }
+  return issues;
+}
+// A store behind a storefront password sends everyone, search engines included, to its password page.
+const shopifyIndexingIsPassword = fin => { try { return !!fin && (new URL(fin.url).pathname.replace(/\/+$/, '') === '/password' || (fin.text !== null && fin.text !== undefined && /<form[^>]+action=["'][^"']*\/password/i.test(fin.text))); } catch (e) { return false; } };
+// The whole check: the pages and the redirects table, robots.txt, the store-wide checks, every page (5 at a time, within the time and request limits), then the pages that canonical tags point to.
+async function shopifyIndexingRun(connection, accessToken, storeUrl) {
+  const pages = await shopifyIndexingPages(connection, accessToken, storeUrl), table = await shopifyIndexingRedirects(connection, accessToken), base = pages.base;
+  const budget = { fetches: 0, deadline: Date.now() + SHOPIFY_INDEXING_DEADLINE_MS }, redirects = { read: table.rows.length, skipped: table.skipped, truncated: table.truncated };
+  const homeProbe = await shopifyIndexingChase(base + '/', budget);
+  if (shopifyIndexingIsPassword(homeProbe.final)) return { pagesTotal: pages.total, pagesChecked: 1, partial: false, counts: { severity: { high: 1, medium: 0, low: 0 }, groups: { site: 1, redirect: 0, noindex: 0, canonical: 0, table: 0 }, ok: 0, noindexPages: 0, total: 1, redirects }, issues: [{ type: 'store_password', group: 'site', severity: 'high', url: base + '/', params: {} }], issuesTruncated: false };
+  const robotsRes = await shopifyPublicFetch(base + '/robots.txt'); budget.fetches++;
+  const robots = robotsRes && robotsRes.ok && robotsRes.text !== null ? shopifyRobotsRules(robotsRes.text) : null, ctx = { base, budget, robots };
+  const issues = [...await shopifyIndexingSiteChecks(base, connection.shop_domain, budget), ...await shopifyIndexingTableChecks(base, table.rows, pages.live, budget)], results = []; let next = 0;
+  await Promise.all(Array.from({ length: SHOPIFY_INDEXING_CONCURRENCY }, async () => { while (next < pages.urls.length) { const p = pages.urls[next++]; if (budget.fetches >= SHOPIFY_INDEXING_MAX_FETCHES || Date.now() >= budget.deadline) return; results.push(await shopifyIndexingCheckPage(p.url, ctx)); } }));
+  const checked = results.filter(r => !r.skipped), byKey = new Map(checked.map(r => [shopifyIndexingKey(r.finalUrl || r.url), r])), targets = new Map();
+  for (const r of checked) { if (r.canonical && !r.canonicalSelf && shopifyIndexingHost(r.canonical) === shopifyIndexingHost(base)) { const k = shopifyIndexingKey(r.canonical), known = byKey.get(k);
+    if (known) { if (known.canonical && !known.canonicalSelf) r.issues.push({ type: 'canonical_chain', url: r.url, params: { to: r.canonical } }); } else if (!targets.has(k)) targets.set(k, r.canonical); } }
+  const verdict = new Map(); let t = 0; for (const [k, target] of targets) { if (t++ >= SHOPIFY_INDEXING_MAX_TARGETS) break; const c = await shopifyIndexingChase(target, budget); if (c.budgetOut) break; verdict.set(k, c.unreachable || c.loop || c.tooMany ? { unreachable: true } : c.hops.length ? { status: c.hops[0].status } : c.final.status !== 200 ? { status: c.final.status } : null); }
+  for (const r of checked) if (r.canonical && !r.canonicalSelf) { const v = verdict.get(shopifyIndexingKey(r.canonical)); if (v) r.issues.push(v.unreachable ? { type: 'canonical_target_unreachable', url: r.url, params: { to: r.canonical } } : { type: 'canonical_target_error', url: r.url, params: { to: r.canonical, status: v.status } }); }
+  for (const r of checked) issues.push(...r.issues);
+  const home = shopifyIndexingKey(base + '/'), rank = { high: 0, medium: 1, low: 2 }, groupRank = { site: 0, redirect: 1, noindex: 2, canonical: 3, table: 4 };
+  const found = issues.map(i => { const [group, sev] = SHOPIFY_INDEXING_ISSUES[i.type] || ['redirect', 'low']; return { type: i.type, group, severity: (i.type === 'noindex_meta' || i.type === 'blocked_robots') && shopifyIndexingKey(i.url) === home ? 'high' : sev, url: i.url, params: i.params || {} }; });
+  found.sort((a, b) => rank[a.severity] - rank[b.severity] || groupRank[a.group] - groupRank[b.group] || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0));
+  const sev = { high: 0, medium: 0, low: 0 }, groups = { site: 0, redirect: 0, noindex: 0, canonical: 0, table: 0 }; for (const i of found) { sev[i.severity]++; groups[i.group]++; }
+  const withIssue = new Set(found.filter(i => i.group === 'redirect' || i.group === 'noindex' || i.group === 'canonical').map(i => shopifyIndexingKey(i.url)));
+  return { pagesTotal: pages.total, pagesChecked: checked.length, partial: checked.length < pages.urls.length || pages.candidates > pages.urls.length, counts: { severity: sev, groups, ok: checked.filter(r => !withIssue.has(shopifyIndexingKey(r.url))).length, noindexPages: checked.filter(r => r.noindex).length, total: found.length, redirects }, issues: found.slice(0, SHOPIFY_INDEXING_MAX_ISSUES), issuesTruncated: found.length > SHOPIFY_INDEXING_MAX_ISSUES };
+}
+const shopifyIndexingRunning = new Set();
+const shopifyIndexingSummary = row => row && ({ id: row.id, checkedAt: row.checked_at, pagesTotal: row.pages_total, pagesChecked: row.pages_checked, partial: row.partial, counts: row.counts });
+const shopifyIndexingFull = row => row && ({ ...shopifyIndexingSummary(row), issues: row.issues || [], issuesTruncated: !!(row.counts && row.counts.total > (row.issues || []).length) });
+async function shopifyIndexingRouteContext(req) {
+  if (!(await userOwnsBusiness(req))) return { status: 404, failure: shopifyFail('business_not_found') };
+  const connection = (await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id])).rows[0];
+  if (!connection) return { status: 404, failure: shopifyFail('no_store') };
+  if (connection.connection_status !== 'connected') return { status: 400, failure: shopifyFail('store_disconnected') };
+  const accessToken = decryptSecret(connection.access_token_encrypted);
+  return { connection, accessToken, storeUrl: await getShopifyStoreUrl(connection, accessToken) };
+}
+app.post('/api/business/:id/shopify/indexing/check', authRequired, async (req, res) => {
+  let lockId = null;
+  try {
+    const ctx = await shopifyIndexingRouteContext(req); if (ctx.failure) return res.status(ctx.status).json(ctx.failure);
+    if (shopifyIndexingRunning.has(ctx.connection.id)) return res.status(409).json(shopifyFail('indexing_running')); shopifyIndexingRunning.add(lockId = ctx.connection.id);
+    const run = await shopifyIndexingRun(ctx.connection, ctx.accessToken, ctx.storeUrl);
+    const row = (await pool.query(`INSERT INTO shopify_indexing_checks (shopify_connection_id, pages_total, pages_checked, partial, counts, issues, checked_at) VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING *`, [ctx.connection.id, run.pagesTotal, run.pagesChecked, run.partial, JSON.stringify(run.counts), JSON.stringify(run.issues)])).rows[0];
+    await pool.query(`DELETE FROM shopify_indexing_checks WHERE shopify_connection_id = $1 AND id NOT IN (SELECT id FROM shopify_indexing_checks WHERE shopify_connection_id = $1 ORDER BY checked_at DESC LIMIT ${SHOPIFY_INDEXING_KEEP})`, [ctx.connection.id]);
+    await logShopifyAudit(ctx.connection.id, 'user', req.userId, 'indexing_checked', `Checked indexing and redirects: ${run.pagesChecked} of ${run.pagesTotal} pages, ${run.counts.total} issue(s) found`, { pagesChecked: run.pagesChecked, pagesTotal: run.pagesTotal, issuesFound: run.counts.total, high: run.counts.severity.high, partial: run.partial }, 'general');
+    res.json({ success: true, check: shopifyIndexingFull(row) });
+  } catch (err) {
+    console.error('Shopify indexing check error:', err.message);
+    if (err.shopifyCode) return res.status(err.shopifyCode === 'auth_lost' ? 400 : 502).json(shopifyFail(err.shopifyCode, err.shopifyParams || undefined));
+    res.status(500).json(shopifyFail('indexing_failed'));
+  } finally { if (lockId) shopifyIndexingRunning.delete(lockId); }
+});
+app.get('/api/business/:id/shopify/indexing/latest', authRequired, async (req, res) => {
+  try {
+    if (!(await userOwnsBusiness(req))) return res.status(404).json(shopifyFail('business_not_found'));
+    const connection = (await pool.query('SELECT * FROM shopify_connections WHERE business_id = $1', [req.params.id])).rows[0]; if (!connection) return res.status(404).json(shopifyFail('no_store'));
+    const rows = (await pool.query('SELECT * FROM shopify_indexing_checks WHERE shopify_connection_id = $1 ORDER BY checked_at DESC LIMIT $2', [connection.id, SHOPIFY_INDEXING_KEEP])).rows;
+    res.json({ check: shopifyIndexingFull(rows[0]) || null, history: rows.map(shopifyIndexingSummary) });
+  } catch (err) { console.error('Shopify indexing history error:', err.message); res.status(500).json(shopifyFail('indexing_load_failed')); }
 });
 
 // shopify-own:end
