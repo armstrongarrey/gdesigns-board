@@ -2654,6 +2654,14 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             </div>
             <div style="font-size:11px;color:var(--muted);margin:8px 0 12px" data-i18n="web.technical_seo_description">Real Core Web Vitals from Google's own Lighthouse engine, plus a robots.txt check for anything blocking search engines. Can take up to a minute to run.</div>
             <div id="shopifyTechnicalSeoContent"></div>
+            <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+                <div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:600;color:var(--text)" data-i18n="shopify.indexing.title">Indexing &amp; redirects check</div>
+                  <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="shopify.indexing.desc">Looks at your home page and your most recently updated products, collections, pages and articles the way a search engine does, and reads your store's URL redirects: redirects, "noindex" settings, canonical tags, loops and dead destinations. It only reads your store and changes nothing.</div></div>
+                <button class="btn-primary" onclick="runShopifyIndexingCheck()" id="shopifyIndexingBtn" data-i18n="shopify.indexing.run">Run Indexing Check</button>
+              </div>
+              <div id="shopifyIndexingContent" style="margin-top:10px"></div>
+            </div>
           </div>
         <div class="wt-card" id="shopifyBrokenLinksSection">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
@@ -8691,6 +8699,7 @@ async function loadShopifyStatus() {
     if (webHas('sitemap')) loadShopifySitemapStatus();
     if (webHas('competitor')) loadCompetitorAnalysis('shopify');
     if (webHas('technical_seo')) loadTechnicalSeoHistory('shopify');
+  if (webHas('technical_seo')) loadShopifyIndexing();
     applyWebsitePlanLocks(); applyShopifyPlanLocks();
     renderWebsiteUsageBar();
     renderJumpNav('shopify');
@@ -8839,6 +8848,57 @@ async function checkShopifySitemap() {
 }
 // shopify-own:end
 
+// shopify-own:start
+// ── Shopify indexing check: redirects, "noindex", canonical tags and the store's URL redirects ───────────────────────────────────────────
+// Shopify's own texts (shopify.*). Every finding arrives as a kind and its facts; the sentence (with the fix) is written here, in the reader's language.
+const SHOPIFY_INDEXING_GROUPS = ['site', 'redirect', 'noindex', 'canonical', 'table'], SHOPIFY_SEVERITY_COLOR = { high: '#ff6b6b', medium: '#f59e0b', low: '#94a3b8' };
+const shopifyWhen = iso => new Date(iso).toLocaleString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' });
+function shopifyIndexingIssueText(issue) {
+  const p = { ...(issue.params || {}) }; if (p.where) p.where = t('shopify.indexing.where.' + p.where);
+  const key = 'shopify.indexing.issue.' + issue.type, text = tf(key, p);
+  return text && text !== key ? text : tf('shopify.indexing.issue.unknown', { type: issue.type });
+}
+function renderShopifyIndexing(check, history) {
+  const el = document.getElementById('shopifyIndexingContent'); if (!el) return;
+  if (!check) { el.innerHTML = shopifyNote(escapeHtml(t('shopify.indexing.none_yet')), 'var(--muted)'); return; }
+  const c = check.counts || {}, sev = c.severity || {}, groups = c.groups || {}, red = c.redirects || {}, issues = check.issues || [];
+  let html = shopifyNote(escapeHtml(tf('shopify.indexing.summary', { checked: check.pagesChecked, total: check.pagesTotal, when: shopifyWhen(check.checkedAt) })), 'var(--text)');
+  if (check.partial) html += shopifyNote(escapeHtml(t('shopify.indexing.partial')), '#f59e0b');
+  if (red.skipped) html += shopifyNote(escapeHtml(t('shopify.indexing.redirects_skipped')), '#f59e0b');
+  else if (red.read !== undefined) html += shopifyNote(escapeHtml(red.read ? tf('shopify.indexing.redirects_read', { n: red.read }) : t('shopify.indexing.redirects_none')), 'var(--text2)');
+  if (red.truncated) html += shopifyNote(escapeHtml(t('shopify.indexing.redirects_truncated')), '#f59e0b');
+  if (!c.total) html += shopifyNote(escapeHtml(tf('shopify.indexing.all_ok', { checked: check.pagesChecked })), '#22c55e');
+  else {
+    html += shopifyNote(escapeHtml(tf('shopify.indexing.totals', { high: sev.high || 0, medium: sev.medium || 0, low: sev.low || 0 })), 'var(--text2)');
+    for (const g of SHOPIFY_INDEXING_GROUPS) {
+      const list = issues.filter(i => i.group === g); if (!list.length && !groups[g]) continue;
+      html += `<div style="font-size:11.5px;font-weight:600;color:var(--muted);margin:14px 0 4px;text-transform:uppercase">${t('shopify.indexing.group.' + g)} (${groups[g] || list.length})</div>` + list.map(i => `<div style="padding:8px 0;border-top:1px solid var(--border)"><div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap"><span style="font-size:10px;font-weight:700;color:${SHOPIFY_SEVERITY_COLOR[i.severity] || '#94a3b8'};border:1px solid ${SHOPIFY_SEVERITY_COLOR[i.severity] || '#94a3b8'};border-radius:10px;padding:1px 7px;text-transform:uppercase">${escapeHtml(t('shopify.indexing.severity.' + i.severity))}</span><span style="font-size:12px;color:var(--text);word-break:break-all;flex:1;min-width:0">${escapeHtml(i.url)}</span></div><div style="font-size:11.5px;color:var(--text2);line-height:1.55;margin-top:4px">${escapeHtml(shopifyIndexingIssueText(i))}</div></div>`).join('');
+    }
+    if (check.issuesTruncated) html += shopifyNote(escapeHtml(tf('shopify.indexing.truncated', { shown: issues.length, total: c.total })), '#f59e0b');
+  }
+  const earlier = (history || []).filter(h => h.id !== check.id).slice(0, 4);
+  if (earlier.length) html += `<div style="font-size:11.5px;font-weight:600;color:var(--muted);margin:14px 0 4px;text-transform:uppercase">${t('shopify.indexing.history_title')}</div>` + earlier.map(h => `<div style="font-size:11.5px;color:var(--text2)">${escapeHtml(tf('shopify.indexing.history_line', { when: shopifyWhen(h.checkedAt), issues: (h.counts && h.counts.total) || 0 }))}</div>`).join('');
+  el.innerHTML = html;
+}
+async function loadShopifyIndexing(afterRun) {
+  if (!document.getElementById('shopifyIndexingContent')) return;
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/indexing/latest`), data = await res.json().catch(() => ({}));
+    if (res.ok && !(afterRun && !data.check)) renderShopifyIndexing(data.check || null, data.history || []);   // a refresh after a run only adds the history: it never replaces the result just shown with "nothing"
+  } catch (e) { /* the earlier result is simply not shown; the button still works */ }
+}
+async function runShopifyIndexingCheck() {
+  const btn = document.getElementById('shopifyIndexingBtn'), box = document.getElementById('shopifyIndexingContent'); btn.disabled = true; btn.textContent = t('shopify.indexing.running_btn');
+  box.innerHTML = shopifyNote(escapeHtml(t('shopify.indexing.running_note')), 'var(--muted)');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/indexing/check`, { method: 'POST' }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { box.innerHTML = shopifyNote(escapeHtml(shopifyServerText(data) || t('board.connection_error')), '#ff8080'); return; }
+    renderShopifyIndexing(data.check, []); loadShopifyIndexing(true);
+  } catch (e) { box.innerHTML = shopifyNote(escapeHtml(t('board.connection_error')), '#ff8080'); }
+  finally { btn.disabled = false; btn.textContent = t('shopify.indexing.run'); }
+}
+// shopify-own:end
+
 async function loadShopifySitemapStatus() {
   const contentEl = document.getElementById('shopifySitemapContent');
   try {
@@ -8893,9 +8953,10 @@ function shopifyLogText(entry) {
     return d.count ? tf(d.autoApplied ? 'shopify.log.result.made_auto' : 'shopify.log.result.made', { looked, count: d.count, autoApplied: d.autoApplied || 0 }) : tf('shopify.log.result.none', { looked });
   }
   const key = 'shopify.log.' + type, probe = t(key); if (!probe || probe === key) return (entry && entry.description) || '';
+  if (type === 'indexing_checked' && d.pagesChecked === undefined) return (entry && entry.description) || '';
   if (SHOPIFY_LOG_CHANGE_KINDS.includes(type) && !d.change) return (entry && entry.description) || '';   // the facts this sentence needs are missing: show the stored English sentence rather than half a sentence
   return tf(key, { title: d.title || '', change: shopifyChangeText(d.change, true), how: t(d.published ? 'shopify.log.word_published' : 'shopify.log.word_draft'), state: t(d.automationMode === 'automatic' ? 'shopify.log.state_on' : 'shopify.log.state_off'),
-    issuesFound: d.issuesFound || 0, autoFixed: d.autoFixed || 0, pendingApproval: d.pendingApproval || 0, brokenCount: d.brokenCount || 0, shop: d.shop || '', verdict: t('shopify.log.verdict_' + (d.verdict === 'complete' || d.verdict === 'incomplete' ? d.verdict : 'none')) });
+    issuesFound: d.issuesFound || 0, autoFixed: d.autoFixed || 0, pendingApproval: d.pendingApproval || 0, brokenCount: d.brokenCount || 0, checked: d.pagesChecked || 0, total: d.pagesTotal || 0, shop: d.shop || '', verdict: t('shopify.log.verdict_' + (d.verdict === 'complete' || d.verdict === 'incomplete' ? d.verdict : 'none')) });
 }
 const SHOPIFY_ACTIVITY_LOG_FEATURES = [
   { key: 'all', labelKey: 'shopify.log.feature.all' }, { key: 'seo_proposals', labelKey: 'shopify.log.feature.seo_proposals' }, { key: 'taxonomy', labelKey: 'shopify.log.feature.taxonomy' },
