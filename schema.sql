@@ -2284,3 +2284,13 @@ CREATE TABLE IF NOT EXISTS wordpress_approval_tasks (
   last_count INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ── Shopify approvals in the Action Center (Shopify's own table) ───────────────────────────────────────────────────────────────────
+-- Remembers the one task made for a business's suggested changes and how many were waiting at the last look, so a task the person closed or deleted
+-- comes back only when MORE are waiting. task_id becomes empty if the task is deleted.
+CREATE TABLE IF NOT EXISTS shopify_approval_tasks (
+  business_id UUID PRIMARY KEY REFERENCES businesses(id) ON DELETE CASCADE,
+  task_id UUID REFERENCES action_tasks(id) ON DELETE SET NULL,
+  last_count INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
