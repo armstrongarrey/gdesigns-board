@@ -8963,11 +8963,69 @@ async function wordpressApprovalTaskSync(businessId, ownerId, plan) {
 }
 
 // wordpress-own:end
+// shopify-own:start
+// ── Shopify approvals in the Action Center ────────────────────────────────────────────────────────────────────────────────────────────
+// Suggested changes waiting for approval appear in the Action Center as ONE task per store ("Review 3 suggested changes for garden.myshopify.com"), not one per suggestion, so a large audit cannot bury the
+// board. The task is kept current by itself: its count follows the real number waiting, it closes when everything has been reviewed, and it reopens when new suggestions arrive. What the person does
+// with it is respected: a task they mark done or delete does not come back until MORE suggestions are waiting than when they dismissed it. Both languages are stored with the task. Nothing here is shared with WordPress.
+const SHOPIFY_TASK_SOURCE = 'website_shopify';
+const SHOPIFY_TASK_TEXT = {
+  en: { title_one: 'Review 1 suggested change for {host}', title_many: 'Review {n} suggested changes for {host}', desc: 'Your Shopify store has suggested changes waiting for your approval. Open the Website section and approve or reject each one: nothing changes in your store until you approve.', age_today: 'The oldest arrived today.', age_one: 'The oldest has been waiting 1 day.', age_many: 'The oldest has been waiting {days} days.' },
+  fr: { title_one: 'Examiner 1 modification suggérée pour {host}', title_many: 'Examiner {n} modifications suggérées pour {host}', desc: "Votre boutique Shopify a des modifications suggérées en attente de votre approbation. Ouvrez la section Site web et approuvez ou refusez chacune d'elles : rien ne change dans votre boutique tant que vous n'avez pas approuvé.", age_today: "La plus ancienne est arrivée aujourd'hui.", age_one: 'La plus ancienne attend depuis 1 jour.', age_many: 'La plus ancienne attend depuis {days} jours.' },
+};
+const shopifyTaskWords = (lang, key, params) => String(SHOPIFY_TASK_TEXT[lang === 'fr' ? 'fr' : 'en'][key] || key).replace(/\{(\w+)\}/g, (m, k) => (params && params[k] !== undefined ? String(params[k]) : m));
+// The task's words in one language: the title says how many and for which site; the description says what to do and how long the oldest has waited.
+function shopifyApprovalTaskWords(lang, n, host, days) {
+  const age = days >= 2 ? shopifyTaskWords(lang, 'age_many', { days }) : days === 1 ? shopifyTaskWords(lang, 'age_one') : shopifyTaskWords(lang, 'age_today');
+  return { title: shopifyTaskWords(lang, n === 1 ? 'title_one' : 'title_many', { n, host }), description: `${shopifyTaskWords(lang, 'desc')} ${age}` };
+}
+// Keeps the site's approval task in line with the suggestions really waiting. Never throws (the Action Center must open whatever happens here).
+async function shopifyApprovalTaskSync(businessId, ownerId, plan) {
+  try {
+    const conn = (await pool.query('SELECT id, shop_domain FROM shopify_connections WHERE business_id = $1 ORDER BY connected_at ASC NULLS LAST LIMIT 1', [businessId])).rows[0];
+    const state = (await pool.query('SELECT * FROM shopify_approval_tasks WHERE business_id = $1', [businessId])).rows[0];
+    if (!conn || !planHasWebsiteFeature(plan, 'proposed_changes')) {   // nothing to manage (no site, or a plan without approvals): remove what this feature made, and only that
+      if (state && state.task_id) await pool.query('DELETE FROM action_tasks WHERE id = $1 AND source = $2', [state.task_id, SHOPIFY_TASK_SOURCE]);
+      if (state) await pool.query('DELETE FROM shopify_approval_tasks WHERE business_id = $1', [businessId]);
+      return;
+    }
+    const waiting = (await pool.query(`SELECT COUNT(*)::int AS n, MIN(created_at) AS oldest FROM shopify_actions WHERE shopify_connection_id = $1 AND approval_status = 'pending'`, [conn.id])).rows[0], n = waiting.n;
+    const days = waiting.oldest ? Math.max(0, Math.floor((Date.now() - new Date(waiting.oldest)) / 864e5)) : 0, host = String(conn.shop_domain);   // a store's own address is already just a host name
+    const en = shopifyApprovalTaskWords('en', n, host, days), fr = shopifyApprovalTaskWords('fr', n, host, days), priority = days >= 7 || n >= 10 ? 'high' : 'medium', detail = JSON.stringify({ platform: 'shopify', count: n });
+    const task = state && state.task_id ? (await pool.query('SELECT * FROM action_tasks WHERE id = $1', [state.task_id])).rows[0] : null, last = state ? state.last_count : 0;
+    const make = async () => (await pool.query(`INSERT INTO action_tasks (business_id, owner_id, title, title_fr, description, description_fr, priority, category, source, source_detail) VALUES ($1, $2, $3, $4, $5, $6, $7, 'website', $8, $9) RETURNING id`, [businessId, ownerId, en.title, fr.title, en.description, fr.description, priority, SHOPIFY_TASK_SOURCE, detail])).rows[0].id;
+    const refresh = (id, status) => pool.query(`UPDATE action_tasks SET title = $2, title_fr = $3, description = $4, description_fr = $5, priority = $6, source_detail = $7, status = COALESCE($8, status), completed_at = CASE WHEN $8 = 'not_started' THEN NULL ELSE completed_at END, updated_at = NOW() WHERE id = $1`, [id, en.title, fr.title, en.description, fr.description, priority, detail, status || null]);
+    if (!state) {
+      if (n === 0) return;
+      const claimed = await pool.query(`INSERT INTO shopify_approval_tasks (business_id, last_count) VALUES ($1, $2) ON CONFLICT (business_id) DO NOTHING RETURNING business_id`, [businessId, n]);
+      if (!claimed.rows.length) return;   // another page or the background check just made it: only one of them does
+      await pool.query('UPDATE shopify_approval_tasks SET task_id = $2, updated_at = NOW() WHERE business_id = $1', [businessId, await make()]); return;
+    }
+    if (n === 0) {   // everything has been reviewed: the task closes itself
+      if (task && task.status !== 'done') await pool.query(`UPDATE action_tasks SET status = 'done', completed_at = NOW(), updated_at = NOW() WHERE id = $1`, [task.id]);
+      await pool.query('UPDATE shopify_approval_tasks SET last_count = 0, updated_at = NOW() WHERE business_id = $1', [businessId]); return;
+    }
+    if (!task) {   // the person deleted it (or it was never made): it comes back only if more are waiting than when they dismissed it
+      if (n > last) await pool.query('UPDATE shopify_approval_tasks SET task_id = $2, last_count = $3, updated_at = NOW() WHERE business_id = $1', [businessId, await make(), n]);
+      else await pool.query('UPDATE shopify_approval_tasks SET last_count = $2, updated_at = NOW() WHERE business_id = $1', [businessId, n]);
+      return;
+    }
+    if (task.status === 'done') {   // closed by itself (nothing was waiting) or by the person: reopened only by NEW suggestions
+      if (last === 0 || n > last) await refresh(task.id, 'not_started');
+      await pool.query('UPDATE shopify_approval_tasks SET last_count = $2, updated_at = NOW() WHERE business_id = $1', [businessId, n]); return;
+    }
+    if (task.title !== en.title || task.description !== en.description || task.priority !== priority || task.title_fr !== fr.title) await refresh(task.id, null);
+    await pool.query('UPDATE shopify_approval_tasks SET last_count = $2, updated_at = NOW() WHERE business_id = $1', [businessId, n]);
+  } catch (err) { console.error('Shopify approval task sync error (the Action Center opens as it was):', err.message); }
+}
+
+// shopify-own:end
 // tasks-website:start
 // ── Website approvals in the Action Center: the part that is the same for every kind of website ──────────────────────────────────────────
 // Each kind of website registers how to keep ITS approvals task current; this part only runs them, when the Action Center is opened and in the background check. Nothing platform-specific is decided here.
 const WEBSITE_TASK_SOURCES = {
   wordpress: { sync: wordpressApprovalTaskSync },
+  shopify: { sync: shopifyApprovalTaskSync },
 };
 async function syncWebsiteApprovalTasks(businessId, ownerId, plan) { for (const source of Object.values(WEBSITE_TASK_SOURCES)) await source.sync(businessId, ownerId, plan); }
 // The background check: every business of the owner, so the tasks (and the home page's list of urgent tasks) are current without anyone opening the Action Center.
