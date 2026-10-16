@@ -2260,3 +2260,17 @@ CREATE TABLE IF NOT EXISTS wordpress_reports (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (website_connection_id, kind, period_end)
 );
+
+-- ── The Shopify website report (Shopify's own table) ──────────────────────────────────────────────────────────────────────────────
+-- Shown in the Reports Center: the 12 newest of each kind per store are kept.
+CREATE TABLE IF NOT EXISTS shopify_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  shopify_connection_id UUID NOT NULL REFERENCES shopify_connections(id) ON DELETE CASCADE,
+  kind VARCHAR(10) NOT NULL,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  content JSONB NOT NULL,
+  created_by UUID,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (shopify_connection_id, kind, period_end)
+);
