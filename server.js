@@ -544,6 +544,7 @@ const WEBSITE_ROUTES = [
   // proposed changes: reviewing/approving is Pro+, generating new proposals is Business+
   ['*',    routeRx(BIZ_PATH + '/(website|shopify)/actions(/[^/]+/(approve|execute|re-verify|confirm-manually|reject|undo|featured-image-preview))?'), 'proposed_changes'],
   ['POST', routeRx(BIZ_PATH + '/website/(seo-proposals|duplicate-title-proposals|taxonomy-proposals|featured-image-proposals)'), 'find_improve_seo'],
+  ['POST', routeRx(BIZ_PATH + '/website/(thin-content-proposals|heading-proposals)'), 'find_improve_seo'],
   ['POST', routeRx(BIZ_PATH + '/shopify/featured-image-proposals'), 'find_improve_seo'],
   ['POST', routeRx(BIZ_PATH + '/shopify/(tag-proposals|duplicate-title-proposals)'), 'find_improve_seo'],
   ['GET',  routeRx(BIZ_PATH + '/(website|shopify)/featured-images'), 'find_improve_seo'],
@@ -3432,6 +3433,7 @@ function featureForActionType(actionType) {
   if (actionType === 'assign_taxonomy' || actionType === 'create_category' || actionType === 'create_tag') return 'taxonomy';
   if (actionType === 'generate_featured_image') return 'featured_images';
   if (actionType === 'remove_broken_link' || actionType === 'update_link_url') return 'broken_links';
+  if (WORDPRESS_CONTENT_TYPES.includes(actionType)) return 'seo_proposals';
   return 'general';
 }
 
@@ -6381,6 +6383,7 @@ async function getWordPressContentForAnalysis(connection, decryptedPassword) {
 async function reVerifyWebsiteAction(action, connection, decryptedPassword) {
   const wpType = action.target_type === 'post' ? 'posts' : 'pages';
   const change = action.edited_change || action.proposed_change;
+  if (WORDPRESS_CONTENT_TYPES.includes(action.action_type)) return await wordpressReVerifyContent(action, connection, decryptedPassword);
 
   try {
     if (change.metaTitle) {
@@ -6767,6 +6770,7 @@ async function executeWebsiteAction(action, connection, decryptedPassword) {
   }
 
   try {
+    if (WORDPRESS_CONTENT_TYPES.includes(action.action_type)) return await wordpressExecuteContentAction(action, connection, decryptedPassword);
     if (change.oldUrl && change.newUrl) {
       // Changes only the address of the one link, keeping its text and the rest of the tag. Reads the page's current content right before editing.
       const readRes = await wpApiRequest(connection.site_url, connection.wp_username, decryptedPassword, `/wp/v2/${wpType}/${action.target_wp_id}?context=edit&_fields=content`, { timeoutMs: 15000 });
@@ -8189,6 +8193,10 @@ const WORDPRESS_TEXT = {
   poll_mode_indexing: 'This check needs a WordPress connection that Arreyon can read directly. Sites connected in poll mode cannot be read from here.',
   goal_metrics_failed: 'Could not load the website measures.', reports_failed: 'Could not build the report. Please try again.', reports_load_failed: 'Could not load the reports.', report_not_found: 'That report does not exist.', report_kind_invalid: 'Choose a weekly or a monthly report.', report_format_invalid: 'Choose pdf or docx.', report_export_failed: 'Could not prepare the download. Please try again.',
   indexing_failed: 'Could not run the check. Please try again.', indexing_no_pages: 'No published pages were found on this site, so there is nothing to check.', indexing_load_failed: 'Could not load the check results.', indexing_running: 'A check is already running for this site. Please wait for it to finish.',
+  content_poll_mode: 'Checking page content directly is not available for a poll-mode connection yet.', content_disconnected: 'This website is disconnected. Please reconnect it first.', content_auth_expired: 'This Application Password is no longer valid. Please reconnect your website.', content_read_failed: 'Could not read the pages of this site. Please try again.', content_generate_failed: 'Could not prepare the suggestions. Please try again.',
+  content_none_thin: 'No thin pages needing more content were found: nothing to propose right now.', content_none_headings: 'No heading problems were found: nothing to propose right now.',
+  content_changed: 'This page was edited after the suggestion was made, so it was not changed. Run the check again.', content_builder: 'This page is built with a page builder, which this change cannot safely edit.', content_unreadable: "Could not read this page's current content.", content_unsupported: 'The content of this page cannot be changed safely in this way.', content_write_rejected: 'WordPress rejected saving this change.', content_verify_unconfirmed: 'The change was saved, but it could not be confirmed. Please check the page manually.', content_verify_failed: 'The change was saved, but the page does not yet show it as expected.', content_failed: 'Something went wrong while changing this page. Nothing was changed.',
+  content_undo_not_applied: 'Only a content change that was applied can be undone.', content_undo_expired: 'This change is too old to undo here. Restore the page from its revisions in WordPress.', content_undo_edited: "This page was edited after the change, so it cannot be undone automatically. Restore it from the page's revisions in WordPress.", content_undo_unreadable: "Could not read the page's current content.", content_undo_rejected: 'WordPress rejected restoring the page.',
 };
 const wordpressFormat = (code, params) => String(WORDPRESS_TEXT[code] || code).replace(/\{(\w+)\}/g, (m, k) => (params && params[k] !== undefined ? String(params[k]) : m));
 const wordpressFail = (code, params) => ({ error: wordpressFormat(code, params), code, ...(params ? { params } : {}) });
@@ -8719,6 +8727,353 @@ app.get('/api/business/:id/website/reports/:reportId/download', authRequired, as
     else res.set({ 'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'Content-Disposition': `attachment; filename="${base}.docx"`, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' }).send(await wordpressReportDOCX(content, lang, name));
   } catch (err) { console.error('WordPress report download error:', err.message); res.status(500).json(wordpressFail('report_export_failed')); }
 });
+
+// wordpress-own:end
+// wordpress-own:start
+// ── WordPress content structure: thin-content expansion and heading restructuring ──────────────────────────────────────────────────────────
+// Two kinds of proposal, both reviewed by the person and never applied automatically. (1) A thin page gets NEW sections appended after its existing text: the existing text is never rewritten, and the
+// new text may not contain facts that are not already on the page or in the business profile (numbers, web addresses, e-mail addresses, phone numbers are checked by software). (2) A page's headings are
+// put in order: extra H1s are demoted when the theme already supplies the page's H1 (checked on the live page), levels that skip are closed up (the text of a heading is never changed), and long stretches of
+// text can get subheadings. A page is re-read right before it is changed and left alone if it differs from what was proposed; a backup is kept so the change can be undone; pages made with a page builder are skipped.
+// Nothing here is shared with Shopify.
+const WORDPRESS_CONTENT_TYPES = ['expand_thin_content', 'fix_heading_levels', 'add_subheadings'];
+const WORDPRESS_CONTENT_LIMITS = { thinMax: 300, thinMin: 20, thinPerRun: 5, headingsPerRun: 10, subheadingPagesPerRun: 5, scan: 100, renderedChecks: 15, recentDays: 90, stretchWords: 350, addedMin: 100, addedMax: 500 };
+const WORDPRESS_UTILITY_SLUG = /^(?:contact(?:-us)?|thank-?you(?:-page)?|thanks|privacy(?:-policy)?|terms(?:-and-conditions|-of-service|-of-use)?|cookies?(?:-policy)?|disclaimer|log-?in|register|cart|checkout|my-account|account|search|404|sitemap|unsubscribe|confirmation|order-confirmation)(?:-\d+)?$/i;
+const WORDPRESS_BUILDER_MARKERS = /\[\/?(?:et_pb_|vc_|fusion_|av_|fl_builder|themify_|elementor)|data-elementor-type|elementor-section|elementor-widget|class="[^"]*\b(?:et_pb_|vc_row|fusion-builder|fl-builder|av_section)/i;
+const wordpressContentHash = html => crypto.createHash('sha256').update(String(html || ''), 'utf8').digest('hex');
+const wordpressContentBlocks = raw => /<!--\s*wp:/.test(String(raw || ''));
+const wordpressContentBuilder = raw => WORDPRESS_BUILDER_MARKERS.test(String(raw || ''));
+const wordpressContentEscape = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const wordpressContentDecode = s => String(s).replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&#(\d+);/g, (m, n) => String.fromCodePoint(Math.min(+n, 0x10FFFF)));
+// The visible words of a piece of content: comments, shortcodes, scripts, styles and tags removed.
+function wordpressContentText(raw) {
+  return wordpressContentDecode(String(raw || '').replace(/<!--[\s\S]*?-->/g, ' ').replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, ' ').replace(/\[\/?[a-z_][^\]]*\]/gi, ' ').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+}
+const wordpressContentWords = raw => { const t = wordpressContentText(raw); return t ? t.split(' ').length : 0; };
+const wordpressPlainField = (v, max) => String(v == null ? '' : v).replace(/<[^>]*>/g, ' ').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
+
+// Headings, in order: the level, the visible text, and where the tag starts and ends.
+function wordpressContentHeadings(raw) {
+  const out = [], rx = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi; let m;
+  while ((m = rx.exec(String(raw || '')))) out.push({ level: +m[1], text: wordpressContentText(m[2]), start: m.index, end: m.index + m[0].length });
+  return out;
+}
+// Does the theme already show this page's own H1? Counted on the live page (null when it could not be read) against the H1s in the content.
+function wordpressH1Decision(contentH1s, liveH1s) {
+  if (!contentH1s || liveH1s === null || liveH1s === undefined) return 'none';
+  if (liveH1s > contentH1s) return 'all';
+  return contentH1s >= 2 ? 'allButFirst' : 'none';
+}
+// The levels the headings should have: the page title is the H1, so content headings start at H2 and never skip a level going down. Extra H1s are demoted as decided above.
+function wordpressHeadingPlan(headings, h1Decision) {
+  let prev = 1, h1Seen = 0;
+  return headings.map(h => {
+    let level = h.level;
+    if (level === 1) { h1Seen++; if (!(h1Decision === 'all' || (h1Decision === 'allButFirst' && h1Seen > 1))) { prev = 1; return 1; } level = 2; }
+    const next = Math.min(Math.max(level, 2), prev + 1); prev = next; return next;
+  });
+}
+// Re-levels the headings of a page: only the tag name (and, in the block editor, the block's level setting) changes; the text and every other attribute stay as they are.
+function wordpressApplyHeadingLevels(raw, levels) {
+  let i = 0;
+  return String(raw).replace(/(<!--\s*wp:heading\b([\s\S]*?)-->\s*)?<h([1-6])\b([^>]*)>([\s\S]*?)<\/h\3>/gi, (m, comment, attrsText, lvl, hattrs, inner) => {
+    const to = levels[i++]; if (to === undefined || to === +lvl) return m;
+    let head = comment || '';
+    if (comment) {
+      const jsonText = (attrsText || '').trim(); let attrs = {};
+      if (jsonText) { try { attrs = JSON.parse(jsonText); } catch (e) { return m; } if (!attrs || typeof attrs !== 'object') return m; }
+      if (to === 2) delete attrs.level; else attrs.level = to;
+      const keep = comment.match(/^<!--\s*wp:heading/)[0], tail = comment.slice(comment.indexOf('-->') + 3);
+      head = keep + (Object.keys(attrs).length ? ' ' + JSON.stringify(attrs) : '') + ' -->' + tail;
+    }
+    return `${head}<h${to}${hattrs}>${inner}</h${to}>`;
+  });
+}
+// The paragraphs of a page, in order (a paragraph block's comment counts as part of it): where each starts, its words and its text.
+function wordpressContentParagraphs(raw) {
+  const out = [], rx = /(<!--\s*wp:paragraph\b[^>]*-->\s*)?<p\b[^>]*>([\s\S]*?)<\/p>/gi; let m;
+  while ((m = rx.exec(String(raw || '')))) { const text = wordpressContentText(m[2]); if (text) out.push({ start: m.index, end: m.index + m[0].length, text, words: text.split(' ').length }); }
+  return out;
+}
+// Long stretches of text with no heading in between: each is { from, to (paragraph numbers, 1-based), words }.
+function wordpressContentStretches(raw) {
+  const paras = wordpressContentParagraphs(raw), heads = wordpressContentHeadings(raw), out = []; let cur = null;
+  paras.forEach((p, i) => { const boundary = cur && heads.some(h => h.start >= paras[i - 1].end && h.start < p.start); if (!cur || boundary) { cur = { from: i + 1, to: i + 1, words: 0 }; out.push(cur); } cur.to = i + 1; cur.words += p.words; });
+  return out;
+}
+// The heading to put before a paragraph: one level under the nearest heading above it (H2 when there is none), never skipping a level.
+function wordpressSubheadingLevel(raw, paraStart) {
+  const above = wordpressContentHeadings(raw).filter(h => h.start < paraStart); const prev = above.length ? above[above.length - 1].level : 1;
+  return prev >= 4 ? prev : prev + 1;
+}
+const wordpressHeadingHtml = (text, level, blocks) => blocks
+  ? `<!-- wp:heading${level === 2 ? '' : ` {"level":${level}}`} -->\n<h${level} class="wp-block-heading">${wordpressContentEscape(text)}</h${level}>\n<!-- /wp:heading -->`
+  : `<h${level}>${wordpressContentEscape(text)}</h${level}>`;
+const wordpressParagraphHtml = (text, blocks) => (blocks ? `<!-- wp:paragraph -->\n<p>${wordpressContentEscape(text)}</p>\n<!-- /wp:paragraph -->` : `<p>${wordpressContentEscape(text)}</p>`);
+function wordpressSectionsHtml(sections, blocks) { return sections.map(s => [wordpressHeadingHtml(s.heading, 2, blocks), ...s.paragraphs.map(p => wordpressParagraphHtml(p, blocks))].join('\n\n')).join('\n\n'); }
+// Subheadings go just before the chosen paragraphs; inserted from the end so earlier positions stay valid.
+function wordpressInsertSubheadings(raw, subheadings, blocks) {
+  const paras = wordpressContentParagraphs(raw); let out = String(raw);
+  for (const s of [...subheadings].sort((a, b) => b.beforeParagraph - a.beforeParagraph)) {
+    const p = paras[s.beforeParagraph - 1]; if (!p) return null;
+    out = out.slice(0, p.start) + wordpressHeadingHtml(s.text, wordpressSubheadingLevel(raw, p.start), blocks) + '\n\n' + out.slice(p.start);
+  }
+  return out;
+}
+// New text must be plain, short, and contain nothing that looks like a fact the page did not already state.
+const WORDPRESS_FACT_PATTERN = /https?:\/\/|www\.|\S+@\S+\.\S+|\+\d{6,}|\b\d[\d .-]{7,}\d\b/i;
+const wordpressDigitRuns = text => new Set(String(text || '').match(/\d+/g) || []);
+function wordpressSanitizeSections(input) {
+  if (!Array.isArray(input)) return null; const out = []; let words = 0;
+  for (const s of input.slice(0, 6)) {
+    const heading = wordpressPlainField(s && s.heading, 1000), paragraphs = (Array.isArray(s && s.paragraphs) ? s.paragraphs : []).slice(0, 4).map(p => wordpressPlainField(p, 5000)).filter(Boolean);
+    if (heading.length > 120 || paragraphs.some(p => p.length > 1200)) return null;   // too long is refused, never cut off in the middle of a sentence
+    if (!heading || !paragraphs.length) continue; words += wordpressContentWords(heading + ' ' + paragraphs.join(' ')); out.push({ heading, paragraphs });
+  }
+  return out.length && words <= 900 ? out : null;
+}
+// What a person may edit before approving: the new sections as plain text ("## Heading", a blank line, paragraphs separated by blank lines).
+const wordpressSectionsToText = sections => sections.map(s => `## ${s.heading}\n\n${s.paragraphs.join('\n\n')}`).join('\n\n');
+function wordpressSectionsFromText(text) {
+  const sections = []; let cur = null;
+  for (const block of String(text || '').replace(/\r/g, '').split(/\n{2,}/)) {
+    const t = block.trim(); if (!t) continue;
+    if (/^##\s+/.test(t)) { const lines = t.split('\n'); cur = { heading: lines[0].replace(/^##\s+/, ''), paragraphs: [] }; sections.push(cur); const rest = lines.slice(1).join(' ').trim(); if (rest) cur.paragraphs.push(rest); }
+    else if (cur) cur.paragraphs.push(t.replace(/\n/g, ' '));
+  }
+  return wordpressSanitizeSections(sections);
+}
+// AI-written sections are only kept if they are plain, a sensible size, and invent no number or contact detail.
+function wordpressSectionsAcceptable(sections, allowedText) {
+  if (!sections) return false; const all = sections.map(s => s.heading + ' ' + s.paragraphs.join(' ')).join(' '), words = wordpressContentWords(all);
+  if (words < WORDPRESS_CONTENT_LIMITS.addedMin || words > WORDPRESS_CONTENT_LIMITS.addedMax || WORDPRESS_FACT_PATTERN.test(all)) return false;
+  if (sections.some(s => s.paragraphs.some(p => wordpressContentWords(p) < 6))) return false;
+  const known = wordpressDigitRuns(allowedText); for (const n of wordpressDigitRuns(all)) if (!known.has(n)) return false;
+  return true;
+}
+// What an action will do, from the proposal and, when the person edited it, their version.
+function wordpressContentEffective(action) {
+  const proposed = action.proposed_change || {}, edited = action.edited_change || null;
+  if (action.action_type === 'expand_thin_content') return { sections: edited && edited.sectionsText ? wordpressSectionsFromText(edited.sectionsText) : wordpressSanitizeSections(proposed.sections) };
+  if (action.action_type === 'fix_heading_levels') return { headingLevels: Array.isArray(proposed.headingLevels) ? proposed.headingLevels : [] };
+  const subs = Array.isArray(proposed.subheadings) ? proposed.subheadings : []; let texts = subs.map(s => wordpressPlainField(s.text, 120));
+  if (edited && typeof edited.headingsText === 'string') { const lines = edited.headingsText.replace(/\r/g, '').split('\n').map(l => wordpressPlainField(l, 120)).filter(Boolean); if (lines.length === subs.length) texts = lines; }
+  return { subheadings: subs.map((s, i) => ({ beforeParagraph: s.beforeParagraph, text: texts[i] })).filter(s => s.text) };
+}
+// The page content a proposal would produce from the content the person saw (null when it cannot be done safely), plus the outline it must end up with.
+function wordpressContentBuild(action, raw) {
+  const eff = wordpressContentEffective(action), blocks = wordpressContentBlocks(raw), prev = action.previous_state || {};
+  if (action.action_type === 'expand_thin_content') { if (!eff.sections) return null; return { html: String(raw).replace(/\s+$/, '') + '\n\n' + wordpressSectionsHtml(eff.sections, blocks) }; }
+  if (action.action_type === 'fix_heading_levels') {
+    const heads = wordpressContentHeadings(raw); if (heads.length !== (prev.headings || []).length) return null;
+    const levels = heads.map(h => h.level); for (const c of eff.headingLevels) { if (!Number.isInteger(c.index) || c.index < 0 || c.index >= levels.length || levels[c.index] !== c.from || ![1, 2, 3, 4, 5, 6].includes(c.to)) return null; levels[c.index] = c.to; }
+    const html = wordpressApplyHeadingLevels(raw, levels), after = wordpressContentHeadings(html); // refuse markup that did not take the change exactly as planned
+    return after.length === levels.length && after.every((h, i) => h.level === levels[i]) ? { html, levels } : null;
+  }
+  if (!eff.subheadings.length || wordpressContentParagraphs(raw).length !== prev.paragraphs) return null;
+  const html = wordpressInsertSubheadings(raw, eff.subheadings, blocks); return html ? { html } : null;
+}
+// Has the page ended up as intended? The original text is still at the start, and what was meant to appear appears.
+function wordpressContentVerify(action, before, after) {
+  const eff = wordpressContentEffective(action), heads = wordpressContentHeadings(after), norm = s => wordpressContentText(s).toLowerCase();
+  if (before !== null && !wordpressContentText(after).startsWith(wordpressContentText(before).slice(0, 150)) && action.action_type !== 'add_subheadings') return false;
+  if (action.action_type === 'expand_thin_content') return !!eff.sections && eff.sections.every(s => heads.some(h => norm(h.text) === norm(s.heading))) && (before === null || wordpressContentWords(after) >= wordpressContentWords(before) + 50);
+  if (action.action_type === 'fix_heading_levels') { const prev = (action.previous_state || {}).headings || []; if (heads.length !== prev.length) return false; const want = prev.map(h => h.level); for (const c of eff.headingLevels) want[c.index] = c.to; return heads.every((h, i) => h.level === want[i] && norm(h.text) === norm(prev[i].text)); }
+  return eff.subheadings.length > 0 && eff.subheadings.every(s => heads.some(h => norm(h.text) === norm(s.text))) && (before === null || wordpressContentWords(after) >= wordpressContentWords(before));
+}
+// What to look at: the published pages and posts (the 100 most recently changed of each), with the raw content a person edits (not the rendered page).
+async function wordpressContentRead(connection, password) {
+  const items = [];
+  for (const [rest, type] of [['pages', 'page'], ['posts', 'post']]) {
+    const res = await wpApiRequest(connection.site_url, connection.wp_username, password, `/wp/v2/${rest}?context=edit&status=publish&per_page=${WORDPRESS_CONTENT_LIMITS.scan}&orderby=modified&order=desc&_fields=id,link,slug,title,content`, { timeoutMs: 25000 });
+    if (res.status === 401) { await pool.query(`UPDATE website_connections SET connection_status = 'auth_expired' WHERE id = $1`, [connection.id]); throw wordpressThrow('content_auth_expired'); }
+    if (!res.ok) throw wordpressThrow('content_read_failed');
+    for (const it of await res.json()) {
+      const raw = it && it.content && typeof it.content.raw === 'string' ? it.content.raw : null; if (raw === null) continue;
+      items.push({ id: it.id, type, title: wordpressContentText((it.title && (it.title.raw || it.title.rendered)) || '').slice(0, 250), url: it.link, slug: String(it.slug || ''), raw });
+    }
+  }
+  return items;
+}
+// Pages that already have a proposal of this kind waiting, or one made in the last 90 days (applied, refused or undone), are left alone: a "no" is not asked again straight away.
+async function wordpressContentBusy(connectionId) {
+  const rows = (await pool.query(`SELECT target_type, target_wp_id FROM website_actions WHERE website_connection_id = $1 AND action_type = ANY($2::text[]) AND (approval_status = 'pending' OR (approval_status = 'approved' AND execution_status = 'not_executed') OR created_at > NOW() - ($3 || ' days')::interval)`, [connectionId, WORDPRESS_CONTENT_TYPES, String(WORDPRESS_CONTENT_LIMITS.recentDays)])).rows;
+  return new Set(rows.map(r => `${r.target_type}:${r.target_wp_id}`));
+}
+const wordpressContentInsert = async (connection, item, actionType, previousState, proposedChange) => (await pool.query(
+  `INSERT INTO website_actions (website_connection_id, ai_agent, action_type, target_type, target_wp_id, target_url, target_title, previous_state, proposed_change, reasoning) VALUES ($1, 'seo_agent', $2, $3, $4, $5, $6, $7, $8, NULL) RETURNING *`,
+  [connection.id, actionType, item.type, item.id, item.url, item.title || '(untitled)', JSON.stringify(previousState), JSON.stringify(proposedChange)])).rows[0];
+const wordpressContentAiJson = async (prompt, ask, userId, feature) => {
+  const raw = await callAI({ persona: prompt + frenchInstruction('en', { jsonMode: true }), messages: [{ role: 'user', content: ask }], complexity: 'complex', context: { feature, userId }, maxTokens: 6000 });
+  try { return extractJSON(raw); } catch (e) { throw wordpressThrow('content_generate_failed'); }
+};
+
+// Thin pages: new sections to be appended after the existing text.
+async function wordpressRunThinContentProposals(connection, password, context, userId = null) {
+  const items = await wordpressContentRead(connection, password), busy = await wordpressContentBusy(connection.id), L = WORDPRESS_CONTENT_LIMITS; let skippedBuilder = 0; const thin = [];
+  for (const it of items) {
+    if (wordpressContentBuilder(it.raw)) { skippedBuilder++; continue; }
+    if (busy.has(`${it.type}:${it.id}`) || WORDPRESS_UTILITY_SLUG.test(it.slug)) continue;
+    const words = wordpressContentWords(it.raw); if (words >= L.thinMin && words < L.thinMax) thin.push({ ...it, words });
+  }
+  thin.sort((a, b) => (a.type === b.type ? b.words - a.words : a.type === 'page' ? -1 : 1));   // pages first, and pages with the most to build on first
+  const scan = { checked: items.length, thin: thin.length, skippedBuilder }, picked = thin.slice(0, L.thinPerRun * 2);
+  if (!picked.length) return { proposals: [], scan, code: 'content_none_thin' };
+  const contextSummary = summarizeBusinessContextForAI(context) || '';
+  const list = picked.map((it, i) => `[${i}] ${it.type.toUpperCase()}: "${it.title}" (${it.url}), ${it.words} words\n  EXISTING TEXT: ${wordpressContentText(it.raw).slice(0, 3000)}`).join('\n\n');
+  const prompt = `You are a content writer improving thin pages on a real business's WordPress website. Each page below is short. For each page, write 2 to 4 NEW sections that will be added AFTER the existing text, so the page becomes genuinely useful to a visitor.
+
+BUSINESS DESCRIPTION:
+${contextSummary || 'No detailed description is available.'}
+
+STRICT RULES. Software checks them and throws away any proposal that breaks them:
+- Write in the SAME LANGUAGE as the page's existing text.
+- Use ONLY information found in the page's existing text or in the business description above. Explain, clarify and organise what is already there (what the service or topic involves, who it is for, how it works in general terms, questions a visitor would naturally have). Never invent facts.
+- NEVER include numbers, prices, years, percentages, phone numbers, e-mail addresses, web addresses, names of people, awards, certifications, guarantees, testimonials, statistics or claims that are not already in the text above.
+- No links, no HTML, no markdown. Plain sentences only.
+- Plain everyday words, short sentences (under 20 words), paragraphs of 2 to 4 sentences.
+- Each section has a short heading (3 to 8 words) and 1 to 2 paragraphs. Together the new sections add about 200 to 350 words.
+- Do not repeat what the page already says: add depth. If you cannot add real value without inventing facts, return no proposal for that page.
+
+PAGES:
+${list}
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{ "proposals": [ { "index": 0, "sections": [ { "heading": "short heading", "paragraphs": ["paragraph one", "paragraph two"] } ] } ] }`;
+  const result = await wordpressContentAiJson(prompt, 'Write the new sections now, as JSON only.', userId, 'website_thin_content');
+  if (!Array.isArray(result.proposals)) throw wordpressThrow('content_generate_failed');
+  const proposals = [], seen = new Set();
+  for (const p of result.proposals) {
+    const it = picked[p && p.index]; if (!it || seen.has(p.index) || proposals.length >= L.thinPerRun) continue; seen.add(p.index);
+    const sections = wordpressSanitizeSections(p.sections); if (!wordpressSectionsAcceptable(sections, `${it.title} ${wordpressContentText(it.raw)} ${contextSummary}`)) continue;
+    const addedWords = wordpressContentWords(sections.map(s => s.heading + ' ' + s.paragraphs.join(' ')).join(' '));
+    proposals.push(await wordpressContentInsert(connection, it, 'expand_thin_content', { contentHash: wordpressContentHash(it.raw), wordCount: it.words, headings: wordpressContentHeadings(it.raw).slice(0, 60).map(h => ({ level: h.level, text: h.text })) }, { sections, addedWords }));
+  }
+  await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated', `Content Agent generated ${proposals.length} thin-page proposal(s)`, { count: proposals.length, kind: 'thin_content' }, 'seo_proposals');
+  return proposals.length ? { proposals, pendingCount: proposals.length, scan } : { proposals: [], scan, code: 'content_none_thin' };
+}
+
+// Subheadings the AI chose are only kept when they sit inside a long unbroken stretch, are spaced apart, and invent no number.
+function wordpressValidateSubheadings(raw, list) {
+  const paras = wordpressContentParagraphs(raw), stretches = wordpressContentStretches(raw), known = wordpressDigitRuns(wordpressContentText(raw)), ok = [];
+  for (const s of (Array.isArray(list) ? list : []).slice(0, 8)) {
+    const n = s && s.beforeParagraph, text = wordpressPlainField(s && s.heading, 100).replace(/[.:;]+$/, ''), words = wordpressContentWords(text);
+    if (!Number.isInteger(n) || n < 2 || n > paras.length || words < 2 || words > 10 || WORDPRESS_FACT_PATTERN.test(text) || [...wordpressDigitRuns(text)].some(d => !known.has(d))) continue;
+    const stretch = stretches.find(st => n > st.from && n <= st.to); if (!stretch || stretch.words < WORDPRESS_CONTENT_LIMITS.stretchWords || ok.some(o => Math.abs(o.beforeParagraph - n) < 3)) continue;
+    ok.push({ beforeParagraph: n, text }); if (ok.length === 3) break;
+  }
+  return ok.sort((a, b) => a.beforeParagraph - b.beforeParagraph);
+}
+// Headings: levels put in order (no AI: the text never changes), then subheadings for long stretches.
+async function wordpressRunHeadingProposals(connection, password, context, userId = null) {
+  const items = await wordpressContentRead(connection, password), busy = await wordpressContentBusy(connection.id), L = WORDPRESS_CONTENT_LIMITS; let skippedBuilder = 0, liveChecks = 0; const fixes = [], longPages = [];
+  for (const it of items) {
+    if (wordpressContentBuilder(it.raw)) { skippedBuilder++; continue; }
+    if (busy.has(`${it.type}:${it.id}`)) continue;
+    const heads = wordpressContentHeadings(it.raw), h1s = heads.filter(h => h.level === 1).length; let decision = 'none';
+    if (heads.length > 60) continue;
+    if (h1s && liveChecks < L.renderedChecks) { liveChecks++; const r = await wordpressPublicFetch(it.url, { timeoutMs: 8000, maxBytes: 1500000 }); decision = wordpressH1Decision(h1s, r && r.ok && r.text ? (r.text.match(/<h1\b/gi) || []).length : null); }
+    const levels = wordpressHeadingPlan(heads, decision), changes = []; heads.forEach((h, i) => { if (levels[i] !== h.level) changes.push({ index: i, from: h.level, to: levels[i], text: h.text.slice(0, 120) }); });
+    if (changes.length) { fixes.push({ it, heads, changes, decision }); continue; }
+    const longest = Math.max(0, ...wordpressContentStretches(it.raw).filter(st => st.to - st.from >= 3).map(st => st.words)); if (longest >= L.stretchWords) longPages.push({ it, longest });
+  }
+  const scan = { checked: items.length, levelProblems: fixes.length, longPages: longPages.length, skippedBuilder }, proposals = [];
+  for (const f of fixes.slice(0, L.headingsPerRun)) proposals.push(await wordpressContentInsert(connection, f.it, 'fix_heading_levels', { contentHash: wordpressContentHash(f.it.raw), wordCount: wordpressContentWords(f.it.raw), headings: f.heads.map(h => ({ level: h.level, text: h.text })) }, { headingLevels: f.changes, h1: f.decision }));
+  const pages = longPages.sort((a, b) => b.longest - a.longest).slice(0, L.subheadingPagesPerRun);
+  if (pages.length) {
+    const list = pages.map(({ it }, i) => { const heads = wordpressContentHeadings(it.raw); return `[${i}] ${it.type.toUpperCase()}: "${it.title}"\n  Existing headings: ${heads.length ? heads.map(h => `H${h.level} "${h.text}"`).join(', ') : 'none'}\n` + wordpressContentParagraphs(it.raw).map((p, n) => `  (${n + 1}) ${p.words} words: ${p.text.slice(0, 110)}`).join('\n'); }).join('\n\n');
+    const prompt = `You are an editor adding subheadings to long pages on a real business's WordPress website, so that visitors can scan them. Each page below is a numbered list of its paragraphs. For each page choose up to 3 places where a NEW section clearly begins and write a short heading for it.
+
+RULES (software checks them and throws away any heading that breaks them):
+- Write in the SAME LANGUAGE as the page.
+- "beforeParagraph" is the number of the paragraph the heading goes just before. Never choose paragraph 1. Choose places where the topic genuinely changes, and keep at least 3 paragraphs between two headings.
+- A heading is 2 to 8 words and describes what follows. No numbers unless they appear in the text, no web addresses, no HTML, no full stop at the end.
+- If a page does not need any, return an empty list for it.
+
+PAGES:
+${list}
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{ "pages": [ { "index": 0, "subheadings": [ { "beforeParagraph": 5, "heading": "short heading" } ] } ] }`;
+    const result = await wordpressContentAiJson(prompt, 'Choose the subheadings now, as JSON only.', userId, 'website_subheadings');
+    if (!Array.isArray(result.pages)) throw wordpressThrow('content_generate_failed');
+    for (const p of result.pages) {
+      const entry = pages[p && p.index]; if (!entry) continue; const subs = wordpressValidateSubheadings(entry.it.raw, p.subheadings); if (!subs.length) continue;
+      proposals.push(await wordpressContentInsert(connection, entry.it, 'add_subheadings', { contentHash: wordpressContentHash(entry.it.raw), wordCount: wordpressContentWords(entry.it.raw), paragraphs: wordpressContentParagraphs(entry.it.raw).length, headings: wordpressContentHeadings(entry.it.raw).slice(0, 60).map(h => ({ level: h.level, text: h.text })) }, { subheadings: subs.map(s => ({ ...s, context: (wordpressContentParagraphs(entry.it.raw)[s.beforeParagraph - 1] || {}).text.slice(0, 110) })) }));
+    }
+  }
+  await logWebsiteAudit(connection.id, 'ai_agent', null, 'proposals_generated', `Content Agent generated ${proposals.length} heading proposal(s)`, { count: proposals.length, kind: 'headings' }, 'seo_proposals');
+  return proposals.length ? { proposals, pendingCount: proposals.length, scan } : { proposals: [], scan, code: 'content_none_headings' };
+}
+
+// Applying a proposal. Failures are stored as a code ("code:content_changed") that the page shows in the reader's language.
+const wordpressContentFail = code => ({ executed: false, verified: false, error: 'code:' + code });
+async function wordpressContentReadRaw(connection, password, action) {
+  const res = await wpApiRequest(connection.site_url, connection.wp_username, password, `/wp/v2/${action.target_type === 'post' ? 'posts' : 'pages'}/${action.target_wp_id}?context=edit&_fields=content`, { timeoutMs: 15000 });
+  if (!res.ok) return null; const d = await res.json(); return d && d.content && typeof d.content.raw === 'string' ? d.content.raw : null;
+}
+async function wordpressContentSaveBackup(actionId, before, after) {
+  try {
+    await pool.query(`DELETE FROM website_action_backups WHERE created_at < NOW() - INTERVAL '30 days'`);
+    await pool.query(`INSERT INTO website_action_backups (action_id, content_before, content_after_hash) VALUES ($1, $2, $3) ON CONFLICT (action_id) DO UPDATE SET content_before = EXCLUDED.content_before, content_after_hash = EXCLUDED.content_after_hash, created_at = NOW()`, [actionId, String(before), wordpressContentHash(after)]);
+    return true;
+  } catch (e) { console.error('Could not keep the undo copy of the page:', e.message); return false; }
+}
+async function wordpressExecuteContentAction(action, connection, password) {
+  try {
+    const raw = await wordpressContentReadRaw(connection, password, action); if (raw === null) return wordpressContentFail('content_unreadable');
+    if (wordpressContentHash(raw) !== (action.previous_state || {}).contentHash) return wordpressContentFail('content_changed');   // the page is not what the person saw
+    if (wordpressContentBuilder(raw)) return wordpressContentFail('content_builder');
+    const built = wordpressContentBuild(action, raw); if (!built) return wordpressContentFail('content_unsupported');
+    if (!(await wordpressContentSaveBackup(action.id, raw, built.html))) return wordpressContentFail('content_failed');   // no undo copy, no change
+    const write = await wpApiRequest(connection.site_url, connection.wp_username, password, `/wp/v2/${action.target_type === 'post' ? 'posts' : 'pages'}/${action.target_wp_id}`, { method: 'POST', body: { content: built.html }, timeoutMs: 25000 });
+    if (!write.ok) { await pool.query('DELETE FROM website_action_backups WHERE action_id = $1', [action.id]).catch(() => {}); return wordpressContentFail('content_write_rejected'); }   // nothing was changed, so no undo copy is kept
+    const after = await wordpressContentReadRaw(connection, password, action); if (after === null) return { executed: true, verified: false, error: 'code:content_verify_unconfirmed' };
+    await pool.query('UPDATE website_action_backups SET content_after_hash = $1 WHERE action_id = $2', [wordpressContentHash(after), action.id]).catch(() => {});   // what WordPress stored may differ slightly from what was sent
+    return wordpressContentVerify(action, raw, after) ? { executed: true, verified: true } : { executed: true, verified: false, error: 'code:content_verify_failed' };
+  } catch (e) { return wordpressContentFail('content_failed'); }
+}
+async function wordpressReVerifyContent(action, connection, password) {
+  try {
+    const after = await wordpressContentReadRaw(connection, password, action); if (after === null) return { verified: false, error: 'code:content_verify_unconfirmed' };
+    const backup = (await pool.query('SELECT content_before FROM website_action_backups WHERE action_id = $1', [action.id])).rows[0];
+    return wordpressContentVerify(action, backup ? backup.content_before : null, after) ? { verified: true } : { verified: false, error: 'code:content_verify_failed' };
+  } catch (e) { return { verified: false, error: 'code:content_verify_failed' }; }
+}
+// Undo: only if the page has not been edited since (what it holds is still what the change left); otherwise the person's later work could be overwritten.
+async function wordpressUndoContentAction(connection, action, userId) {
+  const fail = (status, code) => ({ ok: false, status, ...wordpressFail(code) });
+  if (!WORDPRESS_CONTENT_TYPES.includes(action.action_type) || action.execution_status !== 'executed') return fail(400, 'content_undo_not_applied');
+  const backup = (await pool.query('SELECT * FROM website_action_backups WHERE action_id = $1', [action.id])).rows[0]; if (!backup) return fail(410, 'content_undo_expired');
+  const password = decryptSecret(connection.wp_app_password_encrypted), current = await wordpressContentReadRaw(connection, password, action); if (current === null) return fail(502, 'content_undo_unreadable');
+  if (wordpressContentHash(current) !== backup.content_after_hash) return fail(409, 'content_undo_edited');
+  const write = await wpApiRequest(connection.site_url, connection.wp_username, password, `/wp/v2/${action.target_type === 'post' ? 'posts' : 'pages'}/${action.target_wp_id}`, { method: 'POST', body: { content: backup.content_before }, timeoutMs: 25000 });
+  if (!write.ok) return fail(502, 'content_undo_rejected');
+  if (connection.connection_mode !== 'poll') await invalidatePushModeCache(connection);
+  await pool.query(`UPDATE website_actions SET execution_status = 'undone', verification_status = NULL, approval_status = 'rejected', reviewed_at = NOW() WHERE id = $1`, [action.id]);
+  await pool.query('DELETE FROM website_action_backups WHERE action_id = $1', [action.id]);
+  await logWebsiteAudit(connection.id, 'user', userId, 'proposal_undone', `Undid a content change on "${action.target_title || 'a page'}"`, { actionId: action.id }, 'seo_proposals');
+  return { ok: true };
+}
+async function wordpressContentRouteContext(req) {
+  const account = await resolveAccount(req.userId), context = await getBusinessContext(req.params.id, account.id); if (!context) return { status: 404, failure: wordpressFail('business_not_found') };
+  const connection = (await pool.query('SELECT * FROM website_connections WHERE business_id = $1', [req.params.id])).rows[0]; if (!connection) return { status: 404, failure: wordpressFail('no_site') };
+  if (connection.connection_status === 'disconnected') return { status: 400, failure: wordpressFail('content_disconnected') };
+  if (connection.connection_mode === 'poll') return { status: 400, failure: wordpressFail('content_poll_mode') };
+  return { context, connection, password: decryptSecret(connection.wp_app_password_encrypted) };
+}
+const wordpressContentRoute = (path, kind, run) => app.post(`/api/business/:id/website/${path}`, authRequired, async (req, res) => {
+  try {
+    const ctx = await wordpressContentRouteContext(req); if (ctx.failure) return res.status(ctx.status).json(ctx.failure);
+    recordRunFrom(res, req.params.id, 'wordpress', 'proposals_generated', b => ({ detail: { kind, count: proposalCount(b) } }));
+    res.json(await run(ctx.connection, ctx.password, ctx.context, req.userId));
+  } catch (err) {
+    if (err && err.wordpressCode) return res.status(err.wordpressCode === 'content_auth_expired' ? 401 : 502).json(wordpressFail(err.wordpressCode, err.wordpressParams));
+    console.error(`WordPress ${kind} proposals error:`, err.message); res.status(500).json(wordpressFail('content_generate_failed'));
+  }
+});
+wordpressContentRoute('thin-content-proposals', 'thin_content', wordpressRunThinContentProposals);
+wordpressContentRoute('heading-proposals', 'headings', wordpressRunHeadingProposals);
 
 // wordpress-own:end
 // shopify-own:start
@@ -10089,7 +10444,7 @@ app.post('/api/business/:id/website/actions/:actionId/undo', authRequired, async
     const found = await pool.query('SELECT * FROM website_actions WHERE id = $1 AND website_connection_id = $2', [req.params.actionId, connection.id]);
     if (!found.rows.length) return res.status(404).json({ error: 'Proposed change not found' });
     const action = found.rows[0];
-    const out = action.action_type === 'generate_featured_image' ? await undoFeaturedImageAction(connection, action, req.userId) : await undoLinkFixAction(connection, action, req.userId);
+    const out = WORDPRESS_CONTENT_TYPES.includes(action.action_type) ? await wordpressUndoContentAction(connection, action, req.userId) : action.action_type === 'generate_featured_image' ? await undoFeaturedImageAction(connection, action, req.userId) : await undoLinkFixAction(connection, action, req.userId);
     if (!out.ok) return res.status(out.status).json({ error: out.error, code: out.code });
     res.json({ success: true });
   } catch (err) {
