@@ -2110,6 +2110,7 @@ app.get('/api/business/:id/tasks', authRequired, async (req, res) => {
     const account = await resolveAccount(req.userId);
     const biz = await pool.query('SELECT id FROM businesses WHERE id = $1 AND user_id = $2', [req.params.id, account.id]);
     if (!biz.rows.length) return res.status(404).json({ error: 'Business not found' });
+    await syncWebsiteApprovalTasks(req.params.id, account.id, (req.planAccount || account).plan);   // suggested website changes waiting for approval appear (and update) as tasks
 
     const conditions = ['business_id = $1'];
     const params = [req.params.id];
@@ -8905,6 +8906,77 @@ app.get('/api/business/:id/shopify/reports/:reportId/download', authRequired, as
 });
 
 // shopify-own:end
+// wordpress-own:start
+// ── WordPress approvals in the Action Center ────────────────────────────────────────────────────────────────────────────────────────────
+// Suggested changes waiting for approval appear in the Action Center as ONE task per site ("Review 3 suggested changes for garden.test"), not one per suggestion, so a large audit cannot bury the
+// board. The task is kept current by itself: its count follows the real number waiting, it closes when everything has been reviewed, and it reopens when new suggestions arrive. What the person does
+// with it is respected: a task they mark done or delete does not come back until MORE suggestions are waiting than when they dismissed it. Both languages are stored with the task. Nothing here is shared with Shopify.
+const WORDPRESS_TASK_SOURCE = 'website_wordpress';
+const WORDPRESS_TASK_TEXT = {
+  en: { title_one: 'Review 1 suggested change for {host}', title_many: 'Review {n} suggested changes for {host}', desc: 'Your WordPress site has suggested changes waiting for your approval. Open the Website section and approve or reject each one: nothing changes on your site until you approve.', age_today: 'The oldest arrived today.', age_one: 'The oldest has been waiting 1 day.', age_many: 'The oldest has been waiting {days} days.' },
+  fr: { title_one: 'Examiner 1 modification suggérée pour {host}', title_many: 'Examiner {n} modifications suggérées pour {host}', desc: "Votre site WordPress a des modifications suggérées en attente de votre approbation. Ouvrez la section Site web et approuvez ou refusez chacune d'elles : rien ne change sur votre site tant que vous n'avez pas approuvé.", age_today: "La plus ancienne est arrivée aujourd'hui.", age_one: 'La plus ancienne attend depuis 1 jour.', age_many: 'La plus ancienne attend depuis {days} jours.' },
+};
+const wordpressTaskWords = (lang, key, params) => String(WORDPRESS_TASK_TEXT[lang === 'fr' ? 'fr' : 'en'][key] || key).replace(/\{(\w+)\}/g, (m, k) => (params && params[k] !== undefined ? String(params[k]) : m));
+// The task's words in one language: the title says how many and for which site; the description says what to do and how long the oldest has waited.
+function wordpressApprovalTaskWords(lang, n, host, days) {
+  const age = days >= 2 ? wordpressTaskWords(lang, 'age_many', { days }) : days === 1 ? wordpressTaskWords(lang, 'age_one') : wordpressTaskWords(lang, 'age_today');
+  return { title: wordpressTaskWords(lang, n === 1 ? 'title_one' : 'title_many', { n, host }), description: `${wordpressTaskWords(lang, 'desc')} ${age}` };
+}
+// Keeps the site's approval task in line with the suggestions really waiting. Never throws (the Action Center must open whatever happens here).
+async function wordpressApprovalTaskSync(businessId, ownerId, plan) {
+  try {
+    const conn = (await pool.query('SELECT id, site_url FROM website_connections WHERE business_id = $1 ORDER BY created_at ASC LIMIT 1', [businessId])).rows[0];
+    const state = (await pool.query('SELECT * FROM wordpress_approval_tasks WHERE business_id = $1', [businessId])).rows[0];
+    if (!conn || !planHasWebsiteFeature(plan, 'proposed_changes')) {   // nothing to manage (no site, or a plan without approvals): remove what this feature made, and only that
+      if (state && state.task_id) await pool.query('DELETE FROM action_tasks WHERE id = $1 AND source = $2', [state.task_id, WORDPRESS_TASK_SOURCE]);
+      if (state) await pool.query('DELETE FROM wordpress_approval_tasks WHERE business_id = $1', [businessId]);
+      return;
+    }
+    const waiting = (await pool.query(`SELECT COUNT(*)::int AS n, MIN(created_at) AS oldest FROM website_actions WHERE website_connection_id = $1 AND approval_status = 'pending'`, [conn.id])).rows[0], n = waiting.n;
+    const days = waiting.oldest ? Math.max(0, Math.floor((Date.now() - new Date(waiting.oldest)) / 864e5)) : 0, host = (() => { try { return new URL(conn.site_url).host; } catch (e) { return String(conn.site_url); } })();
+    const en = wordpressApprovalTaskWords('en', n, host, days), fr = wordpressApprovalTaskWords('fr', n, host, days), priority = days >= 7 || n >= 10 ? 'high' : 'medium', detail = JSON.stringify({ platform: 'wordpress', count: n });
+    const task = state && state.task_id ? (await pool.query('SELECT * FROM action_tasks WHERE id = $1', [state.task_id])).rows[0] : null, last = state ? state.last_count : 0;
+    const make = async () => (await pool.query(`INSERT INTO action_tasks (business_id, owner_id, title, title_fr, description, description_fr, priority, category, source, source_detail) VALUES ($1, $2, $3, $4, $5, $6, $7, 'website', $8, $9) RETURNING id`, [businessId, ownerId, en.title, fr.title, en.description, fr.description, priority, WORDPRESS_TASK_SOURCE, detail])).rows[0].id;
+    const refresh = (id, status) => pool.query(`UPDATE action_tasks SET title = $2, title_fr = $3, description = $4, description_fr = $5, priority = $6, source_detail = $7, status = COALESCE($8, status), completed_at = CASE WHEN $8 = 'not_started' THEN NULL ELSE completed_at END, updated_at = NOW() WHERE id = $1`, [id, en.title, fr.title, en.description, fr.description, priority, detail, status || null]);
+    if (!state) {
+      if (n === 0) return;
+      const claimed = await pool.query(`INSERT INTO wordpress_approval_tasks (business_id, last_count) VALUES ($1, $2) ON CONFLICT (business_id) DO NOTHING RETURNING business_id`, [businessId, n]);
+      if (!claimed.rows.length) return;   // another page or the background check just made it: only one of them does
+      await pool.query('UPDATE wordpress_approval_tasks SET task_id = $2, updated_at = NOW() WHERE business_id = $1', [businessId, await make()]); return;
+    }
+    if (n === 0) {   // everything has been reviewed: the task closes itself
+      if (task && task.status !== 'done') await pool.query(`UPDATE action_tasks SET status = 'done', completed_at = NOW(), updated_at = NOW() WHERE id = $1`, [task.id]);
+      await pool.query('UPDATE wordpress_approval_tasks SET last_count = 0, updated_at = NOW() WHERE business_id = $1', [businessId]); return;
+    }
+    if (!task) {   // the person deleted it (or it was never made): it comes back only if more are waiting than when they dismissed it
+      if (n > last) await pool.query('UPDATE wordpress_approval_tasks SET task_id = $2, last_count = $3, updated_at = NOW() WHERE business_id = $1', [businessId, await make(), n]);
+      else await pool.query('UPDATE wordpress_approval_tasks SET last_count = $2, updated_at = NOW() WHERE business_id = $1', [businessId, n]);
+      return;
+    }
+    if (task.status === 'done') {   // closed by itself (nothing was waiting) or by the person: reopened only by NEW suggestions
+      if (last === 0 || n > last) await refresh(task.id, 'not_started');
+      await pool.query('UPDATE wordpress_approval_tasks SET last_count = $2, updated_at = NOW() WHERE business_id = $1', [businessId, n]); return;
+    }
+    if (task.title !== en.title || task.description !== en.description || task.priority !== priority || task.title_fr !== fr.title) await refresh(task.id, null);
+    await pool.query('UPDATE wordpress_approval_tasks SET last_count = $2, updated_at = NOW() WHERE business_id = $1', [businessId, n]);
+  } catch (err) { console.error('WordPress approval task sync error (the Action Center opens as it was):', err.message); }
+}
+
+// wordpress-own:end
+// tasks-website:start
+// ── Website approvals in the Action Center: the part that is the same for every kind of website ──────────────────────────────────────────
+// Each kind of website registers how to keep ITS approvals task current; this part only runs them, when the Action Center is opened and in the background check. Nothing platform-specific is decided here.
+const WEBSITE_TASK_SOURCES = {
+  wordpress: { sync: wordpressApprovalTaskSync },
+};
+async function syncWebsiteApprovalTasks(businessId, ownerId, plan) { for (const source of Object.values(WEBSITE_TASK_SOURCES)) await source.sync(businessId, ownerId, plan); }
+// The background check: every business of the owner, so the tasks (and the home page's list of urgent tasks) are current without anyone opening the Action Center.
+async function syncOwnerWebsiteApprovalTasks(ownerId, plan) {
+  try { for (const b of (await pool.query('SELECT id FROM businesses WHERE user_id = $1', [ownerId])).rows) await syncWebsiteApprovalTasks(b.id, ownerId, plan); }
+  catch (err) { console.error('Approval tasks background sync error:', err.message); }
+}
+
+// tasks-website:end
 // growth-website:start
 // ── Goals that follow a website measure ─────────────────────────────────────────────────────────────────────────────────────────────────
 // A goal can be linked to one measure of a connected website; its current value then follows that measure by itself, through the SAME rules as a value typed in (achievement, milestones,
@@ -16179,6 +16251,7 @@ app.get('/api/dashboard/recent-activity', authRequired, async (req, res) => {
 app.get('/api/dashboard/top-priorities', authRequired, async (req, res) => {
   try {
     const account = await resolveAccount(req.userId);
+    const lang = req.query.lang === 'fr' ? 'fr' : 'en';   // tasks stored in both languages (such as website approvals) read in the reader's language
 
     const bizResult = await pool.query(
       'SELECT id, name, business_xray, intelligence_snapshot FROM businesses WHERE user_id = $1 AND is_active = true ORDER BY updated_at DESC LIMIT 1',
@@ -16203,12 +16276,12 @@ app.get('/api/dashboard/top-priorities', authRequired, async (req, res) => {
     }
 
     const tasksResult = await pool.query(
-      `SELECT id, title, business_id FROM action_tasks WHERE owner_id = $1 AND priority = 'high' AND status != 'done'
+      `SELECT id, title, title_fr, business_id FROM action_tasks WHERE owner_id = $1 AND priority = 'high' AND status != 'done'
        ORDER BY due_date ASC NULLS LAST, created_at DESC LIMIT 3`,
       [account.id]
     );
     tasksResult.rows.forEach(task => {
-      priorities.push({ type: 'high_priority_task', text: task.title, businessId: task.business_id, taskId: task.id });
+      priorities.push({ type: 'high_priority_task', text: (lang === 'fr' && task.title_fr) || task.title, businessId: task.business_id, taskId: task.id });
     });
 
     res.json({ priorities: priorities.slice(0, 5), businessName: business?.name || null });
@@ -21835,6 +21908,7 @@ async function runMonitoringSweep() {
         await checkWordPressAlerts(owner.id, prefs, owner.preferred_language);
         await checkShopifyAlerts(owner.id, prefs, owner.preferred_language);
         await checkOpportunityRadar(owner.id, prefs, owner.preferred_language);
+        await syncOwnerWebsiteApprovalTasks(owner.id, owner.plan);
         await checkSubscriptionExpiry(owner.id, prefs, owner.preferred_language);
         ownersChecked++;
 
