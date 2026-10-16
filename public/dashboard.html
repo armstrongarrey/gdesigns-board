@@ -6238,7 +6238,7 @@ function addTaskFromGrowthAction(checkpointIndex, actionIndex, event) {
 let currentActionBusinessId = null;
 let currentAssignableMembers = [];
 const TASK_PRIORITY_COLORS = { high: '#ef4444', medium: 'var(--gold)', low: 'var(--muted)' };
-const TASK_SOURCE_LABELS = { business_intelligence: 'bi.title', growth_center: 'growth.title', market_intelligence: 'market.title', marketing_strategy: 'mkt.title', content_calendar: 'mkt.calendar_title', website_wordpress: 'wordpress.task.source' };
+const TASK_SOURCE_LABELS = { business_intelligence: 'bi.title', growth_center: 'growth.title', market_intelligence: 'market.title', marketing_strategy: 'mkt.title', content_calendar: 'mkt.calendar_title', website_wordpress: 'wordpress.task.source', website_shopify: 'shopify.task.source' };
 
 async function loadActionBusinesses() {
   try {
@@ -11893,7 +11893,7 @@ async function unlinkGrowthGoal(objectiveId) {
 // tasks-website:start
 // ── Website approvals in the Action Center ───────────────────────────────────────────────────────────────────────────────────────────────
 // The tasks themselves are made and kept current by the server (in both languages); this only gives such a task a "Review now" button that opens the right platform and business in the Website section.
-const WEBSITE_TASK_PLATFORMS = { website_wordpress: 'wordpress' };
+const WEBSITE_TASK_PLATFORMS = { website_wordpress: 'wordpress', website_shopify: 'shopify' };
 function websiteTaskActionHtml(task) {
   const platform = WEBSITE_TASK_PLATFORMS[task.source]; if (!platform || task.status === 'done' || !/^[0-9a-f-]{36}$/i.test(String(task.business_id))) return '';   // only a real id goes into the button
   return `<button onclick="openWebsiteApprovals('${platform}', '${escapeHtml(task.business_id)}')" style="background:none;border:1px solid var(--purple-light);color:var(--purple-light);cursor:pointer;font-size:11px;padding:2px 9px;border-radius:5px">${t('action.review_now')}</button>`;
