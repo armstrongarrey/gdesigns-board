@@ -1898,6 +1898,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <div id="reportsGrid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:14px;max-width:900px"></div>
     <div id="ciReports" style="max-width:900px;margin-top:22px"></div>
       <div id="wordpressReports" style="max-width:900px;margin-top:22px"></div>
+      <div id="shopifyReports" style="max-width:900px;margin-top:22px"></div>
   </div>
 
   <!-- WEBSITE CONTROL CENTER — Phase 8 / Increment 1 (connection + read-only intelligence) -->
@@ -7359,6 +7360,7 @@ async function loadReportsCenter() {
     renderReportsGrid(data.reports || []);
     loadCompetitiveReports();
     loadWordPressReports();
+    loadShopifyReports();
   } catch (e) {
     grid.innerHTML = `<div style="text-align:center;padding:24px;color:#ff8080;font-size:13px;grid-column:1/-1">${t('board.connection_error')}</div>`;
   }
@@ -8909,6 +8911,80 @@ async function runShopifyIndexingCheck() {
 }
 // shopify-own:end
 
+// shopify-own:start
+// ── Shopify website report (Reports Center) and the Shopify measures a goal can follow ───────────────────────────────────────────────
+// Shopify's own texts (shopify.*). The server sends facts; every sentence is written here, in the reader's language (the PDF and Word files use the same words on the server).
+const SHOPIFY_DIRECTION_COLOR = { improved: '#22c55e', worse: '#ff6b6b', same: 'var(--muted)', new: '#60a5fa', none: 'var(--muted)' };
+const shopifyReportDate = day => new Date(day + 'T00:00:00Z').toLocaleDateString(window.currentLang === 'fr' ? 'fr-FR' : 'en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
+const shopifyReportMetric = k => t('shopify.report.metric_' + k);
+const shopifyReportValueText = m => (m.value === null || m.value === undefined ? '-' : `${m.value}${m.unit === '%' ? '%' : ''}`);
+function shopifyReportChangeText(m) {
+  if (m.direction === 'same' || m.direction === 'new' || m.direction === 'none') return t('shopify.report.dir_' + m.direction);
+  return `${m.change > 0 ? '+' : ''}${m.change}${m.unit === '%' ? '%' : ''} (${t('shopify.report.dir_' + m.direction)})`;
+}
+function renderShopifyReportView(report) {
+  const el = document.getElementById('shopifyReportView'); if (!el) return;
+  if (!report) { el.innerHTML = ''; return; }
+  const c = report.content, id = encodeURIComponent(currentReportsBusinessId), dl = fmt => `/api/business/${id}/shopify/reports/${encodeURIComponent(report.id)}/download?format=${fmt}&lang=${window.currentLang === 'fr' ? 'fr' : 'en'}`;
+  const h = (key) => `<div style="font-size:11.5px;font-weight:600;color:var(--muted);margin:16px 0 6px;text-transform:uppercase">${t('shopify.report.' + key)}</div>`, li = txt => `<div style="font-size:12.5px;color:var(--text2);line-height:1.55;margin:3px 0">• ${escapeHtml(txt)}</div>`;
+  const hl = []; if (c.highlights.quiet) hl.push(t('shopify.report.highlight_quiet')); if ((c.highlights.improved || []).length) hl.push(tf('shopify.report.highlight_improved', { list: c.highlights.improved.map(shopifyReportMetric).join(', ') })); if ((c.highlights.worse || []).length) hl.push(tf('shopify.report.highlight_worse', { list: c.highlights.worse.map(shopifyReportMetric).join(', ') })); if (c.highlights.stable) hl.push(t('shopify.report.highlight_stable'));
+  const a = c.activity, acts = [['act_technical', a.technical], ['act_audit', a.audit], ['act_indexing', a.indexing], ['act_links', a.links], ['act_keywords', a.keywords], ['act_ai', a.ai], ['act_approved', a.approved], ['act_auto', a.auto], ['act_rejected', a.rejected], ['act_undone', a.undone], ['act_posts', a.posts], ['act_pending', a.pending]];
+  el.innerHTML = `<div style="background:var(--bg3);border-radius:12px;padding:16px 18px;margin-top:14px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap"><div><div style="font-size:14px;font-weight:700;color:var(--text)">${escapeHtml(t('shopify.report.' + c.kind))} · ${t('shopify.report.title')}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:3px">${escapeHtml(tf('shopify.report.period', { start: shopifyReportDate(c.period.start), end: shopifyReportDate(c.period.end) }))} · ${escapeHtml(tf('shopify.report.generated', { date: shopifyReportDate(c.generatedAt.slice(0, 10)) }))}</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn-ghost" style="font-size:11.5px;padding:6px 12px;text-decoration:none" href="${dl('pdf')}" download>${t('shopify.report.download_pdf')}</a><a class="btn-ghost" style="font-size:11.5px;padding:6px 12px;text-decoration:none" href="${dl('docx')}" download>${t('shopify.report.download_word')}</a></div></div>
+    ${h('section_highlights')}${hl.map(li).join('')}${h('section_priorities')}${(c.priorities || []).map(p => li(tf('shopify.report.priority_' + p.code, p.params || {}))).join('')}
+    ${h('section_metrics')}<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="text-align:left;color:var(--muted)"><th style="padding:5px 6px">${t('shopify.report.col_measure')}</th><th style="padding:5px 6px">${t('shopify.report.col_now')}</th><th style="padding:5px 6px">${t('shopify.report.col_before')}</th><th style="padding:5px 6px">${t('shopify.report.col_change')}</th></tr></thead><tbody>${(c.metrics || []).map(m => `<tr style="border-top:1px solid var(--border)"><td style="padding:6px;color:var(--text)">${escapeHtml(shopifyReportMetric(m.key))}</td><td style="padding:6px;color:var(--text)">${escapeHtml(shopifyReportValueText(m))}</td><td style="padding:6px;color:var(--text2)">${m.previous === null || m.previous === undefined ? '-' : escapeHtml(String(m.previous) + (m.unit === '%' ? '%' : ''))}</td><td style="padding:6px;color:${SHOPIFY_DIRECTION_COLOR[m.direction] || 'var(--muted)'}">${escapeHtml(shopifyReportChangeText(m))}</td></tr>`).join('')}</tbody></table></div>
+    ${(c.noData || []).length ? `<div style="font-size:11.5px;color:var(--muted);margin-top:6px">${escapeHtml(tf('shopify.report.note_no_data', { list: c.noData.map(shopifyReportMetric).join(', ') }))}</div>` : ''}
+    ${h('section_activity')}${acts.map(([k, n]) => li(tf('shopify.report.act_line', { label: t('shopify.report.' + k), n }))).join('')}
+    ${h('section_goals')}${(c.goals || []).length ? c.goals.map(g => li(tf('shopify.report.goal_line', { name: g.name, current: g.current, unit: g.unit, target: g.target, pct: g.pct }) + (g.achieved ? ' - ' + t('shopify.report.goal_achieved') : g.behind ? ' - ' + t('shopify.report.goal_behind') : ''))).join('') : li(t('shopify.report.goal_none'))}</div>`;
+}
+function renderShopifyReportsPanel(reports) {
+  const el = document.getElementById('shopifyReports'); if (!el) return;
+  if (reports === null) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px 20px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap"><div style="min-width:0;flex:1"><div style="font-size:14px;font-weight:700;color:var(--text)">${t('shopify.report.panel_title')}</div><div style="font-size:11.5px;color:var(--muted);margin-top:4px">${t('shopify.report.panel_desc')}</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn-secondary" id="shopifyReportWeeklyBtn" onclick="generateShopifyReport('weekly')">${t('shopify.report.build_weekly')}</button><button class="btn-primary" id="shopifyReportMonthlyBtn" onclick="generateShopifyReport('monthly')">${t('shopify.report.build_monthly')}</button></div></div>
+    <div id="shopifyReportError" style="font-size:12px;color:#ff8080;margin-top:8px"></div>
+    <div style="font-size:11.5px;font-weight:600;color:var(--muted);margin:14px 0 4px;text-transform:uppercase">${t('shopify.report.list_title')}</div>
+    ${reports.length ? reports.map(r => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--border);flex-wrap:wrap"><div style="font-size:12.5px;color:var(--text)">${escapeHtml(t('shopify.report.' + r.kind))} · <span style="color:var(--muted)">${escapeHtml(tf('shopify.report.period', { start: shopifyReportDate(r.periodStart), end: shopifyReportDate(r.periodEnd) }))}</span></div><div style="display:flex;gap:8px"><button class="btn-ghost" style="font-size:11.5px;padding:5px 10px" onclick="viewShopifyReport('${escapeHtml(r.id)}')">${t('shopify.report.view')}</button></div></div>`).join('') : `<div style="font-size:12px;color:var(--muted)">${t('shopify.report.none_yet')}</div>`}
+    <div id="shopifyReportView"></div></div>`;
+}
+async function loadShopifyReports(openId) {
+  if (!document.getElementById('shopifyReports') || !currentReportsBusinessId) return;
+  try {
+    const res = await fetch(`/api/business/${currentReportsBusinessId}/shopify/reports`), data = await res.json().catch(() => ({}));
+    if (!res.ok) { renderShopifyReportsPanel(null); return; }   // no Shopify site on this business, or a plan without it: no panel
+    renderShopifyReportsPanel(data.reports || []); if (openId) viewShopifyReport(openId);
+  } catch (e) { renderShopifyReportsPanel(null); }
+}
+async function viewShopifyReport(id) {
+  const box = document.getElementById('shopifyReportView'); if (!box) return;
+  try {
+    const res = await fetch(`/api/business/${currentReportsBusinessId}/shopify/reports/${encodeURIComponent(id)}`), data = await res.json().catch(() => ({}));
+    if (!res.ok) { box.innerHTML = `<div style="font-size:12px;color:#ff8080;margin-top:10px">${escapeHtml(shopifyServerText(data) || t('board.connection_error'))}</div>`; return; }
+    renderShopifyReportView(data.report);
+  } catch (e) { box.innerHTML = `<div style="font-size:12px;color:#ff8080;margin-top:10px">${t('board.connection_error')}</div>`; }
+}
+async function generateShopifyReport(kind) {
+  const btns = ['shopifyReportWeeklyBtn', 'shopifyReportMonthlyBtn'].map(i => document.getElementById(i)), err = document.getElementById('shopifyReportError'), btn = document.getElementById(kind === 'monthly' ? 'shopifyReportMonthlyBtn' : 'shopifyReportWeeklyBtn');
+  const label = btn.textContent; btns.forEach(b => { b.disabled = true; }); btn.textContent = t('shopify.report.building'); err.textContent = '';
+  try {
+    const res = await fetch(`/api/business/${currentReportsBusinessId}/shopify/reports/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind }) }), data = await res.json().catch(() => ({}));
+    if (!res.ok) { err.textContent = shopifyServerText(data) || t('board.connection_error'); return; }
+    await loadShopifyReports(data.report.id);
+  } catch (e) { err.textContent = t('board.connection_error'); }
+  finally { btns.forEach(b => { if (b) b.disabled = false; }); if (btn && btn.isConnected) btn.textContent = label; }
+}
+// The Shopify measures a goal can follow: what they are, their value right now (or none yet). Returns null when this business has no Shopify site or the plan does not include it.
+async function loadShopifyGoalMetrics() {
+  try {
+    const res = await fetch(`/api/business/${currentGrowthBusinessId}/shopify/goal-metrics`), data = await res.json().catch(() => ({})); if (!res.ok) return null;
+    return (data.metrics || []).map(m => ({ platform: 'shopify', key: m.key, unit: m.unit || '', value: m.value, measuredAt: m.measuredAt }));
+  } catch (e) { return null; }
+}
+// shopify-own:end
+
 async function loadShopifySitemapStatus() {
   const contentEl = document.getElementById('shopifySitemapContent');
   try {
@@ -8964,9 +9040,10 @@ function shopifyLogText(entry) {
   }
   const key = 'shopify.log.' + type, probe = t(key); if (!probe || probe === key) return (entry && entry.description) || '';
   if (type === 'indexing_checked' && d.pagesChecked === undefined) return (entry && entry.description) || '';
+  if (type === 'report_generated' && d.kind !== 'weekly' && d.kind !== 'monthly') return (entry && entry.description) || '';
   if (SHOPIFY_LOG_CHANGE_KINDS.includes(type) && !d.change) return (entry && entry.description) || '';   // the facts this sentence needs are missing: show the stored English sentence rather than half a sentence
   return tf(key, { title: d.title || '', change: shopifyChangeText(d.change, true), how: t(d.published ? 'shopify.log.word_published' : 'shopify.log.word_draft'), state: t(d.automationMode === 'automatic' ? 'shopify.log.state_on' : 'shopify.log.state_off'),
-    issuesFound: d.issuesFound || 0, autoFixed: d.autoFixed || 0, pendingApproval: d.pendingApproval || 0, brokenCount: d.brokenCount || 0, checked: d.pagesChecked || 0, total: d.pagesTotal || 0, shop: d.shop || '', verdict: t('shopify.log.verdict_' + (d.verdict === 'complete' || d.verdict === 'incomplete' ? d.verdict : 'none')) });
+    issuesFound: d.issuesFound || 0, autoFixed: d.autoFixed || 0, pendingApproval: d.pendingApproval || 0, brokenCount: d.brokenCount || 0, checked: d.pagesChecked || 0, total: d.pagesTotal || 0, kind: t('shopify.log.report_' + (d.kind === 'monthly' ? 'monthly' : 'weekly')), shop: d.shop || '', verdict: t('shopify.log.verdict_' + (d.verdict === 'complete' || d.verdict === 'incomplete' ? d.verdict : 'none')) });
 }
 const SHOPIFY_ACTIVITY_LOG_FEATURES = [
   { key: 'all', labelKey: 'shopify.log.feature.all' }, { key: 'seo_proposals', labelKey: 'shopify.log.feature.seo_proposals' }, { key: 'taxonomy', labelKey: 'shopify.log.feature.taxonomy' },
@@ -11763,6 +11840,7 @@ async function loadWordPressGoalMetrics() {
 // Each kind of website says how to list its measures and what to call them; this part only shows them in the goal form, links a new goal, and tells a goal that follows one.
 const GROWTH_WEBSITE_PLATFORMS = [
   { platform: 'wordpress', load: () => loadWordPressGoalMetrics(), groupKey: 'wordpress.goal.group', platformKey: 'wordpress.goal.platform', metricKey: k => 'wordpress.report.metric_' + k },
+  { platform: 'shopify', load: () => loadShopifyGoalMetrics(), groupKey: 'shopify.goal.group', platformKey: 'shopify.goal.platform', metricKey: k => 'shopify.report.metric_' + k },
 ];
 let currentGrowthWebsiteLinks = {};
 const growthWebsitePlatform = p => GROWTH_WEBSITE_PLATFORMS.find(x => x.platform === p);
