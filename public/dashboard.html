@@ -8957,6 +8957,7 @@ function renderShopifyReportsPanel(reports) {
 }
 async function loadShopifyReports(openId) {
   if (!document.getElementById('shopifyReports') || !currentReportsBusinessId) return;
+  if (!webHas('audit')) { renderShopifyReportsPanel(null); return; }   // this plan has no website reports: no request, no panel
   try {
     const res = await fetch(`/api/business/${currentReportsBusinessId}/shopify/reports`), data = await res.json().catch(() => ({}));
     if (!res.ok) { renderShopifyReportsPanel(null); return; }   // no Shopify site on this business, or a plan without it: no panel
@@ -8983,6 +8984,7 @@ async function generateShopifyReport(kind) {
 }
 // The Shopify measures a goal can follow: what they are, their value right now (or none yet). Returns null when this business has no Shopify site or the plan does not include it.
 async function loadShopifyGoalMetrics() {
+  if (!webHas('audit')) return null;   // this plan has no website measures: no request (the goal picker simply has none to offer)
   try {
     const res = await fetch(`/api/business/${currentGrowthBusinessId}/shopify/goal-metrics`), data = await res.json().catch(() => ({})); if (!res.ok) return null;
     return (data.metrics || []).map(m => ({ platform: 'shopify', key: m.key, unit: m.unit || '', value: m.value, measuredAt: m.measuredAt }));
@@ -11829,6 +11831,7 @@ function renderWordPressReportsPanel(reports) {
 }
 async function loadWordPressReports(openId) {
   if (!document.getElementById('wordpressReports') || !currentReportsBusinessId) return;
+  if (!webHas('audit')) { renderWordPressReportsPanel(null); return; }   // this plan has no website reports: no request, no panel
   try {
     const res = await fetch(`/api/business/${currentReportsBusinessId}/website/reports`), data = await res.json().catch(() => ({}));
     if (!res.ok) { renderWordPressReportsPanel(null); return; }   // no WordPress site on this business, or a plan without it: no panel
@@ -11855,6 +11858,7 @@ async function generateWordPressReport(kind) {
 }
 // The WordPress measures a goal can follow: what they are, their value right now (or none yet). Returns null when this business has no WordPress site or the plan does not include it.
 async function loadWordPressGoalMetrics() {
+  if (!webHas('audit')) return null;   // this plan has no website measures: no request (the goal picker simply has none to offer)
   try {
     const res = await fetch(`/api/business/${currentGrowthBusinessId}/website/goal-metrics`), data = await res.json().catch(() => ({})); if (!res.ok) return null;
     return (data.metrics || []).map(m => ({ platform: 'wordpress', key: m.key, unit: m.unit || '', value: m.value, measuredAt: m.measuredAt }));
