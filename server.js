@@ -587,6 +587,21 @@ const AUTO_SEO_EXTRA_PATHS = [
   ['GET',  routeRx(BIZ_PATH + '/competitors/suggestions')],
   ['POST', routeRx(BIZ_PATH + '/competitors/suggestions/confirm')],
   ['POST', routeRx(BIZ_PATH + '/competitors/suggestions/[^/]+/dismiss')],
+  // The rest of what the Auto SEO plan includes besides the website tool itself: the website's reports (Reports page), goals that follow website
+  // measures (Goals page), website approvals as tasks (Action page), and the markets and competitor activity the Competitor Analysis card reads.
+  // Goals are open EXCEPT the AI-written plan (POST .../plan); competitive reports stay with the other plans.
+  ['GET',  routeRx(BIZ_PATH + '/reports-center')],
+  ['*',    routeRx(BIZ_PATH + '/tasks(/[^/]+)?')],
+  ['GET',  routeRx(BIZ_PATH + '/assignable-members')],
+  ['*',    routeRx(BIZ_PATH + '/markets')],
+  ['GET',  routeRx(BIZ_PATH + '/competitor-activity')],
+  ['POST', routeRx(BIZ_PATH + '/competitor-activity/check')],
+  ['POST', routeRx(BIZ_PATH + '/growth-objective')],
+  ['GET',  routeRx(BIZ_PATH + '/growth-objectives')],
+  ['GET',  routeRx(BIZ_PATH + '/growth-objective/[^/]+')],
+  ['*',    routeRx(BIZ_PATH + '/growth-objective/[^/]+/(progress|progress-history|activity|milestones|website-link)')],
+  ['*',    routeRx(BIZ_PATH + '/growth-objective/[^/]+/milestones/[^/]+(/achieve)?')],
+  ['POST', routeRx(BIZ_PATH + '/growth-objectives/website-sync')],
 ];
 
 function lockReasonFor(previousPlan) { return (previousPlan && previousPlan !== 'free') ? 'renew' : 'upgrade'; }
