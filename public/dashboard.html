@@ -1905,7 +1905,6 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
   <div class="section-view" id="section-website">
     <div class="section-title" data-i18n="web.title">Website</div>
     <div class="section-sub" data-i18n="web.subtitle">Connect your website so your AI business team can analyze it and help improve it.</div>
-    <div id="websiteUsageBar" class="web-usage-bar"></div>
 
     <div id="websiteNoBizPrompt" style="display:none;background:var(--bg2);border:1px dashed var(--border);border-radius:14px;padding:20px;text-align:center;max-width:500px">
       <div style="font-size:13px;color:var(--muted)" data-i18n="growth.no_business_yet">Analyze a business first so Growth Center has somewhere to track progress.</div>
@@ -1932,6 +1931,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
         </div>
       </div>
       <div id="wordpressView" class="wt-view">
+    <div id="websiteUsageBar" class="web-usage-bar"></div>
 
 
       <!-- EMPTY STATE — spec section 25: explicit about what Arreyon will
@@ -2425,6 +2425,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
            separate future work. Shown independently of WordPress
            connection state — a business can have one, both, or neither. -->
       <div id="shopifySection" class="wt-view" style="display:none">
+    <div id="shopifyUsageBar" class="web-usage-bar"></div>
         <div id="shopifyConnectPrompt" class="wt-card wt-empty" style="display:none">
           <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:8px" data-i18n="web.shopify_connect_title">Connect Your Shopify Store</div>
           <div style="font-size:13px;color:var(--text2);line-height:1.6;margin:0 auto 18px;max-width:480px" data-i18n="web.shopify_subtitle">Connect a Shopify store to generate and publish blog content with real SEO fields.</div>
@@ -2910,7 +2911,7 @@ async function refreshPlanAccess() {
     const r = await fetch('/api/auth/me');
     if (!r.ok) return;
     const d = await r.json();
-    if (d && d.access) { planAccess = d.access; window.planAccess = planAccess; planAccessFetchedAt = Date.now(); renderWebsiteUsageBar(); renderBilling(); }
+    if (d && d.access) { planAccess = d.access; window.planAccess = planAccess; planAccessFetchedAt = Date.now(); renderWordPressUsageBar(); renderShopifyUsageBar(); applyBusinessLevelPlanLocks(); renderBilling(); }
   } catch (e) { /* the meter just stays as it was */ }
 }
 
@@ -2991,8 +2992,8 @@ function renderBilling() {
         if (f) { f.style.width = p + '%'; f.classList.toggle('danger', p >= 100); }
         if (tx) tx.textContent = label;
       };
-      bar('usageSitesFill', 'usageSitesText', w.sitesUsed, w.sites, tf('web.usage_sites', { used: w.sitesUsed, limit: w.sites }));
-      bar('usagePostsFill', 'usagePostsText', w.postsUsed, w.posts, tf(w.postsPeriod === 'trial' ? 'web.usage_posts_trial' : 'web.usage_posts_month', { used: w.postsUsed, limit: w.posts }));
+      bar('usageSitesFill', 'usageSitesText', w.sitesUsed, w.sites, tf('billing.usage_sites', { used: w.sitesUsed, limit: w.sites }));
+      bar('usagePostsFill', 'usagePostsText', w.postsUsed, w.posts, tf(w.postsPeriod === 'trial' ? 'billing.usage_posts_trial' : 'billing.usage_posts_month', { used: w.postsUsed, limit: w.posts }));
     } else wUse.style.display = 'none';
   }
 
@@ -3065,78 +3066,155 @@ function renderBilling() {
   }).join('');
 }
 
-// ── Website tool: show only what this plan includes ─────────────────────────
-const WEBSITE_FEATURE_ELEMENTS = {
-  agent: ['websiteAgentCard', 'shopifyAgentCard'], calendar: ['websiteCalendarCard', 'shopifyCalendarCard'],
-  agent_activity: ['websiteActivityCard', 'shopifyActivityCard'], automation: ['websiteAutomationCard', 'shopifyAutomationCard'],
-  intelligence: ['websiteIntelligenceSection', 'shopifyIntelligenceSection'], audit: ['websiteAuditRunSection', 'shopifyAuditSection'],
-  ai_visibility: ['websiteAiVisibilitySection', 'shopifyAiVisibilitySection'], keyword_rankings: ['websiteKeywordRankingsSection', 'shopifyKeywordRankingsSection'],
-  sitemap: ['websiteSitemapSection', 'shopifySitemapSection'], competitor: ['websiteCompetitorSection', 'shopifyCompetitorSection'],
-  technical_seo: ['websiteTechnicalSeoSection', 'shopifyTechnicalSeoSection'], broken_links: ['websiteBrokenLinksSection', 'shopifyBrokenLinksSection'],
-  schema: ['websiteSchemaSection', 'shopifySchemaSection'], media: ['websiteMediaSection'], activity_log: ['websiteActivityLogSection'],
-  proposed_changes: ['websiteActionsSection', 'shopifyActionsSection'],
-  backlinks: ['platformTabBacklinks', 'platformTabPartnerNetwork', 'backlinksSection', 'partnerNetworkSection']
+// ── Plan-level: the business-level tabs (they belong to neither platform) ────────────────────────────
+const BUSINESS_LEVEL_LOCKED_ELEMENTS = ['platformTabBacklinks', 'platformTabPartnerNetwork', 'backlinksSection', 'partnerNetworkSection'];
+function applyBusinessLevelPlanLocks() {
+  if (!planAccess || !planAccess.website) return;
+  const has = webHas('backlinks');
+  BUSINESS_LEVEL_LOCKED_ELEMENTS.forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('plan-locked', !has); });
+}
+
+// wordpress-own:start
+// ── WordPress: show only what this plan includes ─────────────────────────────────────────────────────────────────────────────────
+// Nothing here is shared with the other platform: this platform has its own texts (wordpress.plan.*) and its own helpers.
+const WORDPRESS_FEATURE_ELEMENTS = {
+  agent: ['websiteAgentCard'], calendar: ['websiteCalendarCard'], agent_activity: ['websiteActivityCard'], automation: ['websiteAutomationCard'],
+  intelligence: ['websiteIntelligenceSection'], audit: ['websiteAuditRunSection'], ai_visibility: ['websiteAiVisibilitySection'], keyword_rankings: ['websiteKeywordRankingsSection'],
+  sitemap: ['websiteSitemapSection'], competitor: ['websiteCompetitorSection'], technical_seo: ['websiteTechnicalSeoSection'], broken_links: ['websiteBrokenLinksSection'],
+  schema: ['websiteSchemaSection'], media: ['websiteMediaSection'], activity_log: ['websiteActivityLogSection'], proposed_changes: ['websiteActionsSection']
 };
-function applyWebsitePlanLocks() {
+function applyWordPressPlanLocks() {
   if (!planAccess || !planAccess.website) return;
   const lockedFeatures = [];
-  for (const [feature, ids] of Object.entries(WEBSITE_FEATURE_ELEMENTS)) {
+  for (const [feature, ids] of Object.entries(WORDPRESS_FEATURE_ELEMENTS)) {
     const has = webHas(feature);
     ids.forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('plan-locked', !has); });
     if (!has) lockedFeatures.push(feature);
   }
+  if (!webHas('backlinks')) lockedFeatures.push('backlinks');
   // "Find & Improve SEO" lives inside Proposed Changes, which Pro can open — so only its buttons hide.
   const hasFind = webHas('find_improve_seo');
   document.querySelectorAll('[onclick*="generateSeoProposals"],[onclick*="generateDuplicateTitleProposals"],[onclick*="generateTaxonomyProposals"],[onclick*="generateFeaturedImageProposals"]')
     .forEach(b => b.classList.toggle('plan-locked', !hasFind));
   if (!hasFind) lockedFeatures.push('find_improve_seo');
-  renderLockedPanel(lockedFeatures);
+  renderWordPressLockedPanel(lockedFeatures);
 }
-function renderLockedPanel(features) {
-  const wrap = document.getElementById('websiteMainWrap');
+function renderWordPressLockedPanel(features) {
+  const wrap = document.getElementById('wordpressView');
   if (!wrap) return;
   let panel = document.getElementById('websiteLockedPanel');
   if (!features.length) { if (panel) panel.style.display = 'none'; return; }
   if (!panel) { panel = document.createElement('div'); panel.id = 'websiteLockedPanel'; panel.className = 'web-locked-panel'; wrap.appendChild(panel); }
   const minPlan = (planAccess && planAccess.website && planAccess.website.featureMinPlan) || (planAccess && planAccess.featureMinPlan) || {};
-  panel.innerHTML = `<h4>${t('web.locked_title')}</h4><div style="font-size:12px;color:var(--muted)">${t('web.locked_desc')}</div>
-    <ul>${features.map(f => `<li>${t('web.feat_' + f)}${minPlan[f] ? ' — ' + planName(minPlan[f]) : ''}</li>`).join('')}</ul>
-    <button class="btn-primary" style="padding:8px 18px;font-size:12.5px" onclick="showSection('billing')">${t('web.usage_upgrade')}</button>`;
+  panel.innerHTML = `<h4>${t('wordpress.plan.locked_title')}</h4><div style="font-size:12px;color:var(--muted)">${t('wordpress.plan.locked_desc')}</div>
+    <ul>${features.map(f => `<li>${t('wordpress.plan.feat_' + f)}${minPlan[f] ? ' — ' + planName(minPlan[f]) : ''}</li>`).join('')}</ul>
+    <button class="btn-primary" style="padding:8px 18px;font-size:12.5px" onclick="showSection('billing')">${t('wordpress.plan.usage_upgrade')}</button>`;
   panel.style.display = '';
 }
-function renderWebsiteUsageBar() {
+function renderWordPressUsageBar() {
   const el = document.getElementById('websiteUsageBar');
   if (!el) return;
   const w = planAccess && planAccess.website;
   if (!w || !w.sites) { el.style.display = 'none'; return; }
   const top = planAccess.plan === 'business' || planAccess.plan === 'auto_seo';
-  el.innerHTML = `<span>${tf('web.usage_sites', { used: w.sitesUsed, limit: w.sites })}</span><span>${tf(w.postsPeriod === 'trial' ? 'web.usage_posts_trial' : 'web.usage_posts_month', { used: w.postsUsed, limit: w.posts })}</span>${top ? '' : `<a onclick="showSection('billing')">${t('web.usage_upgrade')}</a>`}`;
+  el.innerHTML = `<span>${tf('wordpress.plan.usage_sites', { used: w.sitesUsed, limit: w.sites })}</span><span>${tf(w.postsPeriod === 'trial' ? 'wordpress.plan.usage_posts_trial' : 'wordpress.plan.usage_posts_month', { used: w.postsUsed, limit: w.posts })}</span>${top ? '' : `<a onclick="showSection('billing')">${t('wordpress.plan.usage_upgrade')}</a>`}`;
   el.style.display = 'flex';
 }
 
 // Website-only (Auto SEO) accounts add competitors right inside the Competitor Analysis card,
 // because the Competitors section of Arreyon Consult is not part of their plan.
-function competitorAddHtml(prefix) {
+function wordpressCompetitorAddHtml() {
   if (!(planAccess && planAccess.websiteOnly)) return '';
   return `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-    <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:8px">${t('web.competitor_add_title')}</div>
+    <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:8px">${t('wordpress.plan.competitor_add_title')}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <input class="form-input" id="${prefix}NewCompetitorName" placeholder="${t('web.competitor_name_ph')}" style="flex:1;min-width:140px">
-      <input class="form-input" id="${prefix}NewCompetitorSite" placeholder="${t('web.competitor_site_ph')}" style="flex:1;min-width:160px">
-      <button class="btn-primary" style="padding:8px 16px;font-size:12.5px" onclick="addCompetitorFromWebsite('${prefix}')">${t('web.competitor_add_btn')}</button>
+      <input class="form-input" id="websiteNewCompetitorName" placeholder="${t('wordpress.plan.competitor_name_ph')}" style="flex:1;min-width:140px">
+      <input class="form-input" id="websiteNewCompetitorSite" placeholder="${t('wordpress.plan.competitor_site_ph')}" style="flex:1;min-width:160px">
+      <button class="btn-primary" style="padding:8px 16px;font-size:12.5px" onclick="addWordPressCompetitor()">${t('wordpress.plan.competitor_add_btn')}</button>
     </div></div>`;
 }
-async function addCompetitorFromWebsite(prefix) {
-  const bizId = prefix === 'shopify' ? (typeof currentShopifyBusinessId !== 'undefined' ? currentShopifyBusinessId : currentWebsiteBusinessId) : currentWebsiteBusinessId;
-  const name = (document.getElementById(prefix + 'NewCompetitorName') || {}).value || '';
-  const website = (document.getElementById(prefix + 'NewCompetitorSite') || {}).value || '';
+async function addWordPressCompetitor() {
+  const bizId = currentWebsiteBusinessId;
+  const name = (document.getElementById('websiteNewCompetitorName') || {}).value || '';
+  const website = (document.getElementById('websiteNewCompetitorSite') || {}).value || '';
   if (!name.trim() || !bizId) return;
   try {
     const res = await fetch(`/api/business/${bizId}/competitors`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), website: website.trim() || undefined }) });
-    if (res.ok) { showToast(t('web.competitor_added_toast'), 'success'); loadCompetitorAnalysis(prefix); }
+    if (res.ok) { showToast(t('wordpress.plan.competitor_added_toast'), 'success'); loadCompetitorAnalysis('website'); }
     else { const d = await res.json().catch(() => ({})); showToast(d.error || t('board.connection_error'), 'error'); }
   } catch (e) { showToast(t('board.connection_error'), 'error'); }
 }
+// wordpress-own:end
+
+// shopify-own:start
+// ── Shopify: show only what this plan includes ─────────────────────────────────────────────────────────────────────────────────
+// Nothing here is shared with the other platform: this platform has its own texts (shopify.plan.*) and its own helpers.
+const SHOPIFY_FEATURE_ELEMENTS = {
+  agent: ['shopifyAgentCard'], calendar: ['shopifyCalendarCard'], agent_activity: ['shopifyActivityCard'], automation: ['shopifyAutomationCard'],
+  intelligence: ['shopifyIntelligenceSection'], audit: ['shopifyAuditSection'], ai_visibility: ['shopifyAiVisibilitySection'], keyword_rankings: ['shopifyKeywordRankingsSection'],
+  sitemap: ['shopifySitemapSection'], competitor: ['shopifyCompetitorSection'], technical_seo: ['shopifyTechnicalSeoSection'], broken_links: ['shopifyBrokenLinksSection'],
+  schema: ['shopifySchemaSection'], proposed_changes: ['shopifyActionsSection']
+};
+function applyShopifyFeatureLocks() {
+  if (!planAccess || !planAccess.website) return;
+  const lockedFeatures = [];
+  for (const [feature, ids] of Object.entries(SHOPIFY_FEATURE_ELEMENTS)) {
+    const has = webHas(feature);
+    ids.forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('plan-locked', !has); });
+    if (!has) lockedFeatures.push(feature);
+  }
+  if (!webHas('activity_log')) lockedFeatures.push('activity_log');   // the card itself is locked by applyShopifyPlanLocks
+  if (!webHas('backlinks')) lockedFeatures.push('backlinks');
+  // The buttons of "Find & Improve SEO" are hidden by applyShopifyPlanLocks; here it is only listed.
+  if (!webHas('find_improve_seo')) lockedFeatures.push('find_improve_seo');
+  renderShopifyLockedPanel(lockedFeatures);
+}
+function renderShopifyLockedPanel(features) {
+  const wrap = document.getElementById('shopifySection');
+  if (!wrap) return;
+  let panel = document.getElementById('shopifyLockedPanel');
+  if (!features.length) { if (panel) panel.style.display = 'none'; return; }
+  if (!panel) { panel = document.createElement('div'); panel.id = 'shopifyLockedPanel'; panel.className = 'web-locked-panel'; wrap.appendChild(panel); }
+  const minPlan = (planAccess && planAccess.website && planAccess.website.featureMinPlan) || (planAccess && planAccess.featureMinPlan) || {};
+  panel.innerHTML = `<h4>${t('shopify.plan.locked_title')}</h4><div style="font-size:12px;color:var(--muted)">${t('shopify.plan.locked_desc')}</div>
+    <ul>${features.map(f => `<li>${t('shopify.plan.feat_' + f)}${minPlan[f] ? ' — ' + planName(minPlan[f]) : ''}</li>`).join('')}</ul>
+    <button class="btn-primary" style="padding:8px 18px;font-size:12.5px" onclick="showSection('billing')">${t('shopify.plan.usage_upgrade')}</button>`;
+  panel.style.display = '';
+}
+function renderShopifyUsageBar() {
+  const el = document.getElementById('shopifyUsageBar');
+  if (!el) return;
+  const w = planAccess && planAccess.website;
+  if (!w || !w.sites) { el.style.display = 'none'; return; }
+  const top = planAccess.plan === 'business' || planAccess.plan === 'auto_seo';
+  el.innerHTML = `<span>${tf('shopify.plan.usage_sites', { used: w.sitesUsed, limit: w.sites })}</span><span>${tf(w.postsPeriod === 'trial' ? 'shopify.plan.usage_posts_trial' : 'shopify.plan.usage_posts_month', { used: w.postsUsed, limit: w.posts })}</span>${top ? '' : `<a onclick="showSection('billing')">${t('shopify.plan.usage_upgrade')}</a>`}`;
+  el.style.display = 'flex';
+}
+
+// Website-only (Auto SEO) accounts add competitors right inside the Competitor Analysis card,
+// because the Competitors section of Arreyon Consult is not part of their plan.
+function shopifyCompetitorAddHtml() {
+  if (!(planAccess && planAccess.websiteOnly)) return '';
+  return `<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+    <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:8px">${t('shopify.plan.competitor_add_title')}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input class="form-input" id="shopifyNewCompetitorName" placeholder="${t('shopify.plan.competitor_name_ph')}" style="flex:1;min-width:140px">
+      <input class="form-input" id="shopifyNewCompetitorSite" placeholder="${t('shopify.plan.competitor_site_ph')}" style="flex:1;min-width:160px">
+      <button class="btn-primary" style="padding:8px 16px;font-size:12.5px" onclick="addShopifyCompetitor()">${t('shopify.plan.competitor_add_btn')}</button>
+    </div></div>`;
+}
+async function addShopifyCompetitor() {
+  const bizId = currentWebsiteBusinessId;
+  const name = (document.getElementById('shopifyNewCompetitorName') || {}).value || '';
+  const website = (document.getElementById('shopifyNewCompetitorSite') || {}).value || '';
+  if (!name.trim() || !bizId) return;
+  try {
+    const res = await fetch(`/api/business/${bizId}/competitors`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), website: website.trim() || undefined }) });
+    if (res.ok) { showToast(t('shopify.plan.competitor_added_toast'), 'success'); loadCompetitorAnalysis('shopify'); }
+    else { const d = await res.json().catch(() => ({})); showToast(d.error || t('board.connection_error'), 'error'); }
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+}
+// shopify-own:end
 
 // Website-only accounts see only Google Search Console under Integrations (Keyword Rankings and Sitemap need it).
 function integrationFetch(url) {
@@ -3167,6 +3245,7 @@ async function init() {
     renderBilling();
     loadProfile();
     renderTrialBanner();
+    applyBusinessLevelPlanLocks();
     // An expired account keeps only Billing and Profile; the server refuses everything else,
     // so nothing else is requested (no wall of errors behind the lockout).
     if (isLocked) { applyLockedNav(); showSection('billing'); return; }
@@ -8232,8 +8311,8 @@ document.addEventListener('arreyon:langchange', () => {
     document.getElementById('upgradeBtn').textContent = window.currentUserPlan !== 'free' ? t('dash.manage_plan') : t('dash.upgrade_plan');
     const sb = document.getElementById('sidebarPlanBadge'); if (sb) sb.textContent = planName(window.currentUserPlan);
     if (planAccess && planAccess.locked) renderLockoutText();
-    renderTrialBanner(); renderBilling(); renderWebsiteUsageBar();
-    if (planAccess && planAccess.website) applyWebsitePlanLocks();
+    renderTrialBanner(); renderBilling(); renderWordPressUsageBar(); renderShopifyUsageBar();
+    if (planAccess && planAccess.website) { applyWordPressPlanLocks(); applyShopifyPlanLocks(); }
   }
   if (window.currentUserFirstName) {
     document.getElementById('welcomeMsg').textContent = getGreeting() + ', ' + window.currentUserFirstName + '!';
@@ -8717,8 +8796,8 @@ async function loadShopifyStatus() {
     if (webHas('competitor')) loadCompetitorAnalysis('shopify');
     if (webHas('technical_seo')) loadTechnicalSeoHistory('shopify');
   if (webHas('technical_seo')) loadShopifyIndexing();
-    applyWebsitePlanLocks(); applyShopifyPlanLocks();
-    renderWebsiteUsageBar();
+    applyShopifyPlanLocks();
+    renderShopifyUsageBar();
     renderJumpNav('shopify');
   } catch (e) {
     showShopifyConnectState();
@@ -9061,6 +9140,7 @@ const SHOPIFY_ACTIVITY_LOG_FEATURES = [
 // Shopify's own plan locks for what the Shopify features added (the two suggestion buttons need "Find & Improve SEO"; the Activity Log card needs "activity_log").
 function applyShopifyPlanLocks() {
   if (typeof planAccess === 'undefined' || !planAccess || !planAccess.website) return;
+  applyShopifyFeatureLocks();
   const hasFind = webHas('find_improve_seo');
   ['shopifyTagProposalsBtn', 'shopifyDuplicateTitleBtn', 'shopifyThinContentBtn', 'shopifyHeadingsBtn'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('plan-locked', !hasFind); });
   const card = document.getElementById('shopifyActivityLogSection'); if (card) card.classList.toggle('plan-locked', !webHas('activity_log'));
@@ -9337,8 +9417,8 @@ async function loadWebsiteSection() {
     if (webHas('calendar')) loadContentCalendar('website');
     if (webHas('agent_activity')) loadAgentActivity('website');
     if (webHas('proposed_changes')) loadWebsiteActions();
-    applyWebsitePlanLocks();
-    renderWebsiteUsageBar();
+    applyWordPressPlanLocks();
+    renderWordPressUsageBar();
     renderJumpNav('website');
     return true;
   } catch (e) {
@@ -10251,8 +10331,8 @@ function agentActivityText(e) {
 //   pollMode / permissionLevel — whether this platform has that setting at all
 // A new platform is one entry here (and its own section of the page).
 const WEBSITE_PLATFORM_UI = {
-  website: { prefix: 'website', platform: 'wordpress', api: 'website', pollMode: true, permissionLevel: true, ownLabelKey: 'web.competitor_you', tableNoteKey: 'web.competitor_table_note' },
-  shopify: { prefix: 'shopify', platform: 'shopify', api: 'shopify', pollMode: false, permissionLevel: false, ownLabelKey: 'web.competitor_you_shopify', tableNoteKey: 'web.competitor_table_note_shopify' },
+  website: { prefix: 'website', platform: 'wordpress', api: 'website', pollMode: true, permissionLevel: true, ownLabelKey: 'web.competitor_you', tableNoteKey: 'web.competitor_table_note', competitorAddHtml: () => wordpressCompetitorAddHtml(), noneAddBelowKey: 'wordpress.plan.competitor_none_add_below' },
+  shopify: { prefix: 'shopify', platform: 'shopify', api: 'shopify', pollMode: false, permissionLevel: false, ownLabelKey: 'web.competitor_you_shopify', tableNoteKey: 'web.competitor_table_note_shopify', competitorAddHtml: () => shopifyCompetitorAddHtml(), noneAddBelowKey: 'shopify.plan.competitor_none_add_below' },
 };
 const platformUi = key => WEBSITE_PLATFORM_UI[key] || WEBSITE_PLATFORM_UI.website;
 
@@ -11114,13 +11194,13 @@ function renderCompetitorAnalysisCore(el, data, prefix = 'website') {
   if (data.running) html += `<div style="font-size:12px;color:var(--gold);margin-bottom:10px">${t('web.competitor_running')}</div>`;
   if (!data.competitorsWithWebsite) {
     state.gaps = [];
-    el.innerHTML = html + `<div style="font-size:12px;color:var(--muted)">${t(data.trackedCompetitors ? 'web.competitor_none_website' : (planAccess && planAccess.websiteOnly ? 'web.competitor_none_add_below' : 'web.competitor_none_tracked'))}</div>` + competitorAddHtml(prefix);
+    el.innerHTML = html + `<div style="font-size:12px;color:var(--muted)">${t(data.trackedCompetitors ? 'web.competitor_none_website' : (planAccess && planAccess.websiteOnly ? ui.noneAddBelowKey : 'web.competitor_none_tracked'))}</div>` + ui.competitorAddHtml();
     return;
   }
   const latest = data.latest;
-  if (!latest) { state.gaps = []; el.innerHTML = html + (data.running ? '' : `<div style="font-size:12px;color:var(--muted)">${t('web.competitor_not_run')}</div>`) + competitorAddHtml(prefix); return; }
+  if (!latest) { state.gaps = []; el.innerHTML = html + (data.running ? '' : `<div style="font-size:12px;color:var(--muted)">${t('web.competitor_not_run')}</div>`) + ui.competitorAddHtml(); return; }
   if (latest.status === 'failed') html += `<div style="font-size:12px;color:#ff8080;margin-bottom:10px">${escapeHtml(tf('web.competitor_failed', { error: latest.error_message || '' }))}</div>`;
-  if (latest.status !== 'completed') { state.gaps = []; el.innerHTML = html + competitorAddHtml(prefix); return; }
+  if (latest.status !== 'completed') { state.gaps = []; el.innerHTML = html + ui.competitorAddHtml(); return; }
 
   const own = latest.own || {}, ins = latest.insights || {}, comps = latest.competitors || [];
   html += `<div style="font-size:11px;color:var(--muted);margin-bottom:8px">${escapeHtml(tf('web.competitor_analyzed_at', { time: formatTimestamp(latest.completed_at || latest.created_at) }))}</div>`;
@@ -11149,7 +11229,7 @@ function renderCompetitorAnalysisCore(el, data, prefix = 'website') {
   html += competitorStrategyHtml(ins) + competitorPositioningHtml(ins);
   if (ins.ungrounded_items_dropped > 0) html += `<div style="font-size:10.5px;color:var(--muted);margin-top:8px">${escapeHtml(tf('web.competitor_dropped_note', { n: ins.ungrounded_items_dropped }))}</div>`;
   html += list('web.competitor_ahead_title', ins.where_you_are_ahead) + list('web.competitor_quickwins_title', ins.quick_wins) + list('web.competitor_limits_title', ins.data_limits);
-  el.innerHTML = html + competitorAddHtml(prefix);
+  el.innerHTML = html + ui.competitorAddHtml();
 }
 
 // Returns whether an analysis is running (and picks up watching one started earlier or elsewhere).
