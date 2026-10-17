@@ -2294,3 +2294,116 @@ CREATE TABLE IF NOT EXISTS shopify_approval_tasks (
   last_count INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- CMS-WEBSITE-TOOL-V3 (generated; safe to re-run: new rows use ON CONFLICT DO NOTHING; older text is changed or removed ONLY if it is still exactly the original)
+INSERT INTO cms_content (section, key, value, value_fr, type) VALUES
+  ('website_tool', 'feature7_title', $c$Indexing & redirects check$c$, $c$Contrôle de l'indexation et des redirections$c$, 'text'),
+  ('website_tool', 'feature7_desc', $c$See your site the way a search engine does: redirects, noindex settings, robots.txt and canonical tags. On Shopify, your store's URL redirects are also checked for loops and dead ends.$c$, $c$Voyez votre site comme un moteur de recherche : redirections, balises noindex, robots.txt et balises canoniques. Sur Shopify, les redirections d'URL de votre boutique sont aussi vérifiées (boucles et impasses).$c$, 'textarea'),
+  ('website_tool', 'feature8_title', $c$Reports & goals$c$, $c$Rapports et objectifs$c$, 'text'),
+  ('website_tool', 'feature8_desc', $c$Get weekly and monthly website reports to download as PDF or Word, and link a business goal to a website measure so it updates by itself.$c$, $c$Recevez des rapports hebdomadaires et mensuels de votre site à télécharger en PDF ou Word, et reliez un objectif d'entreprise à une mesure du site pour qu'il se mette à jour tout seul.$c$, 'textarea'),
+  ('website_tool', 'feature9_title', $c$Approvals & alerts$c$, $c$Approbations et alertes$c$, 'text'),
+  ('website_tool', 'feature9_desc', $c$Changes waiting for your approval appear as one task per site in your Action Center, and close by themselves once you have dealt with them. You are alerted if your connection breaks, your site cannot be reached, robots.txt shuts search engines out, or the site is not mobile-ready.$c$, $c$Les modifications en attente de votre accord apparaissent sous la forme d'une tâche par site dans votre Centre d'action et se ferment toutes seules une fois traitées. Vous êtes alerté si la connexion est coupée, si votre site est injoignable, si le fichier robots.txt bloque les moteurs de recherche ou si le site n'est pas adapté aux mobiles.$c$, 'textarea')
+ON CONFLICT (section, key) DO NOTHING;
+
+UPDATE cms_content SET value = $c$10 consultations per month
+All 29 directors
+Report download (PDF)
+Full consultation history
+Full financial calculator suite (10 tools)
+Market Research & Website Analyzer (5-10/month)
+Research-backed Entrepreneur Mode
+2 team members
+Priority email support
+Board Secretary deep-dive
+Website tool: 2 websites, 10 blog posts/month, site audit, competitor analysis, technical SEO, indexing & redirects check, website reports$c$, value_fr = $c$10 consultations par mois
+Les 29 directeurs
+Téléchargement du rapport (PDF)
+Historique complet des consultations
+Suite complète de calculateurs financiers (10 outils)
+Étude de marché et analyseur de site web (5-10/mois)
+Mode Entrepreneur appuyé sur la recherche
+2 membres d'équipe
+Support prioritaire par e-mail
+Analyse approfondie de la Secrétaire du conseil
+Outil site web : 2 sites, 10 articles/mois, audit du site, analyse de la concurrence, SEO technique, contrôle de l'indexation et des redirections, rapports du site$c$, updated_at = NOW()
+ WHERE section = 'pricing' AND key = 'plan_pro_features' AND value = $c$10 consultations per month
+All 29 directors
+Report download (PDF)
+Full consultation history
+Full financial calculator suite (10 tools)
+Market Research & Website Analyzer (5-10/month)
+Research-backed Entrepreneur Mode
+2 team members
+Priority email support
+Board Secretary deep-dive
+Website tool: 2 websites, 10 blog posts/month, site audit, competitor analysis, technical SEO$c$;
+UPDATE cms_content SET value = $c$Unlimited consultations
+All 29 directors
+PDF + Word download
+Video report (HeyGen)
+Full financial calculator suite (10 tools)
+Unlimited Market Research & Website Analyzer
+Research-backed Entrepreneur Mode
+5 team members
+Custom AI director personas
+Priority WhatsApp support
+Full consultation history
+Website tool: 3 websites, 25 blog posts/month, all Pro features plus keyword rankings, XML sitemap, schema markup, AI visibility, media library, thin-content & heading fixes$c$, value_fr = $c$Consultations illimitées
+Les 29 directeurs
+Téléchargement PDF + Word
+Rapport vidéo (HeyGen)
+Suite complète de calculateurs financiers (10 outils)
+Étude de marché et analyseur de site web illimités
+Mode Entrepreneur appuyé sur la recherche
+5 membres d'équipe
+Personas de directeurs IA personnalisés
+Support prioritaire par WhatsApp
+Historique complet des consultations
+Outil site web : 3 sites, 25 articles/mois, toutes les fonctions Pro plus classement des mots-clés, plan du site XML, balisage schema, visibilité IA, médiathèque, corrections des contenus courts et des titres$c$, updated_at = NOW()
+ WHERE section = 'pricing' AND key = 'plan_business_features' AND value = $c$Unlimited consultations
+All 29 directors
+PDF + Word download
+Video report (HeyGen)
+Full financial calculator suite (10 tools)
+Unlimited Market Research & Website Analyzer
+Research-backed Entrepreneur Mode
+5 team members
+Custom AI director personas
+Priority WhatsApp support
+Full consultation history
+Website tool: 3 websites, 25 blog posts/month, keyword rankings, sitemap, schema markup, AI visibility, media library, SEO fixes$c$;
+UPDATE cms_content SET value = $c$1 website (WordPress or Shopify)
+20 blog posts per month
+AI Agent that works automatically + Content Calendar
+Site audit, competitor analysis, technical SEO, indexing & redirects check
+Keyword rankings, XML sitemap, schema markup, thin-content & heading fixes
+AI visibility (AEO/GEO)
+Website alerts
+Website tool only — the other Arreyon Consult features are not included$c$, value_fr = $c$1 site web (WordPress ou Shopify)
+20 articles de blog par mois
+Agent IA qui travaille automatiquement + Calendrier de contenu
+Audit du site, analyse de la concurrence, SEO technique, contrôle de l'indexation et des redirections
+Classement des mots-clés, plan du site XML, balisage schema, corrections des contenus courts et des titres
+Visibilité IA (AEO/GEO)
+Alertes du site web
+Outil site web uniquement — les autres fonctionnalités d'Arreyon Consult ne sont pas incluses$c$, updated_at = NOW()
+ WHERE section = 'pricing' AND key = 'plan_auto_seo_features' AND value = $c$1 website (WordPress or Shopify)
+20 blog posts per month
+AI Agent that works automatically + Content Calendar
+Site audit, competitor analysis, technical SEO
+Keyword rankings, sitemap, schema markup
+AI visibility (AEO/GEO)
+Website alerts (coming soon)
+Website tool only — the other Arreyon Consult features are not included$c$;
+UPDATE cms_content SET value = $c$Spot weak titles and descriptions, broken links and thin pages, tidy up headings and check your technical SEO. You review every change, approve it, and can undo it.$c$, value_fr = $c$Repérez les titres et descriptions faibles, les liens cassés et les pages trop courtes, améliorez les intertitres et vérifiez votre SEO technique. Vous examinez chaque modification, l'approuvez et pouvez l'annuler.$c$, updated_at = NOW()
+ WHERE section = 'website_tool' AND key = 'feature4_desc' AND value = $c$Spot weak titles and descriptions, broken links and technical issues, then review and approve the fixes.$c$;
+UPDATE cms_content SET value = $c$Track keyword rankings, find and compare yourself with competitors, and see how visible your site is to AI assistants (AEO/GEO).$c$, value_fr = $c$Suivez votre classement par mots-clés, trouvez vos concurrents et comparez-vous à eux, et voyez la visibilité de votre site auprès des assistants IA (AEO/GEO).$c$, updated_at = NOW()
+ WHERE section = 'website_tool' AND key = 'feature5_desc' AND value = $c$Track keyword rankings, compare yourself with competitors, and see how visible your site is to AI assistants (AEO/GEO).$c$;
+UPDATE cms_content SET value = $c$Add structured data, build your XML sitemap on WordPress or check the one your Shopify store creates, submit it to Google, and keep your media library organised.$c$, value_fr = $c$Ajoutez des données structurées, générez votre plan du site XML sur WordPress ou vérifiez celui que crée votre boutique Shopify, soumettez-le à Google et gardez votre médiathèque organisée.$c$, updated_at = NOW()
+ WHERE section = 'website_tool' AND key = 'feature6_desc' AND value = $c$Add structured data, submit your sitemap to Google and keep your media library organised.$c$;
+DELETE FROM cms_content WHERE section = 'website_tool' AND key = 'coming_label' AND value = $c$Coming soon$c$;
+DELETE FROM cms_content WHERE section = 'website_tool' AND key = 'coming_items' AND value = $c$Website alerts
+Page content editing
+Thin-content expansion
+Deeper crawl checks (noindex, canonicals, redirects)
+XML sitemap generation$c$;
