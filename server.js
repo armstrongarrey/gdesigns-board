@@ -547,6 +547,7 @@ const WEBSITE_ROUTES = [
   ['POST', routeRx(BIZ_PATH + '/website/(thin-content-proposals|heading-proposals)'), 'find_improve_seo'],
   ['POST', routeRx(BIZ_PATH + '/shopify/featured-image-proposals'), 'find_improve_seo'],
   ['POST', routeRx(BIZ_PATH + '/shopify/(tag-proposals|duplicate-title-proposals)'), 'find_improve_seo'],
+  ['POST', routeRx(BIZ_PATH + '/shopify/(thin-content-proposals|heading-proposals)'), 'find_improve_seo'],
   ['GET',  routeRx(BIZ_PATH + '/(website|shopify)/featured-images'), 'find_improve_seo'],
   // partner network / backlinks
   ['*',    routeRx(BIZ_PATH + '/(backlinks|reciprocal-network)(/.*)?'), 'backlinks'],
@@ -8194,7 +8195,7 @@ const WORDPRESS_TEXT = {
   goal_metrics_failed: 'Could not load the website measures.', reports_failed: 'Could not build the report. Please try again.', reports_load_failed: 'Could not load the reports.', report_not_found: 'That report does not exist.', report_kind_invalid: 'Choose a weekly or a monthly report.', report_format_invalid: 'Choose pdf or docx.', report_export_failed: 'Could not prepare the download. Please try again.',
   indexing_failed: 'Could not run the check. Please try again.', indexing_no_pages: 'No published pages were found on this site, so there is nothing to check.', indexing_load_failed: 'Could not load the check results.', indexing_running: 'A check is already running for this site. Please wait for it to finish.',
   content_poll_mode: 'Checking page content directly is not available for a poll-mode connection yet.', content_disconnected: 'This website is disconnected. Please reconnect it first.', content_auth_expired: 'This Application Password is no longer valid. Please reconnect your website.', content_read_failed: 'Could not read the pages of this site. Please try again.', content_generate_failed: 'Could not prepare the suggestions. Please try again.',
-  content_none_thin: 'No thin pages needing more content were found: nothing to propose right now.', content_none_headings: 'No heading problems were found: nothing to propose right now.',
+  content_none_thin: 'No thin pages needing more content were found: nothing to propose right now.', content_waiting_thin: 'Pages that could use more content already have a suggestion waiting for you.', content_none_headings: 'No heading problems were found: nothing to propose right now.',
   content_changed: 'This page was edited after the suggestion was made, so it was not changed. Run the check again.', content_builder: 'This page is built with a page builder, which this change cannot safely edit.', content_unreadable: "Could not read this page's current content.", content_unsupported: 'The content of this page cannot be changed safely in this way.', content_write_rejected: 'WordPress rejected saving this change.', content_verify_unconfirmed: 'The change was saved, but it could not be confirmed. Please check the page manually.', content_verify_failed: 'The change was saved, but the page does not yet show it as expected.', content_failed: 'Something went wrong while changing this page. Nothing was changed.',
   content_undo_not_applied: 'Only a content change that was applied can be undone.', content_undo_expired: 'This change is too old to undo here. Restore the page from its revisions in WordPress.', content_undo_edited: "This page was edited after the change, so it cannot be undone automatically. Restore it from the page's revisions in WordPress.", content_undo_unreadable: "Could not read the page's current content.", content_undo_rejected: 'WordPress rejected restoring the page.',
 };
@@ -8738,8 +8739,8 @@ app.get('/api/business/:id/website/reports/:reportId/download', authRequired, as
 // Nothing here is shared with Shopify.
 const WORDPRESS_CONTENT_TYPES = ['expand_thin_content', 'fix_heading_levels', 'add_subheadings'];
 const WORDPRESS_CONTENT_LIMITS = { thinMax: 300, thinMin: 20, thinPerRun: 5, headingsPerRun: 10, subheadingPagesPerRun: 5, scan: 100, renderedChecks: 15, recentDays: 90, stretchWords: 350, addedMin: 100, addedMax: 500 };
-const WORDPRESS_UTILITY_SLUG = /^(?:contact(?:-us)?|thank-?you(?:-page)?|thanks|privacy(?:-policy)?|terms(?:-and-conditions|-of-service|-of-use)?|cookies?(?:-policy)?|disclaimer|log-?in|register|cart|checkout|my-account|account|search|404|sitemap|unsubscribe|confirmation|order-confirmation)(?:-\d+)?$/i;
-const WORDPRESS_BUILDER_MARKERS = /\[\/?(?:et_pb_|vc_|fusion_|av_|fl_builder|themify_|elementor)|data-elementor-type|elementor-section|elementor-widget|class="[^"]*\b(?:et_pb_|vc_row|fusion-builder|fl-builder|av_section)/i;
+const WORDPRESS_UTILITY_SLUG = /^(?:contact(?:-us)?|thank-?you(?:-page)?|thanks|privacy(?:-policy)?|terms(?:-and-conditions|-of-service|-of-use)?|cookies?(?:-policy)?|disclaimer|refunds?(?:-policy)?|returns?(?:-policy)?|shipping(?:-policy|-info(?:rmation)?)?|warranty|size-(?:guide|chart)|faqs?|accessibility(?:-statement)?|log-?in|register|cart|checkout|my-account|account|search|404|sitemap|unsubscribe|confirmation|order-confirmation)(?:-\d+)?$/i;
+const WORDPRESS_BUILDER_MARKERS = /\[\/?(?:et_pb_|vc_|fusion_|av_|fl_builder|themify_|elementor)|<[^>]*(?:data-elementor-type|elementor-section|elementor-widget|\bet_pb_|\bvc_row|fusion-builder|fl-builder|\bav_section)[^>]*>/i;   // markup, or a builder's own shortcodes: a post that merely MENTIONS a builder is not one
 const wordpressContentHash = html => crypto.createHash('sha256').update(String(html || ''), 'utf8').digest('hex');
 const wordpressContentBlocks = raw => /<!--\s*wp:/.test(String(raw || ''));
 const wordpressContentBuilder = raw => WORDPRESS_BUILDER_MARKERS.test(String(raw || ''));
@@ -8896,8 +8897,9 @@ async function wordpressContentRead(connection, password) {
   return items;
 }
 // Pages that already have a proposal of this kind waiting, or one made in the last 90 days (applied, refused or undone), are left alone: a "no" is not asked again straight away.
+// A change that could not be applied is not a decision: that page can be looked at again.
 async function wordpressContentBusy(connectionId) {
-  const rows = (await pool.query(`SELECT target_type, target_wp_id FROM website_actions WHERE website_connection_id = $1 AND action_type = ANY($2::text[]) AND (approval_status = 'pending' OR (approval_status = 'approved' AND execution_status = 'not_executed') OR created_at > NOW() - ($3 || ' days')::interval)`, [connectionId, WORDPRESS_CONTENT_TYPES, String(WORDPRESS_CONTENT_LIMITS.recentDays)])).rows;
+  const rows = (await pool.query(`SELECT target_type, target_wp_id FROM website_actions WHERE website_connection_id = $1 AND action_type = ANY($2::text[]) AND (approval_status = 'pending' OR (approval_status = 'approved' AND execution_status = 'not_executed') OR (execution_status <> 'execution_failed' AND created_at > NOW() - ($3 || ' days')::interval))`, [connectionId, WORDPRESS_CONTENT_TYPES, String(WORDPRESS_CONTENT_LIMITS.recentDays)])).rows;
   return new Set(rows.map(r => `${r.target_type}:${r.target_wp_id}`));
 }
 const wordpressContentInsert = async (connection, item, actionType, previousState, proposedChange) => (await pool.query(
@@ -8910,15 +8912,17 @@ const wordpressContentAiJson = async (prompt, ask, userId, feature) => {
 
 // Thin pages: new sections to be appended after the existing text.
 async function wordpressRunThinContentProposals(connection, password, context, userId = null) {
-  const items = await wordpressContentRead(connection, password), busy = await wordpressContentBusy(connection.id), L = WORDPRESS_CONTENT_LIMITS; let skippedBuilder = 0; const thin = [];
+  const items = await wordpressContentRead(connection, password), busy = await wordpressContentBusy(connection.id), L = WORDPRESS_CONTENT_LIMITS; let skippedBuilder = 0, waiting = 0; const thin = [];
   for (const it of items) {
     if (wordpressContentBuilder(it.raw)) { skippedBuilder++; continue; }
-    if (busy.has(`${it.type}:${it.id}`) || WORDPRESS_UTILITY_SLUG.test(it.slug)) continue;
-    const words = wordpressContentWords(it.raw); if (words >= L.thinMin && words < L.thinMax) thin.push({ ...it, words });
+    if (WORDPRESS_UTILITY_SLUG.test(it.slug)) continue;
+    const words = wordpressContentWords(it.raw); if (words < L.thinMin || words >= L.thinMax) continue;
+    if (busy.has(`${it.type}:${it.id}`)) { waiting++; continue; }
+    thin.push({ ...it, words });
   }
   thin.sort((a, b) => (a.type === b.type ? b.words - a.words : a.type === 'page' ? -1 : 1));   // pages first, and pages with the most to build on first
-  const scan = { checked: items.length, thin: thin.length, skippedBuilder }, picked = thin.slice(0, L.thinPerRun * 2);
-  if (!picked.length) return { proposals: [], scan, code: 'content_none_thin' };
+  const scan = { checked: items.length, thin: thin.length, waiting, skippedBuilder }, picked = thin.slice(0, L.thinPerRun * 2);
+  if (!picked.length) return { proposals: [], scan, code: waiting ? 'content_waiting_thin' : 'content_none_thin' };
   const contextSummary = summarizeBusinessContextForAI(context) || '';
   const list = picked.map((it, i) => `[${i}] ${it.type.toUpperCase()}: "${it.title}" (${it.url}), ${it.words} words\n  EXISTING TEXT: ${wordpressContentText(it.raw).slice(0, 3000)}`).join('\n\n');
   const prompt = `You are a content writer improving thin pages on a real business's WordPress website. Each page below is short. For each page, write 2 to 4 NEW sections that will be added AFTER the existing text, so the page becomes genuinely useful to a visitor.
@@ -9372,6 +9376,287 @@ async function shopifyApprovalTaskSync(businessId, ownerId, plan) {
     if (task.title !== en.title || task.description !== en.description || task.priority !== priority || task.title_fr !== fr.title) await refresh(task.id, null);
     await pool.query('UPDATE shopify_approval_tasks SET last_count = $2, updated_at = NOW() WHERE business_id = $1', [businessId, n]);
   } catch (err) { console.error('Shopify approval task sync error (the Action Center opens as it was):', err.message); }
+}
+
+// shopify-own:end
+// shopify-own:start
+// ── Shopify content structure: thin-content expansion and heading restructuring ───────────────────────────────────────────────────────────
+// Two kinds of proposal, both reviewed by the owner and never applied automatically. (1) A thin page or post gets NEW sections appended after its existing text: the existing text is never rewritten, and the
+// new text may not contain facts that are not already on the page or in the business profile (numbers, web addresses, e-mail addresses, phone numbers are checked by software). (2) Headings are put in order:
+// extra H1s are lowered when the theme already shows the page's title as its H1 (checked on the live storefront), levels that skip are closed up (the words of a heading are never changed), and long stretches of text
+// can get subheadings. Approving applies the change at once (as on every Shopify proposal), so the card shows the whole change first. The content is re-read right before it is changed and left alone if it differs
+// from what was proposed; a copy is kept so the change can be undone; pages made with a page-builder app are skipped; policy pages are never expanded. Nothing here is shared with WordPress.
+const SHOPIFY_CONTENT_TYPES = ['expand_thin_content', 'fix_heading_levels', 'add_subheadings'];
+const SHOPIFY_CONTENT_LIMITS = { thinMax: 300, thinMin: 20, thinPerRun: 5, headingsPerRun: 10, subheadingPagesPerRun: 5, renderedChecks: 15, recentDays: 90, stretchWords: 350, addedMin: 100, addedMax: 500 };
+// Pages that state facts a store must keep exactly (policies, shipping, returns, sizes, FAQ) or that do a job (contact, thank-you, account): never "expanded".
+const SHOPIFY_UTILITY_HANDLE = /^(?:contact(?:-us)?|thank-?you(?:-page)?|thanks|privacy(?:-policy)?|terms(?:-and-conditions|-of-service|-of-use)?|refunds?(?:-policy)?|returns?(?:-policy|-and-exchanges?)?|shipping(?:-policy|-info(?:rmation)?|-and-returns?)?|warranty|size-(?:guide|chart)|sizing|faqs?|track(?:-your)?-order|order-(?:status|tracking|confirmation)|store-locator|cookies?(?:-policy)?|disclaimer|accessibility(?:-statement)?|login|register|account|search|404|unsubscribe|confirmation)(?:-\d+)?$/i;
+const SHOPIFY_BUILDER_MARKERS = /<[^>]*(?:data-pf-|\bpf-(?:section|row|col|element)|pagefly|shogun|\bshg-|gempages|\bgp-(?:row|section|container)|data-gp-|\bgem-(?:c|r)-|zipify|replo-)[^>]*>/i;   // only inside a tag: a post that merely MENTIONS a builder is not one
+const shopifyContentHash = html => crypto.createHash('sha256').update(String(html || ''), 'utf8').digest('hex');
+const shopifyContentBuilder = raw => SHOPIFY_BUILDER_MARKERS.test(String(raw || ''));
+const shopifyContentEscape = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const shopifyContentDecode = s => String(s).replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&#(\d+);/g, (m, n) => String.fromCodePoint(Math.min(+n, 0x10FFFF)));
+function shopifyContentText(raw) {
+  return shopifyContentDecode(String(raw || '').replace(/<!--[\s\S]*?-->/g, ' ').replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+}
+const shopifyContentWords = raw => { const t = shopifyContentText(raw); return t ? t.split(' ').length : 0; };
+const shopifyPlainField = (v, max) => String(v == null ? '' : v).replace(/<[^>]*>/g, ' ').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
+function shopifyContentHeadings(raw) {
+  const out = [], rx = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi; let m;
+  while ((m = rx.exec(String(raw || '')))) out.push({ level: +m[1], text: shopifyContentText(m[2]), start: m.index, end: m.index + m[0].length });
+  return out;
+}
+// Does the theme already show this page's own title as an H1? Counted on the live storefront (null when it could not be read) against the H1s in the content.
+function shopifyH1Decision(contentH1s, liveH1s) {
+  if (!contentH1s || liveH1s === null || liveH1s === undefined) return 'none';
+  if (liveH1s > contentH1s) return 'all';
+  return contentH1s >= 2 ? 'allButFirst' : 'none';
+}
+// The page title is the H1, so content headings start at H2 and never skip a level going down. Extra H1s are lowered as decided above.
+function shopifyHeadingPlan(headings, h1Decision) {
+  let prev = 1, h1Seen = 0;
+  return headings.map(h => {
+    let level = h.level;
+    if (level === 1) { h1Seen++; if (!(h1Decision === 'all' || (h1Decision === 'allButFirst' && h1Seen > 1))) { prev = 1; return 1; } level = 2; }
+    const next = Math.min(Math.max(level, 2), prev + 1); prev = next; return next;
+  });
+}
+// Only the tag name changes: the words, the attributes and everything else stay exactly as they are.
+function shopifyApplyHeadingLevels(raw, levels) {
+  let i = 0;
+  return String(raw).replace(/<h([1-6])\b([^>]*)>([\s\S]*?)<\/h\1>/gi, (m, lvl, attrs, inner) => { const to = levels[i++]; return to === undefined || to === +lvl ? m : `<h${to}${attrs}>${inner}</h${to}>`; });
+}
+function shopifyContentParagraphs(raw) {
+  const out = [], rx = /<p\b[^>]*>([\s\S]*?)<\/p>/gi; let m;
+  while ((m = rx.exec(String(raw || '')))) { const text = shopifyContentText(m[1]); if (text) out.push({ start: m.index, end: m.index + m[0].length, text, words: text.split(' ').length }); }
+  return out;
+}
+// Long stretches of text with no heading in between: each is { from, to (paragraph numbers, 1-based), words }.
+function shopifyContentStretches(raw) {
+  const paras = shopifyContentParagraphs(raw), heads = shopifyContentHeadings(raw), out = []; let cur = null;
+  paras.forEach((p, i) => { const boundary = cur && heads.some(h => h.start >= paras[i - 1].end && h.start < p.start); if (!cur || boundary) { cur = { from: i + 1, to: i + 1, words: 0 }; out.push(cur); } cur.to = i + 1; cur.words += p.words; });
+  return out;
+}
+// One level under the nearest heading above (H2 when there is none), never skipping a level.
+function shopifySubheadingLevel(raw, paraStart) {
+  const above = shopifyContentHeadings(raw).filter(h => h.start < paraStart); const prev = above.length ? above[above.length - 1].level : 1;
+  return prev >= 4 ? prev : prev + 1;
+}
+const shopifySectionsHtml = sections => sections.map(s => [`<h2>${shopifyContentEscape(s.heading)}</h2>`, ...s.paragraphs.map(p => `<p>${shopifyContentEscape(p)}</p>`)].join('\n')).join('\n');
+function shopifyInsertSubheadings(raw, subheadings) {
+  const paras = shopifyContentParagraphs(raw); let out = String(raw);
+  for (const s of [...subheadings].sort((a, b) => b.beforeParagraph - a.beforeParagraph)) {
+    const p = paras[s.beforeParagraph - 1]; if (!p) return null; const level = shopifySubheadingLevel(raw, p.start);
+    out = out.slice(0, p.start) + `<h${level}>${shopifyContentEscape(s.text)}</h${level}>\n` + out.slice(p.start);
+  }
+  return out;
+}
+// New text must be plain, a sensible size, and contain nothing that looks like a fact the page did not already state.
+const SHOPIFY_FACT_PATTERN = /https?:\/\/|www\.|\S+@\S+\.\S+|\+\d{6,}|\b\d[\d .-]{7,}\d\b/i;
+const shopifyDigitRuns = text => new Set(String(text || '').match(/\d+/g) || []);
+function shopifySanitizeSections(input) {
+  if (!Array.isArray(input)) return null; const out = []; let words = 0;
+  for (const s of input.slice(0, 6)) {
+    const heading = shopifyPlainField(s && s.heading, 1000), paragraphs = (Array.isArray(s && s.paragraphs) ? s.paragraphs : []).slice(0, 4).map(p => shopifyPlainField(p, 5000)).filter(Boolean);
+    if (heading.length > 120 || paragraphs.some(p => p.length > 1200)) return null;   // too long is refused, never cut off in the middle of a sentence
+    if (!heading || !paragraphs.length) continue; words += shopifyContentWords(heading + ' ' + paragraphs.join(' ')); out.push({ heading, paragraphs });
+  }
+  return out.length && words <= 900 ? out : null;
+}
+// AI-written sections are only kept if they are plain, a sensible size, and invent no number or contact detail.
+function shopifySectionsAcceptable(sections, allowedText) {
+  if (!sections) return false; const all = sections.map(s => s.heading + ' ' + s.paragraphs.join(' ')).join(' '), words = shopifyContentWords(all);
+  if (words < SHOPIFY_CONTENT_LIMITS.addedMin || words > SHOPIFY_CONTENT_LIMITS.addedMax || SHOPIFY_FACT_PATTERN.test(all)) return false;
+  if (sections.some(s => s.paragraphs.some(p => shopifyContentWords(p) < 6))) return false;
+  const known = shopifyDigitRuns(allowedText); for (const n of shopifyDigitRuns(all)) if (!known.has(n)) return false;
+  return true;
+}
+// What an action will do: the proposal, exactly as the owner saw it.
+function shopifyContentEffective(action) {
+  const c = action.proposed_change || {};
+  if (action.action_type === 'expand_thin_content') return { sections: shopifySanitizeSections(c.sections) };
+  if (action.action_type === 'fix_heading_levels') return { headingLevels: Array.isArray(c.headingLevels) ? c.headingLevels : [] };
+  return { subheadings: (Array.isArray(c.subheadings) ? c.subheadings : []).map(s => ({ beforeParagraph: s.beforeParagraph, text: shopifyPlainField(s.text, 120) })).filter(s => s.text) };
+}
+// The content a proposal would produce from the content the owner saw (null when it cannot be done safely).
+function shopifyContentBuild(action, raw) {
+  const eff = shopifyContentEffective(action), prev = action.previous_state || {};
+  if (action.action_type === 'expand_thin_content') return eff.sections ? { html: String(raw).replace(/\s+$/, '') + '\n' + shopifySectionsHtml(eff.sections) } : null;
+  if (action.action_type === 'fix_heading_levels') {
+    const heads = shopifyContentHeadings(raw); if (heads.length !== (prev.headings || []).length) return null;
+    const levels = heads.map(h => h.level); for (const c of eff.headingLevels) { if (!Number.isInteger(c.index) || c.index < 0 || c.index >= levels.length || levels[c.index] !== c.from || ![1, 2, 3, 4, 5, 6].includes(c.to)) return null; levels[c.index] = c.to; }
+    const html = shopifyApplyHeadingLevels(raw, levels), after = shopifyContentHeadings(html);
+    return after.length === levels.length && after.every((h, i) => h.level === levels[i]) ? { html, levels } : null;
+  }
+  if (!eff.subheadings.length || shopifyContentParagraphs(raw).length !== prev.paragraphs) return null;
+  const html = shopifyInsertSubheadings(raw, eff.subheadings); return html ? { html } : null;
+}
+// Has the page ended up as intended? The original text is still at the start, and what was meant to appear appears.
+function shopifyContentVerify(action, before, after) {
+  const eff = shopifyContentEffective(action), heads = shopifyContentHeadings(after), norm = s => shopifyContentText(s).toLowerCase();
+  if (before !== null && !shopifyContentText(after).startsWith(shopifyContentText(before).slice(0, 150)) && action.action_type !== 'add_subheadings') return false;
+  if (action.action_type === 'expand_thin_content') return !!eff.sections && eff.sections.every(s => heads.some(h => norm(h.text) === norm(s.heading))) && (before === null || shopifyContentWords(after) >= shopifyContentWords(before) + 50);
+  if (action.action_type === 'fix_heading_levels') { const prev = (action.previous_state || {}).headings || []; if (heads.length !== prev.length) return false; const want = prev.map(h => h.level); for (const c of eff.headingLevels) want[c.index] = c.to; return heads.every((h, i) => h.level === want[i] && norm(h.text) === norm(prev[i].text)); }
+  return eff.subheadings.length > 0 && eff.subheadings.every(s => heads.some(h => norm(h.text) === norm(s.text))) && (before === null || shopifyContentWords(after) >= shopifyContentWords(before));
+}
+// Subheadings the AI chose are only kept when they sit inside a long unbroken stretch, are spaced apart, and invent no number.
+function shopifyValidateSubheadings(raw, list) {
+  const paras = shopifyContentParagraphs(raw), stretches = shopifyContentStretches(raw), known = shopifyDigitRuns(shopifyContentText(raw)), ok = [];
+  for (const s of (Array.isArray(list) ? list : []).slice(0, 8)) {
+    const n = s && s.beforeParagraph, text = shopifyPlainField(s && s.heading, 100).replace(/[.:;]+$/, ''), words = shopifyContentWords(text);
+    if (!Number.isInteger(n) || n < 2 || n > paras.length || words < 2 || words > 10 || SHOPIFY_FACT_PATTERN.test(text) || [...shopifyDigitRuns(text)].some(d => !known.has(d))) continue;
+    const stretch = stretches.find(st => n > st.from && n <= st.to); if (!stretch || stretch.words < SHOPIFY_CONTENT_LIMITS.stretchWords || ok.some(o => Math.abs(o.beforeParagraph - n) < 3)) continue;
+    ok.push({ beforeParagraph: n, text }); if (ok.length === 3) break;
+  }
+  return ok.sort((a, b) => a.beforeParagraph - b.beforeParagraph);
+}
+// What to look at: the published articles (of the store's blog) and pages, with the body each holds (the 250 most recent of each, as every other Shopify check does).
+async function shopifyContentRead(connection, accessToken) {
+  const storeUrl = await getShopifyStoreUrl(connection, accessToken), items = [];
+  if (connection.blog_id) {
+    const blogHandle = await getShopifyBlogHandle(connection, accessToken);
+    for (const a of await shopifyListResources(connection, accessToken, 'articles', 'id,title,handle,body_html,published_at')) if (a.published_at && typeof a.body_html === 'string') items.push({ id: a.id, type: 'post', title: shopifyContentText(a.title).slice(0, 250), handle: String(a.handle || ''), url: `${storeUrl}/blogs/${blogHandle}/${a.handle}`, raw: a.body_html });
+  }
+  for (const p of await shopifyListResources(connection, accessToken, 'pages', 'id,title,handle,body_html,published_at')) if (p.published_at && typeof p.body_html === 'string') items.push({ id: p.id, type: 'page', title: shopifyContentText(p.title).slice(0, 250), handle: String(p.handle || ''), url: `${storeUrl}/pages/${p.handle}`, raw: p.body_html });
+  return items;
+}
+// Pages that already have a proposal of these kinds waiting, or one made in the last 90 days (applied, refused or undone), are left alone: a "no" is not asked again straight away.
+// A change that could not be applied is not a decision: that page can be looked at again.
+async function shopifyContentBusy(connectionId) {
+  const rows = (await pool.query(`SELECT target_type, target_shopify_id FROM shopify_actions WHERE shopify_connection_id = $1 AND action_type = ANY($2::text[]) AND (approval_status = 'pending' OR (execution_status <> 'execution_failed' AND created_at > NOW() - ($3 || ' days')::interval))`, [connectionId, SHOPIFY_CONTENT_TYPES, String(SHOPIFY_CONTENT_LIMITS.recentDays)])).rows;
+  return new Set(rows.map(r => `${r.target_type}:${r.target_shopify_id}`));
+}
+const shopifyContentHeadingFacts = raw => shopifyContentHeadings(raw).slice(0, 60).map(h => ({ level: h.level, text: h.text }));
+// Thin pages and posts: new sections to be appended after the existing text.
+async function shopifyRunThinContentProposals(connection, accessToken, context, lang = 'en') {
+  const items = await shopifyContentRead(connection, accessToken), busy = await shopifyContentBusy(connection.id), L = SHOPIFY_CONTENT_LIMITS; let skippedBuilder = 0, waiting = 0; const thin = [];
+  for (const it of items) {
+    if (shopifyContentBuilder(it.raw)) { skippedBuilder++; continue; }
+    if (SHOPIFY_UTILITY_HANDLE.test(it.handle)) continue;
+    const words = shopifyContentWords(it.raw); if (words < L.thinMin || words >= L.thinMax) continue;
+    if (busy.has(`${it.type}:${it.id}`)) { waiting++; continue; }
+    thin.push({ ...it, words });
+  }
+  thin.sort((a, b) => (a.type === b.type ? b.words - a.words : a.type === 'page' ? -1 : 1));   // pages first, and pages with the most to build on first
+  const scan = { checked: items.length, thin: thin.length, waiting, skippedBuilder }, picked = thin.slice(0, L.thinPerRun * 2);
+  if (!picked.length) return { proposals: [], scan, ...(waiting ? shopifyNote('thin_waiting') : skippedBuilder ? shopifyNote('thin_none_builders', { n: skippedBuilder }) : shopifyNote('thin_none')) };
+  const contextSummary = summarizeBusinessContextForAI(context) || '';
+  const list = picked.map((it, i) => `[${i}] ${it.type.toUpperCase()}: "${it.title}" (${it.url}), ${it.words} words\n  EXISTING TEXT: ${shopifyContentText(it.raw).slice(0, 3000)}`).join('\n\n');
+  const prompt = `You are a content writer improving thin pages on a real business's Shopify store. Each page or post below is short. For each one, write 2 to 4 NEW sections that will be added AFTER the existing text, so it becomes genuinely useful to a visitor.
+
+BUSINESS DESCRIPTION:
+${contextSummary || 'No detailed description is available.'}
+
+STRICT RULES. Software checks them and throws away any proposal that breaks them:
+- Write the new sections in the SAME LANGUAGE as the page's existing text.
+- Use ONLY information found in the page's existing text or in the business description above. Explain, clarify and organise what is already there (what the product, service or topic involves, who it is for, how it works in general terms, questions a visitor would naturally have). Never invent facts.
+- NEVER include numbers, prices, years, percentages, phone numbers, e-mail addresses, web addresses, names of people, awards, certifications, guarantees, testimonials, statistics, shipping or return terms, or claims that are not already in the text above.
+- No links, no HTML, no markdown. Plain sentences only.
+- Plain everyday words, short sentences (under 20 words), paragraphs of 2 to 4 sentences.
+- Each section has a short heading (3 to 8 words) and 1 to 2 paragraphs. Together the new sections add about 200 to 350 words.
+- Do not repeat what the page already says: add depth. If you cannot add real value without inventing facts, return no proposal for that page.
+
+PAGES:
+${list}
+${shopifyLanguageNote(lang)}
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{ "proposals": [ { "index": 0, "sections": [ { "heading": "short heading", "paragraphs": ["paragraph one", "paragraph two"] } ], "reasoning": "1 sentence on why more content helps this page" } ] }`;
+  const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Write the new sections now, as JSON only.' }], complexity: 'complex', context: { feature: 'shopify_thin_content' }, maxTokens: 6000 });
+  const result = readShopifyProposalJson(raw, 'thin'); if (!Array.isArray(result.proposals)) throw shopifyThrow('thin_ai_missing');
+  const rows = [], seen = new Set();
+  for (const p of result.proposals) {
+    const it = picked[p && p.index]; if (!it || seen.has(p.index) || rows.length >= L.thinPerRun) continue; seen.add(p.index);
+    const sections = shopifySanitizeSections(p.sections); if (!shopifySectionsAcceptable(sections, `${it.title} ${shopifyContentText(it.raw)} ${contextSummary}`)) continue;
+    rows.push({ actionType: 'expand_thin_content', targetType: it.type, id: it.id, url: it.url, title: it.title, previous: { contentHash: shopifyContentHash(it.raw), wordCount: it.words, headings: shopifyContentHeadingFacts(it.raw) }, change: { sections, addedWords: shopifyContentWords(sections.map(s => s.heading + ' ' + s.paragraphs.join(' ')).join(' ')) }, reasoning: shopifyCleanText(p.reasoning, 500) });
+  }
+  if (!rows.length) return { proposals: [], scan, ...shopifyNote('thin_none') };
+  return { ...(await saveShopifyProposals(connection, accessToken, rows)), scan };
+}
+// Headings: levels put in order (no AI: the words never change), then subheadings for long stretches.
+async function shopifyRunHeadingProposals(connection, accessToken, context, lang = 'en') {
+  const items = await shopifyContentRead(connection, accessToken), busy = await shopifyContentBusy(connection.id), L = SHOPIFY_CONTENT_LIMITS; let skippedBuilder = 0, liveChecks = 0; const fixes = [], longPages = [];
+  for (const it of items) {
+    if (shopifyContentBuilder(it.raw)) { skippedBuilder++; continue; }
+    if (busy.has(`${it.type}:${it.id}`)) continue;
+    const heads = shopifyContentHeadings(it.raw), h1s = heads.filter(h => h.level === 1).length; let decision = 'none';
+    if (heads.length > 60) continue;
+    if (h1s && liveChecks < L.renderedChecks) { liveChecks++; const r = await shopifyPublicFetch(it.url, { timeoutMs: 8000, maxBytes: 1500000 }); decision = shopifyH1Decision(h1s, r && r.ok && r.text ? (r.text.match(/<h1\b/gi) || []).length : null); }
+    const levels = shopifyHeadingPlan(heads, decision), changes = []; heads.forEach((h, i) => { if (levels[i] !== h.level) changes.push({ index: i, from: h.level, to: levels[i], text: h.text.slice(0, 120) }); });
+    if (changes.length) { fixes.push({ it, heads, changes, decision }); continue; }
+    const longest = Math.max(0, ...shopifyContentStretches(it.raw).filter(st => st.to - st.from >= 3).map(st => st.words)); if (longest >= L.stretchWords) longPages.push({ it, longest });
+  }
+  const scan = { checked: items.length, levelProblems: fixes.length, longPages: longPages.length, skippedBuilder }, rows = [];
+  for (const f of fixes.slice(0, L.headingsPerRun)) rows.push({ actionType: 'fix_heading_levels', targetType: f.it.type, id: f.it.id, url: f.it.url, title: f.it.title, previous: { contentHash: shopifyContentHash(f.it.raw), wordCount: shopifyContentWords(f.it.raw), headings: f.heads.map(h => ({ level: h.level, text: h.text })) }, change: { headingLevels: f.changes, h1: f.decision }, reasoning: null });
+  const pages = longPages.sort((a, b) => b.longest - a.longest).slice(0, L.subheadingPagesPerRun);
+  if (pages.length) {
+    const list = pages.map(({ it }, i) => { const heads = shopifyContentHeadings(it.raw); return `[${i}] ${it.type.toUpperCase()}: "${it.title}"\n  Existing headings: ${heads.length ? heads.map(h => `H${h.level} "${h.text}"`).join(', ') : 'none'}\n` + shopifyContentParagraphs(it.raw).map((p, n) => `  (${n + 1}) ${p.words} words: ${p.text.slice(0, 110)}`).join('\n'); }).join('\n\n');
+    const prompt = `You are an editor adding subheadings to long pages and posts on a real business's Shopify store, so that visitors can scan them. Each one below is a numbered list of its paragraphs. For each, choose up to 3 places where a NEW section clearly begins and write a short heading for it.
+
+RULES (software checks them and throws away any heading that breaks them):
+- Write each heading in the SAME LANGUAGE as the page.
+- "beforeParagraph" is the number of the paragraph the heading goes just before. Never choose paragraph 1. Choose places where the topic genuinely changes, and keep at least 3 paragraphs between two headings.
+- A heading is 2 to 8 words and describes what follows. No numbers unless they appear in the text, no web addresses, no HTML, no full stop at the end.
+- If a page does not need any, return an empty list for it.
+
+PAGES:
+${list}
+${shopifyLanguageNote(lang)}
+
+Return ONLY valid JSON, no markdown, in exactly this structure:
+{ "pages": [ { "index": 0, "subheadings": [ { "beforeParagraph": 5, "heading": "short heading" } ], "reasoning": "1 sentence on why these headings help" } ] }`;
+    const raw = await callAI({ persona: prompt, messages: [{ role: 'user', content: 'Choose the subheadings now, as JSON only.' }], complexity: 'complex', context: { feature: 'shopify_subheadings' }, maxTokens: 6000 });
+    const result = readShopifyProposalJson(raw, 'headings'); if (!Array.isArray(result.pages)) throw shopifyThrow('headings_ai_missing');
+    for (const p of result.pages) {
+      const entry = pages[p && p.index]; if (!entry) continue; const subs = shopifyValidateSubheadings(entry.it.raw, p.subheadings); if (!subs.length) continue; const paras = shopifyContentParagraphs(entry.it.raw);
+      rows.push({ actionType: 'add_subheadings', targetType: entry.it.type, id: entry.it.id, url: entry.it.url, title: entry.it.title, previous: { contentHash: shopifyContentHash(entry.it.raw), wordCount: shopifyContentWords(entry.it.raw), paragraphs: paras.length, headings: shopifyContentHeadingFacts(entry.it.raw) }, change: { subheadings: subs.map(s => ({ ...s, context: paras[s.beforeParagraph - 1].text.slice(0, 110) })) }, reasoning: shopifyCleanText(p.reasoning, 500) });
+    }
+  }
+  if (!rows.length) return { proposals: [], scan, ...shopifyNote('headings_none') };
+  return { ...(await saveShopifyProposals(connection, accessToken, rows)), scan };
+}
+
+// Applying a proposal. Failures carry a code the dashboard shows in the reader's language (the English sentence stays alongside it).
+const shopifyContentFail = (code, params) => ({ executed: false, verified: false, error: shopifyFormat(code, params), errorCode: code, ...(params ? { errorParams: params } : {}) });
+// Articles live under their blog; pages are addressed directly.
+const shopifyContentTarget = (connection, action) => (action.target_type === 'post' ? { path: `/blogs/${connection.blog_id}/articles/${action.target_shopify_id}.json`, key: 'article' } : { path: `/pages/${action.target_shopify_id}.json`, key: 'page' });
+async function shopifyContentReadBody(connection, accessToken, action) {
+  if (action.target_type === 'post' && !connection.blog_id) return null;
+  const target = shopifyContentTarget(connection, action), res = await shopifyApiRequest(connection.shop_domain, accessToken, `${target.path}?fields=id,body_html`, { timeoutMs: 15000 });
+  if (!res.ok) return null; const o = (await res.json())[target.key]; return o && typeof o.body_html === 'string' ? o.body_html : null;
+}
+async function shopifyContentSaveBackup(actionId, before, after) {
+  try {
+    await pool.query(`DELETE FROM shopify_action_backups WHERE created_at < NOW() - INTERVAL '30 days'`);
+    await pool.query(`INSERT INTO shopify_action_backups (action_id, content_before, content_after_hash) VALUES ($1, $2, $3) ON CONFLICT (action_id) DO UPDATE SET content_before = EXCLUDED.content_before, content_after_hash = EXCLUDED.content_after_hash, created_at = NOW()`, [actionId, String(before), shopifyContentHash(after)]);
+    return true;
+  } catch (e) { console.error('Could not keep the undo copy of the page:', e.message); return false; }
+}
+async function shopifyExecuteContentAction(action, connection, accessToken) {
+  try {
+    const raw = await shopifyContentReadBody(connection, accessToken, action); if (raw === null) return shopifyContentFail('content_unreadable');
+    if (shopifyContentHash(raw) !== (action.previous_state || {}).contentHash) return shopifyContentFail('content_changed');   // the page is not what the owner saw
+    if (shopifyContentBuilder(raw)) return shopifyContentFail('content_builder');
+    const built = shopifyContentBuild(action, raw); if (!built) return shopifyContentFail('content_unsupported');
+    if (!(await shopifyContentSaveBackup(action.id, raw, built.html))) return shopifyContentFail('content_failed');   // no undo copy, no change
+    const target = shopifyContentTarget(connection, action), write = await shopifyApiRequest(connection.shop_domain, accessToken, target.path, { method: 'PUT', body: { [target.key]: { id: action.target_shopify_id, body_html: built.html } }, timeoutMs: 25000 });
+    if (!write.ok) { await pool.query('DELETE FROM shopify_action_backups WHERE action_id = $1', [action.id]).catch(() => {}); return shopifyContentFail('content_write_rejected', { status: write.status }); }   // nothing was changed, so no undo copy is kept
+    const after = await shopifyContentReadBody(connection, accessToken, action); if (after === null) return { executed: true, verified: false, error: shopifyFormat('content_verify_unconfirmed'), errorCode: 'content_verify_unconfirmed' };
+    await pool.query('UPDATE shopify_action_backups SET content_after_hash = $1 WHERE action_id = $2', [shopifyContentHash(after), action.id]).catch(() => {});   // what Shopify stored may differ slightly from what was sent
+    return shopifyContentVerify(action, raw, after) ? { executed: true, verified: true } : { executed: true, verified: false, error: shopifyFormat('content_verify_failed'), errorCode: 'content_verify_failed' };
+  } catch (e) { return shopifyContentFail('content_failed'); }
+}
+// Undo: only if the page has not been edited since (what it holds is still what the change left); otherwise the owner's later work could be overwritten.
+async function shopifyUndoContentAction(connection, action, accessToken) {
+  const fail = (status, code) => ({ ok: false, status, error: shopifyFormat(code), code });
+  if (!SHOPIFY_CONTENT_TYPES.includes(action.action_type) || action.execution_status !== 'executed') return fail(400, 'content_undo_not_applied');
+  const backup = (await pool.query('SELECT * FROM shopify_action_backups WHERE action_id = $1', [action.id])).rows[0]; if (!backup) return fail(410, 'content_undo_expired');
+  const current = await shopifyContentReadBody(connection, accessToken, action); if (current === null) return fail(502, 'content_undo_unreadable');
+  if (shopifyContentHash(current) !== backup.content_after_hash) return fail(409, 'content_undo_edited');
+  const target = shopifyContentTarget(connection, action), write = await shopifyApiRequest(connection.shop_domain, accessToken, target.path, { method: 'PUT', body: { [target.key]: { id: action.target_shopify_id, body_html: backup.content_before } }, timeoutMs: 25000 });
+  if (!write.ok) return fail(502, 'content_undo_rejected');
+  await pool.query(`UPDATE shopify_actions SET execution_status = 'undone', approval_status = 'rejected', reviewed_at = NOW() WHERE id = $1`, [action.id]);   // treated as a "no": not proposed again for a while
+  await pool.query('DELETE FROM shopify_action_backups WHERE action_id = $1', [action.id]);
+  return { ok: true };
 }
 
 // shopify-own:end
@@ -11271,7 +11556,7 @@ app.post('/api/business/:id/shopify/actions/:actionId/undo', authRequired, async
     if (!connection) return res.status(404).json({ error: 'No Shopify store connected' });
     const action = (await pool.query('SELECT * FROM shopify_actions WHERE id = $1 AND shopify_connection_id = $2', [req.params.actionId, connection.id])).rows[0];
     if (!action) return res.status(404).json({ error: 'Proposed change not found' });
-    const out = action.action_type === 'generate_featured_image' ? await undoShopifyFeaturedImageAction(connection, action, decryptSecret(connection.access_token_encrypted)) : await undoShopifyLinkFixAction(connection, action, decryptSecret(connection.access_token_encrypted));
+    const out = SHOPIFY_CONTENT_TYPES.includes(action.action_type) ? await shopifyUndoContentAction(connection, action, decryptSecret(connection.access_token_encrypted)) : action.action_type === 'generate_featured_image' ? await undoShopifyFeaturedImageAction(connection, action, decryptSecret(connection.access_token_encrypted)) : await undoShopifyLinkFixAction(connection, action, decryptSecret(connection.access_token_encrypted));
     if (!out.ok) return res.status(out.status).json({ error: out.error, code: out.code });
     await logShopifyAudit(connection.id, 'user', req.userId, 'change_undone', `Undone: ${shopifyChangeLabel(action)}`, { actionId: action.id, actionType: action.action_type, change: shopifyChangeParts(action) }, shopifyFeatureForActionType(action.action_type));
     res.json({ success: true });
@@ -11646,6 +11931,7 @@ function shopifyFeatureForActionType(type) {
   if (type === 'add_tags') return 'taxonomy';
   if (type === 'generate_featured_image') return 'featured_images';
   if (type === 'remove_broken_link' || type === 'update_link_url') return 'broken_links';
+  if (SHOPIFY_CONTENT_TYPES.includes(type)) return 'seo_proposals';
   return 'general';
 }
 // What a proposed change IS, as facts (kind, value, page) rather than a sentence, so the dashboard can say it in any language.
@@ -11657,9 +11943,12 @@ function shopifyChangeParts(action) {
   if (t === 'generate_featured_image') return { kind: 'featured_image', value: '', targetTitle };
   if (t === 'remove_broken_link') return { kind: 'remove_link', value: c.brokenUrl || '', targetTitle };
   if (t === 'update_link_url') return { kind: 'change_link', value: c.oldUrl || '', to: c.newUrl || '', targetTitle };
+  if (t === 'expand_thin_content') return { kind: 'expand_content', value: String(c.addedWords || 0), targetTitle };
+  if (t === 'fix_heading_levels') return { kind: 'heading_levels', value: String((c.headingLevels || []).length), targetTitle };
+  if (t === 'add_subheadings') return { kind: 'subheadings', value: String((c.subheadings || []).length), targetTitle };
   return { kind: 'other', value: t || '', targetTitle };
 }
-const SHOPIFY_CHANGE_ENGLISH = { meta_title: p => `Meta title: "${p.value}"`, meta_description: p => `Meta description: "${p.value}"`, tags: p => `Add tags: ${p.value}`, featured_image: () => 'Featured image', remove_link: p => `Remove broken link to ${p.value}`, change_link: p => `Change link ${p.value} to ${p.to}`, other: p => p.value || 'Change' };
+const SHOPIFY_CHANGE_ENGLISH = { meta_title: p => `Meta title: "${p.value}"`, meta_description: p => `Meta description: "${p.value}"`, tags: p => `Add tags: ${p.value}`, featured_image: () => 'Featured image', expand_content: p => `Add ${p.value} words of new content`, heading_levels: p => `Fix ${p.value} heading level(s)`, subheadings: p => `Add ${p.value} subheading(s)`, remove_link: p => `Remove broken link to ${p.value}`, change_link: p => `Change link ${p.value} to ${p.to}`, other: p => p.value || 'Change' };
 const shopifyChangeLabel = action => { const p = shopifyChangeParts(action); return `${SHOPIFY_CHANGE_ENGLISH[p.kind](p)}${p.targetTitle ? ` on "${p.targetTitle}"` : ''}`; };
 // What happened when a person approved a change.
 async function logShopifyChangeDecision(connection, action, userId, exec) {
@@ -11668,7 +11957,7 @@ async function logShopifyChangeDecision(connection, action, userId, exec) {
   return logShopifyAudit(connection.id, 'user', userId, 'change_failed', `Could not apply: ${label}`, { ...details, error: String(exec.error || '').slice(0, 300), errorCode: exec.errorCode || null, errorParams: exec.errorParams || null }, feature);
 }
 // A suggestion run by a person: one line for the run, one for each change the store applied by itself.
-const SHOPIFY_RUN_WORDS = { tags: ['taxonomy', 'Looked for posts without tags'], duplicate_titles: ['duplicate_titles', 'Looked for duplicate titles'], featured_images: ['featured_images', 'Looked for articles without a featured image'] };
+const SHOPIFY_RUN_WORDS = { tags: ['taxonomy', 'Looked for posts without tags'], duplicate_titles: ['duplicate_titles', 'Looked for duplicate titles'], featured_images: ['featured_images', 'Looked for articles without a featured image'], thin_content: ['seo_proposals', 'Looked for thin pages'], headings: ['seo_proposals', 'Looked at page headings'] };
 async function logShopifyProposalRun(connection, userId, what, out) {
   const [feature, words] = SHOPIFY_RUN_WORDS[what] || ['general', 'Looked for improvements'];
   const proposals = Array.isArray(out && out.proposals) ? out.proposals : [], auto = proposals.filter(p => p.execution_status === 'executed');
@@ -11961,6 +12250,7 @@ async function executeShopifyAction(action, connection, accessToken) {
   const change = action.proposed_change;
 
   try {
+    if (SHOPIFY_CONTENT_TYPES.includes(action.action_type)) return await shopifyExecuteContentAction(action, connection, accessToken);
     if (action.action_type === 'add_tags') {
       // Tags are only ever ADDED: whatever the article already has is kept, in the same order. Reads the live tags right before writing.
       const articlePath = `/blogs/${connection.blog_id}/articles/${action.target_shopify_id}.json`;
@@ -12636,6 +12926,11 @@ const SHOPIFY_TEXT = {
   runs_load_failed: 'Could not load audit history.', runs_clear_failed: 'Could not clear audit history.', runs_invalid: 'Those are not valid audit runs.', runs_specify: 'Specify which runs to clear: ids or all.',
   log_load_failed: 'Could not load the activity log.', log_clear_failed: 'Could not clear the activity log.', log_invalid: 'Those are not valid entries.', log_unknown_feature: 'Unknown feature.',
   log_specify: 'Specify which entries to clear: ids, feature, or all.',
+  thin_none: 'No thin pages or posts needing more content were found: nothing to propose right now.', thin_waiting: 'Pages that could use more content already have a suggestion waiting for you.', thin_none_builders: 'Nothing was proposed: {n} page(s) built with a page-builder app were skipped, because their content cannot be changed safely from here.', headings_none: 'No heading problems were found: nothing to propose right now.',
+  thin_ai_unreadable: "The AI's answer could not be read. Please try again.", thin_ai_truncated: "The AI's answer was cut off before it finished. Please try again.", thin_ai_missing: "The AI's answer was missing the suggestions. Please try again.", headings_ai_unreadable: "The AI's answer could not be read. Please try again.", headings_ai_truncated: "The AI's answer was cut off before it finished. Please try again.", headings_ai_missing: "The AI's answer was missing the suggestions. Please try again.",
+  thin_content_failed: 'Could not look for thin pages. Please try again.', headings_failed: 'Could not check the headings. Please try again.',
+  content_changed: 'This page was edited after the suggestion was made, so it was not changed. Run the check again.', content_builder: 'This page is built with a page-builder app, which this change cannot safely edit.', content_unreadable: "Could not read this page's current content.", content_unsupported: 'The content of this page cannot be changed safely in this way.', content_write_rejected: 'Shopify rejected saving this change (status {status}).', content_verify_unconfirmed: 'The change was saved, but it could not be confirmed. Please check the page manually.', content_verify_failed: 'The change was saved, but the page does not yet show it as expected.', content_failed: 'Something went wrong while changing this page. Nothing was changed.',
+  content_undo_not_applied: 'Only a content change that was applied can be undone.', content_undo_expired: 'This change is too old to undo here. Restore the page from its version history in Shopify.', content_undo_edited: "This page was edited after the change, so it cannot be undone automatically. Restore it from the page's version history in Shopify.", content_undo_unreadable: "Could not read the page's current content.", content_undo_rejected: 'Shopify rejected restoring the page.',
 };
 const shopifyFormat = (code, params) => String(SHOPIFY_TEXT[code] || code).replace(/\{(\w+)\}/g, (m, k) => (params && params[k] !== undefined ? String(params[k]) : m));
 const shopifyFail = (code, params) => ({ error: shopifyFormat(code, params), code, ...(params ? { params } : {}) });
@@ -12832,6 +13127,8 @@ async function shopifyProposalRouteContext(req) {
 const SHOPIFY_PROPOSAL_ROUTES = [
   { path: 'tag-proposals', kind: 'tags', run: runShopifyTagProposalGeneration, failure: 'tags_failed' },
   { path: 'duplicate-title-proposals', kind: 'duplicate_titles', run: runShopifyDuplicateTitleProposalGeneration, failure: 'duplicates_failed' },
+  { path: 'thin-content-proposals', kind: 'thin_content', run: shopifyRunThinContentProposals, failure: 'thin_content_failed' },
+  { path: 'heading-proposals', kind: 'headings', run: shopifyRunHeadingProposals, failure: 'headings_failed' },
 ];
 for (const r of SHOPIFY_PROPOSAL_ROUTES) app.post(`/api/business/:id/shopify/${r.path}`, authRequired, async (req, res) => {
   try {
