@@ -2986,9 +2986,8 @@ const I18N_DICT = {
     "plan.f_team5": "5 team members",
     "plan.f_whatsapp_support": "Priority WhatsApp support",
     "plan.f_web_business": "Auto SEO: everything in Pro + Keyword Rankings, XML Sitemap, Broken Links checker, Schema Markup, Media Library, Find & Improve SEO (thin content and headings), AI Visibility — {sites} websites, {posts} posts/month",
-    "plan.f_auto_web": "{sites} website (WordPress or Shopify) and {posts} blog posts per month",
-    "plan.f_auto_agent": "AI Agent that works automatically, plus Content Calendar",
-    "plan.f_auto_all": "Every website feature: audit, competitor analysis, technical SEO, indexing & redirects check, keyword rankings, XML sitemap, schema, thin-content & heading fixes, AI visibility (AEO/GEO)",
+    "plan.f_auto_web": "{sites} website (WordPress or Shopify) and {posts} blog posts per month, with topic suggestions and a list of every post",
+    "plan.f_auto_agent": "AI Agent that works automatically, with a Content Calendar, Agent Activity and an Activity Log",
     "plan.f_auto_alerts": "Website alerts",
     "plan.f_auto_only": "Auto SEO only — the other Arreyon Consult features are not included",
     "billing.cycle_monthly": "Monthly",
@@ -3107,7 +3106,16 @@ const I18N_DICT = {
     "billing.usage_sites": "Websites: {used} of {limit}",
     "billing.usage_posts_month": "Blog posts this month: {used} of {limit}",
     "billing.usage_posts_trial": "Free blog posts: {used} of {limit}",
-    "plan.f_auto_reports": "Website reports (PDF & Word), goals that follow your website, and approvals in your Action Center"
+    "plan.f_auto_reports": "Website reports (PDF & Word), goals that follow your website, and approvals in your Action Center",
+    "plan.f_auto_rules": "Automatic content creation on your own rules",
+    "plan.f_auto_audit": "Website Intelligence, Run Audit & Optimize, and Proposed Changes you can approve, apply and undo",
+    "plan.f_auto_improve": "Find & Improve SEO: titles, descriptions, duplicate titles, tags and categories, featured images, thin content and headings",
+    "plan.f_auto_technical": "Technical SEO (Core Web Vitals, robots.txt, mobile), indexing & redirects check and a broken links checker",
+    "plan.f_auto_sitemap": "XML sitemap (build on WordPress, check on Shopify) sent to Google, schema markup and a Media Library (WordPress)",
+    "plan.f_auto_rankings": "Keyword rankings from Google Search Console",
+    "plan.f_auto_competitors": "Competitor analysis: find, add and compare competitors",
+    "plan.f_auto_visibility": "AI visibility (AEO/GEO)",
+    "plan.f_auto_backlinks": "Backlinks & Partner Network"
   },
   fr: {
     "lang.translating": "Traduction en cours…",
@@ -6082,9 +6090,8 @@ const I18N_DICT = {
     "plan.f_team5": "5 membres d'équipe",
     "plan.f_whatsapp_support": "Support prioritaire par WhatsApp",
     "plan.f_web_business": "Auto SEO : tout Pro + classement des mots-clés, plan du site XML, vérificateur de liens cassés, balisage Schema, médiathèque, trouver et améliorer le SEO (contenus courts et titres), visibilité IA — {sites} sites, {posts} articles/mois",
-    "plan.f_auto_web": "{sites} site (WordPress ou Shopify) et {posts} articles de blog par mois",
-    "plan.f_auto_agent": "Agent IA qui travaille automatiquement, plus Calendrier de contenu",
-    "plan.f_auto_all": "Toutes les fonctionnalités web : audit, analyse de la concurrence, SEO technique, contrôle de l'indexation et des redirections, classement des mots-clés, plan du site XML, schema, corrections des contenus courts et des titres, visibilité IA (AEO/GEO)",
+    "plan.f_auto_web": "{sites} site (WordPress ou Shopify) et {posts} articles de blog par mois, avec suggestions de sujets et liste de tous les articles",
+    "plan.f_auto_agent": "Agent IA qui travaille automatiquement, avec un Calendrier de contenu, l'Activité de l'agent et un Journal d'activité",
     "plan.f_auto_alerts": "Alertes du site web",
     "plan.f_auto_only": "Auto SEO uniquement — les autres fonctionnalités d'Arreyon Consult ne sont pas incluses",
     "billing.cycle_monthly": "Mensuel",
@@ -6203,7 +6210,16 @@ const I18N_DICT = {
     "billing.usage_sites": "Sites web : {used} sur {limit}",
     "billing.usage_posts_month": "Articles ce mois-ci : {used} sur {limit}",
     "billing.usage_posts_trial": "Articles gratuits : {used} sur {limit}",
-    "plan.f_auto_reports": "Rapports du site (PDF et Word), objectifs qui suivent votre site et approbations dans votre Centre d'action"
+    "plan.f_auto_reports": "Rapports du site (PDF et Word), objectifs qui suivent votre site et approbations dans votre Centre d'action",
+    "plan.f_auto_rules": "Création automatique de contenu selon vos propres règles",
+    "plan.f_auto_audit": "Intelligence du site web, audit et optimisation, et Modifications proposées que vous pouvez approuver, appliquer et annuler",
+    "plan.f_auto_improve": "Trouver et améliorer le SEO : titres, descriptions, titres en double, étiquettes et catégories, images mises en avant, contenus trop courts et intertitres",
+    "plan.f_auto_technical": "SEO technique (Core Web Vitals, robots.txt, mobile), contrôle de l'indexation et des redirections et vérificateur de liens cassés",
+    "plan.f_auto_sitemap": "Plan du site XML (à générer sur WordPress, à vérifier sur Shopify) envoyé à Google, balisage schema et médiathèque (WordPress)",
+    "plan.f_auto_rankings": "Classement des mots-clés depuis Google Search Console",
+    "plan.f_auto_competitors": "Analyse de la concurrence : trouvez, ajoutez et comparez vos concurrents",
+    "plan.f_auto_visibility": "Visibilité IA (AEO/GEO)",
+    "plan.f_auto_backlinks": "Backlinks et réseau de partenaires"
   }
 };
 
