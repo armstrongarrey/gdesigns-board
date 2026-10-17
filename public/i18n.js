@@ -3106,7 +3106,8 @@ const I18N_DICT = {
     "shopify.plan.feat_backlinks": "Backlinks & Partner Network",
     "billing.usage_sites": "Websites: {used} of {limit}",
     "billing.usage_posts_month": "Blog posts this month: {used} of {limit}",
-    "billing.usage_posts_trial": "Free blog posts: {used} of {limit}"
+    "billing.usage_posts_trial": "Free blog posts: {used} of {limit}",
+    "plan.f_auto_reports": "Website reports (PDF & Word), goals that follow your website, and approvals in your Action Center"
   },
   fr: {
     "lang.translating": "Traduction en cours…",
@@ -6201,7 +6202,8 @@ const I18N_DICT = {
     "shopify.plan.feat_backlinks": "Backlinks et réseau de partenaires",
     "billing.usage_sites": "Sites web : {used} sur {limit}",
     "billing.usage_posts_month": "Articles ce mois-ci : {used} sur {limit}",
-    "billing.usage_posts_trial": "Articles gratuits : {used} sur {limit}"
+    "billing.usage_posts_trial": "Articles gratuits : {used} sur {limit}",
+    "plan.f_auto_reports": "Rapports du site (PDF et Word), objectifs qui suivent votre site et approbations dans votre Centre d'action"
   }
 };
 
