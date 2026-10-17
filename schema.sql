@@ -2618,3 +2618,64 @@ AI visibility (AEO/GEO)
 Website alerts
 Website reports (PDF & Word), goals that follow your website, and approvals in your Action Center
 Auto SEO only — the other Arreyon Consult features are not included$c$;
+
+-- CMS-BUSINESS-ALL-FEATURES-V7 (generated; safe to re-run: replaces the Business plan list ONLY if it is still exactly the text before this update)
+UPDATE cms_content SET value = $c$Unlimited consultations
+All 29 directors
+PDF + Word download
+Video report (HeyGen)
+Full financial calculator suite (10 tools)
+Unlimited Market Research & Website Analyzer
+Research-backed Entrepreneur Mode
+5 team members
+Custom AI director personas
+Priority WhatsApp support
+Full consultation history
+Auto SEO: 3 websites (WordPress or Shopify) and 25 blog posts per month, with topic suggestions and a list of every post
+AI Agent that works automatically, with a Content Calendar, Agent Activity and an Activity Log
+Automatic content creation on your own rules
+Website Intelligence, Run Audit & Optimize, and Proposed Changes you can approve, apply and undo
+Find & Improve SEO: titles, descriptions, duplicate titles, tags and categories, featured images, thin content and headings
+Technical SEO (Core Web Vitals, robots.txt, mobile), indexing & redirects check and a broken links checker
+XML sitemap (build on WordPress, check on Shopify) sent to Google, schema markup and a Media Library (WordPress)
+Keyword rankings from Google Search Console
+Competitor analysis: find, add and compare competitors
+AI visibility (AEO/GEO)
+Backlinks & Partner Network
+Website alerts
+Website reports (PDF & Word), goals that follow your website, and approvals in your Action Center$c$, value_fr = $c$Consultations illimitées
+Les 29 directeurs
+Téléchargement PDF + Word
+Rapport vidéo (HeyGen)
+Suite complète de calculateurs financiers (10 outils)
+Étude de marché et analyseur de site web illimités
+Mode Entrepreneur appuyé sur la recherche
+5 membres d'équipe
+Personas de directeurs IA personnalisés
+Support prioritaire par WhatsApp
+Historique complet des consultations
+Auto SEO : 3 sites (WordPress ou Shopify) et 25 articles de blog par mois, avec suggestions de sujets et liste de tous les articles
+Agent IA qui travaille automatiquement, avec un Calendrier de contenu, l'Activité de l'agent et un Journal d'activité
+Création automatique de contenu selon vos propres règles
+Intelligence du site web, audit et optimisation, et Modifications proposées que vous pouvez approuver, appliquer et annuler
+Trouver et améliorer le SEO : titres, descriptions, titres en double, étiquettes et catégories, images mises en avant, contenus trop courts et intertitres
+SEO technique (Core Web Vitals, robots.txt, mobile), contrôle de l'indexation et des redirections et vérificateur de liens cassés
+Plan du site XML (à générer sur WordPress, à vérifier sur Shopify) envoyé à Google, balisage schema et médiathèque (WordPress)
+Classement des mots-clés depuis Google Search Console
+Analyse de la concurrence : trouvez, ajoutez et comparez vos concurrents
+Visibilité IA (AEO/GEO)
+Backlinks et réseau de partenaires
+Alertes du site web
+Rapports du site (PDF et Word), objectifs qui suivent votre site et approbations dans votre Centre d'action$c$, updated_at = NOW()
+ WHERE section = 'pricing' AND key = 'plan_business_features' AND value = $c$Unlimited consultations
+All 29 directors
+PDF + Word download
+Video report (HeyGen)
+Full financial calculator suite (10 tools)
+Unlimited Market Research & Website Analyzer
+Research-backed Entrepreneur Mode
+5 team members
+Custom AI director personas
+Priority WhatsApp support
+Full consultation history
+Auto SEO: 3 websites, 25 blog posts/month, all Pro features plus keyword rankings, XML sitemap, schema markup, AI visibility, media library, thin-content & heading fixes$c$;
