@@ -2407,3 +2407,147 @@ Page content editing
 Thin-content expansion
 Deeper crawl checks (noindex, canonicals, redirects)
 XML sitemap generation$c$;
+
+-- CMS-RENAME-AUTO-SEO-V4 (generated; safe to re-run: changes a plan list ONLY if it is still exactly the text before this rename)
+UPDATE cms_content SET value = $c$3 consultations during your 7-day trial
+5 starter directors
+Board Secretary Q&A
+Basic board report
+3 core financial calculators
+Website Analyzer (1 scan)
+Entrepreneur Mode & Scenario Comparison
+1 team member
+Auto SEO: connect 1 website + 2 blog posts$c$, value_fr = $c$3 consultations pendant votre essai de 7 jours
+5 directeurs de départ
+Questions-réponses avec la Secrétaire du conseil
+Rapport de conseil de base
+3 calculateurs financiers essentiels
+Analyseur de site web (1 analyse)
+Mode Entrepreneur et comparaison de scénarios
+1 membre d'équipe
+Auto SEO : connectez 1 site + 2 articles de blog$c$, updated_at = NOW()
+ WHERE section = 'pricing' AND key = 'plan_free_features' AND value = $c$3 consultations during your 7-day trial
+5 starter directors
+Board Secretary Q&A
+Basic board report
+3 core financial calculators
+Website Analyzer (1 scan)
+Entrepreneur Mode & Scenario Comparison
+1 team member
+Website tool: connect 1 website + 2 blog posts$c$;
+UPDATE cms_content SET value = $c$3 consultations per month
+5 starter directors
+Board Secretary Q&A
+Basic board report
+3 core financial calculators
+Website Analyzer (1 scan/month)
+Entrepreneur Mode & Scenario Comparison
+1 team member
+Auto SEO: 1 website, AI Agent & Content Calendar, 5 blog posts/month$c$, value_fr = $c$3 consultations par mois
+5 directeurs de départ
+Questions-réponses avec la Secrétaire du conseil
+Rapport de conseil de base
+3 calculateurs financiers essentiels
+Analyseur de site web (1 analyse/mois)
+Mode Entrepreneur et comparaison de scénarios
+1 membre d'équipe
+Auto SEO : 1 site, Agent IA et Calendrier de contenu, 5 articles/mois$c$, updated_at = NOW()
+ WHERE section = 'pricing' AND key = 'plan_starter_features' AND value = $c$3 consultations per month
+5 starter directors
+Board Secretary Q&A
+Basic board report
+3 core financial calculators
+Website Analyzer (1 scan/month)
+Entrepreneur Mode & Scenario Comparison
+1 team member
+Website tool: 1 website, AI Agent & Content Calendar, 5 blog posts/month$c$;
+UPDATE cms_content SET value = $c$10 consultations per month
+All 29 directors
+Report download (PDF)
+Full consultation history
+Full financial calculator suite (10 tools)
+Market Research & Website Analyzer (5-10/month)
+Research-backed Entrepreneur Mode
+2 team members
+Priority email support
+Board Secretary deep-dive
+Auto SEO: 2 websites, 10 blog posts/month, site audit, competitor analysis, technical SEO, indexing & redirects check, website reports$c$, value_fr = $c$10 consultations par mois
+Les 29 directeurs
+Téléchargement du rapport (PDF)
+Historique complet des consultations
+Suite complète de calculateurs financiers (10 outils)
+Étude de marché et analyseur de site web (5-10/mois)
+Mode Entrepreneur appuyé sur la recherche
+2 membres d'équipe
+Support prioritaire par e-mail
+Analyse approfondie de la Secrétaire du conseil
+Auto SEO : 2 sites, 10 articles/mois, audit du site, analyse de la concurrence, SEO technique, contrôle de l'indexation et des redirections, rapports du site$c$, updated_at = NOW()
+ WHERE section = 'pricing' AND key = 'plan_pro_features' AND value = $c$10 consultations per month
+All 29 directors
+Report download (PDF)
+Full consultation history
+Full financial calculator suite (10 tools)
+Market Research & Website Analyzer (5-10/month)
+Research-backed Entrepreneur Mode
+2 team members
+Priority email support
+Board Secretary deep-dive
+Website tool: 2 websites, 10 blog posts/month, site audit, competitor analysis, technical SEO, indexing & redirects check, website reports$c$;
+UPDATE cms_content SET value = $c$Unlimited consultations
+All 29 directors
+PDF + Word download
+Video report (HeyGen)
+Full financial calculator suite (10 tools)
+Unlimited Market Research & Website Analyzer
+Research-backed Entrepreneur Mode
+5 team members
+Custom AI director personas
+Priority WhatsApp support
+Full consultation history
+Auto SEO: 3 websites, 25 blog posts/month, all Pro features plus keyword rankings, XML sitemap, schema markup, AI visibility, media library, thin-content & heading fixes$c$, value_fr = $c$Consultations illimitées
+Les 29 directeurs
+Téléchargement PDF + Word
+Rapport vidéo (HeyGen)
+Suite complète de calculateurs financiers (10 outils)
+Étude de marché et analyseur de site web illimités
+Mode Entrepreneur appuyé sur la recherche
+5 membres d'équipe
+Personas de directeurs IA personnalisés
+Support prioritaire par WhatsApp
+Historique complet des consultations
+Auto SEO : 3 sites, 25 articles/mois, toutes les fonctions Pro plus classement des mots-clés, plan du site XML, balisage schema, visibilité IA, médiathèque, corrections des contenus courts et des titres$c$, updated_at = NOW()
+ WHERE section = 'pricing' AND key = 'plan_business_features' AND value = $c$Unlimited consultations
+All 29 directors
+PDF + Word download
+Video report (HeyGen)
+Full financial calculator suite (10 tools)
+Unlimited Market Research & Website Analyzer
+Research-backed Entrepreneur Mode
+5 team members
+Custom AI director personas
+Priority WhatsApp support
+Full consultation history
+Website tool: 3 websites, 25 blog posts/month, all Pro features plus keyword rankings, XML sitemap, schema markup, AI visibility, media library, thin-content & heading fixes$c$;
+UPDATE cms_content SET value = $c$1 website (WordPress or Shopify)
+20 blog posts per month
+AI Agent that works automatically + Content Calendar
+Site audit, competitor analysis, technical SEO, indexing & redirects check
+Keyword rankings, XML sitemap, schema markup, thin-content & heading fixes
+AI visibility (AEO/GEO)
+Website alerts
+Auto SEO only — the other Arreyon Consult features are not included$c$, value_fr = $c$1 site web (WordPress ou Shopify)
+20 articles de blog par mois
+Agent IA qui travaille automatiquement + Calendrier de contenu
+Audit du site, analyse de la concurrence, SEO technique, contrôle de l'indexation et des redirections
+Classement des mots-clés, plan du site XML, balisage schema, corrections des contenus courts et des titres
+Visibilité IA (AEO/GEO)
+Alertes du site web
+Auto SEO uniquement — les autres fonctionnalités d'Arreyon Consult ne sont pas incluses$c$, updated_at = NOW()
+ WHERE section = 'pricing' AND key = 'plan_auto_seo_features' AND value = $c$1 website (WordPress or Shopify)
+20 blog posts per month
+AI Agent that works automatically + Content Calendar
+Site audit, competitor analysis, technical SEO, indexing & redirects check
+Keyword rankings, XML sitemap, schema markup, thin-content & heading fixes
+AI visibility (AEO/GEO)
+Website alerts
+Website tool only — the other Arreyon Consult features are not included$c$;
