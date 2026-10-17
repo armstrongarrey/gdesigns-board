@@ -2586,6 +2586,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
                 <button class="btn-ghost" onclick="clearShopifyAuditHistory()" data-i18n="shopify.audit.clear">Clear History</button>
                 <button class="btn-secondary" onclick="generateShopifyTagProposals()" id="shopifyTagProposalsBtn" data-i18n="shopify.tags.suggest">Suggest Tags</button>
                 <button class="btn-secondary" onclick="generateShopifyDuplicateTitleProposals()" id="shopifyDuplicateTitleBtn" data-i18n="shopify.dups.fix">Fix Duplicate Titles</button>
+<button class="btn-secondary" onclick="generateShopifyThinContentProposals()" id="shopifyThinContentBtn" data-i18n="shopify.content.thin_button">Expand Thin Pages</button>
+<button class="btn-secondary" onclick="generateShopifyHeadingProposals()" id="shopifyHeadingsBtn" data-i18n="shopify.content.headings_button">Fix Headings</button>
                 <button class="btn-primary" onclick="runShopifyAudit()" id="shopifyRunAuditBtn" data-i18n="web.run_audit_button">Run Audit & Optimize</button>
               </div>
             </div>
@@ -9058,7 +9060,7 @@ const SHOPIFY_ACTIVITY_LOG_FEATURES = [
 function applyShopifyPlanLocks() {
   if (typeof planAccess === 'undefined' || !planAccess || !planAccess.website) return;
   const hasFind = webHas('find_improve_seo');
-  ['shopifyTagProposalsBtn', 'shopifyDuplicateTitleBtn'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('plan-locked', !hasFind); });
+  ['shopifyTagProposalsBtn', 'shopifyDuplicateTitleBtn', 'shopifyThinContentBtn', 'shopifyHeadingsBtn'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('plan-locked', !hasFind); });
   const card = document.getElementById('shopifyActivityLogSection'); if (card) card.classList.toggle('plan-locked', !webHas('activity_log'));
 }
 const shopifyLanguage = () => (window.currentLang === 'fr' ? 'fr' : 'en');
@@ -9712,6 +9714,26 @@ async function runShopifyProposals(btnId, idleKey, busyKey, path) {
 }
 function generateShopifyTagProposals() { return runShopifyProposals('shopifyTagProposalsBtn', 'shopify.tags.suggest', 'shopify.tags.finding', 'tag-proposals'); }
 function generateShopifyDuplicateTitleProposals() { return runShopifyProposals('shopifyDuplicateTitleBtn', 'shopify.dups.fix', 'shopify.dups.finding', 'duplicate-title-proposals'); }
+function generateShopifyThinContentProposals() {
+  return runShopifyProposals('shopifyThinContentBtn', 'shopify.content.thin_button', 'shopify.content.working', 'thin-content-proposals');
+}
+function generateShopifyHeadingProposals() {
+  return runShopifyProposals('shopifyHeadingsBtn', 'shopify.content.headings_button', 'shopify.content.working', 'heading-proposals');
+}
+// The three kinds of content proposal and the words that name them. Approving applies a change at once, so the card shows the WHOLE change: the new text, or every heading that moves.
+const SHOPIFY_CONTENT_TYPE_LABELS = { expand_thin_content: 'shopify.content.type_expand', fix_heading_levels: 'shopify.content.type_levels', add_subheadings: 'shopify.content.type_subheadings' };
+function shopifyContentChangeHtml(action) {
+  const c = action.proposed_change || {}, prev = action.previous_state || {};
+  const note = (text, color = 'var(--muted)') => `<div style="font-size:11px;color:${color};margin:4px 0;font-style:italic">${escapeHtml(text)}</div>`;
+  const label = `<div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:3px">${escapeHtml(t(SHOPIFY_CONTENT_TYPE_LABELS[action.action_type] || 'shopify.change.other'))}</div>`;
+  const now = note(tf('shopify.content.current', { words: prev.wordCount || 0, headings: (prev.headings || []).length }), 'var(--text2)');
+  if (c.sections) {
+    const text = c.sections.map(s => `<div style="font-size:12.5px;font-weight:600;color:var(--text);margin-top:6px">${escapeHtml(s.heading)}</div>` + (s.paragraphs || []).map(p => `<div style="font-size:12px;color:var(--text2);margin-top:3px">${escapeHtml(p)}</div>`).join('')).join('');
+    return label + now + note(tf('shopify.content.thin_added', { n: c.addedWords || 0 }), 'var(--text2)') + `<div style="max-height:260px;overflow:auto;background:var(--bg2);border-radius:8px;padding:6px 10px;margin:6px 0">${text}</div>` + note(t('shopify.content.thin_note'));
+  }
+  if (c.headingLevels) return label + now + c.headingLevels.map(l => `<div style="font-size:12.5px;margin-bottom:3px"><span style="color:var(--muted)">H${Number(l.from)} → H${Number(l.to)}</span> ${escapeHtml(l.text)}</div>`).join('') + (c.h1 === 'all' ? note(t('shopify.content.levels_h1')) : '') + note(t('shopify.content.levels_note'));
+  return label + now + (c.subheadings || []).map(s => `<div style="font-size:12px;color:var(--text2);margin-bottom:6px"><b>${escapeHtml(s.text)}</b><br>${escapeHtml(tf('shopify.content.subheading_before', { context: s.context || '' }))}</div>`).join('') + note(t('shopify.content.subheadings_note'));
+}
 // shopify-own:end
 
 
@@ -9864,14 +9886,14 @@ async function loadShopifyActions() {
 
 // Link fixes that were applied (by a person or automatically) or undone, newest first: Shopify's list used to show only what was waiting.
 function shopifyAppliedLinkFixesHtml(actions) {
-  const rows = (actions || []).filter(a => ['remove_broken_link', 'update_link_url', 'generate_featured_image'].includes(a.action_type) && ['executed', 'undone', 'execution_failed'].includes(a.execution_status)).slice(0, 10);
+  const rows = (actions || []).filter(a => ['remove_broken_link', 'update_link_url', 'generate_featured_image', ...Object.keys(SHOPIFY_CONTENT_TYPE_LABELS)].includes(a.action_type) && ['executed', 'undone', 'execution_failed'].includes(a.execution_status)).slice(0, 10);
   if (!rows.length) return '';
   const status = a => a.execution_status === 'undone' ? [t('web.status_undone'), 'var(--muted)'] : a.execution_status === 'execution_failed' ? [t('web.status_could_not_apply'), '#eab308'] : [t('web.status_applied'), 'var(--green)'];
   return `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin:18px 0 8px">${t('web.applied_links_title')}</div>` + rows.map(a => {
     const [label, color] = status(a);
     return `<div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:8px${a.execution_status === 'undone' ? ';opacity:.75' : ''}">
       <div style="display:flex;justify-content:space-between;gap:10px"><div style="font-size:12.5px;color:var(--text)">${escapeHtml(a.target_title || '')}</div><span style="font-size:9.5px;font-weight:700;color:${color};white-space:nowrap">${label}</span></div>
-      <div style="font-size:11px;color:var(--muted);margin-top:3px">${t(WEBSITE_ACTION_TYPE_LABELS[a.action_type] || 'web.action_type_title')}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px">${t(SHOPIFY_CONTENT_TYPE_LABELS[a.action_type] || WEBSITE_ACTION_TYPE_LABELS[a.action_type] || 'web.action_type_title')}</div>
       ${undoRowHtml(a, 'shopify')}
     </div>`;
   }).join('');
@@ -9893,6 +9915,7 @@ function renderShopifyActions(actions) {
     else if (Array.isArray(change.tags) && change.tags.length) changeDescription = `${t('shopify.proposal.tags_label')}: ${change.tags.map(escapeHtml).join(', ')}`;
     else if (change.brokenUrl) changeDescription = tf('web.broken_link_description', { url: escapeHtml(change.brokenUrl) });
     else if (change.oldUrl && change.newUrl) changeDescription = tf('web.link_update_description', { old: escapeHtml(change.oldUrl), new: escapeHtml(change.newUrl) });
+    else if (SHOPIFY_CONTENT_TYPE_LABELS[action.action_type]) changeDescription = shopifyContentChangeHtml(action);
     const prev = action.previous_state || {}, shared = action.action_type === 'update_meta_title' && (prev.metaTitle || prev.title) ? prev.metaTitle || prev.title : '';   // a duplicate-title fix shows the title that is shared
 
     return `
@@ -9915,7 +9938,7 @@ async function approveShopifyAction(actionId) {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/shopify/actions/${actionId}/approve`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) {
-      showToast(data.error || t('board.connection_error'), 'error');
+      showToast(shopifyServerText(data) || t('board.connection_error'), 'error');
       return;
     }
     showToast(t('web.change_applied_toast'), 'success');
@@ -12214,7 +12237,8 @@ async function undoWebsiteAction(actionId, api = 'website') {
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${api === 'shopify' ? 'shopify' : 'website'}/actions/${encodeURIComponent(actionId)}/undo`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok && /^content_/.test(data.code || '')) { showToast(wordpressServerText(data), 'error'); return; }
+    if (!res.ok && api !== 'shopify' && /^content_/.test(data.code || '')) { showToast(wordpressServerText(data), 'error'); return; }
+    if (!res.ok && api === 'shopify' && data.code && shopifyServerText(data)) { showToast(shopifyServerText(data), 'error'); return; }
     if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
     showToast(t('web.undo_done'), 'success'); if (api === 'shopify') loadShopifyActions(); else loadWebsiteActions();
   } catch (e) { showToast(t('board.connection_error'), 'error'); }
