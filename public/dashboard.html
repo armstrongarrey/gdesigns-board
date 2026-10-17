@@ -204,6 +204,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 
 .plan-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
 .plan-locked{display:none !important}
+/* Website-only (Auto SEO) accounts: Reports shows the website's reports only, and Goals has no AI-written plan */
+.website-only #reportsGrid,.website-only #ciReports,.website-only #growthPlanWrap{display:none !important}
 .plan-badge.free{background:var(--bg4);color:var(--muted)}
 .plan-badge.auto_seo{background:rgba(16,185,129,.15);color:var(--green)}
 .plan-badge.expired{background:rgba(239,68,68,.15);color:#ef4444}
@@ -2917,7 +2919,7 @@ async function refreshPlanAccess() {
 
 // ── Which sections each kind of account can open ─────────────────────────────
 const LOCKED_SECTIONS = ['billing', 'profile'];
-const WEBSITE_ONLY_SECTIONS = ['website', 'alerts', 'integrations', 'profile', 'billing'];
+const WEBSITE_ONLY_SECTIONS = ['website', 'reportscenter', 'growth', 'action', 'alerts', 'integrations', 'profile', 'billing'];
 function scopeSection(name) {
   if (planAccess && planAccess.locked && !LOCKED_SECTIONS.includes(name)) return 'billing';
   if (planAccess && planAccess.websiteOnly && !WEBSITE_ONLY_SECTIONS.includes(name)) return 'website';
@@ -2927,7 +2929,7 @@ function applyNavScope(allowed) {
   document.querySelectorAll('.nav-item[id^="nav-"]').forEach(n => { n.style.display = allowed.includes(n.id.slice(4)) ? '' : 'none'; });
 }
 function applyLockedNav() { applyNavScope(LOCKED_SECTIONS); }
-function applyWebsiteOnlyNav() { applyNavScope(WEBSITE_ONLY_SECTIONS); }
+function applyWebsiteOnlyNav() { applyNavScope(WEBSITE_ONLY_SECTIONS); document.body.classList.add('website-only'); }
 function activeSectionName() { const a = document.querySelector('.section-view.active'); return a ? a.id.replace('section-', '') : ''; }
 
 // ── Expired accounts: the lockout says "renew" (paid plan) or "upgrade" (free trial) ──
@@ -2958,7 +2960,7 @@ function planFeatureLines(plan) {
     starter:  [['plan.f_starter_consult'], ['plan.f_free_basic'], ['plan.f_dirs5'], ['plan.f_secretary'], ['plan.f_basic_report'], ['plan.f_calc3'], ['plan.f_analyzer_month1'], ['plan.f_entrepreneur'], ['plan.f_team1'], ['plan.f_web_starter', P]],
     pro:      [['plan.f_pro_consult'], ['plan.f_all_dirs'], ['plan.f_pdf'], ['plan.f_history'], ['plan.f_calc10'], ['plan.f_pro_research'], ['plan.f_research_entrepreneur'], ['plan.f_team2'], ['plan.f_email_support'], ['plan.f_secretary_deep'], ['plan.f_web_pro', P]],
     business: [['plan.f_biz_consult'], ['plan.f_all_dirs'], ['plan.f_download_both'], ['plan.f_video'], ['plan.f_calc10'], ['plan.f_biz_research'], ['plan.f_research_entrepreneur'], ['plan.f_team5'], ['plan.f_personas'], ['plan.f_whatsapp_support'], ['plan.f_history'], ['plan.f_web_business', P]],
-    auto_seo: [['plan.f_auto_web', P], ['plan.f_auto_agent'], ['plan.f_auto_all'], ['plan.f_auto_alerts'], ['plan.f_auto_only']]
+    auto_seo: [['plan.f_auto_web', P], ['plan.f_auto_agent'], ['plan.f_auto_all'], ['plan.f_auto_alerts'], ['plan.f_auto_reports'], ['plan.f_auto_only']]
   };
   return (lines[plan] || []).map(([key, params]) => params ? tf(key, params) : t(key));
 }
@@ -7442,7 +7444,7 @@ async function loadReportsCenter() {
       return;
     }
     renderReportsGrid(data.reports || []);
-    loadCompetitiveReports();
+    if (!(planAccess && planAccess.websiteOnly)) loadCompetitiveReports();   // competitive reports are not part of the website-only plan
     loadWordPressReports();
     loadShopifyReports();
   } catch (e) {
