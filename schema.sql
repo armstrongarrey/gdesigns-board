@@ -2551,3 +2551,30 @@ Keyword rankings, XML sitemap, schema markup, thin-content & heading fixes
 AI visibility (AEO/GEO)
 Website alerts
 Website tool only — the other Arreyon Consult features are not included$c$;
+
+-- CMS-AUTO-SEO-REPORTS-V5 (generated; safe to re-run: changes the Auto SEO plan list ONLY if it is still exactly the text before this line was added)
+UPDATE cms_content SET value = $c$1 website (WordPress or Shopify)
+20 blog posts per month
+AI Agent that works automatically + Content Calendar
+Site audit, competitor analysis, technical SEO, indexing & redirects check
+Keyword rankings, XML sitemap, schema markup, thin-content & heading fixes
+AI visibility (AEO/GEO)
+Website alerts
+Website reports (PDF & Word), goals that follow your website, and approvals in your Action Center
+Auto SEO only — the other Arreyon Consult features are not included$c$, value_fr = $c$1 site web (WordPress ou Shopify)
+20 articles de blog par mois
+Agent IA qui travaille automatiquement + Calendrier de contenu
+Audit du site, analyse de la concurrence, SEO technique, contrôle de l'indexation et des redirections
+Classement des mots-clés, plan du site XML, balisage schema, corrections des contenus courts et des titres
+Visibilité IA (AEO/GEO)
+Alertes du site web
+Rapports du site (PDF et Word), objectifs qui suivent votre site et approbations dans votre Centre d'action
+Auto SEO uniquement — les autres fonctionnalités d'Arreyon Consult ne sont pas incluses$c$, updated_at = NOW()
+ WHERE section = 'pricing' AND key = 'plan_auto_seo_features' AND value = $c$1 website (WordPress or Shopify)
+20 blog posts per month
+AI Agent that works automatically + Content Calendar
+Site audit, competitor analysis, technical SEO, indexing & redirects check
+Keyword rankings, XML sitemap, schema markup, thin-content & heading fixes
+AI visibility (AEO/GEO)
+Website alerts
+Auto SEO only — the other Arreyon Consult features are not included$c$;
