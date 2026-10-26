@@ -253,7 +253,7 @@ else switchTab('login');
 document.addEventListener('DOMContentLoaded', () => {
   const urlErr = params.get('error');
   if (urlErr) {
-    const msgKeys = { invalid_token:'auth.err_invalid_token', google_failed:'auth.err_google_failed', verify_failed:'auth.err_verify_failed' };
+    const msgKeys = { invalid_token:'auth.err_invalid_token', google_failed:'auth.err_google_failed', verify_failed:'auth.err_verify_failed', service_unavailable:'auth.err_service_unavailable' };
     const el = document.getElementById('loginError');
     if (el) { el.textContent = msgKeys[urlErr] ? t(msgKeys[urlErr]) : t('auth.err_generic'); el.classList.add('show'); }
   }
