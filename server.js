@@ -322,9 +322,128 @@ app.post(['/api/chat', '/api/board-match', '/api/board-analyze', '/api/board-res
   requireBoardOrUser, limitIp('board', 300, RL_HOUR), capBody(800 * 1024));
 
 // ── DATABASE ───────────────────────────────────────────────────────────────
+// Every setting is stated rather than left to the library's defaults (which wait forever for a connection and have no
+// handler for a dropped one, so a single bad connection could stop the whole service). The host (Neon) switches the
+// database off after about five minutes without a query, so a connection is never held open for long while idle.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  max: Math.max(2, Math.min(20, Number(process.env.DB_POOL_MAX) || 10)),
+  idleTimeoutMillis: 10 * 1000,
+  connectionTimeoutMillis: 20 * 1000,
+  keepAlive: true
+});
+
+// ── DATABASE HEALTH ────────────────────────────────────────────────────────
+// When the database cannot be reached (for example the host's monthly allowance is used up) every request and every
+// background job used to try, fail and print a long error, many times a minute. Now the first clear failure "opens the
+// breaker": API requests are answered at once with a plain message, background work pauses, and one request at a time
+// is let through to find out whether the database is back (after 1 minute, then 2, 4 ... at most 15).
+
+// Prints at most once a minute per topic, so a failing database or a repeating error cannot flood the logs.
+const logOnceAt = new Map();
+function logOnce(topic, ...parts) {
+  const now = Date.now();
+  if (now - (logOnceAt.get(topic) || 0) < 60 * 1000) return false;
+  logOnceAt.set(topic, now);
+  console.error(...parts);
+  return true;
+}
+// The driver's error text can name the database host or address; that stays out of the logs and out of replies.
+function plainDbError(e) {
+  return String((e && e.message) || e || '')
+    .replace(/postgres(?:ql)?:\/\/\S+/gi, '<database address>')
+    .replace(/\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.neon\.tech\b/gi, '<database host>')
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b/g, '<database host>')
+    .replace(/\s+/g, ' ').slice(0, 200);
+}
+const DB_DOWN_CODES = new Set(['57P01', '57P02', '57P03', '53300', '08000', '08001', '08003', '08004', '08006', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE']);
+function isDbUnavailableError(e) {
+  if (!e) return false;
+  if (e.code && DB_DOWN_CODES.has(String(e.code))) return true;
+  return /compute time quota|exceeded the .{0,40}quota|quota.{0,20}exceeded|terminating connection|connection terminated|database system is (?:starting up|shutting down|in recovery)|too many (?:connections|clients)|timeout exceeded when trying to connect|server closed the connection|connect ECONNREFUSED/i.test(String((e && e.message) || ''));
+}
+const isDbQuotaError = (e) => /quota/i.test(String((e && e.message) || ''));
+
+const DB_BREAKER_MIN_MS = Math.max(1, Number(process.env.DB_BREAKER_MIN_SECONDS) || 60) * 1000;
+const DB_BREAKER_MAX_MS = 15 * 60 * 1000;
+const dbBreaker = { open: false, since: 0, until: 0, step: 0, failures: 0, probeAt: 0, lastReason: '' };
+function openDbBreaker(e) {
+  const now = Date.now(), wasOpen = dbBreaker.open;
+  dbBreaker.step = wasOpen ? Math.min(DB_BREAKER_MAX_MS, dbBreaker.step * 2) : DB_BREAKER_MIN_MS;
+  dbBreaker.open = true; dbBreaker.until = now + dbBreaker.step; dbBreaker.probeAt = 0;
+  if (!wasOpen) dbBreaker.since = now;
+  dbBreaker.lastReason = plainDbError(e);
+  logOnce('db-breaker', `[database] unavailable: ${dbBreaker.lastReason} — requests get a plain message and background work is paused; next attempt in ${Math.round(dbBreaker.step / 1000)}s.`);
+}
+function closeDbBreaker() {
+  if (!dbBreaker.open) return;
+  console.log(`[database] reachable again after ${Math.round((Date.now() - dbBreaker.since) / 1000)}s — resuming normal work.`);
+  dbBreaker.open = false; dbBreaker.failures = 0; dbBreaker.step = 0; dbBreaker.probeAt = 0;
+  requestSchedulerReplan(true);
+}
+// True while work should stay away from the database. When the wait is over, ONE caller at a time is let through to find out.
+function dbBreakerBlocking() {
+  if (!dbBreaker.open) return false;
+  const now = Date.now();
+  if (now < dbBreaker.until) return true;
+  if (dbBreaker.probeAt && now - dbBreaker.probeAt < 10 * 1000) return true;
+  dbBreaker.probeAt = now;
+  return false;
+}
+function noteDbError(e) {
+  if (!isDbUnavailableError(e)) return;
+  if (dbBreaker.open) { if (Date.now() >= dbBreaker.until) openDbBreaker(e); return; }   // while waiting, requests already in flight add nothing
+  dbBreaker.failures++;
+  if (isDbQuotaError(e) || dbBreaker.failures >= 3) openDbBreaker(e);                      // a quota message is certain; other errors must repeat
+}
+function noteDbOk() { dbBreaker.failures = 0; if (dbBreaker.open) closeDbBreaker(); }
+
+// Any change to a plugin site's actions or connection (or to a business/account that owns one) makes the memory that
+// plugin polls are answered from out of date (see the poll route). Every query passes through here, so no write can be missed.
+let pollEpoch = 0;
+const POLL_RELEVANT_WRITE = /\b(?:insert\s+into|update|delete\s+from)\s+(?:only\s+)?(?:website_actions|website_connections)\b|\bdelete\s+from\s+(?:only\s+)?(?:businesses|users)\b|\btruncate\b/i;
+function noteDbWrite(sql) {
+  const text = typeof sql === 'string' ? sql : (sql && typeof sql.text === 'string' ? sql.text : '');
+  if (text && POLL_RELEVANT_WRITE.test(text)) pollEpoch++;
+}
+const rawPoolQuery = pool.query.bind(pool);
+pool.query = function guardedQuery(...args) {
+  if (typeof args[args.length - 1] === 'function') return rawPoolQuery(...args);   // callback style: left alone
+  noteDbWrite(args[0]);
+  return rawPoolQuery(...args).then(
+    (result) => { noteDbOk(); return result; },
+    (e) => { noteDbError(e); throw e; }
+  );
+};
+// A dropped idle connection is only logged: it is not a failed request, so it must not be able to trip the breaker by itself.
+pool.on('error', (e) => { logOnce('db-idle-error', '[database] an idle connection was dropped:', plainDbError(e)); });
+
+// The plain message people see while the database is unreachable (French when the browser asks for French).
+function dbDownMessage(req) {
+  return /^\s*fr/i.test(String((req && req.headers && req.headers['accept-language']) || ''))
+    ? 'Le service est temporairement indisponible. Veuillez réessayer dans quelques minutes.'
+    : 'The service is temporarily unavailable. Please try again in a few minutes.';
+}
+function sendDbDown(req, res) {
+  const retry = Math.max(5, Math.ceil((dbBreaker.until - Date.now()) / 1000));
+  res.set('Retry-After', String(retry));
+  return res.status(503).json({ error: dbDownMessage(req), code: 'service_unavailable', retryAfterSeconds: retry });
+}
+// These two do not need the database to answer (the plugin poll is answered from memory; the version list is fixed text).
+const DB_DOWN_ALLOWED = new Set(['/api/website-connector/poll', '/api/website-connector/plugin-versions']);
+app.use((req, res, next) => {
+  if (!dbBreaker.open || !req.path.startsWith('/api/') || DB_DOWN_ALLOWED.has(req.path)) return next();
+  if (dbBreakerBlocking()) return sendDbDown(req, res);
+  next();   // the one request let through to find out whether the database is back
+});
+// A change made through the app (a new scheduled post, Automatic switched on, a new connection) can move the next time
+// something is due, so the scheduler looks again a moment after it.
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS' && /^\/api\/(?:business|shopify|website|content)/.test(req.path)) {
+    res.on('finish', () => { if (res.statusCode < 400) requestSchedulerReplan(); });
+  }
+  next();
 });
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────
@@ -980,12 +1099,11 @@ passport.use(new GoogleStrategy({
 }, googleStrategyVerify));
 
 passport.serializeUser((user, done) => done(null, user.id));
-passport.deserializeUser(async (id, done) => {
-  try {
-    const result = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
-    done(null, result.rows[0]);
-  } catch(e) { done(e, null); }
-});
+// The app signs people in with its own cookie (see authRequired), not with this session. The session only carries the
+// Google sign-in from the redirect to the callback, where req.user is set straight from the sign-in step. Looking the user
+// up again on every later request was a database read for nothing — and with the database unreachable it failed every
+// page for anyone still holding the session cookie.
+passport.deserializeUser((id, done) => done(null, { id }));
 
 // ── AUTH MIDDLEWARE ────────────────────────────────────────────────────────
 async function authRequired(req, res, next) {
@@ -3465,6 +3583,11 @@ function featureForActionType(actionType) {
 // support conversation — no auth required, since the content is generic
 // and non-sensitive, and it may reasonably be handed to a client's own
 // developer rather than downloaded by the Arreyon account holder directly.
+// The newest published version of each WordPress plugin. Change a number here when its file changes: every site running an older
+// version then shows an "update available" notice (see plugin-versions below). The version in each file's header comes from here.
+const ARREYON_CONNECT_PLUGIN_VERSION = '1.1.0';
+const ARREYON_SEO_BRIDGE_PLUGIN_VERSION = '2.1.0';
+
 const ARREYON_SEO_REST_BRIDGE_PLUGIN = `<?php
 /**
  * Plugin Name: Arreyon SEO REST Bridge
@@ -3474,7 +3597,7 @@ const ARREYON_SEO_REST_BRIDGE_PLUGIN = `<?php
  *              so Arreyon Consult's SEO Agent can actually update these
  *              fields AND have the change show up on the live page.
  *              Supports Yoast SEO, Rank Math, and All in One SEO.
- * Version:     2.0.0
+ * Version:     ${ARREYON_SEO_BRIDGE_PLUGIN_VERSION}
  * Author:      G-DESIGNS LTD / Arreyon Consult
  *
  * INSTALLATION
@@ -3736,6 +3859,76 @@ add_action('rest_api_init', function () {
         },
     ]);
 });
+
+// ── UPDATE NOTICE ──────────────────────────────────────────────────────────
+// When a newer version of this plugin is published, a notice appears at the top of the Plugins screen with a button to
+// download it. Nothing is installed automatically. The only thing asked of Arreyon is a short public page listing the
+// newest version numbers — no account, login or site information is sent — remembered for 12 hours (1 hour if Arreyon
+// could not be reached).
+define('ARREYON_BRIDGE_VERSION', '${ARREYON_SEO_BRIDGE_PLUGIN_VERSION}');
+define('ARREYON_BRIDGE_API_BASE', 'https://consult.gdesignsme.com');
+define('ARREYON_BRIDGE_VERSIONS_CACHE_KEY', 'arreyon_bridge_latest_version');
+
+function arreyon_bridge_is_french() {
+    return strpos((string) get_locale(), 'fr') === 0;
+}
+
+// True when this file sits in wp-content/mu-plugins/ (the usual way to install it).
+function arreyon_bridge_is_mu_plugin() {
+    return defined('WPMU_PLUGIN_DIR') && strpos(wp_normalize_path(__FILE__), wp_normalize_path(WPMU_PLUGIN_DIR)) === 0;
+}
+
+function arreyon_bridge_latest_version() {
+    $cached = get_transient(ARREYON_BRIDGE_VERSIONS_CACHE_KEY);
+    if (is_string($cached)) {
+        return $cached === '' ? null : $cached;
+    }
+    $found = '';
+    $response = wp_remote_get(ARREYON_BRIDGE_API_BASE . '/api/website-connector/plugin-versions', array('timeout' => 4));
+    if (!is_wp_error($response) && (int) wp_remote_retrieve_response_code($response) === 200) {
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        $version = (is_array($data) && isset($data['seoBridge']['version'])) ? $data['seoBridge']['version'] : '';
+        if (is_string($version) && preg_match('/^[0-9]+([.][0-9]+){0,3}$/', $version)) {
+            $found = $version;
+        }
+    }
+    set_transient(ARREYON_BRIDGE_VERSIONS_CACHE_KEY, $found, $found !== '' ? 12 * HOUR_IN_SECONDS : HOUR_IN_SECONDS);
+    return $found === '' ? null : $found;
+}
+
+function arreyon_bridge_new_version() {
+    $latest = arreyon_bridge_latest_version();
+    return ($latest !== null && version_compare($latest, ARREYON_BRIDGE_VERSION, '>')) ? $latest : null;
+}
+
+function arreyon_bridge_download_url() {
+    return ARREYON_BRIDGE_API_BASE . (arreyon_bridge_is_mu_plugin() ? '/api/website-tools/seo-rest-bridge-plugin' : '/api/website-tools/seo-rest-bridge-plugin.zip');
+}
+
+function arreyon_bridge_update_text($new) {
+    $mu = arreyon_bridge_is_mu_plugin();
+    if (arreyon_bridge_is_french()) {
+        $how = $mu ? 'Téléchargez-la et remplacez le fichier arreyon-seo-rest-bridge.php dans le dossier wp-content/mu-plugins/ de votre site par le nouveau.' : 'Téléchargez-la, puis allez dans Extensions → Ajouter → Téléverser une extension, choisissez le fichier et cliquez sur « Installer maintenant » ; WordPress proposera de remplacer la version actuelle.';
+        return sprintf('Une nouvelle version d’Arreyon SEO REST Bridge est disponible : la version %1$s (vous utilisez la version %2$s). %3$s', $new, ARREYON_BRIDGE_VERSION, $how);
+    }
+    $how = $mu ? 'Download it and replace the file arreyon-seo-rest-bridge.php in your site’s wp-content/mu-plugins/ folder with the new one.' : 'Download it, then go to Plugins → Add New → Upload Plugin, choose the file and click “Install Now”; WordPress will offer to replace the current version.';
+    return sprintf('A new version of Arreyon SEO REST Bridge is available: version %1$s (you are using version %2$s). %3$s', $new, ARREYON_BRIDGE_VERSION, $how);
+}
+
+add_action('admin_notices', function () {
+    if (!current_user_can('manage_options')) {
+        return;
+    }
+    $screen = function_exists('get_current_screen') ? get_current_screen() : null;
+    if (!$screen || $screen->id !== 'plugins') {
+        return;
+    }
+    $new = arreyon_bridge_new_version();
+    if ($new === null) {
+        return;
+    }
+    echo '<div class="notice notice-warning"><p>' . esc_html(arreyon_bridge_update_text($new)) . ' <a class="button button-primary" href="' . esc_url(arreyon_bridge_download_url()) . '">' . esc_html(arreyon_bridge_is_french() ? 'Télécharger la version ' . $new : 'Download version ' . $new) . '</a></p></div>';
+});
 `;
 
 // Standalone CRC32 and a minimal single-file ZIP builder — no new npm
@@ -3852,7 +4045,7 @@ const ARREYON_CONNECT_PLUGIN = `<?php
  *              Application Password. Generates its own Application Password
  *              internally and sends it to Arreyon on your behalf, once you enter
  *              the code shown in your Arreyon account.
- * Version:     1.0.0
+ * Version:     ${ARREYON_CONNECT_PLUGIN_VERSION}
  * Author:      G-DESIGNS LTD / Arreyon Consult
  * Requires PHP: 7.4
  *
@@ -3921,6 +4114,8 @@ function arreyon_connect_render_page() {
     ?>
     <div class="wrap">
         <h1>Arreyon Connect</h1>
+
+        <?php arreyon_connect_render_update_notice(); ?>
 
         <?php if ($error): ?>
             <div class="notice notice-error"><p><?php echo esc_html($error); ?></p></div>
@@ -4694,7 +4889,89 @@ register_deactivation_hook(__FILE__, function () {
         wp_unschedule_event($scheduled, ARREYON_CRON_HOOK);
     }
 });
+
+// ── UPDATE NOTICE ──────────────────────────────────────────────────────────
+// When a newer version of this plugin is published, a notice appears on this plugin's own page and under its row on the
+// Plugins screen, with a button to download it. Nothing is installed automatically: you download the file and install it
+// yourself (Plugins → Add New → Upload Plugin; WordPress offers to replace the current version and your connection stays
+// in place). The only thing asked of Arreyon is a short public page listing the newest version numbers — no account,
+// login or site information is sent — and the answer is remembered for 12 hours (1 hour if Arreyon could not be reached).
+define('ARREYON_CONNECT_VERSION', '${ARREYON_CONNECT_PLUGIN_VERSION}');
+define('ARREYON_CONNECT_VERSIONS_CACHE_KEY', 'arreyon_connect_latest_version');
+
+function arreyon_connect_is_french() {
+    return strpos((string) get_locale(), 'fr') === 0;
+}
+
+function arreyon_connect_latest_version() {
+    $cached = get_transient(ARREYON_CONNECT_VERSIONS_CACHE_KEY);
+    if (is_string($cached)) {
+        return $cached === '' ? null : $cached;
+    }
+    $found = '';
+    $response = wp_remote_get(ARREYON_CONNECT_API_BASE . '/api/website-connector/plugin-versions', array('timeout' => 4));
+    if (!is_wp_error($response) && (int) wp_remote_retrieve_response_code($response) === 200) {
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        $version = (is_array($data) && isset($data['connect']['version'])) ? $data['connect']['version'] : '';
+        if (is_string($version) && preg_match('/^[0-9]+([.][0-9]+){0,3}$/', $version)) {
+            $found = $version;
+        }
+    }
+    set_transient(ARREYON_CONNECT_VERSIONS_CACHE_KEY, $found, $found !== '' ? 12 * HOUR_IN_SECONDS : HOUR_IN_SECONDS);
+    return $found === '' ? null : $found;
+}
+
+function arreyon_connect_new_version() {
+    $latest = arreyon_connect_latest_version();
+    return ($latest !== null && version_compare($latest, ARREYON_CONNECT_VERSION, '>')) ? $latest : null;
+}
+
+function arreyon_connect_download_url() {
+    return ARREYON_CONNECT_API_BASE . '/api/website-tools/arreyon-connect-plugin.zip';
+}
+
+function arreyon_connect_update_text($new) {
+    if (arreyon_connect_is_french()) {
+        return sprintf('Une nouvelle version d’Arreyon Connect est disponible : la version %1$s (vous utilisez la version %2$s). Téléchargez-la, puis allez dans Extensions → Ajouter → Téléverser une extension, choisissez le fichier et cliquez sur « Installer maintenant ». WordPress proposera de remplacer la version actuelle ; votre connexion à Arreyon est conservée.', $new, ARREYON_CONNECT_VERSION);
+    }
+    return sprintf('A new version of Arreyon Connect is available: version %1$s (you are using version %2$s). Download it, then go to Plugins → Add New → Upload Plugin, choose the file and click “Install Now”. WordPress will offer to replace the current version; your connection to Arreyon stays in place.', $new, ARREYON_CONNECT_VERSION);
+}
+
+// Shown at the top of this plugin's own page.
+function arreyon_connect_render_update_notice() {
+    $french = arreyon_connect_is_french();
+    $new = arreyon_connect_new_version();
+    if ($new !== null) {
+        echo '<div class="notice notice-warning"><p>' . esc_html(arreyon_connect_update_text($new)) . '</p><p><a class="button button-primary" href="' . esc_url(arreyon_connect_download_url()) . '">' . esc_html($french ? 'Télécharger la version ' . $new : 'Download version ' . $new) . '</a></p></div>';
+        return;
+    }
+    $latest = arreyon_connect_latest_version();
+    $line = ($french ? 'Version ' : 'Version ') . ARREYON_CONNECT_VERSION;
+    if ($latest !== null) {
+        $line .= $french ? ' — vous avez la dernière version.' : ' — you have the latest version.';
+    }
+    echo '<p class="description">' . esc_html($line) . '</p>';
+}
+
+// Shown under this plugin's row on the Plugins screen.
+add_action('after_plugin_row_' . plugin_basename(__FILE__), function () {
+    if (!current_user_can('manage_options')) {
+        return;
+    }
+    $new = arreyon_connect_new_version();
+    if ($new === null) {
+        return;
+    }
+    echo '<tr class="plugin-update-tr active"><td colspan="4" class="plugin-update colspanchange"><div class="update-message notice inline notice-warning notice-alt"><p>' . esc_html(arreyon_connect_update_text($new)) . ' <a href="' . esc_url(arreyon_connect_download_url()) . '">' . esc_html(arreyon_connect_is_french() ? 'Télécharger' : 'Download') . '</a></p></div></td></tr>';
+});
 `;
+
+// Which plugin versions are the newest. Public, fixed text, no database: the plugins ask this (at most twice a day each)
+// to show their "a new version is available" notice. Only version numbers are sent; each plugin builds its own download address.
+app.get('/api/website-connector/plugin-versions', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json({ connect: { version: ARREYON_CONNECT_PLUGIN_VERSION }, seoBridge: { version: ARREYON_SEO_BRIDGE_PLUGIN_VERSION } });
+});
 
 app.get('/api/website-tools/arreyon-connect-plugin.zip', (req, res) => {
   const zipBuf = arreyonBuildSingleFileZip('arreyon-connect/arreyon-connect.php', ARREYON_CONNECT_PLUGIN);
@@ -5023,12 +5300,48 @@ app.post('/api/website-connector/register', async (req, res) => {
 // real, indexed WHERE clause, the same as looking up any other unique
 // value. No authRequired here: the plugin is not a logged-in Arreyon
 // user, this token IS its authentication.
+// ── PLUGIN POLL REGISTRY ───────────────────────────────────────────────────
+// Every plugin site asks "is there anything for me?" every 5 minutes, around the clock. Answered from the database each
+// time, those questions alone keep it switched on all day (it only rests after about five idle minutes), and the cost
+// grows with every customer who connects a site. So the server keeps in memory which polling sites exist and whether any
+// of them has work waiting, and answers from that. The memory is rebuilt, for ALL sites in one query, when anything it
+// depends on is written (see noteDbWrite) and in any case at least once an hour. A site that does have work gets exactly
+// the same answer from the database as before.
+const POLL_REGISTRY_MAX_AGE_MS = 60 * 60 * 1000;
+const pollRegistry = { byHash: new Map(), loadedAt: 0, epoch: -1, loading: null };
+async function loadPollRegistry() {
+  const epochAtStart = pollEpoch;
+  const r = await pool.query(
+    `SELECT c.id, c.polling_token_hash,
+            (c.pending_content_request_at IS NOT NULL OR EXISTS (
+               SELECT 1 FROM website_actions a
+               WHERE a.website_connection_id = c.id AND a.approval_status = 'approved' AND a.execution_status = 'not_executed')) AS has_work
+     FROM website_connections c
+     WHERE c.connection_mode = 'poll' AND c.polling_token_hash IS NOT NULL`
+  );
+  const byHash = new Map();
+  for (const row of r.rows) byHash.set(row.polling_token_hash, { id: row.id, hasWork: !!row.has_work });
+  pollRegistry.byHash = byHash; pollRegistry.loadedAt = Date.now(); pollRegistry.epoch = epochAtStart;
+}
+async function ensurePollRegistry() {
+  if (pollRegistry.epoch === pollEpoch && Date.now() - pollRegistry.loadedAt < POLL_REGISTRY_MAX_AGE_MS) return;
+  if (dbBreaker.open && pollRegistry.loadedAt) return;   // database unreachable: the last known picture beats an error
+  if (!pollRegistry.loading) pollRegistry.loading = loadPollRegistry().finally(() => { pollRegistry.loading = null; });
+  await pollRegistry.loading;
+}
+
 app.get('/api/website-connector/poll', async (req, res) => {
   const token = typeof req.query.token === 'string' ? req.query.token : '';
   if (!token) return res.status(400).json({ error: 'Missing token.' });
 
   try {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    // Answered from memory unless this site has something waiting (see the registry above).
+    await ensurePollRegistry();
+    const known = pollRegistry.byHash.get(tokenHash);
+    if (!known) return res.status(401).json({ error: 'This polling token was not recognized.' });
+    if (!known.hasWork) return res.json({ actions: [], contentRequested: false });
+
     const connResult = await pool.query(
       `SELECT * FROM website_connections WHERE polling_token_hash = $1 AND connection_mode = 'poll'`,
       [tokenHash]
@@ -15375,7 +15688,15 @@ app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/auth?error=google_failed' }),
   async (req, res) => {
     try { await issueSession(res, req.user); res.redirect('/dashboard'); }
-    catch (e) { res.redirect('/auth?error=google_failed'); }
+    catch (e) { res.redirect('/auth?error=' + (isDbUnavailableError(e) || dbBreaker.open ? 'service_unavailable' : 'google_failed')); }
+  },
+  // An error here (the database unreachable, Google refusing the sign-in code) used to end in the framework's raw error
+  // page. It now returns to the sign-in page with a plain message, and logs what kind of failure it was (never the code or a token).
+  (err, req, res, next) => {
+    const unavailable = isDbUnavailableError(err) || dbBreaker.open;
+    logOnce('google-callback:' + (unavailable ? 'database' : ((err && (err.code || err.name)) || 'error')),
+      `[google sign-in] could not finish: ${unavailable ? 'the database is unavailable' : `${(err && err.name) || 'error'} ${(err && err.code) || ''} ${plainDbError(err)}`.trim()}`);
+    res.redirect('/auth?error=' + (unavailable ? 'service_unavailable' : 'google_failed'));
   }
 );
 
@@ -20291,9 +20612,8 @@ async function runCompetitiveIntelligenceSweep({ now = new Date() } = {}) {
   } finally { ciSweepState.running = false; }
   return summary;
 }
-function startCompetitiveIntelligenceScheduler() {
-  setInterval(async () => { try { await runCompetitiveIntelligenceSweep(); } catch (e) { console.error('Competitive intelligence sweep error:', e.message); } }, 60 * 60 * 1000);   // checked every hour
-}
+// No timer of its own any more: the hourly check runs in the scheduler's hourly wake-up (see runHourlyBackgroundTasks).
+function startCompetitiveIntelligenceScheduler() {}
 
 // ── PDF and Word downloads of a competitive report (the same libraries and look as the other reports) ──
 const ciDateLabel = (iso, lang) => new Date(iso).toLocaleDateString(lang === 'fr' ? 'fr-FR' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -22681,15 +23001,9 @@ async function runMonitoringSweep() {
 // the worst case the next check is delayed by up to an hour, which is fine
 // for a daily digest.
 let lastMonitoringSweepAt = null;
-function startMonitoringScheduler() {
-  setInterval(async () => {
-    const hoursSinceLastRun = lastMonitoringSweepAt ? (Date.now() - lastMonitoringSweepAt) / (1000 * 60 * 60) : Infinity;
-    if (hoursSinceLastRun >= 24) {
-      lastMonitoringSweepAt = Date.now();
-      await runMonitoringSweep();
-    }
-  }, 60 * 60 * 1000); // check every hour
-}
+// No timer of its own any more: the daily monitoring sweep is checked in the scheduler's hourly wake-up
+// (see runMonitoringSweepIfDue), and when it last ran is kept in the database rather than in memory.
+function startMonitoringScheduler() {}
 // ████████████████████████████████████████████████████████████████████████████
 // WEBSITE AGENT — how this part of the app is organised
 //
@@ -23438,15 +23752,16 @@ async function runAgentMaintenanceSweep() {
         `SELECT id, business_id FROM ${agent.table} WHERE automation_mode = 'automatic' AND ${agent.runnableWhere} AND ${AGENT_CYCLE_DUE_CLAUSE}`
       );
       for (const row of due.rows) {
+        if (typeof agentSweepSkipActive === 'function' && agentSweepSkipActive(platform, row.id)) continue;   // looked at within the hour
         touchSweepProgress();
         // Only owners whose plan includes the AI Agent (and at least one maintenance step) get a cycle.
         // Expired accounts and sites paused by the plan's website limit are skipped without being claimed.
         const ownerRow = await pool.query('SELECT user_id FROM businesses WHERE id = $1', [row.business_id]);
-        if (!ownerRow.rows.length) continue;
+        if (!ownerRow.rows.length) { if (typeof noteAgentSweepSkip === 'function') noteAgentSweepSkip(platform, row.id); continue; }
         const access = await backgroundAccessFor(ownerRow.rows[0].user_id, row.business_id, 'agent');
-        if (!access.ok) continue;
+        if (!access.ok) { if (typeof noteAgentSweepSkip === 'function') noteAgentSweepSkip(platform, row.id); continue; }
         const allowedSteps = agentStepsForPlan(access.account.plan);
-        if (allowedSteps && allowedSteps.size === 0) continue;   // Starter: the agent only writes scheduled posts
+        if (allowedSteps && allowedSteps.size === 0) { if (typeof noteAgentSweepSkip === 'function') noteAgentSweepSkip(platform, row.id); continue; }   // Starter: the agent only writes scheduled posts
         const claimed = await pool.query(
           `UPDATE ${agent.table} SET agent_last_cycle_at = NOW()
            WHERE id = $1 AND automation_mode = 'automatic' AND ${agent.runnableWhere} AND ${AGENT_CYCLE_DUE_CLAUSE}
@@ -23504,14 +23819,115 @@ async function runAllSweeps() {
   }
   return true;
 }
-// Previously a bare hourly timer with no run at startup: after any restart
-// or deploy the first sweep was a full hour away, so scheduled posts could
-// go unprocessed indefinitely. Now: a catch-up run shortly after boot, then
-// every 5 minutes (cheap when nothing is due — one indexed query).
+// ── BACKGROUND SCHEDULER ───────────────────────────────────────────────────
+// Before: every 5 minutes, all day, the server asked the database "is anything due?", and two more hourly timers did
+// their own asking. That steady tapping kept the database switched on around the clock, although the real work (a post
+// at a set time, a site's daily cycle) happens a few times a day. Now the server asks ONCE for the next moment anything
+// is due and sleeps until then. It looks again when something changes (a post is scheduled, Automatic is switched on)
+// and at least once an hour. The hourly jobs run together in that same wake-up, so the database is woken once, not
+// several times. (A free host puts the server to sleep when nobody is using it; on waking it runs a catch-up, as before.)
+const SCHED_MIN_GAP_MS = Math.max(1, Number(process.env.SCHEDULER_MIN_GAP_SECONDS) || 30) * 1000;
+const SCHED_MAX_SLEEP_MS = 60 * 60 * 1000;
+const SCHED_HOURLY_MS = 55 * 60 * 1000;
+const sched = { timer: null, runAt: 0, busy: false, replanTimer: null, lastHourlyAt: 0, started: false };
+
+// Sites that were due but are deliberately not worked on (an expired plan, the plan's website limit): remembered for an
+// hour so they neither make the scheduler wake again and again nor cost two lookups each on every sweep.
+const agentSweepSkips = new Map();
+function noteAgentSweepSkip(platform, id) { agentSweepSkips.set(platform + ':' + id, Date.now() + SCHED_MAX_SLEEP_MS); }
+function agentSweepSkipActive(platform, id) {
+  const key = platform + ':' + id, until = agentSweepSkips.get(key);
+  if (!until) return false;
+  if (until > Date.now()) return true;
+  agentSweepSkips.delete(key);
+  return false;
+}
+
+// The earliest moment anything is due: a scheduled post, a post stuck mid-write (retaken after 30 minutes), or an
+// automatic site's next cycle. One query. Null when nothing is waiting.
+async function nextSchedulerDueAt() {
+  const params = [];
+  const parts = [
+    `(SELECT MIN(due) FROM (
+        SELECT ((scheduled_date + scheduled_time) AT TIME ZONE COALESCE(NULLIF(timezone, ''), 'UTC')) AS due FROM content_calendar_entries WHERE status = 'scheduled'
+        UNION ALL
+        SELECT processed_at + INTERVAL '30 minutes' FROM content_calendar_entries WHERE status = 'processing') c)`
+  ];
+  for (const [platform, agent] of Object.entries(WEBSITE_AGENTS)) {
+    params.push([...agentSweepSkips.keys()].filter(k => k.startsWith(platform + ':') && agentSweepSkipActive(platform, k.slice(platform.length + 1))).map(k => k.slice(platform.length + 1)));
+    parts.push(`(SELECT MIN(CASE WHEN agent_last_cycle_at IS NULL THEN NOW() ELSE agent_last_cycle_at + (CASE agent_cycle_frequency WHEN 'weekly' THEN INTERVAL '7 days' WHEN 'monthly' THEN INTERVAL '1 month' ELSE INTERVAL '1 day' END) END)
+        FROM ${agent.table} WHERE automation_mode = 'automatic' AND ${agent.runnableWhere} AND id::text <> ALL($${params.length}::text[]))`);
+  }
+  const r = await pool.query(`SELECT LEAST(${parts.join(', ')}) AS next_due`, params);
+  return r.rows[0] && r.rows[0].next_due ? new Date(r.rows[0].next_due) : null;
+}
+
+function scheduleSchedulerAt(whenMs) {
+  if (sched.timer) clearTimeout(sched.timer);
+  const delay = Math.min(SCHED_MAX_SLEEP_MS, Math.max(SCHED_MIN_GAP_MS, whenMs - Date.now()));
+  sched.runAt = Date.now() + delay;
+  sched.timer = setTimeout(schedulerTick, delay);
+}
+async function planSchedulerWake() {
+  if (dbBreaker.open) { scheduleSchedulerAt(dbBreaker.until + 1000); return; }   // nothing to look up while the database is out
+  try {
+    const due = await nextSchedulerDueAt();
+    scheduleSchedulerAt(due ? due.getTime() : Date.now() + SCHED_MAX_SLEEP_MS);
+  } catch (e) {
+    logOnce('sched-plan', 'Scheduler could not look up when work is next due:', plainDbError(e));
+    scheduleSchedulerAt(Date.now() + 5 * 60 * 1000);
+  }
+}
+// Looks again at when work is next due, a moment after something changed (several changes in a row count once).
+function requestSchedulerReplan(immediate) {
+  if (!sched.started) return;
+  if (sched.replanTimer) clearTimeout(sched.replanTimer);
+  sched.replanTimer = setTimeout(() => { sched.replanTimer = null; if (!sched.busy) planSchedulerWake().catch(() => {}); }, immediate ? 100 : 3000);
+}
+
+async function schedulerTick() {
+  sched.timer = null;
+  if (sched.busy) { scheduleSchedulerAt(Date.now() + SCHED_MIN_GAP_MS); return; }
+  if (dbBreakerBlocking()) { scheduleSchedulerAt(dbBreaker.until + 1000); return; }
+  sched.busy = true;
+  try {
+    await runAllSweeps().catch(e => console.error('Sweep error:', plainDbError(e)));
+    if (Date.now() - sched.lastHourlyAt >= SCHED_HOURLY_MS) await runHourlyBackgroundTasks();
+  } finally { sched.busy = false; }
+  await planSchedulerWake();
+}
+
+// The jobs that used to have timers of their own, run together in one wake-up.
+async function runHourlyBackgroundTasks() {
+  sched.lastHourlyAt = Date.now();
+  agentSweepSkips.clear();   // sites skipped for plan reasons are looked at again once an hour
+  try { await runCompetitiveIntelligenceSweep(); } catch (e) { console.error('Competitive intelligence sweep error:', plainDbError(e)); }
+  try { await runMonitoringSweepIfDue(); } catch (e) { console.error('Monitoring sweep error:', plainDbError(e)); }
+  try { await loadPollRegistry(); } catch (e) { logOnce('poll-registry', 'Could not refresh the plugin poll list:', plainDbError(e)); }
+}
+
+// The daily monitoring sweep. When it last ran is kept in the database and claimed in one statement, so a restart, a
+// redeploy or a second copy of the server can never run it twice in a day (it used to be remembered only in memory, so
+// every restart could repeat the whole sweep for every account owner within the hour).
+async function runMonitoringSweepIfDue() {
+  const claim = await pool.query(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ('monitoring_last_sweep_at', $1, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+       WHERE COALESCE(app_settings.updated_at, 'epoch'::timestamptz) < NOW() - INTERVAL '23 hours'
+     RETURNING key`,
+    [new Date().toISOString()]
+  );
+  if (!claim.rows.length) return false;
+  lastMonitoringSweepAt = Date.now();
+  await runMonitoringSweep();
+  return true;
+}
+
 function startContentAutomationScheduler() {
-  const run = () => runAllSweeps().catch(e => console.error('Sweep error:', e.message));
-  setTimeout(run, 30 * 1000);
-  setInterval(run, 5 * 60 * 1000);
+  if (sched.started) return;
+  sched.started = true;
+  sched.lastHourlyAt = Date.now();                     // the hourly jobs keep their old rhythm: first one an hour after start
+  scheduleSchedulerAt(Date.now() + Math.max(1, Number(process.env.SCHEDULER_BOOT_DELAY_SECONDS) || 30) * 1000);   // the catch-up run shortly after boot, as before (30 seconds)
 }
 // Lets an external scheduler trigger a sweep. A free Render instance sleeps
 // after 15 minutes without traffic, and in-process timers die with it; an
@@ -24377,6 +24793,21 @@ app.put('/api/alerts/preferences', authRequired, async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Failed to save preferences' }); }
 });
 
+
+// Any error a route did not handle itself ends up here: a plain reply instead of the framework's raw error page, and
+// one log line a minute per kind instead of a full stack on every request.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const unavailable = isDbUnavailableError(err);
+  const given = Number(err && (err.status || err.statusCode));
+  const status = unavailable ? 503 : (given >= 400 && given < 600 ? given : 500);
+  logOnce(`http-error:${status}:${(err && (err.code || err.type || err.name)) || 'error'}`, `[request error] ${req.method} ${req.path} → ${status}:`, plainDbError(err));
+  const isApi = req.path.startsWith('/api/');
+  if (unavailable) return isApi ? sendDbDown(req, res) : res.status(503).type('text/plain').send(dbDownMessage(req));
+  const message = status < 500 ? 'The request could not be processed.' : 'Something went wrong. Please try again.';
+  if (isApi) return res.status(status).json({ error: message });
+  res.status(status).type('text/plain').send(message);
+});
 
 // ── START ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
