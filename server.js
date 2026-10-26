@@ -402,10 +402,15 @@ function noteDbOk() { dbBreaker.failures = 0; if (dbBreaker.open) closeDbBreaker
 // Any change to a plugin site's actions or connection (or to a business/account that owns one) makes the memory that
 // plugin polls are answered from out of date (see the poll route). Every query passes through here, so no write can be missed.
 let pollEpoch = 0;
+// Any change to the page text, announcements, prices or reviews makes the cached public answers out of date (see cachedPublic).
+// (The price save goes through a transaction, which this cannot see, so that route says so itself.)
+let publicEpoch = 0;
+const PUBLIC_RELEVANT_WRITE = /\b(?:insert\s+into|update|delete\s+from)\s+(?:only\s+)?(?:cms_content|announcements|plan_pricing|reviews)\b|\btruncate\b/i;
 const POLL_RELEVANT_WRITE = /\b(?:insert\s+into|update|delete\s+from)\s+(?:only\s+)?(?:website_actions|website_connections)\b|\bdelete\s+from\s+(?:only\s+)?(?:businesses|users)\b|\btruncate\b/i;
 function noteDbWrite(sql) {
   const text = typeof sql === 'string' ? sql : (sql && typeof sql.text === 'string' ? sql.text : '');
   if (text && POLL_RELEVANT_WRITE.test(text)) pollEpoch++;
+  if (text && PUBLIC_RELEVANT_WRITE.test(text)) publicEpoch++;
 }
 const rawPoolQuery = pool.query.bind(pool);
 pool.query = function guardedQuery(...args) {
@@ -419,6 +424,56 @@ pool.query = function guardedQuery(...args) {
 // A dropped idle connection is only logged: it is not a failed request, so it must not be able to trip the breaker by itself.
 pool.on('error', (e) => { logOnce('db-idle-error', '[database] an idle connection was dropped:', plainDbError(e)); });
 
+// ── PUBLIC PAGE CACHE ──────────────────────────────────────────────────────
+// The landing page asks four public questions on every visit (page text, announcements, prices, reviews), and each one
+// used to read the database: every visitor, bot and link-preview crawler woke it up. The answers are the same for
+// everyone and change only when someone edits them, so the server now keeps each answer in memory:
+//   - a cached answer is reused until it is 30 minutes old (announcements: until the next one starts or ends),
+//   - any change made to that content (see PUBLIC_RELEVANT_WRITE) throws the cached answers away at once,
+//   - one reload at a time, however many visitors arrive together,
+//   - and if the database cannot be reached, the last answer is still given (a visitor never sees an error page
+//     for content the server already had).
+const PUBLIC_CACHE_MAX_AGE_MS = Math.max(1, Number(process.env.PUBLIC_CACHE_SECONDS) || 30 * 60) * 1000;   // 30 minutes unless PUBLIC_CACHE_SECONDS says otherwise
+const publicCache = new Map();     // key -> { value, epoch, validUntil }
+const publicLoading = new Map();   // key -> the reload in progress
+// load() returns { value, maxAgeMs? }; maxAgeMs can only SHORTEN how long the answer is kept.
+async function cachedPublic(key, load, { maxAgeMs = PUBLIC_CACHE_MAX_AGE_MS } = {}) {
+  const hit = publicCache.get(key), now = Date.now();
+  if (hit && hit.epoch === publicEpoch && now < hit.validUntil) return { value: hit.value, state: 'fresh' };
+  if (hit && dbBreaker.open && dbBreakerBlocking()) return { value: hit.value, state: 'stale-outage' };   // the database is out: do not even ask
+  const running = publicLoading.get(key);
+  if (running) {
+    if (hit && hit.epoch === publicEpoch) return { value: hit.value, state: 'stale-refreshing' };     // only expired by time: the old answer is right and the new one is on its way
+    try { return { value: (await running).value, state: 'loaded' }; }                                  // edited since: wait for the new answer
+    catch (e) { if (hit) return { value: hit.value, state: 'stale-error' }; throw e; }
+  }
+  const epochAtStart = publicEpoch;
+  const p = (async () => {
+    const r = await load();
+    publicCache.set(key, { value: r.value, epoch: epochAtStart, validUntil: Date.now() + Math.min(maxAgeMs, r.maxAgeMs > 0 ? r.maxAgeMs : maxAgeMs) });
+    return r;
+  })();
+  publicLoading.set(key, p); p.catch(() => {});
+  try { return { value: (await p).value, state: 'loaded' }; }
+  catch (e) {
+    if (hit) { logOnce('public-cache:' + key, `[public cache] could not refresh "${key}", still giving the last answer:`, plainDbError(e)); return { value: hit.value, state: 'stale-error' }; }
+    throw e;
+  }
+  finally { publicLoading.delete(key); }
+}
+// The common wrapper of the four public routes. A failure that is not about the database is thrown back so each route's own
+// error answer (unchanged) is used; a database outage with nothing cached gets the plain 503.
+async function servePublic(req, res, key, load, opts) {
+  try {
+    const { value } = await cachedPublic(key, load, opts);
+    if (opts && opts.cacheControl) res.set('Cache-Control', opts.cacheControl);   // only the reviews list sets its own (it always did)
+    return res.json(value);
+  } catch (e) {
+    if (isDbUnavailableError(e) || dbBreaker.open) return sendDbDown(req, res);
+    throw e;
+  }
+}
+
 // The plain message people see while the database is unreachable (French when the browser asks for French).
 function dbDownMessage(req) {
   return /^\s*fr/i.test(String((req && req.headers && req.headers['accept-language']) || ''))
@@ -430,8 +485,9 @@ function sendDbDown(req, res) {
   res.set('Retry-After', String(retry));
   return res.status(503).json({ error: dbDownMessage(req), code: 'service_unavailable', retryAfterSeconds: retry });
 }
-// These two do not need the database to answer (the plugin poll is answered from memory; the version list is fixed text).
-const DB_DOWN_ALLOWED = new Set(['/api/website-connector/poll', '/api/website-connector/plugin-versions']);
+// These can answer without the database: the plugin poll and the public pages from memory, the version list is fixed text.
+// (A public page with nothing cached yet still gets the plain 503.)
+const DB_DOWN_ALLOWED = new Set(['/api/website-connector/poll', '/api/website-connector/plugin-versions', '/api/cms', '/api/announcements', '/api/plans/pricing', '/api/public/reviews']);
 app.use((req, res, next) => {
   if (!dbBreaker.open || !req.path.startsWith('/api/') || DB_DOWN_ALLOWED.has(req.path)) return next();
   if (dbBreakerBlocking()) return sendDbDown(req, res);
@@ -1168,6 +1224,7 @@ async function resolveAccount(userId) {
 
 // ── Pricing configuration (editable from admin; cached briefly) ─────────────
 let pricingCache = { at: 0, cfg: null };
+let pricingLastGood = null;   // the last prices that were read successfully from the database
 function defaultPricingConfig() {
   const plans = {};
   for (const k of PAID_PLANS) plans[k] = { usd: DEFAULT_PLAN_PRICES_USD[k], cfa: null };
@@ -1176,6 +1233,7 @@ function defaultPricingConfig() {
 async function loadPricingConfig(force = false) {
   if (!force && pricingCache.cfg && Date.now() - pricingCache.at < 60 * 1000) return pricingCache.cfg;
   const cfg = defaultPricingConfig();
+  let readOk = false;
   try {
     const [settings, rows] = await Promise.all([
       pool.query(`SELECT key, value FROM app_settings WHERE key IN ('fcfa_rate', 'annual_discount_percent')`),
@@ -1188,10 +1246,20 @@ async function loadPricingConfig(force = false) {
     for (const r of rows.rows) {
       if (cfg.plans[r.plan_key]) cfg.plans[r.plan_key] = { usd: Number(r.usd_monthly), cfa: r.cfa_monthly === null ? null : Number(r.cfa_monthly) };
     }
+    readOk = true;
   } catch (e) {
+    // The database could not be read. If prices were read successfully before, THOSE are kept (the built-in defaults are not
+    // your prices, and must never be shown or charged just because the database was briefly out); the next try is in ~10 seconds.
+    const kept = (typeof pricingLastGood !== 'undefined') ? pricingLastGood : null;
+    if (kept) {
+      console.error('loadPricingConfig kept the last known prices:', e.message);
+      pricingCache = { at: Date.now() - 50 * 1000, cfg: kept };
+      return kept;
+    }
     // If the pricing tables are not there yet, the defaults above are used rather than failing every page.
     console.error('loadPricingConfig fell back to defaults:', e.message);
   }
+  if (readOk && typeof pricingLastGood !== 'undefined') pricingLastGood = cfg;
   pricingCache = { at: Date.now(), cfg };
   return cfg;
 }
@@ -15551,8 +15619,11 @@ app.post('/api/reviews', authRequired, async (req, res) => {
   try { const out = await reviewSubmit(req.userId, req.body); res.status(out.status).json(out.body); } catch (e) { console.error('Review error:', e.message); res.status(500).json(REVIEW_ERROR); }
 });
 app.get('/api/public/reviews', async (req, res) => {
-  try { const out = await reviewPublicList(); res.set('Cache-Control', 'public, max-age=300'); res.json({ reviews: out.reviews, summary: out.summary }); } catch (e) { res.status(500).json(REVIEW_ERROR); }
+  try {
+    await servePublic(req, res, 'reviews', async () => { const out = await reviewPublicList(); return { value: { reviews: out.reviews, summary: out.summary } }; }, { cacheControl: 'public, max-age=300' });
+  } catch (e) { res.status(500).json(REVIEW_ERROR); }
 });
+
 
 // ── Contact form (homepage) ───────────────────────────────────────────────
 // A visitor writes to us. The message is SAVED first (so it is never lost), then emailed to CONTACT_NOTIFY_EMAIL (default gdesignsme@gmail.com) with the visitor's
@@ -16174,60 +16245,70 @@ app.post('/api/translate-messages', async (req, res) => {
 // database, so every subsequent request — French or not — is instant. Only
 // the very first French visitor after a content change experiences the
 // one-time translation delay.
+// French text that could not be translated (the AI failed, or answered with nothing) is not asked for again for 30 minutes.
+// Before, every visit asked again, in parallel, and paid for it each time.
+const CMS_TRANSLATE_RETRY_MS = Math.max(1, Number(process.env.CMS_TRANSLATE_RETRY_SECONDS) || 30 * 60) * 1000;   // 30 minutes unless CMS_TRANSLATE_RETRY_SECONDS says otherwise
+const cmsTranslateFailedAt = new Map();   // section -> when its translation last failed or came back incomplete
+async function loadCmsContent(lang) {
+  const result = await pool.query('SELECT * FROM cms_content ORDER BY section, key');
+
+  if (lang === 'fr') {
+    const missingBySection = {};
+    result.rows.forEach(row => {
+      if (!row.value_fr) {
+        if (!missingBySection[row.section]) missingBySection[row.section] = [];
+        missingBySection[row.section].push({ key: row.key, value: row.value });
+      }
+    });
+
+    const now = Date.now();
+    const sectionsNeedingTranslation = Object.entries(missingBySection).filter(([section]) => now - (cmsTranslateFailedAt.get(section) || 0) >= CMS_TRANSLATE_RETRY_MS);
+    if (sectionsNeedingTranslation.length) {
+      // Translate all missing sections in parallel — bounded by the slowest
+      // single section rather than the sum of all of them
+      const results = await Promise.allSettled(
+        sectionsNeedingTranslation.map(([section, fields]) => translateCmsSection(section, fields))
+      );
+
+      const updates = []; // flatten to a list of {section, key, value_fr} for the DB write + in-memory patch
+      sectionsNeedingTranslation.forEach(([section, fields], i) => {
+        const outcome = results[i];
+        if (outcome.status !== 'fulfilled') {
+          console.error(`Auto-translate failed for section "${section}":`, outcome.reason?.message);
+          cmsTranslateFailedAt.set(section, Date.now());
+          return;
+        }
+        const translated = outcome.value;
+        fields.forEach(field => {
+          const frValue = translated[field.key];
+          if (frValue) updates.push({ section, key: field.key, value_fr: frValue });
+        });
+        if (fields.every(field => translated[field.key])) cmsTranslateFailedAt.delete(section); else cmsTranslateFailedAt.set(section, Date.now());
+      });
+
+      // Save to DB (cache for next time) and patch the in-memory rows so this
+      // very request already returns the freshly-translated text, not a stale fallback
+      for (const u of updates) {
+        await pool.query('UPDATE cms_content SET value_fr = $1 WHERE section = $2 AND key = $3', [u.value_fr, u.section, u.key]);
+        const row = result.rows.find(r => r.section === u.section && r.key === u.key);
+        if (row) row.value_fr = u.value_fr;
+      }
+    }
+  }
+
+  const content = {};
+  result.rows.forEach(row => {
+    if (!content[row.section]) content[row.section] = {};
+    // Still falls back to English if a specific field's translation failed —
+    // never shows blank text even if one section had trouble
+    content[row.section][row.key] = (lang === 'fr' && row.value_fr) ? row.value_fr : row.value;
+  });
+  return { value: { content, lang } };
+}
 app.get('/api/cms', async (req, res) => {
   const lang = req.query.lang === 'fr' ? 'fr' : 'en';
   try {
-    const result = await pool.query('SELECT * FROM cms_content ORDER BY section, key');
-
-    if (lang === 'fr') {
-      const missingBySection = {};
-      result.rows.forEach(row => {
-        if (!row.value_fr) {
-          if (!missingBySection[row.section]) missingBySection[row.section] = [];
-          missingBySection[row.section].push({ key: row.key, value: row.value });
-        }
-      });
-
-      const sectionsNeedingTranslation = Object.entries(missingBySection);
-      if (sectionsNeedingTranslation.length) {
-        // Translate all missing sections in parallel — bounded by the slowest
-        // single section rather than the sum of all of them
-        const results = await Promise.allSettled(
-          sectionsNeedingTranslation.map(([section, fields]) => translateCmsSection(section, fields))
-        );
-
-        const updates = []; // flatten to a list of {section, key, value_fr} for the DB write + in-memory patch
-        sectionsNeedingTranslation.forEach(([section, fields], i) => {
-          const outcome = results[i];
-          if (outcome.status !== 'fulfilled') {
-            console.error(`Auto-translate failed for section "${section}":`, outcome.reason?.message);
-            return;
-          }
-          const translated = outcome.value;
-          fields.forEach(field => {
-            const frValue = translated[field.key];
-            if (frValue) updates.push({ section, key: field.key, value_fr: frValue });
-          });
-        });
-
-        // Save to DB (cache for next time) and patch the in-memory rows so this
-        // very request already returns the freshly-translated text, not a stale fallback
-        for (const u of updates) {
-          await pool.query('UPDATE cms_content SET value_fr = $1 WHERE section = $2 AND key = $3', [u.value_fr, u.section, u.key]);
-          const row = result.rows.find(r => r.section === u.section && r.key === u.key);
-          if (row) row.value_fr = u.value_fr;
-        }
-      }
-    }
-
-    const content = {};
-    result.rows.forEach(row => {
-      if (!content[row.section]) content[row.section] = {};
-      // Still falls back to English if a specific field's translation failed —
-      // never shows blank text even if one section had trouble
-      content[row.section][row.key] = (lang === 'fr' && row.value_fr) ? row.value_fr : row.value;
-    });
-    res.json({ content, lang });
+    await servePublic(req, res, 'cms:' + lang, () => loadCmsContent(lang));
   } catch(e) {
     console.error('CMS load error:', e.message);
     res.status(500).json({ error: 'Failed' });
@@ -16303,16 +16384,19 @@ app.post('/api/admin/cms-translate', adminRequired, async (req, res) => {
 // ANNOUNCEMENT ROUTES
 // ═══════════════════════════════════════════════════════════════════════════
 
+// The list changes by itself at the moment an announcement starts or ends, so the answer is kept only until then. The time
+// window is applied here with ONE reading of the clock (the old query asked the database twice for "now").
+async function loadPublicAnnouncements() {
+  const all = (await pool.query(`SELECT * FROM announcements WHERE is_active = true ORDER BY created_at DESC`)).rows;
+  const now = Date.now(), at = (v) => (v === null || v === undefined) ? null : new Date(v).getTime();
+  const shown = all.filter(a => (at(a.starts_at) === null || at(a.starts_at) <= now) && (at(a.ends_at) === null || at(a.ends_at) >= now));
+  let nextChange = Infinity;
+  for (const a of all) { const s = at(a.starts_at), e = at(a.ends_at); if (s !== null && s > now) nextChange = Math.min(nextChange, s); if (e !== null && e >= now) nextChange = Math.min(nextChange, e + 1); }
+  return { value: { announcements: shown }, maxAgeMs: nextChange === Infinity ? undefined : Math.max(1000, nextChange - now + 500) };
+}
 app.get('/api/announcements', async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT * FROM announcements WHERE is_active = true
-       AND (starts_at IS NULL OR starts_at <= NOW())
-       AND (ends_at IS NULL OR ends_at >= NOW())
-       ORDER BY created_at DESC`
-    );
-    res.json({ announcements: result.rows });
-  } catch(e) { res.status(500).json({ error: 'Failed' }); }
+  try { await servePublic(req, res, 'announcements', loadPublicAnnouncements); }
+  catch(e) { res.status(500).json({ error: 'Failed' }); }
 });
 
 app.post('/api/admin/announcements', adminRequired, async (req, res) => {
@@ -16404,7 +16488,7 @@ app.put('/api/admin/coupons/:id', adminRequired, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/api/plans/pricing', async (req, res) => {
   try {
-    res.json(buildPublicPricing(await loadPricingConfig()));
+    await servePublic(req, res, 'pricing', async () => ({ value: buildPublicPricing(await loadPricingConfig()) }));
   } catch (e) {
     console.error('Public pricing error:', e.message);
     res.status(500).json({ error: 'Failed to load pricing' });
@@ -16450,6 +16534,7 @@ app.put('/api/admin/plan-pricing', adminRequired, async (req, res) => {
     }
     await client.query('COMMIT');
     pricingCache = { at: 0, cfg: null };
+    publicEpoch++;   // the public price list must show the new prices at once
     const cfg = await loadPricingConfig(true);
     res.json({ success: true, rate: cfg.rate, discountPercent: cfg.discount, plans: cfg.plans, computed: computePlanPrices(cfg) });
   } catch (e) {
