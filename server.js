@@ -417,12 +417,180 @@ pool.query = function guardedQuery(...args) {
   if (typeof args[args.length - 1] === 'function') return rawPoolQuery(...args);   // callback style: left alone
   noteDbWrite(args[0]);
   return rawPoolQuery(...args).then(
-    (result) => { noteDbOk(); return result; },
+    (result) => { noteDbOk(); meterTouch(); return result; },
     (e) => { noteDbError(e); throw e; }
   );
 };
 // A dropped idle connection is only logged: it is not a failed request, so it must not be able to trip the breaker by itself.
 pool.on('error', (e) => { logOnce('db-idle-error', '[database] an idle connection was dropped:', plainDbError(e)); });
+
+// ── COMPUTE METER ──────────────────────────────────────────────────────────
+// The host (Neon) charges for the time the database is switched ON, not for the work it does: after any query it stays on for
+// about five more minutes. Nothing told you how much of the month's allowance was gone until it had run out. This keeps an
+// ESTIMATE from the queries this server runs: each one keeps the database on for five minutes after it, and overlapping
+// stretches count once. It is a floor, not the host's own number (the host also counts activity from outside this server, and
+// any scaling above the smallest size), so the admin page lets you type in the host's real figure to line the estimate up.
+// The meter never wakes the database to record itself: it is saved only while the database is already awake.
+const { AsyncLocalStorage } = require('async_hooks');
+const querySource = new AsyncLocalStorage();
+const withQuerySource = (name, fn) => querySource.run({ name }, fn);   // labels every query made inside fn, so the page can say what keeps the database awake
+const METER_IDLE_MS = Math.max(1, Number(process.env.NEON_IDLE_MINUTES) || 5) * 60 * 1000;
+const METER_HOUR_MS = 3600 * 1000, METER_KEY = 'compute_meter', METER_SETTINGS_KEY = 'compute_meter_settings', METER_SAVE_EVERY_MS = 10 * 60 * 1000;
+const METER_DEFAULTS = {
+  allowanceCuHours: Math.max(0.001, Number(process.env.NEON_ALLOWANCE_CU_HOURS) || 100),   // the free plan's monthly allowance
+  computeCu: Math.max(0.25, Number(process.env.NEON_COMPUTE_CU) || 0.25),                    // the size the database runs at (the smallest is 0.25)
+  billingDay: Math.min(28, Math.max(1, Math.floor(Number(process.env.NEON_BILLING_DAY)) || 1))   // the day of the month the allowance starts again
+};
+const meter = { settings: { ...METER_DEFAULTS }, periodStart: '', awakeMs: 0, awakeUntil: 0, lastTouch: 0, baseline: null, alerts: {}, previous: null, hourly: new Map(), queries: 0, startedAt: Date.now(), loaded: false, dirty: false, saving: false, saveQueued: false, lastSaveAt: 0 };
+
+function meterPeriodStart(nowMs, billingDay) {
+  const d = new Date(nowMs); let y = d.getUTCFullYear(), m = d.getUTCMonth();
+  if (d.getUTCDate() < billingDay) { m -= 1; if (m < 0) { m = 11; y -= 1; } }
+  return new Date(Date.UTC(y, m, billingDay)).toISOString().slice(0, 10);
+}
+function meterPeriodEnd(startIso, billingDay) { const d = new Date(startIso + 'T00:00:00Z'); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, billingDay)).toISOString().slice(0, 10); }
+function meterCuHours() {
+  const hours = (ms) => ms / METER_HOUR_MS * meter.settings.computeCu;
+  return meter.baseline ? meter.baseline.cuHours + hours(Math.max(0, meter.awakeMs - meter.baseline.awakeMsAtThen)) : hours(meter.awakeMs);
+}
+// A new month of the allowance: the count starts again (last month's total is kept for reference).
+function meterRoll(now) {
+  const start = meterPeriodStart(now, meter.settings.billingDay);
+  if (meter.periodStart === start) return;
+  if (meter.periodStart) meter.previous = { periodStart: meter.periodStart, cuHours: Math.round(meterCuHours() * 100) / 100 };
+  meter.periodStart = start; meter.awakeMs = 0; meter.baseline = null; meter.alerts = {};
+}
+// Which part of the app a query belongs to, as a short label with no ids (so the list stays short and cannot carry personal data).
+function meterPathLabel(p) {
+  return String(p || '/').split('/').slice(0, 7).map(seg => (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(seg) || /^[0-9]+$/.test(seg) || seg.length > 40) ? ':id' : seg.replace(/[^A-Za-z0-9_.:-]/g, '')).join('/').slice(0, 80) || '/';
+}
+// Called after every query that reached the database.
+function meterTouch() {
+  const now = Date.now(); meterRoll(now);
+  const add = now >= meter.awakeUntil ? METER_IDLE_MS : now + METER_IDLE_MS - meter.awakeUntil;   // a new stretch, or the extension of the one running
+  meter.awakeUntil = now + METER_IDLE_MS; meter.lastTouch = now; meter.awakeMs += add; meter.queries++; meter.dirty = true;
+  const hour = now - (now % METER_HOUR_MS); let b = meter.hourly.get(hour);
+  if (!b) {
+    b = { awakeMs: 0, queries: 0, sources: Object.create(null) }; meter.hourly.set(hour, b);
+    if (meter.hourly.size > 48) for (const k of [...meter.hourly.keys()].sort((x, y) => x - y).slice(0, meter.hourly.size - 48)) meter.hourly.delete(k);
+  }
+  b.awakeMs += add; b.queries++;
+  const store = querySource.getStore(), name = (store && store.name) || 'other';
+  if (name in b.sources || Object.keys(b.sources).length < 40) b.sources[name] = (b.sources[name] || 0) + 1; else b.sources.other = (b.sources.other || 0) + 1;
+  // Saved at most every 10 minutes, and only now, because the database is awake right now anyway.
+  if (meter.loaded && !meter.saving && !meter.saveQueued && now - meter.lastSaveAt >= METER_SAVE_EVERY_MS) { meter.saveQueued = true; setImmediate(() => { meter.saveQueued = false; meterSave().catch(() => {}); }); }
+}
+function meterProjection(now) {
+  const startMs = Date.parse(meter.periodStart + 'T00:00:00Z'), endMs = Date.parse(meterPeriodEnd(meter.periodStart, meter.settings.billingDay) + 'T00:00:00Z');
+  const elapsedDays = (now - startMs) / 864e5, periodDays = (endMs - startMs) / 864e5, used = meterCuHours(), allowance = meter.settings.allowanceCuHours;
+  if (elapsedDays < 1) return { elapsedDays, periodDays, perDay: null, projected: null, runsOutAt: null };
+  const perDay = used / elapsedDays, projected = perDay * periodDays;
+  return { elapsedDays, periodDays, perDay, projected, runsOutAt: perDay > 0 && projected > allowance ? new Date(startMs + (allowance / perDay) * 864e5).toISOString().slice(0, 10) : null };
+}
+function meterApplySettings(input) {
+  const s = input && typeof input === 'object' ? input : {}, next = { ...meter.settings };
+  if (s.allowanceCuHours !== undefined) { const v = Number(s.allowanceCuHours); if (!(v >= 0.001 && v <= 1e6)) return { ok: false, error: 'allowance' }; next.allowanceCuHours = v; }
+  if (s.computeCu !== undefined) { const v = Number(s.computeCu); if (!(v >= 0.25 && v <= 64)) return { ok: false, error: 'size' }; next.computeCu = v; }
+  if (s.billingDay !== undefined) { const v = Number(s.billingDay); if (!(Number.isInteger(v) && v >= 1 && v <= 28)) return { ok: false, error: 'day' }; next.billingDay = v; }
+  meter.settings = next;
+  meter.periodStart = meterPeriodStart(Date.now(), next.billingDay);   // a corrected reset day moves the period without throwing the count away
+  meter.dirty = true;
+  return { ok: true };
+}
+function meterCalibrate(cuHours, now = Date.now()) {
+  const v = Number(cuHours); if (!(v >= 0 && v <= 1e6)) return false;
+  meterRoll(now); meter.baseline = { cuHours: v, awakeMsAtThen: meter.awakeMs, at: now }; meter.dirty = true; return true;
+}
+function meterState() {
+  const hourly = {}; for (const [k, v] of meter.hourly) hourly[k] = { awakeMs: v.awakeMs, queries: v.queries, sources: { ...v.sources } };
+  return { periodStart: meter.periodStart, awakeMs: meter.awakeMs, awakeUntil: meter.awakeUntil, lastTouch: meter.lastTouch, baseline: meter.baseline, alerts: meter.alerts, previous: meter.previous, queries: meter.queries, hourly };
+}
+const finite = (v) => (typeof v === 'number' && isFinite(v) && v >= 0) ? v : 0;
+// What was saved before is ADDED to what this run has counted since it started (so neither a restart nor a late load loses or doubles anything).
+function meterMerge(saved) {
+  if (!saved || typeof saved !== 'object') return;
+  meterRoll(Date.now());
+  if (saved.periodStart !== meter.periodStart) {
+    // Saved in an earlier month: its numbers are not this month's. Only its total is kept, as "last month".
+    if (saved.periodStart && saved.periodStart < meter.periodStart && (!meter.previous || saved.periodStart > meter.previous.periodStart)) {
+      const hours = (ms) => ms / METER_HOUR_MS * meter.settings.computeCu;
+      const total = saved.baseline && typeof saved.baseline.cuHours === 'number' ? finite(saved.baseline.cuHours) + hours(Math.max(0, finite(saved.awakeMs) - finite(saved.baseline.awakeMsAtThen))) : hours(finite(saved.awakeMs));
+      meter.previous = { periodStart: saved.periodStart, cuHours: Math.round(total * 100) / 100 };
+    }
+    return;
+  }
+  meter.awakeMs += finite(saved.awakeMs); meter.awakeUntil = Math.max(meter.awakeUntil, finite(saved.awakeUntil)); meter.lastTouch = Math.max(meter.lastTouch, finite(saved.lastTouch)); meter.queries += finite(saved.queries);
+  const bl = saved.baseline;   // the host's figure is taken back only if every part of it is a real number (a damaged one must not become 0)
+  if (bl && typeof bl.cuHours === 'number' && isFinite(bl.cuHours) && bl.cuHours >= 0 && typeof bl.awakeMsAtThen === 'number' && isFinite(bl.awakeMsAtThen) && bl.awakeMsAtThen >= 0) meter.baseline = { cuHours: bl.cuHours, awakeMsAtThen: bl.awakeMsAtThen, at: finite(bl.at) };
+  meter.alerts = { ...(saved.alerts && typeof saved.alerts === 'object' ? saved.alerts : {}), ...meter.alerts };
+  if (!meter.previous && saved.previous) meter.previous = saved.previous;
+  for (const [k, v] of Object.entries(saved.hourly || {})) {
+    const key = Number(k); if (!isFinite(key) || !v || typeof v !== 'object') continue;
+    let b = meter.hourly.get(key); if (!b) { b = { awakeMs: 0, queries: 0, sources: Object.create(null) }; meter.hourly.set(key, b); }
+    b.awakeMs += finite(v.awakeMs); b.queries += finite(v.queries);
+    for (const [n, c] of Object.entries(v.sources || {})) { const nm = String(n).slice(0, 80); b.sources[nm] = (b.sources[nm] || 0) + finite(c); }
+  }
+  if (meter.hourly.size > 48) for (const k of [...meter.hourly.keys()].sort((x, y) => x - y).slice(0, meter.hourly.size - 48)) meter.hourly.delete(k);
+}
+async function meterLoad() {
+  const r = await pool.query(`SELECT key, value FROM app_settings WHERE key IN ($1, $2)`, [METER_KEY, METER_SETTINGS_KEY]);
+  let saved = null, settings = null;
+  for (const row of r.rows) { try { const v = JSON.parse(row.value); if (row.key === METER_KEY) saved = v; else settings = v; } catch (e) {} }
+  if (settings) { const ok = meterApplySettings(settings); if (!ok.ok) console.error('[compute meter] saved settings were not valid and were ignored'); }
+  meterMerge(saved); meter.loaded = true; meter.dirty = false;
+}
+async function meterSave() {
+  if (!meter.loaded || meter.saving) return false;
+  meter.saving = true; meter.lastSaveAt = Date.now();
+  try {
+    await pool.query(`INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW()), ($3, $4, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`, [METER_KEY, JSON.stringify(meterState()), METER_SETTINGS_KEY, JSON.stringify(meter.settings)]);
+    meter.dirty = false; return true;
+  } finally { meter.saving = false; }
+}
+
+// ── the mails ──
+const meterNum = (n, d = 1) => (Math.round(Number(n) * Math.pow(10, d)) / Math.pow(10, d)).toFixed(d);
+function meterAlertEmail(alert, now = Date.now()) {
+  const used = meterCuHours(), allowance = meter.settings.allowanceCuHours, pct = Math.round(used / allowance * 100), proj = meterProjection(now);
+  const resets = meterPeriodEnd(meter.periodStart, meter.settings.billingDay), link = `${BASE_URL}/admin/system-health`;
+  let en, fr, subject;
+  if (alert.kind === 'projection') {
+    subject = `Database allowance: at this rate it runs out around ${proj.runsOutAt} / Quota de la base : épuisé vers le ${proj.runsOutAt}`;
+    en = `At the current rate the database's monthly allowance (${meterNum(allowance, 0)} compute-hours) will be used up around <b>${proj.runsOutAt}</b>, before it starts again on ${resets}. About ${meterNum(used)} are estimated used so far (${pct}%).`;
+    fr = `Au rythme actuel, le quota mensuel de la base (${meterNum(allowance, 0)} heures de calcul) sera épuisé vers le <b>${proj.runsOutAt}</b>, avant son renouvellement le ${resets}. Environ ${meterNum(used)} sont estimées consommées jusqu'ici (${pct}&nbsp;%).`;
+  } else if (alert.kind === 'test') {
+    subject = 'Test of the database allowance alert / Test de l\'alerte du quota de la base';
+    en = `This is a test. The alert works. About ${meterNum(used)} of ${meterNum(allowance, 0)} compute-hours are estimated used this month (${pct}%); it starts again on ${resets}.`;
+    fr = `Ceci est un test. L'alerte fonctionne. Environ ${meterNum(used)} sur ${meterNum(allowance, 0)} heures de calcul sont estimées consommées ce mois-ci (${pct}&nbsp;%) ; le quota se renouvelle le ${resets}.`;
+  } else {
+    subject = `Database allowance: ${alert.level}% used / Quota de la base : ${alert.level} % utilisé`;
+    en = alert.level >= 100 ? `The database's monthly allowance is estimated <b>used up</b> (${meterNum(used)} of ${meterNum(allowance, 0)} compute-hours). The site's features that need the database will stop until it starts again on ${resets}, unless the plan is upgraded.`
+      : `About <b>${alert.level}%</b> of the database's monthly allowance is estimated used (${meterNum(used)} of ${meterNum(allowance, 0)} compute-hours). It starts again on ${resets}.`;
+    fr = alert.level >= 100 ? `Le quota mensuel de la base est estimé <b>épuisé</b> (${meterNum(used)} sur ${meterNum(allowance, 0)} heures de calcul). Les fonctions du site qui ont besoin de la base s'arrêteront jusqu'au renouvellement le ${resets}, sauf mise à niveau du forfait.`
+      : `Environ <b>${alert.level}&nbsp;%</b> du quota mensuel de la base est estimé consommé (${meterNum(used)} sur ${meterNum(allowance, 0)} heures de calcul). Il se renouvelle le ${resets}.`;
+  }
+  const note = `<p style="color:#666;font-size:13px">This is an estimate from this server's own activity (a floor: the host's own figure can be higher). Check it against the host's usage page, and type that figure on the page below to line the estimate up. / Ceci est une estimation faite à partir de l'activité de ce serveur (un minimum : le chiffre de l'hébergeur peut être plus élevé). Comparez-la à la page d'utilisation de l'hébergeur et saisissez ce chiffre sur la page ci-dessous.</p>`;
+  return { subject, html: `<div style="font-family:Arial,sans-serif;max-width:560px"><p>${en}</p><hr style="border:none;border-top:1px solid #ddd"><p>${fr}</p><p><a href="${link}">${link}</a></p>${note}</div>` };
+}
+// Checks the estimate against 50 / 80 / 100 percent and against the month's projection, and mails what is new (each only once a month).
+// When several were crossed at once only the most serious is mailed; the milder ones are marked as told. A failed send is tried again next time.
+async function meterCheckAlerts(now = Date.now()) {
+  meterRoll(now);
+  const used = meterCuHours(), pct = used / meter.settings.allowanceCuHours * 100, proj = meterProjection(now), crossed = [50, 80, 100].filter(t => pct >= t && !meter.alerts[t]), sent = [];
+  let toSend = null, mark = [];
+  if (crossed.length) { toSend = { kind: 'threshold', level: crossed[crossed.length - 1] }; mark = crossed.map(String); if (toSend.level >= 80) mark.push('projection'); }   // at 80% or more, a "will run out around" mail on top would only repeat it
+  else if (pct < 80 && proj.runsOutAt && proj.elapsedDays >= 2 && !meter.alerts.projection && !meter.alerts[80]) { toSend = { kind: 'projection' }; mark = ['projection']; }
+  if (!toSend) return sent;
+  const mail = meterAlertEmail(toSend, now);
+  const ok = await sendEmail(ADMIN_EMAIL, mail.subject, mail.html);
+  if (ok) {
+    for (const k of mark) meter.alerts[k] = now; meter.dirty = true; sent.push(toSend);
+    // Written down at once: a server that goes back to sleep must not forget it has already said this, or it would say it again at every wake.
+    if (meter.loaded) { try { await meterSave(); } catch (e) { logOnce('meter-save', '[compute meter] could not save that the alert was sent:', plainDbError(e)); } }
+  }
+  else logOnce('meter-mail', '[compute meter] the allowance alert could not be emailed (is the email service set up?); it will be tried again.');
+  return sent;
+}
 
 // ── PUBLIC PAGE CACHE ──────────────────────────────────────────────────────
 // The landing page asks four public questions on every visit (page text, announcements, prices, reviews), and each one
@@ -487,7 +655,7 @@ function sendDbDown(req, res) {
 }
 // These can answer without the database: the plugin poll and the public pages from memory, the version list is fixed text.
 // (A public page with nothing cached yet still gets the plain 503.)
-const DB_DOWN_ALLOWED = new Set(['/api/website-connector/poll', '/api/website-connector/plugin-versions', '/api/cms', '/api/announcements', '/api/plans/pricing', '/api/public/reviews']);
+const DB_DOWN_ALLOWED = new Set(['/api/website-connector/poll', '/api/website-connector/plugin-versions', '/api/cms', '/api/announcements', '/api/plans/pricing', '/api/public/reviews', '/api/admin/system-health']);
 app.use((req, res, next) => {
   if (!dbBreaker.open || !req.path.startsWith('/api/') || DB_DOWN_ALLOWED.has(req.path)) return next();
   if (dbBreakerBlocking()) return sendDbDown(req, res);
@@ -501,6 +669,8 @@ app.use((req, res, next) => {
   }
   next();
 });
+// Every query made while answering a request is labelled with the request's address (ids removed), for the health page.
+app.use((req, res, next) => { querySource.run({ name: req.method + ' ' + meterPathLabel(req.path) }, next); });
 
 // ── CONSTANTS ──────────────────────────────────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET || 'arreyon-jwt-secret-2026';
@@ -22372,6 +22542,172 @@ app.get('/boardroom', (req, res) => res.sendFile(path.join(__dirname, 'public', 
 app.get('/team-invite', (req, res) => res.sendFile(path.join(__dirname, 'public', 'team-invite.html')));
 app.get('/consult', (req, res) => res.sendFile(path.join(__dirname, 'public', 'consult.html')));
 app.get('/board', (req, res) => res.sendFile(path.join(__dirname, 'public', 'board.html')));
+// The administrator's health page. It sits BEFORE the catch-all that serves the admin app for every address under /admin.
+const HEALTH_PAGE_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>System health</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f6f7f9; --card:#fff; --text:#1c2330; --muted:#667085; --line:#e4e7ec; --ok:#12805c; --warn:#b54708; --bad:#c01048; --bar:#2563eb; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f141b; --card:#18202b; --text:#e8edf4; --muted:#9aa7b8; --line:#2a3544; --ok:#3ccf9a; --warn:#f5a54a; --bad:#ff6b8b; --bar:#5b8def; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width: 900px; margin: 0 auto; padding: 20px 16px 60px; }
+  header { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin-bottom:16px; }
+  h1 { font-size:22px; margin:0; }
+  h2 { font-size:16px; margin:0 0 10px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  .muted { color:var(--muted); font-size:13px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .big { font-size:26px; font-weight:700; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  .bar { height:14px; background:var(--line); border-radius:8px; overflow:hidden; margin:10px 0; }
+  .bar > div { height:100%; background:var(--bar); }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  td, th { text-align:left; padding:6px 4px; border-bottom:1px solid var(--line); vertical-align:top; word-break:break-word; }
+  td.n, th.n { text-align:right; white-space:nowrap; }
+  .hours { display:flex; align-items:flex-end; gap:2px; height:70px; margin-top:8px; }
+  .hours > div { flex:1; background:var(--bar); min-height:2px; border-radius:2px 2px 0 0; opacity:.85; }
+  button, input { font:inherit; padding:7px 10px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--text); }
+  button { cursor:pointer; background:var(--bar); color:#fff; border-color:var(--bar); }
+  button.plain { background:transparent; color:var(--text); border-color:var(--line); }
+  input { width:150px; }
+  label { display:flex; flex-direction:column; gap:3px; font-size:13px; color:var(--muted); }
+  .msg { font-size:13px; margin-top:6px; min-height:18px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="t-title">System health</h1>
+    <div class="row">
+      <button class="plain" id="b-lang" type="button">FR</button>
+      <button id="b-refresh" type="button">Refresh</button>
+    </div>
+  </header>
+  <div id="app"><p class="muted" id="t-loading">Loading…</p></div>
+  <p class="muted" id="t-note"></p>
+</main>
+<script>
+(function () {
+  var T = {
+    en: {
+      title: "System health", refresh: "Refresh", loading: "Loading…", failed: "Could not load the figures. Try again in a moment.",
+      note: "Nothing on this page refreshes by itself, so leaving it open never keeps the database awake.",
+      db: "Database", dbOk: "Reachable", dbDown: "Unavailable. Requests are paused and tried again automatically.", dbDownReason: "Last error", dbNext: "Next attempt in about {s} seconds.",
+      compute: "Database compute allowance (estimate)", usedOf: "{u} of {a} compute-hours used ({p}%)",
+      period: "This period: {s} to {e}. The allowance starts again on {e}.", previous: "Last period (from {s}): about {u} compute-hours.",
+      projNone: "Too early in the period to project.", projOk: "At this rate the period ends at about {p} compute-hours, within the allowance.", projOut: "At this rate the period would reach about {p} compute-hours and run out around {d}.",
+      est: "This is an estimate from this server's own activity, so it is a minimum: the host's own figure can be higher. Type the host's current number below to line the estimate up.",
+      calLabel: "Host's current usage (compute-hours)", calSave: "Line it up",
+      setTitle: "Settings", setAllow: "Allowance (compute-hours)", setSize: "Database size (compute units)", setDay: "Day the allowance starts again (1 to 28)", setSave: "Save settings",
+      awake24: "Database switched on in the last 24 hours: about {m} minutes ({p}% of the time).", awakeHint: "Close to 100% means something is using the database all day. A healthy site is mostly off.",
+      src: "What kept the database awake (last 24 hours)", srcPart: "Part of the app", srcQ: "Queries", srcNone: "Nothing recorded yet.",
+      hours: "Minutes switched on, hour by hour (oldest to newest)",
+      sys: "System", sysWake: "Next background wake-up", sysWakeNone: "not scheduled yet", sysPoll: "Plugin sites known / with work waiting", sysCache: "Public page copies kept", sysPool: "Database connections in use / idle / waiting", sysUp: "Running for", sysMem: "Memory used", sysCacheLine: "{k}: {v} seconds left{c}", stale: " (out of date, will refresh)",
+      fail: "Sites whose agent keeps failing (last 7 days)", failShow: "Show", failNone: "None.", failLine: "{n} failed cycles, last {t}", failErr: "Could not read this right now.",
+      test: "Send me a test alert", testOk: "Sent. Check your inbox.", testNo: "Could not send. Is the email service set up?", saved: "Saved.", bad: "That value is not valid.", alerts: "Alerts already sent this period",
+      alertNone: "none yet", m: "min", s: "s", h: "h", d: "d"
+    },
+    fr: {
+      title: "État du système", refresh: "Actualiser", loading: "Chargement…", failed: "Impossible de charger les chiffres. Réessayez dans un instant.",
+      note: "Rien sur cette page ne s’actualise seul : la laisser ouverte ne maintient jamais la base éveillée.",
+      db: "Base de données", dbOk: "Accessible", dbDown: "Indisponible. Les requêtes sont suspendues et réessayées automatiquement.", dbDownReason: "Dernière erreur", dbNext: "Prochaine tentative dans environ {s} secondes.",
+      compute: "Quota de calcul de la base (estimation)", usedOf: "{u} sur {a} heures de calcul utilisées ({p} %)",
+      period: "Période en cours : du {s} au {e}. Le quota se renouvelle le {e}.", previous: "Période précédente (depuis le {s}) : environ {u} heures de calcul.",
+      projNone: "Trop tôt dans la période pour faire une projection.", projOk: "À ce rythme la période se terminera à environ {p} heures de calcul, dans la limite du quota.", projOut: "À ce rythme la période atteindrait environ {p} heures de calcul et le quota serait épuisé vers le {d}.",
+      est: "Ceci est une estimation faite à partir de l’activité de ce serveur ; c’est donc un minimum : le chiffre de l’hébergeur peut être plus élevé. Saisissez ci-dessous le chiffre actuel de l’hébergeur pour aligner l’estimation.",
+      calLabel: "Utilisation actuelle selon l’hébergeur (heures de calcul)", calSave: "Aligner",
+      setTitle: "Réglages", setAllow: "Quota (heures de calcul)", setSize: "Taille de la base (unités de calcul)", setDay: "Jour du renouvellement du quota (1 à 28)", setSave: "Enregistrer les réglages",
+      awake24: "Base allumée au cours des 24 dernières heures : environ {m} minutes ({p} % du temps).", awakeHint: "Près de 100 % signifie que quelque chose utilise la base toute la journée. Un site sain est surtout éteint.",
+      src: "Ce qui a maintenu la base éveillée (24 dernières heures)", srcPart: "Partie de l’application", srcQ: "Requêtes", srcNone: "Rien d’enregistré pour l’instant.",
+      hours: "Minutes d’allumage, heure par heure (de la plus ancienne à la plus récente)",
+      sys: "Système", sysWake: "Prochain réveil en arrière-plan", sysWakeNone: "pas encore planifié", sysPoll: "Sites avec extension connus / avec du travail en attente", sysCache: "Copies des pages publiques conservées", sysPool: "Connexions à la base en cours / libres / en attente", sysUp: "En fonctionnement depuis", sysMem: "Mémoire utilisée", sysCacheLine: "{k} : encore {v} secondes{c}", stale: " (périmée, sera actualisée)",
+      fail: "Sites dont l’agent échoue de façon répétée (7 derniers jours)", failShow: "Afficher", failNone: "Aucun.", failLine: "{n} cycles en échec, le dernier {t}", failErr: "Impossible de lire cela pour l’instant.",
+      test: "M’envoyer une alerte de test", testOk: "Envoyée. Vérifiez votre boîte de réception.", testNo: "Envoi impossible. Le service d’e-mail est-il configuré ?", saved: "Enregistré.", bad: "Cette valeur n’est pas valide.", alerts: "Alertes déjà envoyées sur cette période",
+      alertNone: "aucune pour l’instant", m: "min", s: "s", h: "h", d: "j"
+    }
+  };
+  var lang = "en";
+  try { var q = new URLSearchParams(location.search).get("lang"); var saved = q || localStorage.getItem("arreyon_lang") || navigator.language || "en"; lang = String(saved).toLowerCase().indexOf("fr") === 0 ? "fr" : "en"; } catch (e) {}
+  var data = null, failing = undefined;
+  function t(k, v) { var s = (T[lang] && T[lang][k]) || T.en[k] || k; if (v) for (var n in v) s = s.split("{" + n + "}").join(String(v[n])); return s; }
+  function el(tag, text, cls) { var e = document.createElement(tag); if (text !== undefined && text !== null) e.textContent = String(text); if (cls) e.className = cls; return e; }
+  function card(title) { var c = el("section", null, "card"); if (title) c.appendChild(el("h2", title)); return c; }
+  function fmtDate(iso) { try { return new Date(iso).toLocaleString(lang === "fr" ? "fr-FR" : "en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); } catch (e) { return String(iso); } }
+  function fmtDur(sec) { sec = Math.max(0, Math.round(sec)); if (sec < 3600) return Math.round(sec / 60) + " " + t("m"); if (sec < 86400) return (sec / 3600).toFixed(1) + " " + t("h"); return (sec / 86400).toFixed(1) + " " + t("d"); }
+  function post(path, body) { return fetch(path, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { status: r.status, body: j }; }); }); }
+  function labelled(text, input) { var l = el("label", text); l.appendChild(input); return l; }
+  function render() {
+    var app = document.getElementById("app"); app.textContent = "";
+    var d = data, m = d.meter;
+    document.documentElement.lang = lang; document.getElementById("t-title").textContent = t("title"); document.title = t("title");
+    document.getElementById("b-refresh").textContent = t("refresh"); document.getElementById("b-lang").textContent = lang === "fr" ? "EN" : "FR"; document.getElementById("t-note").textContent = t("note");
+
+    var c = card(t("db")), st = el("div", d.database.state === "ok" ? t("dbOk") : t("dbDown"), "big " + (d.database.state === "ok" ? "ok" : "bad")); c.appendChild(st);
+    if (d.database.state !== "ok") { if (d.database.lastReason) c.appendChild(el("p", t("dbDownReason") + ": " + d.database.lastReason, "muted")); if (d.database.nextTryInSeconds) c.appendChild(el("p", t("dbNext", { s: d.database.nextTryInSeconds }), "muted")); }
+    app.appendChild(c);
+
+    c = card(t("compute"));
+    var pct = m.percent, cls = pct >= 100 ? "bad" : pct >= 80 ? "warn" : "ok";
+    c.appendChild(el("div", t("usedOf", { u: m.estimateCuHours.toFixed(1), a: Number(m.allowanceCuHours.toFixed(2)), p: Math.round(pct) }), "big " + cls));
+    var bar = el("div", null, "bar"), fill = el("div"); fill.style.width = Math.min(100, Math.max(0, pct)) + "%"; bar.appendChild(fill); c.appendChild(bar);
+    c.appendChild(el("p", t("period", { s: m.periodStart, e: m.periodEnd }), "muted"));
+    if (m.previous) c.appendChild(el("p", t("previous", { s: m.previous.periodStart, u: m.previous.cuHours }), "muted"));
+    if (m.projectedCuHours === null) c.appendChild(el("p", t("projNone")));
+    else if (m.runsOutAt) c.appendChild(el("p", t("projOut", { p: m.projectedCuHours.toFixed(0), d: m.runsOutAt }), "warn"));
+    else c.appendChild(el("p", t("projOk", { p: m.projectedCuHours.toFixed(0) }), "ok"));
+    c.appendChild(el("p", t("est"), "muted"));
+    var cal = el("div", null, "row"), calIn = el("input"); calIn.type = "number"; calIn.step = "0.01"; calIn.min = "0"; var calBtn = el("button", t("calSave")); calBtn.type = "button"; cal.appendChild(labelled(t("calLabel"), calIn)); cal.appendChild(calBtn); c.appendChild(cal);
+    var calMsg = el("div", "", "msg"); c.appendChild(calMsg);
+    calBtn.onclick = function () { post("/api/admin/system-health/settings", { calibrateCuHours: calIn.value }).then(function (r) { calMsg.textContent = r.status === 200 ? t("saved") : t("bad"); if (r.status === 200) load(); }); };
+    c.appendChild(el("p", t("alerts") + ": " + (m.alertsSent.length ? m.alertsSent.join(", ") : t("alertNone")), "muted"));
+    var tb = el("button", t("test"), "plain"); tb.type = "button"; var tm = el("div", "", "msg"); tb.onclick = function () { tm.textContent = "…"; post("/api/admin/system-health/test-alert", {}).then(function (r) { tm.textContent = r.status === 200 && r.body.sent ? t("testOk") : t("testNo"); }); }; c.appendChild(tb); c.appendChild(tm);
+    app.appendChild(c);
+
+    c = card(t("setTitle")); var sr = el("div", null, "row"), a1 = el("input"), a2 = el("input"), a3 = el("input");
+    a1.type = a2.type = a3.type = "number"; a1.step = "0.1"; a2.step = "0.25"; a3.min = "1"; a3.max = "28"; a1.value = m.allowanceCuHours; a2.value = m.computeCu; a3.value = m.billingDay;
+    sr.appendChild(labelled(t("setAllow"), a1)); sr.appendChild(labelled(t("setSize"), a2)); sr.appendChild(labelled(t("setDay"), a3)); c.appendChild(sr);
+    var sb = el("button", t("setSave")); sb.type = "button"; sb.style.marginTop = "10px"; var sm = el("div", "", "msg"); c.appendChild(sb); c.appendChild(sm);
+    sb.onclick = function () { post("/api/admin/system-health/settings", { allowanceCuHours: a1.value, computeCu: a2.value, billingDay: a3.value }).then(function (r) { sm.textContent = r.status === 200 ? t("saved") : t("bad"); if (r.status === 200) load(); }); };
+    app.appendChild(c);
+
+    c = card(t("src")); c.appendChild(el("p", t("awake24", { m: m.awakeMinutesLast24h, p: m.awakeShareLast24h }), "big")); c.appendChild(el("p", t("awakeHint"), "muted"));
+    if (!d.sources.length) c.appendChild(el("p", t("srcNone"), "muted")); else { var tbl = el("table"), hd = el("tr"); hd.appendChild(el("th", t("srcPart"))); hd.appendChild(el("th", t("srcQ"), "n")); tbl.appendChild(hd); d.sources.forEach(function (s) { var r = el("tr"); r.appendChild(el("td", s.name)); r.appendChild(el("td", s.queries, "n")); tbl.appendChild(r); }); c.appendChild(tbl); }
+    c.appendChild(el("p", t("hours"), "muted")); var hrs = el("div", null, "hours"); d.hours.forEach(function (h) { var b = el("div"); b.style.height = Math.max(2, Math.round(h.awakeMinutes / 60 * 70)) + "px"; b.title = fmtDate(h.hour) + ": " + h.awakeMinutes + " " + t("m"); hrs.appendChild(b); }); c.appendChild(hrs);
+    app.appendChild(c);
+
+    c = card(t("sys")); var sy = el("table");
+    function line(k, v) { var r = el("tr"); r.appendChild(el("td", k)); r.appendChild(el("td", v, "n")); sy.appendChild(r); }
+    line(t("sysWake"), d.scheduler.nextWakeAt ? fmtDate(d.scheduler.nextWakeAt) : t("sysWakeNone")); line(t("sysPoll"), d.pollRegistry.sites + " / " + d.pollRegistry.withWork); line(t("sysPool"), d.pool.total - d.pool.idle + " / " + d.pool.idle + " / " + d.pool.waiting); line(t("sysUp"), fmtDur(d.process.uptimeSeconds)); line(t("sysMem"), d.process.memoryMb + " MB");
+    c.appendChild(sy); var cl = el("div", null, "muted"); cl.appendChild(el("p", t("sysCache") + ":")); d.publicCache.forEach(function (e) { cl.appendChild(el("div", t("sysCacheLine", { k: e.key, v: e.validForSeconds, c: e.current ? "" : t("stale") }))); }); c.appendChild(cl);
+    app.appendChild(c);
+
+    c = card(t("fail")); var fb = el("button", t("failShow"), "plain"); fb.type = "button"; fb.onclick = function () { load(true); }; 
+    if (failing === undefined) c.appendChild(fb); else if (failing === null) c.appendChild(el("p", t("failErr"), "muted")); else if (!failing.length) c.appendChild(el("p", t("failNone"), "muted")); else { var ft = el("table"); failing.forEach(function (f) { var r = el("tr"); r.appendChild(el("td", f.name + " (" + f.platform + ")")); r.appendChild(el("td", t("failLine", { n: f.failures, t: fmtDate(f.lastAt) }), "n")); ft.appendChild(r); }); c.appendChild(ft); }
+    app.appendChild(c);
+  }
+  function load(withFailing) {
+    fetch("/api/admin/system-health" + (withFailing ? "?failing=1" : ""), { credentials: "same-origin" })
+      .then(function (r) { if (r.status === 401 || r.status === 403) { location.href = "/admin"; throw new Error("auth"); } return r.json(); })
+      .then(function (j) { data = j; if (withFailing) failing = j.failingSites; render(); })
+      .catch(function (e) { if (e && e.message === "auth") return; var app = document.getElementById("app"); app.textContent = ""; app.appendChild(el("p", t("failed"), "bad")); });
+  }
+  document.getElementById("b-refresh").onclick = function () { load(false); };
+  document.getElementById("b-lang").onclick = function () { lang = lang === "fr" ? "en" : "fr"; try { localStorage.setItem("arreyon_lang", lang); } catch (e) {} if (data) render(); };
+  load(false);
+})();
+</script>
+</body>
+</html>
+`;
+app.get('/admin/system-health', async (req, res) => {
+  const a = await adminForHealth(req); if (!a.ok) return res.redirect('/admin');
+  res.set('Cache-Control', 'no-store').type('html').send(HEALTH_PAGE_HTML);
+});
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/admin/*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/privacy', (req, res) => res.sendFile(path.join(__dirname, 'public', 'privacy.html')));
@@ -23956,7 +24292,7 @@ function scheduleSchedulerAt(whenMs) {
 async function planSchedulerWake() {
   if (dbBreaker.open) { scheduleSchedulerAt(dbBreaker.until + 1000); return; }   // nothing to look up while the database is out
   try {
-    const due = await nextSchedulerDueAt();
+    const due = await withQuerySource('scheduler: planning', () => nextSchedulerDueAt());
     scheduleSchedulerAt(due ? due.getTime() : Date.now() + SCHED_MAX_SLEEP_MS);
   } catch (e) {
     logOnce('sched-plan', 'Scheduler could not look up when work is next due:', plainDbError(e));
@@ -23976,7 +24312,7 @@ async function schedulerTick() {
   if (dbBreakerBlocking()) { scheduleSchedulerAt(dbBreaker.until + 1000); return; }
   sched.busy = true;
   try {
-    await runAllSweeps().catch(e => console.error('Sweep error:', plainDbError(e)));
+    await withQuerySource('scheduler: sweeps', () => runAllSweeps()).catch(e => console.error('Sweep error:', plainDbError(e)));
     if (Date.now() - sched.lastHourlyAt >= SCHED_HOURLY_MS) await runHourlyBackgroundTasks();
   } finally { sched.busy = false; }
   await planSchedulerWake();
@@ -23986,9 +24322,11 @@ async function schedulerTick() {
 async function runHourlyBackgroundTasks() {
   sched.lastHourlyAt = Date.now();
   agentSweepSkips.clear();   // sites skipped for plan reasons are looked at again once an hour
-  try { await runCompetitiveIntelligenceSweep(); } catch (e) { console.error('Competitive intelligence sweep error:', plainDbError(e)); }
-  try { await runMonitoringSweepIfDue(); } catch (e) { console.error('Monitoring sweep error:', plainDbError(e)); }
-  try { await loadPollRegistry(); } catch (e) { logOnce('poll-registry', 'Could not refresh the plugin poll list:', plainDbError(e)); }
+  try { await withQuerySource('scheduler: competitor tracking', () => runCompetitiveIntelligenceSweep()); } catch (e) { console.error('Competitive intelligence sweep error:', plainDbError(e)); }
+  try { await withQuerySource('scheduler: monitoring', () => runMonitoringSweepIfDue()); } catch (e) { console.error('Monitoring sweep error:', plainDbError(e)); }
+  try { await withQuerySource('scheduler: plugin site list', () => loadPollRegistry()); } catch (e) { logOnce('poll-registry', 'Could not refresh the plugin poll list:', plainDbError(e)); }
+  // The compute meter: restored if it could not be at start-up, checked against 50 / 80 / 100 percent, and saved (the database is awake right now).
+  try { await withQuerySource('scheduler: compute meter', async () => { if (!meter.loaded) await meterLoad(); await meterCheckAlerts(); await meterSave(); }); } catch (e) { logOnce('meter-hourly', '[compute meter] could not be checked or saved this hour:', plainDbError(e)); }
 }
 
 // The daily monitoring sweep. When it last ran is kept in the database and claimed in one statement, so a restart, a
@@ -24879,6 +25217,95 @@ app.put('/api/alerts/preferences', authRequired, async (req, res) => {
 });
 
 
+// ── SYSTEM HEALTH (admin) ──────────────────────────────────────────────────
+// Everything an administrator needs to see why the database is busy, in one place. Building the figures reads nothing from the
+// database (they are all in memory) except the optional "failing sites" list, which is only fetched when asked for.
+function systemHealthSnapshot(now = Date.now(), failingSites) {
+  meterRoll(now);
+  const used = meterCuHours(), allowance = meter.settings.allowanceCuHours, proj = meterProjection(now), cur = now - (now % METER_HOUR_MS);
+  const hours = [], top = Object.create(null); let awake24 = 0;
+  for (let i = 23; i >= 0; i--) {
+    const t = cur - i * METER_HOUR_MS, b = meter.hourly.get(t), mins = b ? Math.round(Math.min(b.awakeMs, METER_HOUR_MS) / 60000) : 0;
+    hours.push({ hour: new Date(t).toISOString(), awakeMinutes: mins, queries: b ? b.queries : 0 });
+    if (b) { awake24 += Math.min(b.awakeMs, METER_HOUR_MS); for (const [n, c] of Object.entries(b.sources)) top[n] = (top[n] || 0) + c; }
+  }
+  let withWork = 0; for (const v of pollRegistry.byHash.values()) if (v.hasWork) withWork++;
+  const mem = process.memoryUsage();
+  return {
+    generatedAt: new Date(now).toISOString(),
+    database: { state: dbBreaker.open ? 'unavailable' : 'ok', since: dbBreaker.open ? new Date(dbBreaker.since).toISOString() : null, lastReason: dbBreaker.open ? dbBreaker.lastReason : null, nextTryInSeconds: dbBreaker.open ? Math.max(0, Math.round((dbBreaker.until - now) / 1000)) : null },
+    pool: { max: pool.options && pool.options.max || null, total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount },
+    meter: {
+      periodStart: meter.periodStart, periodEnd: meterPeriodEnd(meter.periodStart, meter.settings.billingDay),
+      estimateCuHours: Math.round(used * 100) / 100, allowanceCuHours: allowance, percent: Math.round(used / allowance * 1000) / 10,
+      computeCu: meter.settings.computeCu, billingDay: meter.settings.billingDay,
+      projectedCuHours: proj.projected === null ? null : Math.round(proj.projected * 10) / 10, runsOutAt: proj.runsOutAt,
+      calibrated: meter.baseline ? { cuHours: meter.baseline.cuHours, at: new Date(meter.baseline.at).toISOString() } : null,
+      previous: meter.previous, alertsSent: Object.keys(meter.alerts).sort(),
+      awakeMinutesLast24h: Math.round(awake24 / 60000), awakeShareLast24h: Math.round(awake24 / (24 * METER_HOUR_MS) * 100),
+      queriesSinceStart: meter.queries, trackingSince: new Date(meter.startedAt).toISOString(), restored: meter.loaded
+    },
+    sources: Object.entries(top).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([name, queries]) => ({ name, queries })),
+    hours,
+    scheduler: { started: sched.started, busy: sched.busy, nextWakeAt: sched.timer ? new Date(sched.runAt).toISOString() : null, lastHourlyAt: sched.lastHourlyAt ? new Date(sched.lastHourlyAt).toISOString() : null },
+    pollRegistry: { sites: pollRegistry.byHash.size, withWork, loadedAt: pollRegistry.loadedAt ? new Date(pollRegistry.loadedAt).toISOString() : null },
+    publicCache: [...publicCache.entries()].map(([key, e]) => ({ key, validForSeconds: Math.max(0, Math.round((e.validUntil - now) / 1000)), current: e.epoch === publicEpoch })).sort((a, b) => a.key < b.key ? -1 : 1),
+    process: { uptimeSeconds: Math.round(process.uptime()), memoryMb: Math.round(mem.rss / 1048576), node: process.version },
+    ...(failingSites !== undefined ? { failingSites } : {})
+  };
+}
+// Sites whose daily agent cycle failed at least twice in the last 7 days (read-only; only fetched when the administrator asks).
+async function meterFailingSites() {
+  const r = await withQuerySource('admin: failing sites', () => pool.query(
+    `SELECT b.name, a.platform, count(*)::int AS failures, max(a.created_at) AS last_at
+     FROM website_agent_activity a JOIN businesses b ON b.id = a.business_id
+     WHERE a.task_type = 'cycle_failed' AND a.created_at > NOW() - INTERVAL '7 days'
+     GROUP BY b.id, b.name, a.platform HAVING count(*) >= 2 ORDER BY failures DESC, last_at DESC LIMIT 20`));
+  return r.rows.map(x => ({ name: String(x.name || '').slice(0, 120), platform: String(x.platform), failures: x.failures, lastAt: new Date(x.last_at).toISOString() }));
+}
+// The admin check for the READ-ONLY health figures. It is the normal check, except that while the database cannot be reached
+// (the very time these figures are needed) a correctly signed admin token is accepted without the "is this session still current" lookup.
+async function adminForHealth(req) {
+  const token = req.cookies.arreyon_admin_token || (req.headers.authorization || '').replace('Bearer ', '');
+  if (!token) return { ok: false, status: 401, error: 'Admin authentication required' };
+  let decoded; try { decoded = jwt.verify(token, JWT_SECRET); } catch (e) { return { ok: false, status: 401, error: 'Invalid admin token' }; }
+  if (!decoded || decoded.role !== 'admin' || !decoded.adminId) return { ok: false, status: 403, error: 'Admin access required' };
+  try {
+    if (!(await sessionIsCurrent('admin_users', decoded.adminId, decoded.tv))) return { ok: false, status: 401, error: 'Your admin session has ended. Please sign in again.' };
+  } catch (e) {
+    if (!(isDbUnavailableError(e) || dbBreaker.open)) return { ok: false, status: 500, error: 'Could not check your session. Please try again.' };
+  }
+  return { ok: true };
+}
+app.get('/api/admin/system-health', async (req, res) => {
+  const a = await adminForHealth(req); if (!a.ok) return res.status(a.status).json({ error: a.error });
+  let failing; if (req.query.failing === '1') { try { failing = dbBreaker.open ? null : await meterFailingSites(); } catch (e) { failing = null; } }
+  res.json(systemHealthSnapshot(Date.now(), failing));
+});
+app.post('/api/admin/system-health/settings', adminRequired, async (req, res) => {
+  const b = req.body && typeof req.body === 'object' ? req.body : {};
+  const settings = {}; for (const k of ['allowanceCuHours', 'computeCu', 'billingDay']) if (b[k] !== undefined && b[k] !== '') settings[k] = b[k];
+  if (Object.keys(settings).length) { const r = meterApplySettings(settings); if (!r.ok) return res.status(400).json({ error: 'Invalid ' + r.error }); }
+  if (b.calibrateCuHours !== undefined && b.calibrateCuHours !== '') { if (!meterCalibrate(b.calibrateCuHours)) return res.status(400).json({ error: 'Invalid usage figure' }); }
+  try { if (meter.loaded || (await meterLoad().then(() => true).catch(() => false))) await meterSave(); } catch (e) { return res.json({ success: true, saved: false }); }   // kept in memory even if it could not be written
+  res.json({ success: true, saved: true });
+});
+app.post('/api/admin/system-health/test-alert', adminRequired, async (req, res) => {
+  const mail = meterAlertEmail({ kind: 'test' });
+  res.json({ sent: !!(await sendEmail(ADMIN_EMAIL, mail.subject, mail.html)) });
+});
+// Saves the meter when the host stops this server (a deploy, or a free plan going to sleep) — but only while the database is
+// still awake, so that saving never wakes it.
+let shuttingDown = false;
+async function shutdownGracefully(signal) {
+  if (shuttingDown) return; shuttingDown = true;
+  const guard = setTimeout(() => process.exit(0), 4000);
+  try { if (meter.loaded && meter.dirty && Date.now() < meter.awakeUntil && !dbBreaker.open) await meterSave(); } catch (e) {}
+  clearTimeout(guard); console.log(`${signal}: stopped.`); process.exit(0);
+}
+process.on('SIGTERM', () => { shutdownGracefully('SIGTERM'); });
+process.on('SIGINT', () => { shutdownGracefully('SIGINT'); });
+
 // Any error a route did not handle itself ends up here: a plain reply instead of the framework's raw error page, and
 // one log line a minute per kind instead of a full stack on every request.
 app.use((err, req, res, next) => {
@@ -24897,7 +25324,11 @@ app.use((err, req, res, next) => {
 // ── START ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-  await initDB();
+  await withQuerySource('start-up', async () => {
+    await initDB();
+    try { await meterLoad(); meterCheckAlerts().catch((e) => logOnce('meter-start', '[compute meter] the start-up check failed:', plainDbError(e))); }   // checked at every wake, in the background (a free host's server may never stay awake for the hourly check)
+    catch (e) { console.error('[compute meter] could not restore the saved figures yet (it will try again within the hour):', plainDbError(e)); }
+  });
   console.log(`Arreyon Consult running on port ${PORT}`);
   startMonitoringScheduler();
   startCompetitiveIntelligenceScheduler();
