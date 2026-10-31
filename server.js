@@ -24299,6 +24299,7 @@ async function checkWordPressHealth(ownerId, business, lang) {
   const unreachable = !lost && problems >= WORDPRESS_UNREACHABLE_AFTER;
   await raise('connection_lost', await step('connection_lost', lost, { status: conn.connection_status }));
   await raise('site_unreachable', await step('site_unreachable', unreachable, { failures: problems }));
+  raised += await wordpressSslCheck(ownerId, business, conn, lang);   // an expiring certificate is reported for any connected site, reachable or not (an expired one is often WHY it cannot be reached)
   if (lost || unreachable) return raised;   // nothing else can be checked on a site that cannot be reached
   // 2. does robots.txt shut everyone out? (a live look; if the file cannot be read, nothing changes: an unknown is never "fixed")
   if (conn.site_url) { const robots = await checkRobotsTxt(conn.site_url); if (robots.exists) await raise('robots_blocking', await step('robots_blocking', !!robots.blocksEverything, { siteUrl: conn.site_url }), { siteUrl: conn.site_url }); }
@@ -24315,6 +24316,77 @@ async function checkWordPressAlerts(ownerId, prefs, language) {
     try { raised += await checkWordPressHealth(ownerId, b, lang); } catch (e) { console.error(`WordPress alert check failed (${b.id}):`, e.message); }   // one site failing never stops the others
   }
   return { raised };
+}
+// wordpress-own:end
+
+// wordpress-own:start
+// ── Security certificate warnings (WordPress) ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// Once a day, with the other alerts, the certificate (HTTPS) of the website's address is read and its expiry date compared with today: a warning at 30 days, a
+// critical alert at 7 days, and a critical alert once it has expired. Browsers show visitors a "Not secure" page when a certificate expires, so this is the
+// warning that comes BEFORE that. Only the date is judged: whether the certificate is trusted is not, because a site that browsers accept can still look
+// untrusted from here (a missing intermediate certificate), and a false alarm is worse than none. If the certificate cannot be read, nothing changes (an
+// unknown is never treated as fixed). The three kinds are exclusive (a certificate at 5 days is not also "at 30 days"), and each uses the same state as
+// the other alerts: raised once, a reminder after 7 days, cleared quietly when it is renewed. A healthy certificate costs one database read.
+// Nothing here is shared with Shopify.
+const WORDPRESS_SSL = { warnDays: 30, soonDays: 7, timeoutMs: 8000 };
+const WORDPRESS_SSL_KINDS = ['ssl_expiring', 'ssl_expiring_soon', 'ssl_expired'];
+const wordpressSslMessages = {
+  ssl_expiring: {
+    en: (biz, remind, d) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your website's security certificate expires in ${d.days} days: ${biz}`, message: `The security certificate (HTTPS) of ${d.host} expires on ${d.date}. After that date browsers tell visitors that the website is "Not secure", and many of them leave. Most hosts renew certificates automatically; if yours does not, ask your hosting provider to renew it before that date.` }),
+    fr: (biz, remind, d) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Le certificat de sécurité de votre site expire dans ${d.days} jours : ${biz}`, message: `Le certificat de sécurité (HTTPS) de ${d.host} expire le ${d.date}. Après cette date, les navigateurs indiquent aux visiteurs que le site n'est « pas sécurisé », et beaucoup s'en vont. La plupart des hébergeurs renouvellent les certificats automatiquement ; si le vôtre ne le fait pas, demandez-lui de le renouveler avant cette date.` })
+  },
+  ssl_expiring_soon: {
+    en: (biz, remind, d) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your website's security certificate expires in ${d.days} day${d.days === 1 ? '' : 's'}: ${biz}`, message: `The security certificate (HTTPS) of ${d.host} expires on ${d.date}. From then on browsers will tell visitors that the website is "Not secure", and many of them will leave. Renew it now. Most hosts renew certificates automatically; if yours does not, ask your hosting provider to renew it before that date.` }),
+    fr: (biz, remind, d) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Le certificat de sécurité de votre site expire dans ${d.days} jour${d.days === 1 ? '' : 's'} : ${biz}`, message: `Le certificat de sécurité (HTTPS) de ${d.host} expire le ${d.date}. À partir de ce moment, les navigateurs indiqueront aux visiteurs que le site n'est « pas sécurisé », et beaucoup s'en iront. Renouvelez-le dès maintenant. La plupart des hébergeurs renouvellent les certificats automatiquement ; si le vôtre ne le fait pas, demandez-lui de le renouveler avant cette date.` })
+  },
+  ssl_expired: {
+    en: (biz, remind, d) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your website's security certificate has expired: ${biz}`, message: `The security certificate (HTTPS) of ${d.host} expired on ${d.date}. Visitors now see a "Not secure" warning and many of them leave, and search engines can rank the website lower. Renew it as soon as possible. Most hosts renew certificates automatically; if yours does not, ask your hosting provider to renew it before that date.` }),
+    fr: (biz, remind, d) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Le certificat de sécurité de votre site a expiré : ${biz}`, message: `Le certificat de sécurité (HTTPS) de ${d.host} a expiré le ${d.date}. Les visiteurs voient maintenant un avertissement « pas sécurisé » et beaucoup s'en vont, et les moteurs de recherche peuvent classer le site plus bas. Renouvelez-le dès que possible. La plupart des hébergeurs renouvellent les certificats automatiquement ; si le vôtre ne le fait pas, demandez-lui de le renouveler avant cette date.` })
+  }
+};
+const wordpressSslText = (kind, lang, biz, remind, d) => wordpressSslMessages[kind][lang === 'fr' ? 'fr' : 'en'](biz, remind, { ...d, date: new Date(d.validTo).toLocaleDateString(lang === 'fr' ? 'fr-FR' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) });
+// Which alert, if any, a certificate that ends on validTo calls for today. null when the date cannot be read.
+function wordpressSslWanted(validTo, now = Date.now()) {
+  const t = Date.parse(String(validTo || '')); if (!Number.isFinite(t)) return null;
+  if (t <= now) return { kind: 'ssl_expired', days: 0, validTo: new Date(t).toISOString() };
+  const days = Math.ceil((t - now) / 864e5), kind = days <= WORDPRESS_SSL.soonDays ? 'ssl_expiring_soon' : days <= WORDPRESS_SSL.warnDays ? 'ssl_expiring' : null;
+  return { kind, days, validTo: new Date(t).toISOString() };
+}
+// One connection to host:port, asking for the certificate whether or not it is trusted. Resolves { validTo } or null (could not be read). connect is a parameter so it can be tested.
+function wordpressCertFetch(host, port, timeoutMs, connect) {
+  return new Promise(resolve => {
+    let done = false, sock = null; const finish = v => { if (done) return; done = true; clearTimeout(timer); try { if (sock) sock.destroy(); } catch (e) {} resolve(v); }, timer = setTimeout(() => finish(null), timeoutMs);
+    try {
+      const isIp = /^[\d.]+$|:/.test(String(host)); sock = connect({ host, port, servername: isIp ? undefined : host, rejectUnauthorized: false }, () => { try { const c = sock.getPeerCertificate(); finish(c && c.valid_to ? { validTo: c.valid_to } : null); } catch (e) { finish(null); } });
+      sock.on('error', () => finish(null));
+    } catch (e) { finish(null); }
+  });
+}
+// The certificate of a site's address. Only https addresses of public hosts; anything else (or any failure) is "cannot be read".
+async function wordpressReadCertificate(siteUrl) {
+  let u; try { u = new URL(String(siteUrl)); } catch (e) { return null; }
+  if (u.protocol !== 'https:' || !u.hostname) return null;
+  try { await assertPublicHost(u.hostname); } catch (e) { return null; }
+  return wordpressCertFetch(u.hostname, Number(u.port) || 443, WORDPRESS_SSL.timeoutMs, require('tls').connect);
+}
+// One site. Returns how many alerts were raised.
+async function wordpressSslCheck(ownerId, business, conn, lang) {
+  let siteUrl = null; try { siteUrl = await Promise.resolve(conn.site_url); } catch (e) { return 0; }
+  if (!siteUrl) return 0;
+  let cert = null; try { cert = await wordpressReadCertificate(siteUrl); } catch (e) { return 0; }   // never let a certificate problem stop the site's other checks
+  if (!cert) return 0;   // cannot be read: nothing changes
+  const want = wordpressSslWanted(cert.validTo); if (!want) return 0;
+  const active = new Set((await pool.query(`SELECT kind FROM wordpress_health_state WHERE business_id = $1 AND kind = ANY($2::text[]) AND active`, [business.id, WORDPRESS_SSL_KINDS])).rows.map(r => r.kind));
+  if (!want.kind && !active.size) return 0;   // a healthy certificate and nothing to clear: one read, nothing more
+  const host = new URL(String(siteUrl)).hostname; let raised = 0;
+  for (const kind of WORDPRESS_SSL_KINDS) {
+    const should = kind === want.kind; if (!should && !active.has(kind)) continue;
+    const result = await wordpressHealthStep(business.id, kind, should, { daysLeft: want.days, validTo: want.validTo, host });
+    if (!result.raise) continue;
+    const text = wordpressSslText(kind, lang, business.name || 'your website', result.reason === 'reminder', { days: want.days, host, validTo: want.validTo });
+    await createAlert(ownerId, business.id, 'wordpress_' + kind, kind === 'ssl_expiring' ? 'warning' : 'critical', text.title, text.message, { businessId: business.id, platform: 'wordpress', kind, reason: result.reason, connectionId: conn.id, daysLeft: want.days, validTo: want.validTo, host }); raised++;
+  }
+  return raised;
 }
 // wordpress-own:end
 
@@ -24406,6 +24478,7 @@ async function checkShopifyHealth(ownerId, business, lang) {
   const unreachable = !lost && problems >= SHOPIFY_UNREACHABLE_AFTER;
   await raise('connection_lost', await step('connection_lost', lost, { status: conn.connection_status }));
   await raise('site_unreachable', await step('site_unreachable', unreachable, { failures: problems }));
+  raised += await shopifySslCheck(ownerId, business, conn, lang);   // an expiring certificate is reported for any connected store, reachable or not (an expired one is often WHY it cannot be reached)
   if (lost || unreachable) return raised;   // nothing else can be checked on a site that cannot be reached
   // 2. does robots.txt shut everyone out? (a live look; if the file cannot be read, nothing changes: an unknown is never "fixed")
   const siteUrl = await shopifyStoreUrlFor(conn);
@@ -24423,6 +24496,77 @@ async function checkShopifyAlerts(ownerId, prefs, language) {
     try { raised += await checkShopifyHealth(ownerId, b, lang); } catch (e) { console.error(`Shopify alert check failed (${b.id}):`, e.message); }   // one site failing never stops the others
   }
   return { raised };
+}
+// shopify-own:end
+
+// shopify-own:start
+// ── Security certificate warnings (Shopify) ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// Once a day, with the other alerts, the certificate (HTTPS) of the store's address is read and its expiry date compared with today: a warning at 30 days, a
+// critical alert at 7 days, and a critical alert once it has expired. Browsers show visitors a "Not secure" page when a certificate expires, so this is the
+// warning that comes BEFORE that. Only the date is judged: whether the certificate is trusted is not, because a site that browsers accept can still look
+// untrusted from here (a missing intermediate certificate), and a false alarm is worse than none. If the certificate cannot be read, nothing changes (an
+// unknown is never treated as fixed). The three kinds are exclusive (a certificate at 5 days is not also "at 30 days"), and each uses the same state as
+// the other alerts: raised once, a reminder after 7 days, cleared quietly when it is renewed. A healthy certificate costs one database read.
+// Nothing here is shared with WordPress.
+const SHOPIFY_SSL = { warnDays: 30, soonDays: 7, timeoutMs: 8000 };
+const SHOPIFY_SSL_KINDS = ['ssl_expiring', 'ssl_expiring_soon', 'ssl_expired'];
+const shopifySslMessages = {
+  ssl_expiring: {
+    en: (biz, remind, d) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your store's security certificate expires in ${d.days} days: ${biz}`, message: `The security certificate (HTTPS) of ${d.host} expires on ${d.date}. After that date browsers tell visitors that the store is "Not secure", and many of them leave. Shopify normally renews certificates for you: open Settings > Domains in your Shopify admin to check the status of this domain, and contact Shopify support if it does not renew.` }),
+    fr: (biz, remind, d) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Le certificat de sécurité de votre boutique expire dans ${d.days} jours : ${biz}`, message: `Le certificat de sécurité (HTTPS) de ${d.host} expire le ${d.date}. Après cette date, les navigateurs indiquent aux clients que le boutique n'est « pas sécurisé », et beaucoup s'en vont. Shopify renouvelle normalement les certificats pour vous : ouvrez Paramètres > Domaines dans votre interface Shopify pour vérifier l'état de ce domaine, et contactez l'assistance Shopify s'il ne se renouvelle pas.` })
+  },
+  ssl_expiring_soon: {
+    en: (biz, remind, d) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your store's security certificate expires in ${d.days} day${d.days === 1 ? '' : 's'}: ${biz}`, message: `The security certificate (HTTPS) of ${d.host} expires on ${d.date}. From then on browsers will tell visitors that the store is "Not secure", and many of them will leave. Renew it now. Shopify normally renews certificates for you: open Settings > Domains in your Shopify admin to check the status of this domain, and contact Shopify support if it does not renew.` }),
+    fr: (biz, remind, d) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Le certificat de sécurité de votre boutique expire dans ${d.days} jour${d.days === 1 ? '' : 's'} : ${biz}`, message: `Le certificat de sécurité (HTTPS) de ${d.host} expire le ${d.date}. À partir de ce moment, les navigateurs indiqueront aux clients que le boutique n'est « pas sécurisé », et beaucoup s'en iront. Renouvelez-le dès maintenant. Shopify renouvelle normalement les certificats pour vous : ouvrez Paramètres > Domaines dans votre interface Shopify pour vérifier l'état de ce domaine, et contactez l'assistance Shopify s'il ne se renouvelle pas.` })
+  },
+  ssl_expired: {
+    en: (biz, remind, d) => ({ title: `${remind ? 'Still unresolved: ' : ''}Your store's security certificate has expired: ${biz}`, message: `The security certificate (HTTPS) of ${d.host} expired on ${d.date}. Visitors now see a "Not secure" warning and many of them leave, and search engines can rank the store lower. Renew it as soon as possible. Shopify normally renews certificates for you: open Settings > Domains in your Shopify admin to check the status of this domain, and contact Shopify support if it does not renew.` }),
+    fr: (biz, remind, d) => ({ title: `${remind ? 'Toujours non résolu : ' : ''}Le certificat de sécurité de votre boutique a expiré : ${biz}`, message: `Le certificat de sécurité (HTTPS) de ${d.host} a expiré le ${d.date}. Les clients voient maintenant un avertissement « pas sécurisé » et beaucoup s'en vont, et les moteurs de recherche peuvent classer le boutique plus bas. Renouvelez-le dès que possible. Shopify renouvelle normalement les certificats pour vous : ouvrez Paramètres > Domaines dans votre interface Shopify pour vérifier l'état de ce domaine, et contactez l'assistance Shopify s'il ne se renouvelle pas.` })
+  }
+};
+const shopifySslText = (kind, lang, biz, remind, d) => shopifySslMessages[kind][lang === 'fr' ? 'fr' : 'en'](biz, remind, { ...d, date: new Date(d.validTo).toLocaleDateString(lang === 'fr' ? 'fr-FR' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) });
+// Which alert, if any, a certificate that ends on validTo calls for today. null when the date cannot be read.
+function shopifySslWanted(validTo, now = Date.now()) {
+  const t = Date.parse(String(validTo || '')); if (!Number.isFinite(t)) return null;
+  if (t <= now) return { kind: 'ssl_expired', days: 0, validTo: new Date(t).toISOString() };
+  const days = Math.ceil((t - now) / 864e5), kind = days <= SHOPIFY_SSL.soonDays ? 'ssl_expiring_soon' : days <= SHOPIFY_SSL.warnDays ? 'ssl_expiring' : null;
+  return { kind, days, validTo: new Date(t).toISOString() };
+}
+// One connection to host:port, asking for the certificate whether or not it is trusted. Resolves { validTo } or null (could not be read). connect is a parameter so it can be tested.
+function shopifyCertFetch(host, port, timeoutMs, connect) {
+  return new Promise(resolve => {
+    let done = false, sock = null; const finish = v => { if (done) return; done = true; clearTimeout(timer); try { if (sock) sock.destroy(); } catch (e) {} resolve(v); }, timer = setTimeout(() => finish(null), timeoutMs);
+    try {
+      const isIp = /^[\d.]+$|:/.test(String(host)); sock = connect({ host, port, servername: isIp ? undefined : host, rejectUnauthorized: false }, () => { try { const c = sock.getPeerCertificate(); finish(c && c.valid_to ? { validTo: c.valid_to } : null); } catch (e) { finish(null); } });
+      sock.on('error', () => finish(null));
+    } catch (e) { finish(null); }
+  });
+}
+// The certificate of a site's address. Only https addresses of public hosts; anything else (or any failure) is "cannot be read".
+async function shopifyReadCertificate(siteUrl) {
+  let u; try { u = new URL(String(siteUrl)); } catch (e) { return null; }
+  if (u.protocol !== 'https:' || !u.hostname) return null;
+  try { await assertPublicHost(u.hostname); } catch (e) { return null; }
+  return shopifyCertFetch(u.hostname, Number(u.port) || 443, SHOPIFY_SSL.timeoutMs, require('tls').connect);
+}
+// One site. Returns how many alerts were raised.
+async function shopifySslCheck(ownerId, business, conn, lang) {
+  let siteUrl = null; try { siteUrl = await shopifyStoreUrlFor(conn); } catch (e) { return 0; }
+  if (!siteUrl) return 0;
+  let cert = null; try { cert = await shopifyReadCertificate(siteUrl); } catch (e) { return 0; }   // never let a certificate problem stop the site's other checks
+  if (!cert) return 0;   // cannot be read: nothing changes
+  const want = shopifySslWanted(cert.validTo); if (!want) return 0;
+  const active = new Set((await pool.query(`SELECT kind FROM shopify_health_state WHERE business_id = $1 AND kind = ANY($2::text[]) AND active`, [business.id, SHOPIFY_SSL_KINDS])).rows.map(r => r.kind));
+  if (!want.kind && !active.size) return 0;   // a healthy certificate and nothing to clear: one read, nothing more
+  const host = new URL(String(siteUrl)).hostname; let raised = 0;
+  for (const kind of SHOPIFY_SSL_KINDS) {
+    const should = kind === want.kind; if (!should && !active.has(kind)) continue;
+    const result = await shopifyHealthStep(business.id, kind, should, { daysLeft: want.days, validTo: want.validTo, host });
+    if (!result.raise) continue;
+    const text = shopifySslText(kind, lang, business.name || 'your store', result.reason === 'reminder', { days: want.days, host, validTo: want.validTo });
+    await createAlert(ownerId, business.id, 'shopify_' + kind, kind === 'ssl_expiring' ? 'warning' : 'critical', text.title, text.message, { businessId: business.id, platform: 'shopify', kind, reason: result.reason, connectionId: conn.id, daysLeft: want.days, validTo: want.validTo, host }); raised++;
+  }
+  return raised;
 }
 // shopify-own:end
 
