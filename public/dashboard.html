@@ -2391,6 +2391,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 <button class="btn-secondary" onclick="generateHeadingProposals()" id="websiteHeadingsBtn" data-i18n="wordpress.content.headings_button">Fix Headings</button>
 <button class="btn-secondary" onclick="generateAltMediaProposals()" id="websiteAltMediaBtn" data-i18n="wordpress.alt.media_button">Describe Library Images</button>
 <button class="btn-secondary" onclick="generateAltContentProposals()" id="websiteAltContentBtn" data-i18n="wordpress.alt.content_button">Describe Page Images</button>
+<button class="btn-secondary" onclick="generateInlinkProposals()" id="websiteInlinkBtn" data-i18n="wordpress.inlink.button">Add Internal Links</button>
             <button class="btn-primary" onclick="generateSeoProposals()" id="websiteSeoProposalsBtn" data-i18n="web.find_seo_improvements">Find SEO Improvements</button>
           </div>
         </div>
@@ -2594,6 +2595,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 <button class="btn-secondary" onclick="generateShopifyThinContentProposals()" id="shopifyThinContentBtn" data-i18n="shopify.content.thin_button">Expand Thin Pages</button>
 <button class="btn-secondary" onclick="generateShopifyHeadingProposals()" id="shopifyHeadingsBtn" data-i18n="shopify.content.headings_button">Fix Headings</button>
 <button class="btn-secondary" onclick="generateShopifyAltContentProposals()" id="shopifyAltContentBtn" data-i18n="shopify.alt.content_button">Describe Page Images</button>
+<button class="btn-secondary" onclick="generateShopifyInlinkProposals()" id="shopifyInlinkBtn" data-i18n="shopify.inlink.button">Add Internal Links</button>
                 <button class="btn-primary" onclick="runShopifyAudit()" id="shopifyRunAuditBtn" data-i18n="web.run_audit_button">Run Audit & Optimize</button>
               </div>
             </div>
@@ -9147,7 +9149,7 @@ function applyShopifyPlanLocks() {
   if (typeof planAccess === 'undefined' || !planAccess || !planAccess.website) return;
   applyShopifyFeatureLocks();
   const hasFind = webHas('find_improve_seo');
-  ['shopifyTagProposalsBtn', 'shopifyDuplicateTitleBtn', 'shopifyThinContentBtn', 'shopifyHeadingsBtn'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('plan-locked', !hasFind); });
+  ['shopifyTagProposalsBtn', 'shopifyDuplicateTitleBtn', 'shopifyThinContentBtn', 'shopifyHeadingsBtn', 'shopifyAltContentBtn', 'shopifyInlinkBtn'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('plan-locked', !hasFind); });
   const card = document.getElementById('shopifyActivityLogSection'); if (card) card.classList.toggle('plan-locked', !webHas('activity_log'));
 }
 const shopifyLanguage = () => (window.currentLang === 'fr' ? 'fr' : 'en');
@@ -9810,8 +9812,11 @@ function generateShopifyHeadingProposals() {
 function generateShopifyAltContentProposals() {
   return runShopifyProposals('shopifyAltContentBtn', 'shopify.alt.content_button', 'shopify.alt.working', 'alt-content-proposals');
 }
+function generateShopifyInlinkProposals() {
+  return runShopifyProposals('shopifyInlinkBtn', 'shopify.inlink.button', 'shopify.inlink.working', 'internal-link-proposals');
+}
 // The three kinds of content proposal and the words that name them. Approving applies a change at once, so the card shows the WHOLE change: the new text, or every heading that moves.
-const SHOPIFY_CONTENT_TYPE_LABELS = { expand_thin_content: 'shopify.content.type_expand', fix_heading_levels: 'shopify.content.type_levels', add_subheadings: 'shopify.content.type_subheadings', fix_content_image_alt: 'shopify.alt.type_content' };
+const SHOPIFY_CONTENT_TYPE_LABELS = { expand_thin_content: 'shopify.content.type_expand', fix_heading_levels: 'shopify.content.type_levels', add_subheadings: 'shopify.content.type_subheadings', fix_content_image_alt: 'shopify.alt.type_content', add_internal_links: 'shopify.inlink.type' };
 // Image descriptions (alt text) in pages and posts: each picture is shown beside the description that would be added. Every address is checked to be a web address and every piece of text is escaped.
 const shopifyAltUrl = u => { try { const p = new URL(String(u)); return /^https?:$/.test(p.protocol) ? p.toString() : ''; } catch (e) { return ''; } };
 function shopifyAltChangeHtml(action) {
@@ -9820,8 +9825,17 @@ function shopifyAltChangeHtml(action) {
   const rows = images.map((im, i) => { const u = shopifyAltUrl(im && im.src); return `<div style="display:flex;gap:10px;align-items:flex-start;margin:6px 0">${u ? `<img src="${escapeHtml(u)}" alt="" loading="lazy" referrerpolicy="no-referrer" style="max-width:90px;max-height:90px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);object-fit:cover">` : ''}<div style="font-size:12px"><div style="color:var(--muted)">${escapeHtml(tf('shopify.alt.image_n', { n: i + 1 }))} · ${escapeHtml(t('shopify.alt.current_none'))}</div><div style="color:var(--text2);margin-top:2px"><b>${escapeHtml(t('shopify.alt.proposed_label'))}:</b> ${escapeHtml(im && typeof im.altText === 'string' ? im.altText : '')}</div></div></div>`; }).join('');
   return label + rows + `<div style="font-size:11px;color:var(--muted);margin:6px 0 0;font-style:italic">${escapeHtml(t('shopify.alt.note'))}</div>`;
 }
+// Internal links: each link shows where its words stand and which page they point to. Every address shown is checked to be a web address and every piece of text is escaped.
+const shopifyInlinkUrl = u => { try { const p = new URL(String(u)); return /^https?:$/.test(p.protocol) ? p.toString() : ''; } catch (e) { return ''; } };
+function shopifyInlinkLinksHtml(action) {
+  const c = action.proposed_change || {}, prev = action.previous_state || {}, note = text => `<div style="font-size:11px;color:var(--muted);margin:4px 0;font-style:italic">${escapeHtml(text)}</div>`;
+  const label = `<div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:3px">${escapeHtml(t('shopify.inlink.type'))}</div>`;
+  return label + note(tf('shopify.inlink.current', { n: Number(prev.internalLinks) || 0 })) + (Array.isArray(c.links) ? c.links : []).map((l, i) => { l = l || {}; const u = shopifyInlinkUrl(l.href);
+    return `<div style="font-size:12px;margin:6px 0"><div style="color:var(--muted)">${escapeHtml(tf('shopify.inlink.link_n', { n: i + 1 }))}</div><div style="color:var(--text2)">…${escapeHtml(l.before)}<b style="color:var(--text);text-decoration:underline">${escapeHtml(l.phrase)}</b>${escapeHtml(l.after)}…</div><div style="color:var(--muted)">→ ${escapeHtml(l.targetTitle)}${u ? ` <span style="word-break:break-all">(${escapeHtml(u)})</span>` : ''}</div></div>`; }).join('') + note(t('shopify.inlink.note')) + note(t('shopify.inlink.apply_note'));
+}
 function shopifyContentChangeHtml(action) {
   if (action.action_type === 'fix_content_image_alt') return shopifyAltChangeHtml(action);
+  if (action.action_type === 'add_internal_links') return shopifyInlinkLinksHtml(action);
   const c = action.proposed_change || {}, prev = action.previous_state || {};
   const note = (text, color = 'var(--muted)') => `<div style="font-size:11px;color:${color};margin:4px 0;font-style:italic">${escapeHtml(text)}</div>`;
   const label = `<div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:3px">${escapeHtml(t(SHOPIFY_CONTENT_TYPE_LABELS[action.action_type] || 'shopify.change.other'))}</div>`;
@@ -11845,7 +11859,7 @@ function wordpressLogText(entry) {
     case 'sitemap_checked': return ['none', 'complete', 'incomplete'].includes(d.verdict) ? t('wordpress.log.sitemap_checked_' + d.verdict) : fallback;
     case 'report_generated': return d.kind === 'weekly' || d.kind === 'monthly' ? tf('wordpress.log.report_generated', { kind: t('wordpress.log.report_' + d.kind) }) : fallback;
     case 'indexing_checked': return d.pagesChecked === undefined ? fallback : tf('wordpress.log.indexing_checked', { checked: d.pagesChecked, total: d.pagesTotal, issues: d.issuesFound || 0 });
-    case 'proposals_generated': return d.kind === 'alt_media' || d.kind === 'alt_content' ? tf('wordpress.log.' + d.kind, { n: d.count || 0 }) : d.kind === 'thin_content' || d.kind === 'headings' ? tf('wordpress.log.content_' + (d.kind === 'headings' ? 'headings' : 'thin'), { n: d.count || 0 }) : fallback;
+    case 'proposals_generated': return d.kind === 'alt_media' || d.kind === 'alt_content' || d.kind === 'inlinks' ? tf('wordpress.log.' + d.kind, { n: d.count || 0 }) : d.kind === 'thin_content' || d.kind === 'headings' ? tf('wordpress.log.content_' + (d.kind === 'headings' ? 'headings' : 'thin'), { n: d.count || 0 }) : fallback;
     default: return fallback;
   }
 }
@@ -12330,6 +12344,24 @@ async function wordpressRunAltCheck(kind) {
 }
 function generateAltMediaProposals() { return wordpressRunAltCheck('media'); }
 function generateAltContentProposals() { return wordpressRunAltCheck('content'); }
+// Internal links: each link shows where its words stand and which page they point to. Every address shown is checked to be a web address and every piece of text is escaped.
+const wordpressInlinkUrl = u => { try { const p = new URL(String(u)); return /^https?:$/.test(p.protocol) ? p.toString() : ''; } catch (e) { return ''; } };
+const wordpressInlinkIsAction = c => !!c && Array.isArray(c.links);
+function wordpressInlinkCurrentHtml(prev) { return `<div style="font-size:12px;color:var(--text2)">${escapeHtml(tf('wordpress.inlink.current', { n: Number((prev || {}).internalLinks) || 0 }))}</div>`; }
+function wordpressInlinkProposedHtml(change) {
+  const links = (change.links || []).map((l, i) => { l = l || {}; const u = wordpressInlinkUrl(l.href);
+    return `<div style="font-size:12px;margin:6px 0"><div style="color:var(--muted)">${escapeHtml(tf('wordpress.inlink.link_n', { n: i + 1 }))}</div><div style="color:var(--text2)">…${escapeHtml(l.before)}<b style="color:var(--text);text-decoration:underline">${escapeHtml(l.phrase)}</b>${escapeHtml(l.after)}…</div><div style="color:var(--muted)">→ ${escapeHtml(l.targetTitle)}${u ? ` <span style="word-break:break-all">(${escapeHtml(u)})</span>` : ''}</div></div>`; }).join('');
+  return links + `<div style="font-size:11px;color:var(--muted);margin-top:6px;font-style:italic">${escapeHtml(t('wordpress.inlink.note'))}</div>`;
+}
+async function generateInlinkProposals() {
+  const btn = document.getElementById('websiteInlinkBtn'), idle = t('wordpress.inlink.button'); btn.disabled = true; btn.textContent = t('wordpress.inlink.working');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/internal-link-proposals`, { method: 'POST' }), data = await res.json().catch(() => ({}));
+    if (res.ok) { const n = (data.proposals || []).length; showToast(n ? tf('wordpress.inlink.found', { n }) : (wordpressServerText({ code: data.code || 'inlink_none' }) || t('web.no_proposals_found_toast')), 'success'); loadWebsiteActions(); }
+    else showToast(wordpressServerText(data) || t('board.connection_error'), 'error');
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+  finally { btn.disabled = false; btn.textContent = idle; }
+}
 // wordpress-own:end
 
 async function generateTaxonomyProposals() {
@@ -12389,7 +12421,7 @@ async function undoWebsiteAction(actionId, api = 'website') {
   finally { if (btn) btn.disabled = false; }
 }
 
-const WEBSITE_ACTION_TYPE_LABELS = { fix_media_alt: 'wordpress.alt.type_media', fix_content_image_alt: 'wordpress.alt.type_content', update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description', assign_taxonomy: 'web.action_type_taxonomy', generate_featured_image: 'web.action_type_featured_image', remove_broken_link: 'web.action_type_broken_link', update_link_url: 'web.action_type_link_update', expand_thin_content: 'wordpress.content.type_expand', fix_heading_levels: 'wordpress.content.type_levels', add_subheadings: 'wordpress.content.type_subheadings' };
+const WEBSITE_ACTION_TYPE_LABELS = { fix_media_alt: 'wordpress.alt.type_media', fix_content_image_alt: 'wordpress.alt.type_content', add_internal_links: 'wordpress.inlink.type', update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description', assign_taxonomy: 'web.action_type_taxonomy', generate_featured_image: 'web.action_type_featured_image', remove_broken_link: 'web.action_type_broken_link', update_link_url: 'web.action_type_link_update', expand_thin_content: 'wordpress.content.type_expand', fix_heading_levels: 'wordpress.content.type_levels', add_subheadings: 'wordpress.content.type_subheadings' };
 
 // Renders each proposal with its real previous value alongside the AI's
 // suggestion (spec's explicit CURRENT/PROPOSED preview format), an
@@ -12422,6 +12454,7 @@ function renderWebsiteActionsContent(actions) {
 
   const renderProposedValue = (change) => {
     if (wordpressAltIsAction(change)) return wordpressAltProposedHtml(change);
+    if (wordpressInlinkIsAction(change)) return wordpressInlinkProposedHtml(change);
     if (change.sections || change.headingLevels || change.subheadings) return wordpressContentProposedHtml(change);
     if (change.title) return `<div><span style="color:var(--muted)">${t('web.field_title')}:</span> ${escapeHtml(change.title)}</div>`;
     if (change.metaDescription) return `<div><span style="color:var(--muted)">${t('web.field_meta_description')}:</span> ${escapeHtml(change.metaDescription)}</div>`;
@@ -12450,6 +12483,7 @@ function renderWebsiteActionsContent(actions) {
   };
   const renderPreviousValue = (prev, change) => {
     if (wordpressAltIsAction(change)) return wordpressAltCurrentHtml(prev, change);
+    if (wordpressInlinkIsAction(change)) return wordpressInlinkCurrentHtml(prev);
     if (change.sections || change.headingLevels || change.subheadings) return wordpressContentCurrentText(prev);
     if (change.title) return escapeHtml(prev.title || t('web.value_none'));
     if (change.metaDescription) return escapeHtml(prev.metaDescription || t('web.value_none'));
