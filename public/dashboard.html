@@ -2389,6 +2389,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
             <button class="btn-secondary" onclick="generateFeaturedImageProposals()" id="websiteFeaturedImageBtn" data-i18n="web.generate_featured_images">Generate Featured Images</button>
 <button class="btn-secondary" onclick="generateThinContentProposals()" id="websiteThinContentBtn" data-i18n="wordpress.content.thin_button">Expand Thin Pages</button>
 <button class="btn-secondary" onclick="generateHeadingProposals()" id="websiteHeadingsBtn" data-i18n="wordpress.content.headings_button">Fix Headings</button>
+<button class="btn-secondary" onclick="generateAltMediaProposals()" id="websiteAltMediaBtn" data-i18n="wordpress.alt.media_button">Describe Library Images</button>
+<button class="btn-secondary" onclick="generateAltContentProposals()" id="websiteAltContentBtn" data-i18n="wordpress.alt.content_button">Describe Page Images</button>
             <button class="btn-primary" onclick="generateSeoProposals()" id="websiteSeoProposalsBtn" data-i18n="web.find_seo_improvements">Find SEO Improvements</button>
           </div>
         </div>
@@ -11830,7 +11832,7 @@ function wordpressLogText(entry) {
     case 'sitemap_checked': return ['none', 'complete', 'incomplete'].includes(d.verdict) ? t('wordpress.log.sitemap_checked_' + d.verdict) : fallback;
     case 'report_generated': return d.kind === 'weekly' || d.kind === 'monthly' ? tf('wordpress.log.report_generated', { kind: t('wordpress.log.report_' + d.kind) }) : fallback;
     case 'indexing_checked': return d.pagesChecked === undefined ? fallback : tf('wordpress.log.indexing_checked', { checked: d.pagesChecked, total: d.pagesTotal, issues: d.issuesFound || 0 });
-    case 'proposals_generated': return d.kind === 'thin_content' || d.kind === 'headings' ? tf('wordpress.log.content_' + (d.kind === 'headings' ? 'headings' : 'thin'), { n: d.count || 0 }) : fallback;
+    case 'proposals_generated': return d.kind === 'alt_media' || d.kind === 'alt_content' ? tf('wordpress.log.' + d.kind, { n: d.count || 0 }) : d.kind === 'thin_content' || d.kind === 'headings' ? tf('wordpress.log.content_' + (d.kind === 'headings' ? 'headings' : 'thin'), { n: d.count || 0 }) : fallback;
     default: return fallback;
   }
 }
@@ -12247,6 +12249,8 @@ function wordpressContentEditHtml(a) {
   const c = a.proposed_change || {}; let field, value, rows;
   if (c.sections) { field = 'sectionsText'; value = wordpressSectionsToText(c.sections); rows = 12; }
   else if (c.subheadings) { field = 'headingsText'; value = c.subheadings.map(s => s.text).join('\n'); rows = Math.max(2, c.subheadings.length + 1); }
+  else if (a.action_type === 'fix_media_alt') { field = 'altText'; value = c.altText || ''; rows = 2; }
+  else if (a.action_type === 'fix_content_image_alt') { field = 'altsText'; value = (c.images || []).map(i => i.altText).join('\n'); rows = Math.max(2, (c.images || []).length + 1); }
   else return '';
   return `<textarea class="form-input" id="editField-${escapeHtml(a.id)}" data-field="${field}" data-original="${escapeHtml(value)}" rows="${rows}" style="font-size:12.5px;margin-bottom:8px;width:100%;resize:vertical">${escapeHtml(value)}</textarea>`;
 }
@@ -12272,6 +12276,47 @@ function generateThinContentProposals() {
 function generateHeadingProposals() {
   return wordpressRunContentCheck('headings');
 }
+// wordpress-own:end
+
+// wordpress-own:start
+// Image descriptions (alt text): two buttons, the pictures shown beside what is proposed, and the boxes a person edits. A person approves each one; nothing is applied by this code.
+// Every address shown is checked to be a web address and every piece of text is escaped. Nothing here is shared with Shopify.
+const wordpressAltUrl = u => { try { const p = new URL(String(u)); return /^https?:$/.test(p.protocol) ? p.toString() : ''; } catch (e) { return ''; } };
+function wordpressAltThumb(url, size) {
+  const u = wordpressAltUrl(url); if (!u) return '';
+  return `<img src="${escapeHtml(u)}" alt="" loading="lazy" referrerpolicy="no-referrer" style="max-width:${Number(size) || 120}px;max-height:${Number(size) || 120}px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);object-fit:cover">`;
+}
+// An image-description proposal: a list of pictures, or one library picture's text. (A featured-image proposal also has "altText", but it has an imagePrompt.)
+const wordpressAltIsAction = c => !!c && (Array.isArray(c.images) || (c.altText !== undefined && c.imagePrompt === undefined));
+// "Current": the picture(s) and the fact that there is no description yet.
+function wordpressAltCurrentHtml(prev, change) {
+  const none = escapeHtml(t('wordpress.alt.current_none'));
+  if (Array.isArray(change.images)) return change.images.map((im, i) => `<div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:8px">${wordpressAltThumb(im.src, 90)}<div style="font-size:12px"><div style="color:var(--muted)">${escapeHtml(tf('wordpress.alt.image_n', { n: i + 1 }))}</div><div>${none}</div></div></div>`).join('');
+  prev = prev || {};
+  return `<div style="display:flex;gap:10px;align-items:flex-start">${wordpressAltThumb(prev.previewUrl || prev.imageUrl, 120)}<div style="font-size:12px">${none}</div></div>`;
+}
+// "Proposed": the text itself is in the box below (so it can be edited); for several pictures a line explains how the lines map to the pictures.
+function wordpressAltProposedHtml(change) {
+  return Array.isArray(change.images) ? `<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">${escapeHtml(t('wordpress.alt.edit_hint'))}</div>` : '';
+}
+async function wordpressRunAltCheck(kind) {
+  const media = kind === 'media', btn = document.getElementById(media ? 'websiteAltMediaBtn' : 'websiteAltContentBtn'), idle = t(media ? 'wordpress.alt.media_button' : 'wordpress.alt.content_button');
+  btn.disabled = true; btn.textContent = t('wordpress.alt.working');
+  try {
+    const res = await fetch(`/api/business/${currentWebsiteBusinessId}/website/${media ? 'alt-media-proposals' : 'alt-content-proposals'}`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      const n = (data.proposals || []).length, sc = data.scan || {}, extra = [];
+      if (n && sc.unsure) extra.push(tf('wordpress.alt.unsure_note', { n: sc.unsure }));
+      if (n && sc.skippedBuilder) extra.push(tf('wordpress.content.builder_skipped', { n: sc.skippedBuilder }));
+      showToast(n ? tf(media ? 'wordpress.alt.media_found' : 'wordpress.alt.content_found', { n }) + (extra.length ? ' ' + extra.join(' ') : '') : (wordpressServerText({ code: data.code || (media ? 'alt_media_none' : 'alt_content_none') }) || t('web.no_proposals_found_toast')), 'success');
+      loadWebsiteActions();
+    } else showToast(wordpressServerText(data) || t('board.connection_error'), 'error');
+  } catch (e) { showToast(t('board.connection_error'), 'error'); }
+  finally { btn.disabled = false; btn.textContent = idle; }
+}
+function generateAltMediaProposals() { return wordpressRunAltCheck('media'); }
+function generateAltContentProposals() { return wordpressRunAltCheck('content'); }
 // wordpress-own:end
 
 async function generateTaxonomyProposals() {
@@ -12323,7 +12368,7 @@ async function undoWebsiteAction(actionId, api = 'website') {
   try {
     const res = await fetch(`/api/business/${currentWebsiteBusinessId}/${api === 'shopify' ? 'shopify' : 'website'}/actions/${encodeURIComponent(actionId)}/undo`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok && api !== 'shopify' && /^content_/.test(data.code || '')) { showToast(wordpressServerText(data), 'error'); return; }
+    if (!res.ok && api !== 'shopify' && /^(content|alt)_/.test(data.code || '')) { showToast(wordpressServerText(data), 'error'); return; }
     if (!res.ok && api === 'shopify' && data.code && shopifyServerText(data)) { showToast(shopifyServerText(data), 'error'); return; }
     if (!res.ok) { showToast(data.error || t('board.connection_error'), 'error'); return; }
     showToast(t('web.undo_done'), 'success'); if (api === 'shopify') loadShopifyActions(); else loadWebsiteActions();
@@ -12331,7 +12376,7 @@ async function undoWebsiteAction(actionId, api = 'website') {
   finally { if (btn) btn.disabled = false; }
 }
 
-const WEBSITE_ACTION_TYPE_LABELS = { update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description', assign_taxonomy: 'web.action_type_taxonomy', generate_featured_image: 'web.action_type_featured_image', remove_broken_link: 'web.action_type_broken_link', update_link_url: 'web.action_type_link_update', expand_thin_content: 'wordpress.content.type_expand', fix_heading_levels: 'wordpress.content.type_levels', add_subheadings: 'wordpress.content.type_subheadings' };
+const WEBSITE_ACTION_TYPE_LABELS = { fix_media_alt: 'wordpress.alt.type_media', fix_content_image_alt: 'wordpress.alt.type_content', update_meta_title: 'web.action_type_title', update_meta_description: 'web.action_type_description', assign_taxonomy: 'web.action_type_taxonomy', generate_featured_image: 'web.action_type_featured_image', remove_broken_link: 'web.action_type_broken_link', update_link_url: 'web.action_type_link_update', expand_thin_content: 'wordpress.content.type_expand', fix_heading_levels: 'wordpress.content.type_levels', add_subheadings: 'wordpress.content.type_subheadings' };
 
 // Renders each proposal with its real previous value alongside the AI's
 // suggestion (spec's explicit CURRENT/PROPOSED preview format), an
@@ -12346,6 +12391,7 @@ const WEBSITE_ACTION_TYPE_LABELS = { update_meta_title: 'web.action_type_title',
 // or identical title. A genuine, top-level function (not scoped to
 // one caller) since more than one place now needs this same badge.
 function targetTypeBadge(type) {
+  if (type === 'media') return `<span style="font-size:9px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 6px;border-radius:4px;white-space:nowrap;text-transform:uppercase;margin-right:6px">${t('wordpress.alt.badge_media')}</span>`;
   const isPage = type === 'page';
   return `<span style="font-size:9px;font-weight:700;color:${isPage ? 'var(--purple-light)' : 'var(--green)'};background:${isPage ? 'rgba(139,92,246,.15)' : 'rgba(16,163,127,.15)'};padding:2px 6px;border-radius:4px;white-space:nowrap;text-transform:uppercase;margin-right:6px">${isPage ? t('web.badge_page') : t('web.badge_post')}</span>`;
 }
@@ -12362,6 +12408,7 @@ function renderWebsiteActionsContent(actions) {
   }
 
   const renderProposedValue = (change) => {
+    if (wordpressAltIsAction(change)) return wordpressAltProposedHtml(change);
     if (change.sections || change.headingLevels || change.subheadings) return wordpressContentProposedHtml(change);
     if (change.title) return `<div><span style="color:var(--muted)">${t('web.field_title')}:</span> ${escapeHtml(change.title)}</div>`;
     if (change.metaDescription) return `<div><span style="color:var(--muted)">${t('web.field_meta_description')}:</span> ${escapeHtml(change.metaDescription)}</div>`;
@@ -12389,6 +12436,7 @@ function renderWebsiteActionsContent(actions) {
     return '';
   };
   const renderPreviousValue = (prev, change) => {
+    if (wordpressAltIsAction(change)) return wordpressAltCurrentHtml(prev, change);
     if (change.sections || change.headingLevels || change.subheadings) return wordpressContentCurrentText(prev);
     if (change.title) return escapeHtml(prev.title || t('web.value_none'));
     if (change.metaDescription) return escapeHtml(prev.metaDescription || t('web.value_none'));
@@ -12404,6 +12452,7 @@ function renderWebsiteActionsContent(actions) {
         <span style="font-size:10px;font-weight:700;color:var(--gold);background:rgba(230,170,0,.15);padding:2px 8px;border-radius:4px;white-space:nowrap">${t('web.status_pending_review')}</span>
       </div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px">${t(WEBSITE_ACTION_TYPE_LABELS[a.action_type] || 'web.action_type_title')}</div>
+      ${(a.action_type === 'fix_media_alt' || a.action_type === 'fix_content_image_alt') ? `<div style="font-size:11px;color:var(--muted);margin-bottom:8px;font-style:italic">${escapeHtml(t('wordpress.alt.note'))}</div>` : ''}
       <div style="font-size:11.5px;color:var(--muted);margin-bottom:2px">${t('web.current_value')}</div>
       <div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">${renderPreviousValue(a.previous_state, a.proposed_change)}</div>
       <div style="font-size:11.5px;color:var(--muted);margin-bottom:2px" data-i18n="web.proposed_value">Proposed</div>
@@ -12485,12 +12534,12 @@ function renderWebsiteActionsContent(actions) {
 
 async function approveWebsiteAction(actionId, field) {
   const inputEl = document.getElementById(`editField-${actionId}`);
-  const currentValue = inputEl ? inputEl.value.trim() : null;
+  const currentValue = inputEl ? (inputEl.dataset.field === 'altsText' ? inputEl.value.replace(/\r/g, '') : inputEl.value.trim()) : null;   // one description per line: a blank first line means "skip that picture", so these are not trimmed
   const originalValue = inputEl ? inputEl.dataset.original : null;
   // Only send editedChange if the person genuinely changed the text from
   // what was actually proposed — otherwise the original AI proposal is
   // approved as-is, and the audit trail correctly reflects that.
-  const wasEdited = currentValue && currentValue !== originalValue;
+  const wasEdited = currentValue && currentValue.trim() && currentValue !== originalValue;
   if (inputEl && inputEl.dataset.field) field = inputEl.dataset.field;   // the new kinds of proposal say which field their box edits
   const editedChange = wasEdited ? { [field]: currentValue } : null;
 
