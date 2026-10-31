@@ -2593,6 +2593,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
                 <button class="btn-secondary" onclick="generateShopifyDuplicateTitleProposals()" id="shopifyDuplicateTitleBtn" data-i18n="shopify.dups.fix">Fix Duplicate Titles</button>
 <button class="btn-secondary" onclick="generateShopifyThinContentProposals()" id="shopifyThinContentBtn" data-i18n="shopify.content.thin_button">Expand Thin Pages</button>
 <button class="btn-secondary" onclick="generateShopifyHeadingProposals()" id="shopifyHeadingsBtn" data-i18n="shopify.content.headings_button">Fix Headings</button>
+<button class="btn-secondary" onclick="generateShopifyAltContentProposals()" id="shopifyAltContentBtn" data-i18n="shopify.alt.content_button">Describe Page Images</button>
                 <button class="btn-primary" onclick="runShopifyAudit()" id="shopifyRunAuditBtn" data-i18n="web.run_audit_button">Run Audit & Optimize</button>
               </div>
             </div>
@@ -9806,9 +9807,21 @@ function generateShopifyThinContentProposals() {
 function generateShopifyHeadingProposals() {
   return runShopifyProposals('shopifyHeadingsBtn', 'shopify.content.headings_button', 'shopify.content.working', 'heading-proposals');
 }
+function generateShopifyAltContentProposals() {
+  return runShopifyProposals('shopifyAltContentBtn', 'shopify.alt.content_button', 'shopify.alt.working', 'alt-content-proposals');
+}
 // The three kinds of content proposal and the words that name them. Approving applies a change at once, so the card shows the WHOLE change: the new text, or every heading that moves.
-const SHOPIFY_CONTENT_TYPE_LABELS = { expand_thin_content: 'shopify.content.type_expand', fix_heading_levels: 'shopify.content.type_levels', add_subheadings: 'shopify.content.type_subheadings' };
+const SHOPIFY_CONTENT_TYPE_LABELS = { expand_thin_content: 'shopify.content.type_expand', fix_heading_levels: 'shopify.content.type_levels', add_subheadings: 'shopify.content.type_subheadings', fix_content_image_alt: 'shopify.alt.type_content' };
+// Image descriptions (alt text) in pages and posts: each picture is shown beside the description that would be added. Every address is checked to be a web address and every piece of text is escaped.
+const shopifyAltUrl = u => { try { const p = new URL(String(u)); return /^https?:$/.test(p.protocol) ? p.toString() : ''; } catch (e) { return ''; } };
+function shopifyAltChangeHtml(action) {
+  const c = action.proposed_change || {}, images = Array.isArray(c.images) ? c.images : [];
+  const label = `<div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:3px">${escapeHtml(t('shopify.alt.type_content'))}</div>`;
+  const rows = images.map((im, i) => { const u = shopifyAltUrl(im && im.src); return `<div style="display:flex;gap:10px;align-items:flex-start;margin:6px 0">${u ? `<img src="${escapeHtml(u)}" alt="" loading="lazy" referrerpolicy="no-referrer" style="max-width:90px;max-height:90px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);object-fit:cover">` : ''}<div style="font-size:12px"><div style="color:var(--muted)">${escapeHtml(tf('shopify.alt.image_n', { n: i + 1 }))} · ${escapeHtml(t('shopify.alt.current_none'))}</div><div style="color:var(--text2);margin-top:2px"><b>${escapeHtml(t('shopify.alt.proposed_label'))}:</b> ${escapeHtml(im && typeof im.altText === 'string' ? im.altText : '')}</div></div></div>`; }).join('');
+  return label + rows + `<div style="font-size:11px;color:var(--muted);margin:6px 0 0;font-style:italic">${escapeHtml(t('shopify.alt.note'))}</div>`;
+}
 function shopifyContentChangeHtml(action) {
+  if (action.action_type === 'fix_content_image_alt') return shopifyAltChangeHtml(action);
   const c = action.proposed_change || {}, prev = action.previous_state || {};
   const note = (text, color = 'var(--muted)') => `<div style="font-size:11px;color:${color};margin:4px 0;font-style:italic">${escapeHtml(text)}</div>`;
   const label = `<div style="font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:3px">${escapeHtml(t(SHOPIFY_CONTENT_TYPE_LABELS[action.action_type] || 'shopify.change.other'))}</div>`;
