@@ -9394,6 +9394,50 @@ function wordpressInsertSubheadings(raw, subheadings, blocks) {
 // New text must be plain, short, and contain nothing that looks like a fact the page did not already state.
 const WORDPRESS_FACT_PATTERN = /https?:\/\/|www\.|\S+@\S+\.\S+|\+\d{6,}|\b\d[\d .-]{7,}\d\b/i;
 const wordpressDigitRuns = text => new Set(String(text || '').match(/\d+/g) || []);
+
+// ── Claims made in words (WordPress) ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Software already refuses AI-written text with a web address, a contact detail or a number the page does not hold. This is the same kind of check for claims
+// made in WORDS: awards, certifications, guarantees, free shipping or returns, "founded" or "family-owned" history, "trusted by", counts like "thousands of",
+// and the names of people or brands. Each is allowed only when the page text or the business description already says it; otherwise the whole proposal is
+// refused (never edited). English and French are checked; for other languages only the claim words are, because names cannot be told apart from nouns there.
+const WORDPRESS_CLAIM_PHRASES = [
+  'award', 'awards', 'award winning', 'awarded', 'certified', 'certification', 'certifications', 'accredited', 'guarantee', 'guarantees', 'guaranteed', 'warranty', 'warranties',
+  'free shipping', 'free delivery', 'free returns', 'free return', 'money back', 'refund', 'refunds', 'established in', 'founded in', 'family owned', 'family run', 'since our founding', 'since our opening',
+  'trusted by', 'best selling', 'bestselling', 'best seller', 'number one', 'no 1', 'market leader', 'years of experience', 'decades of experience', 'years of expertise', 'hundreds of', 'thousands of', 'millions of', 'dozens of',
+  'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety', 'hundred', 'thousand', 'million', 'five star', '5 star', 'customers love', 'customers rave',
+  'primé', 'primée', 'primés', 'primées', 'récompensé', 'récompensée', 'récompensés', 'récompensées', 'certifié', 'certifiée', 'certifiés', 'certifiées', 'agréé', 'agréée', 'agréés', 'agréées',
+  'garantie', 'garanties', 'garanti', 'garantis', 'garantit', 'livraison gratuite', 'livraison offerte', 'retour gratuit', 'retours gratuits', 'retours offerts', 'remboursé', 'remboursée', 'remboursés', 'remboursement', 'remboursements', 'satisfait ou remboursé',
+  'depuis notre création', 'depuis notre fondation', 'depuis notre ouverture', 'fondé en', 'fondée en', 'créé en', 'créée en', 'entreprise familiale', 'nous font confiance', 'plébiscité', 'plébiscitée', 'meilleure vente', 'meilleures ventes',
+  'numéro un', 'numéro 1', 'leader du marché', 'ans d\'expérience', 'années d\'expérience', 'décennies d\'expérience', 'centaines de', 'milliers de', 'millions de', 'dizaines de',
+  'vingt', 'trente', 'quarante', 'cinquante', 'soixante', 'cent', 'cents', 'mille', 'million', 'cinq étoiles', 'clients adorent'
+];
+const WORDPRESS_CLAIM_REGEXES = WORDPRESS_CLAIM_PHRASES.map(p => new RegExp('(?<![\\p{L}\\p{N}])' + p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[ -]/g, '[\\s-]+').replace(/'/g, '[\'’]') + '(?![\\p{L}\\p{N}])', 'iu'));
+const WORDPRESS_CLAIM_NAME_OK = new Set(['wordpress', 'google', 'facebook', 'instagram', 'whatsapp', 'youtube', 'tiktok', 'linkedin', 'paypal', 'visa', 'mastercard', 'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']);
+const WORDPRESS_CLAIM_STOPWORDS = new Set(['the', 'and', 'of', 'to', 'is', 'for', 'with', 'in', 'that', 'it', 'you', 'your', 'are', 'on', 'as', 'at', 'be', 'this', 'can', 'or', 'le', 'la', 'les', 'de', 'des', 'du', 'et', 'pour', 'avec', 'est', 'un', 'une', 'dans', 'que', 'qui', 'vous', 'votre', 'sur', 'au', 'aux', 'ou', 'par', 'en']);
+const wordpress_ClaimWords = text => String(text || '').toLowerCase().match(/[\p{L}][\p{L}'’-]*/gu) || [];
+// English or French: enough everyday English or French words that a capitalised word in the middle of a sentence is a name, not just a noun.
+const wordpress_ClaimNamesApply = source => { const w = wordpress_ClaimWords(source); return w.length >= 20 && w.filter(x => WORDPRESS_CLAIM_STOPWORDS.has(x)).length / w.length >= 0.12; };
+// null when the text makes no claim the source does not make; otherwise 'claim' (a claim word) or 'name' (a person or brand name).
+function wordpressClaimProblemText(text, source, checkNames) {
+  const t = String(text || ''), src = String(source || '');
+  for (const rx of WORDPRESS_CLAIM_REGEXES) if (rx.test(t) && !rx.test(src)) return 'claim';
+  if (checkNames && wordpress_ClaimNamesApply(src)) {
+    const known = new Set(wordpress_ClaimWords(src).map(w => w.replace(/['’]s$/, ''))), rx = /(?<![\p{L}\p{N}])\p{Lu}[\p{Ll}]{2,}(?:['’]s)?(?![\p{L}\p{N}])/gu; let m;
+    while ((m = rx.exec(t))) {
+      const before = t.slice(0, m.index); if (!before.trim() || /[.!?:;…]\s*["“«(]?\s*$/.test(before) || /["“«(]\s*$/.test(before)) continue;   // the first word of a sentence is capitalised anyway
+      const w = m[0].toLowerCase().replace(/['’]s$/, ''); if (!known.has(w) && !WORDPRESS_CLAIM_NAME_OK.has(w)) return 'name';
+    }
+  }
+  return null;
+}
+// Sections written for a page: the headings and paragraphs together. (Names are only looked for in paragraphs: a heading is Title Case.)
+function wordpressClaimProblem(sections, source) {
+  for (const s of (Array.isArray(sections) ? sections : [])) {
+    if (wordpressClaimProblemText(s.heading, source, false)) return 'claim';
+    for (const p of (s.paragraphs || [])) { const r = wordpressClaimProblemText(p, source, true); if (r) return r; }
+  }
+  return null;
+}
 function wordpressSanitizeSections(input) {
   if (!Array.isArray(input)) return null; const out = []; let words = 0;
   for (const s of input.slice(0, 6)) {
@@ -9519,7 +9563,8 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   const proposals = [], seen = new Set();
   for (const p of result.proposals) {
     const it = picked[p && p.index]; if (!it || seen.has(p.index) || proposals.length >= L.thinPerRun) continue; seen.add(p.index);
-    const sections = wordpressSanitizeSections(p.sections); if (!wordpressSectionsAcceptable(sections, `${it.title} ${wordpressContentText(it.raw)} ${contextSummary}`)) continue;
+    const sections = wordpressSanitizeSections(p.sections); const allowedWords = `${it.title} ${wordpressContentText(it.raw)} ${contextSummary}`; if (!wordpressSectionsAcceptable(sections, allowedWords)) continue;
+    if (wordpressClaimProblem(sections, allowedWords)) { scan.unsupportedClaims = (scan.unsupportedClaims || 0) + 1; continue; }   // a claim, or a name, that the page and the business description do not make: refused whole
     const addedWords = wordpressContentWords(sections.map(s => s.heading + ' ' + s.paragraphs.join(' ')).join(' '));
     proposals.push(await wordpressContentInsert(connection, it, 'expand_thin_content', { contentHash: wordpressContentHash(it.raw), wordCount: it.words, headings: wordpressContentHeadings(it.raw).slice(0, 60).map(h => ({ level: h.level, text: h.text })) }, { sections, addedWords }));
   }
@@ -9529,10 +9574,10 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
 
 // Subheadings the AI chose are only kept when they sit inside a long unbroken stretch, are spaced apart, and invent no number.
 function wordpressValidateSubheadings(raw, list) {
-  const paras = wordpressContentParagraphs(raw), stretches = wordpressContentStretches(raw), known = wordpressDigitRuns(wordpressContentText(raw)), ok = [];
+  const paras = wordpressContentParagraphs(raw), stretches = wordpressContentStretches(raw), srcText = wordpressContentText(raw), known = wordpressDigitRuns(srcText), ok = [];
   for (const s of (Array.isArray(list) ? list : []).slice(0, 8)) {
     const n = s && s.beforeParagraph, text = wordpressPlainField(s && s.heading, 100).replace(/[.:;]+$/, ''), words = wordpressContentWords(text);
-    if (!Number.isInteger(n) || n < 2 || n > paras.length || words < 2 || words > 10 || WORDPRESS_FACT_PATTERN.test(text) || [...wordpressDigitRuns(text)].some(d => !known.has(d))) continue;
+    if (!Number.isInteger(n) || n < 2 || n > paras.length || words < 2 || words > 10 || WORDPRESS_FACT_PATTERN.test(text) || [...wordpressDigitRuns(text)].some(d => !known.has(d)) || wordpressClaimProblemText(text, srcText, false)) continue;
     const stretch = stretches.find(st => n > st.from && n <= st.to); if (!stretch || stretch.words < WORDPRESS_CONTENT_LIMITS.stretchWords || ok.some(o => Math.abs(o.beforeParagraph - n) < 3)) continue;
     ok.push({ beforeParagraph: n, text }); if (ok.length === 3) break;
   }
@@ -10360,6 +10405,50 @@ function shopifyInsertSubheadings(raw, subheadings) {
 // New text must be plain, a sensible size, and contain nothing that looks like a fact the page did not already state.
 const SHOPIFY_FACT_PATTERN = /https?:\/\/|www\.|\S+@\S+\.\S+|\+\d{6,}|\b\d[\d .-]{7,}\d\b/i;
 const shopifyDigitRuns = text => new Set(String(text || '').match(/\d+/g) || []);
+
+// ── Claims made in words (Shopify) ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Software already refuses AI-written text with a web address, a contact detail or a number the page does not hold. This is the same kind of check for claims
+// made in WORDS: awards, certifications, guarantees, free shipping or returns, "founded" or "family-owned" history, "trusted by", counts like "thousands of",
+// and the names of people or brands. Each is allowed only when the page text or the business description already says it; otherwise the whole proposal is
+// refused (never edited). English and French are checked; for other languages only the claim words are, because names cannot be told apart from nouns there.
+const SHOPIFY_CLAIM_PHRASES = [
+  'award', 'awards', 'award winning', 'awarded', 'certified', 'certification', 'certifications', 'accredited', 'guarantee', 'guarantees', 'guaranteed', 'warranty', 'warranties',
+  'free shipping', 'free delivery', 'free returns', 'free return', 'money back', 'refund', 'refunds', 'established in', 'founded in', 'family owned', 'family run', 'since our founding', 'since our opening',
+  'trusted by', 'best selling', 'bestselling', 'best seller', 'number one', 'no 1', 'market leader', 'years of experience', 'decades of experience', 'years of expertise', 'hundreds of', 'thousands of', 'millions of', 'dozens of',
+  'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety', 'hundred', 'thousand', 'million', 'five star', '5 star', 'customers love', 'customers rave',
+  'primé', 'primée', 'primés', 'primées', 'récompensé', 'récompensée', 'récompensés', 'récompensées', 'certifié', 'certifiée', 'certifiés', 'certifiées', 'agréé', 'agréée', 'agréés', 'agréées',
+  'garantie', 'garanties', 'garanti', 'garantis', 'garantit', 'livraison gratuite', 'livraison offerte', 'retour gratuit', 'retours gratuits', 'retours offerts', 'remboursé', 'remboursée', 'remboursés', 'remboursement', 'remboursements', 'satisfait ou remboursé',
+  'depuis notre création', 'depuis notre fondation', 'depuis notre ouverture', 'fondé en', 'fondée en', 'créé en', 'créée en', 'entreprise familiale', 'nous font confiance', 'plébiscité', 'plébiscitée', 'meilleure vente', 'meilleures ventes',
+  'numéro un', 'numéro 1', 'leader du marché', 'ans d\'expérience', 'années d\'expérience', 'décennies d\'expérience', 'centaines de', 'milliers de', 'millions de', 'dizaines de',
+  'vingt', 'trente', 'quarante', 'cinquante', 'soixante', 'cent', 'cents', 'mille', 'million', 'cinq étoiles', 'clients adorent'
+];
+const SHOPIFY_CLAIM_REGEXES = SHOPIFY_CLAIM_PHRASES.map(p => new RegExp('(?<![\\p{L}\\p{N}])' + p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[ -]/g, '[\\s-]+').replace(/'/g, '[\'’]') + '(?![\\p{L}\\p{N}])', 'iu'));
+const SHOPIFY_CLAIM_NAME_OK = new Set(['shopify', 'google', 'facebook', 'instagram', 'whatsapp', 'youtube', 'tiktok', 'linkedin', 'paypal', 'visa', 'mastercard', 'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']);
+const SHOPIFY_CLAIM_STOPWORDS = new Set(['the', 'and', 'of', 'to', 'is', 'for', 'with', 'in', 'that', 'it', 'you', 'your', 'are', 'on', 'as', 'at', 'be', 'this', 'can', 'or', 'le', 'la', 'les', 'de', 'des', 'du', 'et', 'pour', 'avec', 'est', 'un', 'une', 'dans', 'que', 'qui', 'vous', 'votre', 'sur', 'au', 'aux', 'ou', 'par', 'en']);
+const shopify_ClaimWords = text => String(text || '').toLowerCase().match(/[\p{L}][\p{L}'’-]*/gu) || [];
+// English or French: enough everyday English or French words that a capitalised word in the middle of a sentence is a name, not just a noun.
+const shopify_ClaimNamesApply = source => { const w = shopify_ClaimWords(source); return w.length >= 20 && w.filter(x => SHOPIFY_CLAIM_STOPWORDS.has(x)).length / w.length >= 0.12; };
+// null when the text makes no claim the source does not make; otherwise 'claim' (a claim word) or 'name' (a person or brand name).
+function shopifyClaimProblemText(text, source, checkNames) {
+  const t = String(text || ''), src = String(source || '');
+  for (const rx of SHOPIFY_CLAIM_REGEXES) if (rx.test(t) && !rx.test(src)) return 'claim';
+  if (checkNames && shopify_ClaimNamesApply(src)) {
+    const known = new Set(shopify_ClaimWords(src).map(w => w.replace(/['’]s$/, ''))), rx = /(?<![\p{L}\p{N}])\p{Lu}[\p{Ll}]{2,}(?:['’]s)?(?![\p{L}\p{N}])/gu; let m;
+    while ((m = rx.exec(t))) {
+      const before = t.slice(0, m.index); if (!before.trim() || /[.!?:;…]\s*["“«(]?\s*$/.test(before) || /["“«(]\s*$/.test(before)) continue;   // the first word of a sentence is capitalised anyway
+      const w = m[0].toLowerCase().replace(/['’]s$/, ''); if (!known.has(w) && !SHOPIFY_CLAIM_NAME_OK.has(w)) return 'name';
+    }
+  }
+  return null;
+}
+// Sections written for a page: the headings and paragraphs together. (Names are only looked for in paragraphs: a heading is Title Case.)
+function shopifyClaimProblem(sections, source) {
+  for (const s of (Array.isArray(sections) ? sections : [])) {
+    if (shopifyClaimProblemText(s.heading, source, false)) return 'claim';
+    for (const p of (s.paragraphs || [])) { const r = shopifyClaimProblemText(p, source, true); if (r) return r; }
+  }
+  return null;
+}
 function shopifySanitizeSections(input) {
   if (!Array.isArray(input)) return null; const out = []; let words = 0;
   for (const s of input.slice(0, 6)) {
@@ -10407,10 +10496,10 @@ function shopifyContentVerify(action, before, after) {
 }
 // Subheadings the AI chose are only kept when they sit inside a long unbroken stretch, are spaced apart, and invent no number.
 function shopifyValidateSubheadings(raw, list) {
-  const paras = shopifyContentParagraphs(raw), stretches = shopifyContentStretches(raw), known = shopifyDigitRuns(shopifyContentText(raw)), ok = [];
+  const paras = shopifyContentParagraphs(raw), stretches = shopifyContentStretches(raw), srcText = shopifyContentText(raw), known = shopifyDigitRuns(srcText), ok = [];
   for (const s of (Array.isArray(list) ? list : []).slice(0, 8)) {
     const n = s && s.beforeParagraph, text = shopifyPlainField(s && s.heading, 100).replace(/[.:;]+$/, ''), words = shopifyContentWords(text);
-    if (!Number.isInteger(n) || n < 2 || n > paras.length || words < 2 || words > 10 || SHOPIFY_FACT_PATTERN.test(text) || [...shopifyDigitRuns(text)].some(d => !known.has(d))) continue;
+    if (!Number.isInteger(n) || n < 2 || n > paras.length || words < 2 || words > 10 || SHOPIFY_FACT_PATTERN.test(text) || [...shopifyDigitRuns(text)].some(d => !known.has(d)) || shopifyClaimProblemText(text, srcText, false)) continue;
     const stretch = stretches.find(st => n > st.from && n <= st.to); if (!stretch || stretch.words < SHOPIFY_CONTENT_LIMITS.stretchWords || ok.some(o => Math.abs(o.beforeParagraph - n) < 3)) continue;
     ok.push({ beforeParagraph: n, text }); if (ok.length === 3) break;
   }
@@ -10473,7 +10562,8 @@ Return ONLY valid JSON, no markdown, in exactly this structure:
   const rows = [], seen = new Set();
   for (const p of result.proposals) {
     const it = picked[p && p.index]; if (!it || seen.has(p.index) || rows.length >= L.thinPerRun) continue; seen.add(p.index);
-    const sections = shopifySanitizeSections(p.sections); if (!shopifySectionsAcceptable(sections, `${it.title} ${shopifyContentText(it.raw)} ${contextSummary}`)) continue;
+    const sections = shopifySanitizeSections(p.sections); const allowedWords = `${it.title} ${shopifyContentText(it.raw)} ${contextSummary}`; if (!shopifySectionsAcceptable(sections, allowedWords)) continue;
+    if (shopifyClaimProblem(sections, allowedWords)) { scan.unsupportedClaims = (scan.unsupportedClaims || 0) + 1; continue; }   // a claim, or a name, that the page and the business description do not make: refused whole
     rows.push({ actionType: 'expand_thin_content', targetType: it.type, id: it.id, url: it.url, title: it.title, previous: { contentHash: shopifyContentHash(it.raw), wordCount: it.words, headings: shopifyContentHeadingFacts(it.raw) }, change: { sections, addedWords: shopifyContentWords(sections.map(s => s.heading + ' ' + s.paragraphs.join(' ')).join(' ')) }, reasoning: shopifyCleanText(p.reasoning, 500) });
   }
   if (!rows.length) return { proposals: [], scan, ...shopifyNote('thin_none') };
